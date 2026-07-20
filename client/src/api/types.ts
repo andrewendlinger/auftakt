@@ -236,6 +236,12 @@ export function parseColumnOptions(json: string | null | undefined): CustomColum
   }
 }
 
+/** A custom column's value on one task, stringified. Custom values are keyed by column id. */
+export function customValueOf(task: Task, colId: ID): string {
+  const v = parseCustomValues(task.custom_values)[String(colId)];
+  return v == null ? '' : String(v);
+}
+
 /** The Status column's option flagged `done` — drives gray-out, sink-to-bottom, archiving. */
 export function doneValueOf(cols: CustomColumn[]): string {
   const status = cols.find((c) => c.kind === 'builtin' && c.key === 'status');

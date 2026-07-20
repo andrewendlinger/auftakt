@@ -11,6 +11,7 @@ import { ProjectPage } from './pages/ProjectPage';
 import { ArchivePage } from './pages/ArchivePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { PrintArtist } from './pages/PrintArtist';
+import { PrintProject } from './pages/PrintProject';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -32,6 +33,7 @@ createRoot(document.getElementById('root')!).render(
               <Route path="einstellungen" element={<SettingsPage />} />
             </Route>
             <Route path="print/artist/:id" element={<PrintArtist />} />
+            <Route path="print/project/:id" element={<PrintProject />} />
           </Routes>
         </HashRouter>
       </ToastProvider>

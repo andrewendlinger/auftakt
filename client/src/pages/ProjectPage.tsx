@@ -150,7 +150,15 @@ export function ProjectPage() {
               <Markdown className="mt-1 max-w-2xl text-sm text-neutral-600">{project.description}</Markdown>
             )}
           </div>
-          <EditProjectButton project={project} artistColor={artistColor} />
+          <div className="flex items-center gap-2">
+            <a
+              href={`#/print/project/${projectId}`}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200"
+            >
+              🖨 Ein-Pager (PDF)
+            </a>
+            <EditProjectButton project={project} artistColor={artistColor} />
+          </div>
         </div>
       </Card>
 

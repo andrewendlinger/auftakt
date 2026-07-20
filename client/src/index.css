@@ -111,7 +111,10 @@ body {
   text-align: left;
 }
 
-/* Print styles for the per-artist one-pager (Cmd/Ctrl-P). */
+/* Print styles for the per-artist and per-project one-pagers (Cmd/Ctrl-P). */
+@page {
+  margin: 14mm;
+}
 @media print {
   .no-print {
     display: none !important;
@@ -122,5 +125,16 @@ body {
   }
   body {
     background: #fff;
+  }
+  /* Never split a row across pages, and keep a heading with the rows it introduces.
+     Deliberately not on `section` — the task section can exceed a page, and an
+     unsatisfiable `avoid` there just leaves a blank gap. */
+  tr,
+  li {
+    break-inside: avoid;
+  }
+  h2,
+  h3 {
+    break-after: avoid;
   }
 }

@@ -10,7 +10,7 @@ import {
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import type { CustomColumn, CustomColumnOption, Task, TaskSortRule } from '../api/types';
-import { doneValueOf, parseColumnOptions, parseCustomValues } from '../api/types';
+import { customValueOf, doneValueOf, parseColumnOptions, parseCustomValues } from '../api/types';
 import { formatDate } from '../lib/dates';
 import { withAlpha } from '../lib/colors';
 import { MANUAL_SORT_ID, SORTABLE_TASK_COLUMNS } from '../lib/taskSort';
@@ -55,11 +55,6 @@ function colId(col: CustomColumn): string {
 
 function findBuiltin(cols: CustomColumn[], key: string): CustomColumn | undefined {
   return cols.find((c) => c.kind === 'builtin' && c.key === key);
-}
-
-function customValueOf(task: Task, colId: number): string {
-  const v = parseCustomValues(task.custom_values)[String(colId)];
-  return v == null ? '' : String(v);
 }
 
 /** Map each option value to its position (rank) in the ordered options array. */

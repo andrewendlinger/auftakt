@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import { doneValueOf } from '../api/types';
 import { Spinner } from '../components/ui';
 import { Markdown } from '../components/Markdown';
+import { Empty, PrintHeader, PrintPage, Section } from '../components/PrintSheet';
 import { formatDate, formatEventWhen, weekdayShort } from '../lib/dates';
 import { useSaison } from '../hooks';
 
@@ -38,26 +39,10 @@ export function PrintArtist() {
   const openTasks = tasks.filter((t) => t.status !== doneValue);
 
   return (
-    <div className="mx-auto max-w-3xl bg-white p-10 print-page">
-      <div className="no-print mb-6 flex justify-end">
-        <button
-          onClick={() => window.print()}
-          className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white"
-        >
-          Als PDF speichern / Drucken
-        </button>
-      </div>
-
-      <header className="mb-6 flex items-start gap-4 border-b-4 pb-3" style={{ borderColor: artist.color }}>
-        {artist.image && (
-          <img src={artist.image} alt="" className="h-16 w-16 shrink-0 rounded-full object-cover" />
-        )}
-        <div>
-          <div className="text-xs uppercase tracking-widest text-neutral-400">{saison}</div>
-          <h1 className="text-3xl font-bold text-neutral-900">{artist.name}</h1>
-          {artist.notes && <Markdown className="mt-1 text-sm text-neutral-600">{artist.notes}</Markdown>}
-        </div>
-      </header>
+    <PrintPage>
+      <PrintHeader accent={artist.color} kicker={saison} title={artist.name} image={artist.image}>
+        {artist.notes && <Markdown className="mt-1 text-sm text-neutral-600">{artist.notes}</Markdown>}
+      </PrintHeader>
 
       <Section title="Kontakte">
         {contacts.length === 0 ? (
@@ -119,19 +104,6 @@ export function PrintArtist() {
           </table>
         )}
       </Section>
-    </div>
+    </PrintPage>
   );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="mb-5">
-      <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-neutral-700">{title}</h2>
-      {children}
-    </section>
-  );
-}
-
-function Empty() {
-  return <p className="text-sm text-neutral-400">—</p>;
 }
