@@ -57,3 +57,12 @@ export function DropletIcon({ className = 'h-4 w-4' }: IconProps) {
     </svg>
   );
 }
+
+export function LinkIcon({ className = 'h-4 w-4' }: IconProps) {
+  return (
+    <svg className={className} {...common}>
+      <path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.5 1.5" />
+      <path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7L12 19" />
+    </svg>
+  );
+}

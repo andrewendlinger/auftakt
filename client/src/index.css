@@ -49,6 +49,18 @@ body {
 .prose-md li {
   margin: 0.1em 0;
 }
+/* Nested lists inherit the rules above, so without this a sub-list is only
+   distinguishable by its indentation. */
+.prose-md ul ul {
+  list-style: circle;
+}
+.prose-md ul ul ul {
+  list-style: square;
+}
+.prose-md li > ul,
+.prose-md li > ol {
+  margin: 0.1em 0;
+}
 .prose-md strong {
   font-weight: 600;
 }

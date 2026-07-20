@@ -3,7 +3,14 @@ import { Btn, IconButton } from './ui';
 import { MarkdownTextarea } from './MarkdownTextarea';
 import { resizeToDataUrl } from '../lib/image';
 
-const MODAL_WIDTH = { md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-3xl' } as const;
+// Viewport-relative, not a fixed rem cap: on a large window the old max-w-2xl left every
+// entity dialog at 42rem no matter how much room there was. The upper bounds stop form
+// fields drifting uncomfortably far from their labels on a very wide monitor.
+const MODAL_WIDTH = {
+  md: 'w-[min(34rem,92vw)]',
+  lg: 'w-[min(64rem,92vw)]',
+  xl: 'w-[min(76rem,92vw)]',
+} as const;
 
 export function Modal({
   title,
@@ -36,19 +43,23 @@ export function Modal({
       className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/30 p-4 py-10"
       onMouseDown={onClose}
     >
+      {/* Column layout with a scrolling body: height used to be unbounded and the *overlay*
+          scrolled, which pushed a long form's own footer off-screen. py-10 above = 5rem. */}
       <div
-        className={`w-full ${width} rounded-2xl bg-white text-neutral-800 shadow-xl`}
+        className={`${width} flex max-h-[calc(100vh-5rem)] flex-col rounded-2xl bg-white text-neutral-800 shadow-xl`}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-neutral-100 px-5 py-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-neutral-100 px-5 py-3">
           <h3 className="font-semibold text-neutral-800">{title}</h3>
           <IconButton onClick={onClose} title="Schließen" aria-label="Schließen" className="-mr-1">
             ✕
           </IconButton>
         </div>
-        <div className="px-5 py-4">{children}</div>
+        <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
         {footer && (
-          <div className="flex justify-end gap-2 border-t border-neutral-100 px-5 py-3">{footer}</div>
+          <div className="flex shrink-0 justify-end gap-2 border-t border-neutral-100 px-5 py-3">
+            {footer}
+          </div>
         )}
       </div>
     </div>
@@ -285,7 +296,7 @@ export function RecordFormModal({
                 value={vals[f.name] ?? ''}
                 onChange={(v) => set(f.name, v)}
                 placeholder={f.placeholder}
-                className={`${inputCls} min-h-20 resize-y`}
+                className={`${inputCls} min-h-40 resize-y`}
               />
             ) : f.type === 'select' ? (
               <Select value={vals[f.name]} onChange={(e) => set(f.name, e.target.value)}>

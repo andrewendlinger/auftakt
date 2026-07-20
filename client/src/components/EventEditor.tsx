@@ -66,6 +66,7 @@ export function EventEditor({
     <Modal
       title={event ? 'Termin bearbeiten' : 'Neuer Termin'}
       onClose={onClose}
+      size="lg"
       footer={
         <>
           <Btn onClick={onClose}>Abbrechen</Btn>
