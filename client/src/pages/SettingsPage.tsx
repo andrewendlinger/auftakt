@@ -119,9 +119,14 @@ export function SettingsPage() {
               </Btn>
             </div>
             <p className="mt-1 text-xs text-neutral-400">
-              Beim App-Start wird eine datierte Kopie der Datenbank hierhin gesichert (die letzten 30 bleiben
-              erhalten). In einen Cloud-Ordner (z. B. Google Drive) legen.
+              Beim App-Start wird eine datierte Kopie <strong>aller Saisons</strong> hierhin gesichert (die letzten
+              30 Stände bleiben erhalten). In einen Cloud-Ordner (z. B. Google Drive) legen.
             </p>
+            {hasElectron && !settings.backup_dir && (
+              <p className="mt-1 text-xs text-amber-600">
+                Ohne Backup-Ordner werden keine Sicherungen angelegt.
+              </p>
+            )}
           </div>
           <div className="flex gap-2">
             <Btn onClick={() => window.auftakt?.exportDatabase?.()} disabled={!hasElectron}>

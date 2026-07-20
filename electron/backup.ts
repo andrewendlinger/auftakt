@@ -1,29 +1,17 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
-
-const KEEP = 30;
-
 /**
- * On startup, copy the live SQLite file into the user-picked backup folder with
- * a timestamped name, then keep only the most recent KEEP backups.
+ * Backups are performed by the server, not here: it owns the SQLite connections
+ * and is the only side that can produce a consistent snapshot of a WAL database.
+ * Electron only picks the folder and kicks the run off at startup.
  */
-export function runStartupBackup(dbPath: string, backupDir: string): void {
-  if (!backupDir || !existsSync(dbPath)) return;
-  mkdirSync(backupDir, { recursive: true });
-
-  const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
-  copyFileSync(dbPath, join(backupDir, `auftakt-${stamp}.db`));
-
-  const backups = readdirSync(backupDir)
-    .filter((f) => /^auftakt-.*\.db$/.test(f))
-    .map((f) => ({ f, t: statSync(join(backupDir, f)).mtimeMs }))
-    .sort((a, b) => b.t - a.t);
-
-  for (const { f } of backups.slice(KEEP)) {
-    try {
-      unlinkSync(join(backupDir, f));
-    } catch {
-      /* ignore */
-    }
+export async function runStartupBackup(port: number, backupDir: string): Promise<void> {
+  if (!backupDir) return;
+  const r = await fetch(`http://localhost:${port}/api/backup`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dir: backupDir }),
+  });
+  if (!r.ok) {
+    const { error } = (await r.json().catch(() => ({ error: r.statusText }))) as { error?: string };
+    throw new Error(error ?? 'Backup fehlgeschlagen');
   }
 }

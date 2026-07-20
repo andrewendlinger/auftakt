@@ -1,7 +1,6 @@
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { copyFileSync, existsSync } from 'node:fs';
 import { buildMenu } from './menu';
 import { runStartupBackup } from './backup';
 
@@ -16,15 +15,24 @@ function dataDir(): string {
   return isDev ? resolve(app.getAppPath(), '.data') : app.getPath('userData');
 }
 
-/** The active season's DB file, resolved from the running server's season registry. */
-async function activeDbPath(): Promise<string> {
-  const r = await fetch(`http://localhost:${PORT}/api/seasons`);
-  const j = (await r.json()) as { activeFile: string };
-  return j.activeFile;
-}
-
 function stamp(): string {
   return new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+}
+
+/**
+ * POST to the local server and surface failures as a German error dialog.
+ * All database-file work lives server-side (it owns the SQLite connections);
+ * this process only supplies the paths the user picked in a dialog.
+ */
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const r = await fetch(`http://localhost:${PORT}/api/${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json = (await r.json().catch(() => ({}))) as T & { error?: string };
+  if (!r.ok) throw new Error(json.error ?? r.statusText);
+  return json;
 }
 
 async function startServer(): Promise<void> {
@@ -84,8 +92,12 @@ async function exportDatabase(): Promise<void> {
     defaultPath: `auftakt-${stamp()}.db`,
   });
   if (r.canceled || !r.filePath) return;
-  copyFileSync(await activeDbPath(), r.filePath);
-  await dialog.showMessageBox({ message: 'Datenbank wurde exportiert.', type: 'info' });
+  try {
+    await post('backup/export', { path: r.filePath });
+    await dialog.showMessageBox({ message: 'Datenbank wurde exportiert.', type: 'info' });
+  } catch (err) {
+    await dialog.showMessageBox({ type: 'error', message: `Export fehlgeschlagen: ${(err as Error).message}` });
+  }
 }
 
 async function importDatabase(): Promise<void> {
@@ -95,6 +107,20 @@ async function importDatabase(): Promise<void> {
     filters: [{ name: 'SQLite-Datenbank', extensions: ['db', 'sqlite'] }],
   });
   if (r.canceled || !r.filePaths[0]) return;
+
+  // Check the file before offering to replace anything: a corrupt or foreign file
+  // must never get as far as the confirmation dialog.
+  try {
+    const check = await post<{ ok: boolean; error?: string }>('backup/import/check', { path: r.filePaths[0] });
+    if (!check.ok) {
+      await dialog.showMessageBox({ type: 'error', message: check.error ?? 'Die Datei kann nicht importiert werden.' });
+      return;
+    }
+  } catch (err) {
+    await dialog.showMessageBox({ type: 'error', message: `Prüfung fehlgeschlagen: ${(err as Error).message}` });
+    return;
+  }
+
   const confirm = await dialog.showMessageBox({
     type: 'warning',
     buttons: ['Abbrechen', 'Importieren'],
@@ -103,13 +129,23 @@ async function importDatabase(): Promise<void> {
     message: 'Die aktuelle Datenbank wird zuerst gesichert und dann ersetzt. Fortfahren?',
   });
   if (confirm.response !== 1) return;
-  // Safety backup of the active season's DB before overwriting it.
-  const dest = await activeDbPath();
-  if (existsSync(dest)) copyFileSync(dest, `${dest}.pre-import-${stamp()}.bak`);
-  copyFileSync(r.filePaths[0], dest);
-  await dialog.showMessageBox({ message: 'Import abgeschlossen. Die App wird neu gestartet.', type: 'info' });
-  app.relaunch();
-  app.exit(0);
+
+  try {
+    const { backup } = await post<{ backup: string }>('backup/import', { path: r.filePaths[0] });
+    await dialog.showMessageBox({
+      type: 'info',
+      message: 'Import abgeschlossen. Die App wird neu gestartet.',
+      detail: backup ? `Die bisherige Datenbank wurde gesichert:\n${backup}` : undefined,
+    });
+    app.relaunch();
+    app.exit(0);
+  } catch (err) {
+    await dialog.showMessageBox({
+      type: 'error',
+      message: `Import fehlgeschlagen: ${(err as Error).message}`,
+      detail: 'Die bisherige Datenbank wurde nicht verändert.',
+    });
+  }
 }
 
 async function createWindow(): Promise<void> {
@@ -132,23 +168,34 @@ async function createWindow(): Promise<void> {
   });
 }
 
+/**
+ * Ask for a backup folder only once there is data worth protecting — on a first
+ * launch the database is empty, and prompting then just produced an empty backup.
+ * The prompt is marked as shown either way, so a declined dialog does not reappear
+ * every launch; Settings keeps a "Wählen…" button (and warns while none is set).
+ */
+async function ensureBackupDir(): Promise<string> {
+  const status = (await (await fetch(`http://localhost:${PORT}/api/backup/status`)).json()) as {
+    backupDir: string;
+    hasData: boolean;
+    prompted: boolean;
+  };
+  if (status.backupDir) return status.backupDir;
+  if (!status.hasData || status.prompted) return '';
+
+  const chosen = await promptForDirectory();
+  await post('backup/prompted', {});
+  if (!chosen) return '';
+  await patchSettings({ backup_dir: chosen });
+  return chosen;
+}
+
 app.whenReady().then(async () => {
   if (!isDev) {
     await startServer();
     try {
-      const settings = (await (await fetch(`http://localhost:${PORT}/api/settings`)).json()) as {
-        backup_dir?: string;
-      };
-      let backupDir = settings.backup_dir;
-      if (!backupDir) {
-        // First launch: pick the backup folder once.
-        const chosen = await promptForDirectory();
-        if (chosen) {
-          await patchSettings({ backup_dir: chosen });
-          backupDir = chosen;
-        }
-      }
-      if (backupDir) runStartupBackup(await activeDbPath(), backupDir);
+      const backupDir = await ensureBackupDir();
+      if (backupDir) await runStartupBackup(PORT, backupDir);
     } catch (err) {
       console.error('Backup übersprungen:', err);
     }

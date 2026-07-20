@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -26,7 +26,7 @@ interface Registry {
 const DEFAULT_SEASON_LABEL = 'Festival 2026';
 
 /** The directory that holds seasons.json and the per-season .db files. */
-function dataDir(): string {
+export function dataDir(): string {
   const env = process.env.AUFTAKT_DATA_DIR;
   if (env && env.trim() !== '') return env;
   // Back-compat: a single-file override still works — use its folder + name.
@@ -41,7 +41,7 @@ function legacyFileName(): string {
   return legacy && legacy.trim() !== '' ? basename(legacy) : 'auftakt.db';
 }
 
-function registryPath(): string {
+export function registryPath(): string {
   return join(dataDir(), 'seasons.json');
 }
 
@@ -77,6 +77,11 @@ export function resolveDbPath(): string {
 export function listSeasons(): { activeId: number; activeFile: string; seasons: Season[] } {
   const reg = readRegistry();
   return { activeId: reg.activeId, activeFile: join(dataDir(), activeSeason(reg).file), seasons: reg.seasons };
+}
+
+/** Every registered season's DB file, resolved to an absolute path. Used by the backup run. */
+export function seasonFiles(): Array<{ label: string; file: string; path: string }> {
+  return readRegistry().seasons.map((s) => ({ label: s.label, file: s.file, path: join(dataDir(), s.file) }));
 }
 
 /** Create a fully-initialised new season DB and register it (does not activate it). */
@@ -470,6 +475,108 @@ export function closeDb(): void {
     instance.close();
     instance = null;
   }
+}
+
+/*
+ * Copying a live SQLite file with the filesystem is NOT safe under WAL: committed
+ * rows sit in the -wal until a checkpoint, so a plain copy of the .db can (and in
+ * practice does) yield an empty database. Every snapshot therefore goes through
+ * `VACUUM INTO`, which writes a consistent single-file image of db + WAL.
+ */
+export function snapshotDb(srcPath: string, destPath: string): void {
+  if (!existsSync(srcPath)) throw new Error(`Datenbank nicht gefunden: ${srcPath}`);
+  if (existsSync(destPath)) unlinkSync(destPath); // VACUUM INTO refuses an existing target
+  // Inactive seasons are opened read-write for the same reason copySeasonData does:
+  // a read-only handle cannot create the WAL shared-memory file when one is missing.
+  const active = instance && resolveDbPath() === srcPath;
+  const db = active ? instance! : new Database(srcPath);
+  try {
+    db.prepare('VACUUM INTO ?').run(destPath);
+  } finally {
+    if (!active) db.close();
+  }
+}
+
+/** Tables an Auftakt database must have for an import to be plausible. */
+const REQUIRED_TABLES = ['settings', 'artists', 'tasks', 'custom_columns'];
+
+/**
+ * Check a user-picked file before it is allowed to replace a real database.
+ * Returns a German error message, or null when the file looks importable.
+ */
+export function validateImportCandidate(path: string): string | null {
+  if (!existsSync(path)) return 'Die gewählte Datei existiert nicht.';
+  let db: Database.Database;
+  try {
+    db = new Database(path, { readonly: true });
+  } catch {
+    return 'Die gewählte Datei ist keine gültige SQLite-Datenbank.';
+  }
+  try {
+    const check = db.pragma('integrity_check') as Array<{ integrity_check: string }>;
+    if (check[0]?.integrity_check !== 'ok') return 'Die gewählte Datenbank ist beschädigt und wurde nicht importiert.';
+    const tables = new Set(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
+        (r) => r.name,
+      ),
+    );
+    const missing = REQUIRED_TABLES.filter((t) => !tables.has(t));
+    if (missing.length) return `Die gewählte Datei ist keine Auftakt-Datenbank (fehlend: ${missing.join(', ')}).`;
+    return null;
+  } catch (err) {
+    // better-sqlite3 opens lazily, so a file that is not SQLite at all fails here.
+    return `Die gewählte Datei ist keine gültige Auftakt-Datenbank (${(err as Error).message}).`;
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Replace the active season's database with a user-picked file.
+ *
+ * Order matters: nothing is destroyed until the candidate has been validated and
+ * the current data safely snapshotted. The connection is closed *before* the copy
+ * so SQLite checkpoints and removes the -wal/-shm — a stale WAL left next to a
+ * freshly copied file gets replayed on the next launch, which either silently
+ * discards the import or corrupts it into "database disk image is malformed".
+ */
+export function importIntoActiveSeason(candidatePath: string, backupDir: string): { backup: string } {
+  const invalid = validateImportCandidate(candidatePath);
+  if (invalid) throw new Error(invalid);
+
+  const dest = resolveDbPath();
+  // A season registered but never opened has no file yet — nothing to back up, and
+  // reporting a path to a file we did not write would be a lie.
+  let backup = '';
+  if (existsSync(dest)) {
+    backup = preImportBackupPath(dest, backupDir);
+    mkdirSync(dirname(backup), { recursive: true });
+    snapshotDb(dest, backup);
+  }
+
+  closeDb();
+  copyFileSync(candidatePath, dest);
+  for (const suffix of ['-wal', '-shm']) {
+    try {
+      if (existsSync(dest + suffix)) unlinkSync(dest + suffix);
+    } catch {
+      /* ignore */
+    }
+  }
+  return { backup };
+}
+
+/** Pre-import safety copy: into the backup folder when there is one, else next to the DB. */
+function preImportBackupPath(dbPath: string, backupDir: string): string {
+  const name = `${basename(dbPath, '.db')}.db`;
+  return backupDir
+    ? join(backupDir, `pre-import-${backupStamp()}`, name)
+    : `${dbPath}.pre-import-${backupStamp()}.bak`;
+}
+
+/** Filesystem-safe timestamp shared by every backup folder name. */
+export function backupStamp(): string {
+  return new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
 }
 
 /** Add the data-driven-column fields to custom_columns on databases created before they existed. */
