@@ -22,6 +22,17 @@ client/dist/
 # just its output. Rebuild with `npm run demo:seed`.
 .demo/
 
+# the Notion importer — a one-off onboarding tool, kept locally but not published. It
+# documents a customer's internal Notion template (K-codes, aside layout, German field
+# labels), which is theirs rather than ours. Run it with:
+#   cd server && npx tsx src/notion/import.ts <export-dir> [ziel-verzeichnis]
+server/src/notion/
+
+# output of the Notion importer — season databases built from a user's Notion export,
+# so they hold the same real names, addresses and notes that `files/` does. Globbed: one
+# output directory per season (.notion-import, .notion-import-2027, …).
+.notion-import*/
+
 # real import data: the CSVs hold real names, e-mail addresses and internal
 # notes. Stays local — seed.ts falls back to sample data when absent.
 files/
