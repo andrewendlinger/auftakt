@@ -41,6 +41,15 @@ export function ListIcon({ className = 'h-4 w-4' }: IconProps) {
   );
 }
 
+/** Disclosure chevron. Rotate the icon (not its button) with `rotate-90` to point it down. */
+export function ChevronRightIcon({ className = 'h-4 w-4' }: IconProps) {
+  return (
+    <svg className={className} {...common}>
+      <path d="M9 5l7 7-7 7" />
+    </svg>
+  );
+}
+
 export function DropletIcon({ className = 'h-4 w-4' }: IconProps) {
   return (
     <svg className={className} {...common}>

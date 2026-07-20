@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   flexRender,
   getCoreRowModel,
@@ -17,6 +17,7 @@ import { SORTABLE_TASK_COLUMNS } from '../lib/taskSort';
 import { Markdown } from './Markdown';
 import { MarkdownTextarea } from './MarkdownTextarea';
 import { ColorSwatchPicker } from './ColorSwatchPicker';
+import { CHILD_BAND, TREE, TreeGutterCell, groupRows, spineColorFor } from './TaskTreeGutter';
 import { TrashIcon } from './icons';
 import { ProjectBadge } from './ProjectBadge';
 import { PillSelect } from './PillSelect';
@@ -306,6 +307,7 @@ export function TaskTable({
             <ColumnCell
               task={row.original}
               col={col}
+              isChild={row.depth > 0}
               doneValue={doneValue}
               statusOptions={statusOptions}
               priorityOptions={priorityOptions}
@@ -314,33 +316,39 @@ export function TaskTable({
             />
           );
           if (!isTitle) return inner;
-          // Title cell for the subtask hierarchy: disclosure toggle + indent + a done/total badge.
+          // The hierarchy chrome lives in the leading gutter column, so all that belongs here
+          // is the subtask counter — a property of the task itself, and the one cue that stays
+          // meaningful wherever the user has ordered the Titel column.
           const kids = childrenByParent.get(row.original.id) ?? [];
+          if (kids.length === 0) return inner;
           const doneKids = kids.filter((k) => k.status === doneValue).length;
+          const isExpanded = row.getIsExpanded();
+          const pct = Math.round((doneKids / kids.length) * 100);
           return (
-            <div className="flex items-start gap-1" style={{ paddingLeft: row.depth * 22 }}>
-              {row.getCanExpand() ? (
-                <IconButton
-                  size="sm"
-                  title={row.getIsExpanded() ? 'Einklappen' : 'Ausklappen'}
-                  onClick={() => toggleExpand(row.original.id)}
-                >
-                  {row.getIsExpanded() ? '▾' : '▸'}
-                </IconButton>
-              ) : (
-                <span className="mt-1 w-7 shrink-0 text-center leading-none text-neutral-300">
-                  {row.depth > 0 ? '└' : ''}
-                </span>
-              )}
+            <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">{inner}</div>
-              {kids.length > 0 && (
-                <span
-                  className="mt-0.5 shrink-0 rounded-full bg-neutral-100 px-1.5 py-0.5 text-[11px] font-medium text-neutral-500"
-                  title={`${doneKids} von ${kids.length} Unteraufgaben erledigt`}
-                >
-                  {doneKids}/{kids.length}
-                </span>
-              )}
+              {/* A second, larger disclosure target for anyone who never notices the chevron. */}
+              <button
+                type="button"
+                onClick={() => toggleExpand(row.original.id)}
+                title={`${doneKids} von ${kids.length} Unteraufgaben erledigt — ${isExpanded ? 'einklappen' : 'ausklappen'}`}
+                className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium tabular-nums transition ${
+                  isExpanded
+                    ? 'text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600'
+                    : 'text-neutral-600 ring-1 ring-neutral-200 ring-inset hover:ring-neutral-300'
+                }`}
+                // Expanded the children speak for themselves, so the pill recedes. Collapsed it
+                // carries the progress it is standing in for, as its own fill.
+                style={
+                  isExpanded
+                    ? undefined
+                    : {
+                        backgroundImage: `linear-gradient(to right, rgb(229 229 229) ${pct}%, rgb(245 245 245) ${pct}%)`,
+                      }
+                }
+              >
+                {doneKids}/{kids.length}
+              </button>
             </div>
           );
         },
@@ -416,6 +424,8 @@ export function TaskTable({
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="border-b border-neutral-100 text-left text-xs uppercase tracking-wide text-neutral-400">
+            {/* Gutter header. Rendered outside the map so it carries no sort handler. */}
+            <th className="p-0" style={{ width: TREE.width, minWidth: TREE.width }} aria-hidden />
             {table.getHeaderGroups()[0]?.headers.map((h) => {
               const id = h.column.id;
               const active = sort?.id === id;
@@ -434,46 +444,75 @@ export function TaskTable({
             })}
           </tr>
         </thead>
-        <tbody>
-          {table.getRowModel().rows.map((row) => {
-            const done = row.original.status === doneValue;
-            const color = row.original.color;
-            const colored = !done && !!color;
-            const child = row.depth > 0;
-            const tint = done
-              ? 'bg-neutral-50/60 text-neutral-400'
-              : colored
-                ? ''
-                : child
-                  ? 'bg-neutral-50/40 hover:bg-neutral-50/70'
-                  : 'hover:bg-neutral-50/40';
-            return (
-              <Fragment key={row.id}>
-                <tr
-                  data-task-id={row.original.id}
-                  data-depth={row.depth}
-                  className={`group border-b border-neutral-50 align-top ${tint}`}
-                  style={colored ? { background: withAlpha(color, 0.16), boxShadow: `inset 3px 0 0 0 ${color}` } : undefined}
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id} className="px-3 py-2">
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </td>
-                  ))}
-                </tr>
-                {row.depth === 0 && addingChildFor === row.original.id && (
-                  <SubtaskAddRow
-                    parentTask={row.original}
-                    colSpan={row.getVisibleCells().length}
-                    defaultStatus={defaultStatus}
-                    onAdded={invalidate}
-                    onClose={() => setAddingChildFor(null)}
-                  />
-                )}
-              </Fragment>
-            );
-          })}
-        </tbody>
+        {/* One <tbody> per top-level task, so a task and its subtasks form one framed group. */}
+        {groupRows(table.getRowModel().rows).map((group) => {
+          const head = group[0]!;
+          const spineColor = spineColorFor(head.original.color);
+          const composerOpen = addingChildFor === head.original.id;
+          const lastIdx = group.length - 1;
+          return (
+            <tbody key={head.id} data-group-id={head.original.id}>
+              {group.map((row, i) => {
+                const done = row.original.status === doneValue;
+                const color = row.original.color;
+                const colored = !done && !!color;
+                const child = row.depth > 0;
+                const closesGroup = i === lastIdx && !composerOpen;
+                // Three cues, three channels that cannot overwrite one another: `done` owns
+                // background-color, the colour tint and the nesting band composite as
+                // background-image layers, and the colour accent moves to the gutter cell.
+                const layers: string[] = [];
+                if (colored) {
+                  const tint = withAlpha(color, 0.16);
+                  layers.push(`linear-gradient(${tint}, ${tint})`);
+                }
+                if (child) layers.push(CHILD_BAND);
+                return (
+                  <tr
+                    key={row.id}
+                    data-task-id={row.original.id}
+                    data-depth={row.depth}
+                    className={`group border-b align-top ${
+                      closesGroup ? 'border-neutral-200/60' : 'border-neutral-100/70'
+                    } ${
+                      done
+                        ? 'bg-neutral-50/60 text-neutral-400'
+                        : child
+                          ? 'hover:bg-neutral-50/70'
+                          : 'hover:bg-neutral-50/40'
+                    }`}
+                    style={layers.length ? { backgroundImage: layers.join(', ') } : undefined}
+                  >
+                    <TreeGutterCell
+                      kind={child ? 'child' : row.getCanExpand() ? 'parent' : 'leaf'}
+                      expanded={row.getIsExpanded()}
+                      continues={i < lastIdx || composerOpen}
+                      spineColor={spineColor}
+                      accentColor={colored ? color : null}
+                      onToggle={() => toggleExpand(row.original.id)}
+                    />
+                    {row.getVisibleCells().map((cell) => (
+                      <td key={cell.id} className="px-3 py-2">
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+              {composerOpen && (
+                <SubtaskAddRow
+                  parentTask={head.original}
+                  /* Data columns only — the composer supplies its own gutter cell. */
+                  colSpan={head.getVisibleCells().length}
+                  spineColor={spineColor}
+                  defaultStatus={defaultStatus}
+                  onAdded={invalidate}
+                  onClose={() => setAddingChildFor(null)}
+                />
+              )}
+            </tbody>
+          );
+        })}
       </table>
 
       {tasks.length === 0 && <div className="p-3"><EmptyState>Keine Aufgaben.</EmptyState></div>}
@@ -528,6 +567,7 @@ export function TaskTable({
 function ColumnCell({
   task,
   col,
+  isChild,
   doneValue,
   statusOptions,
   priorityOptions,
@@ -536,6 +576,8 @@ function ColumnCell({
 }: {
   task: Task;
   col: CustomColumn;
+  /** Subtask row — the one nesting cue that survives any column ordering. */
+  isChild: boolean;
   doneValue: string;
   statusOptions: CustomColumnOption[];
   priorityOptions: CustomColumnOption[];
@@ -549,7 +591,14 @@ function ColumnCell({
           <PillSelect value={task.status} options={statusOptions} onChange={(v) => commit(task.id, { status: v })} />
         );
       case 'title':
-        return <TitleCell task={task} doneValue={doneValue} onCommit={(v) => commit(task.id, { title: v })} />;
+        return (
+          <TitleCell
+            task={task}
+            isChild={isChild}
+            doneValue={doneValue}
+            onCommit={(v) => commit(task.id, { title: v })}
+          />
+        );
       case 'priority':
         return (
           <PillSelect
@@ -576,10 +625,12 @@ function ColumnCell({
 
 function TitleCell({
   task,
+  isChild,
   doneValue,
   onCommit,
 }: {
   task: Task;
+  isChild: boolean;
   doneValue: string;
   onCommit: (v: string) => void;
 }) {
@@ -609,7 +660,13 @@ function TitleCell({
   }
   return (
     <button
-      className={`min-w-48 max-w-md text-left ${task.status === doneValue ? 'line-through' : 'font-medium text-neutral-800'}`}
+      className={`min-w-48 max-w-md text-left ${
+        task.status === doneValue
+          ? 'line-through'
+          : isChild
+            ? 'text-neutral-600'
+            : 'font-medium text-neutral-800'
+      }`}
       onClick={() => setEditing(true)}
     >
       {task.title}
@@ -844,16 +901,19 @@ function useTaskComposer(create: (title: string) => Promise<unknown>, onAdded: (
   return { title, setTitle, submit };
 }
 
-/** Indented inline composer for a subtask, injected under its parent row while adding. */
+/** Inline composer for a subtask, rendered as the last row of its parent's group so that it
+ *  extends the group rather than splitting it. `colSpan` covers the data columns only. */
 function SubtaskAddRow({
   parentTask,
   colSpan,
+  spineColor,
   defaultStatus,
   onAdded,
   onClose,
 }: {
   parentTask: Task;
   colSpan: number;
+  spineColor: string;
   defaultStatus: string;
   onAdded: () => Promise<void>;
   onClose: () => void;
@@ -872,10 +932,10 @@ function SubtaskAddRow({
     onAdded,
   );
   return (
-    <tr className="border-b border-neutral-50 bg-neutral-50/40">
+    <tr className="border-b border-neutral-200/60" style={{ backgroundImage: CHILD_BAND }}>
+      <TreeGutterCell kind="composer" spineColor={spineColor} />
       <td colSpan={colSpan} className="px-3 py-1.5">
-        <div className="flex items-center gap-2" style={{ paddingLeft: 22 }}>
-          <span className="w-4 shrink-0 text-neutral-300">└</span>
+        <div className="flex items-center gap-2">
           <span className="text-neutral-300">＋</span>
           <input
             autoFocus
