@@ -165,6 +165,17 @@ export interface LayoutEntry {
   width: 'full' | 'half';
 }
 
+/**
+ * One renamed UI heading. Stored as an array rather than a `Record` because the settings
+ * PATCH only JSON-stringifies arrays (`server/src/routes/settings.ts`) — an object would be
+ * silently persisted as the string "[object Object]".
+ */
+export interface LabelOverride {
+  /** A `LabelKey` from `lib/labels.ts`; unknown ids are ignored on read. */
+  key: string;
+  label: string;
+}
+
 /** One level of the automatic task-ordering hierarchy (Settings → Automatische Sortierung). */
 export interface TaskSortRule {
   /** A sortable builtin column id: status | priority | due | title | created | updated. */
@@ -185,6 +196,8 @@ export interface Settings {
   artist_layout?: LayoutEntry[];
   /** Automatic ordering hierarchy for the main task table. */
   task_sort?: TaskSortRule[];
+  /** User-renamed headings; only overrides are stored, defaults live in `lib/labels.ts`. */
+  labels?: LabelOverride[];
   [key: string]: unknown;
 }
 

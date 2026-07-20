@@ -7,6 +7,8 @@ import type { EventItem } from '../api/types';
 import { formatEventWhen, weekdayShort } from '../lib/dates';
 import { Markdown } from './Markdown';
 import { TrashIcon } from './icons';
+import { EditableLabel } from './EditableLabel';
+import type { LabelKey } from '../lib/labels';
 import { useInvalidateAll, useUndoableDelete, resourceUndo } from '../hooks';
 
 const TYPE_COLORS: Record<string, { bg: string; fg: string }> = {
@@ -22,14 +24,15 @@ function typeColor(type: string) {
 }
 
 export function EventList({
-  title = 'Wichtige Termine',
+  titleKey,
   events,
   parent,
   eventTypes,
   emptyLabel = 'Keine Termine.',
   showProject = false,
 }: {
-  title?: string;
+  /** Heading id — the text itself lives in `lib/labels.ts` and is user-renameable. */
+  titleKey: LabelKey;
   events: EventItem[];
   parent: EventParent;
   eventTypes: string[];
@@ -50,7 +53,7 @@ export function EventList({
           </Btn>
         }
       >
-        {title}
+        <EditableLabel k={titleKey} />
       </SectionTitle>
 
       {events.length === 0 ? (

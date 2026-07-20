@@ -6,12 +6,16 @@ import { Spinner } from '../components/ui';
 import { Markdown } from '../components/Markdown';
 import { Empty, PrintHeader, PrintPage, Section } from '../components/PrintSheet';
 import { formatDate, formatEventWhen, weekdayShort } from '../lib/dates';
-import { useSaison } from '../hooks';
+import { useLabel, useSaison } from '../hooks';
 
 export function PrintArtist() {
   const { id } = useParams<{ id: string }>();
   const artistId = Number(id);
   const saison = useSaison();
+  // The sheet prints whatever the user renamed each section to on the artist page — the
+  // headings are the same sections, so a PDF that disagreed with the screen would be the
+  // drift this registry exists to prevent.
+  const label = useLabel();
 
   const { data, isLoading } = useQuery({
     queryKey: ['print-artist', artistId],
@@ -44,7 +48,7 @@ export function PrintArtist() {
         {artist.notes && <Markdown className="mt-1 text-sm text-neutral-600">{artist.notes}</Markdown>}
       </PrintHeader>
 
-      <Section title="Kontakte">
+      <Section title={label('artist.kontakte')}>
         {contacts.length === 0 ? (
           <Empty />
         ) : (
@@ -63,7 +67,7 @@ export function PrintArtist() {
         )}
       </Section>
 
-      <Section title="Wichtige Termine">
+      <Section title={label('artist.termine')}>
         {events.length === 0 ? (
           <Empty />
         ) : (
@@ -84,7 +88,9 @@ export function PrintArtist() {
         )}
       </Section>
 
-      <Section title={`Offene Aufgaben (${openTasks.length})`}>
+      {/* "n offen" rather than a fixed „Offene “ prefix: the sheet omits done tasks and has to
+          keep saying so, but the prefix would read „Offene Alle Aufgaben“ once renamed. */}
+      <Section title={`${label('artist.aufgaben')} (${openTasks.length} offen)`}>
         {openTasks.length === 0 ? (
           <Empty />
         ) : (

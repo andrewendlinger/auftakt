@@ -9,6 +9,8 @@ import { useDragReorder } from '../lib/dragReorder';
 import { Markdown } from '../components/Markdown';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { SectionArranger } from '../components/SectionArranger';
+import { EditableLabel } from '../components/EditableLabel';
+import type { LabelKey } from '../lib/labels';
 import { Card, DragHandle, SectionTitle, Spinner, EmptyState } from '../components/ui';
 import { EventList } from '../components/EventList';
 import { ContactList } from '../components/ContactList';
@@ -17,12 +19,13 @@ import { EditArtistButton, NewProjectButton } from '../components/EntityButtons'
 import { ExcelButton } from '../components/ExcelButton';
 import { useInvalidateAll, useSettings } from '../hooks';
 
-const SECTION_LABELS: Record<string, string> = {
-  termine: 'Termine',
-  projekte: 'Projekte',
-  kontakte: 'Kontakte',
-  aufgaben: 'Aufgaben',
-};
+/** Which heading names each section in the "Bereiche anordnen" strip. */
+const SECTION_LABEL_KEYS = {
+  termine: 'artist.termine',
+  projekte: 'artist.projekte',
+  kontakte: 'artist.kontakte',
+  aufgaben: 'artist.aufgaben',
+} as const satisfies Record<string, LabelKey>;
 
 export function ArtistPage() {
   const { id } = useParams<{ id: string }>();
@@ -60,6 +63,7 @@ export function ArtistPage() {
   const sections: Record<string, ReactNode> = {
     termine: (
       <EventList
+        titleKey="artist.termine"
         events={events}
         parent={{ artist_id: artistId }}
         eventTypes={settings?.event_types ?? []}
@@ -69,7 +73,9 @@ export function ArtistPage() {
     ),
     projekte: (
       <>
-        <SectionTitle right={<NewProjectButton artistId={artistId} artistColor={color} />}>Projekte</SectionTitle>
+        <SectionTitle right={<NewProjectButton artistId={artistId} artistColor={color} />}>
+          <EditableLabel k="artist.projekte" />
+        </SectionTitle>
         {projects.length === 0 ? (
           <EmptyState>Noch keine Projekte.</EmptyState>
         ) : (
@@ -77,10 +83,12 @@ export function ArtistPage() {
         )}
       </>
     ),
-    kontakte: <ContactList contacts={contacts} parent={{ artist_id: artistId }} title="Künstler-Kontakte" />,
+    kontakte: <ContactList contacts={contacts} parent={{ artist_id: artistId }} titleKey="artist.kontakte" />,
     aufgaben: (
       <>
-        <SectionTitle right={<ExcelButton params={{ resolved_artist_id: artistId }} />}>Aufgaben</SectionTitle>
+        <SectionTitle right={<ExcelButton params={{ resolved_artist_id: artistId }} />}>
+          <EditableLabel k="artist.aufgaben" />
+        </SectionTitle>
         <TaskTable tasks={tasks} customColumns={customColumns} parent={{ artist_id: artistId }} showProject />
       </>
     ),
@@ -109,7 +117,9 @@ export function ArtistPage() {
               </span>
             )}
             <div>
-              <div className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Künstler</div>
+              <div className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                <EditableLabel k="artist.kicker" />
+              </div>
               <h1 className="text-2xl font-bold text-neutral-800">{artist.name}</h1>
               {artist.notes && (
                 <Markdown className="mt-1 max-w-2xl text-sm text-neutral-600">{artist.notes}</Markdown>
@@ -131,7 +141,7 @@ export function ArtistPage() {
       <SectionArranger
         layoutKey="artist_layout"
         sections={sections}
-        labels={SECTION_LABELS}
+        labelKeys={SECTION_LABEL_KEYS}
         fullWidthKeys={['aufgaben']}
       />
     </div>

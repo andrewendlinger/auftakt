@@ -10,6 +10,7 @@ import { ProjectBadge } from '../components/ProjectBadge';
 import { TaskTable } from '../components/TaskTable';
 import { NewArtistButton } from '../components/EntityButtons';
 import { ExcelButton } from '../components/ExcelButton';
+import { EditableLabel } from '../components/EditableLabel';
 
 export function Dashboard() {
   const { data, isLoading } = useQuery({ queryKey: ['dashboard'], queryFn: api.dashboard });
@@ -39,7 +40,9 @@ export function Dashboard() {
   return (
     <div className="space-y-10">
       <section>
-        <SectionTitle right={<NewArtistButton />}>Künstler</SectionTitle>
+        <SectionTitle right={<NewArtistButton />}>
+          <EditableLabel k="dash.artists" />
+        </SectionTitle>
         {data.artists.length === 0 ? (
           <EmptyState>Noch keine Künstler angelegt.</EmptyState>
         ) : (
@@ -52,7 +55,9 @@ export function Dashboard() {
       </section>
 
       <section>
-        <SectionTitle>Nächste Termine · 14 Tage</SectionTitle>
+        <SectionTitle>
+          <EditableLabel k="dash.events" />
+        </SectionTitle>
         {data.upcoming14.length === 0 ? (
           <div className="space-y-3">
             <EmptyState>Keine Termine in den nächsten 14 Tagen.</EmptyState>
@@ -117,7 +122,7 @@ export function Dashboard() {
             </div>
           }
         >
-          Alle Aufgaben
+          <EditableLabel k="dash.tasks" />
         </SectionTitle>
         <TaskTable
           tasks={tasks}

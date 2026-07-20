@@ -8,6 +8,8 @@ import { withAlpha } from '../lib/colors';
 import { Markdown } from './Markdown';
 import { ColorSwatchPicker } from './ColorSwatchPicker';
 import { TrashIcon } from './icons';
+import { EditableLabel } from './EditableLabel';
+import type { LabelKey } from '../lib/labels';
 import { useInvalidateAll, useUndoableDelete, resourceUndo } from '../hooks';
 
 const FIELDS: FieldDef[] = [
@@ -19,11 +21,12 @@ const FIELDS: FieldDef[] = [
 ];
 
 export function ContactList({
-  title = 'Kontakte',
+  titleKey,
   contacts,
   parent,
 }: {
-  title?: string;
+  /** Heading id — the text itself lives in `lib/labels.ts` and is user-renameable. */
+  titleKey: LabelKey;
   contacts: Contact[];
   parent: { artist_id?: number; project_id?: number };
 }) {
@@ -52,7 +55,9 @@ export function ContactList({
 
   return (
     <div>
-      <SectionTitle right={<Btn onClick={() => setCreating(true)}>+ Kontakt</Btn>}>{title}</SectionTitle>
+      <SectionTitle right={<Btn onClick={() => setCreating(true)}>+ Kontakt</Btn>}>
+        <EditableLabel k={titleKey} />
+      </SectionTitle>
       {contacts.length === 0 ? (
         <EmptyState>Keine Kontakte.</EmptyState>
       ) : (

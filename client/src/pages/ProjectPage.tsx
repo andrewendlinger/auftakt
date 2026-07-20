@@ -6,6 +6,8 @@ import { contrastText, projectShade, withAlpha } from '../lib/colors';
 import { Markdown } from '../components/Markdown';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { SectionArranger } from '../components/SectionArranger';
+import { EditableLabel } from '../components/EditableLabel';
+import type { LabelKey } from '../lib/labels';
 import { Card, SectionTitle, Spinner, Btn } from '../components/ui';
 import { EventList } from '../components/EventList';
 import { ContactList } from '../components/ContactList';
@@ -17,12 +19,16 @@ import { ExcelButton } from '../components/ExcelButton';
 import { InlineNotes } from '../components/InlineNotes';
 import { useInvalidateAll, useSettings } from '../hooks';
 
-const SECTION_LABELS: Record<string, string> = {
-  termine: 'Wichtige Termine',
-  fakten: 'Notizen',
-  kontakte: 'Kontakte & Links',
-  aufgaben: 'Aufgaben',
-};
+/**
+ * Which heading names each section in the "Bereiche anordnen" strip. `kontakte` holds two
+ * lists side by side; its contacts heading is the one that names the section.
+ */
+const SECTION_LABEL_KEYS = {
+  termine: 'project.termine',
+  fakten: 'project.fakten',
+  kontakte: 'project.kontakte',
+  aufgaben: 'project.aufgaben',
+} as const satisfies Record<string, LabelKey>;
 
 export function ProjectPage() {
   const { id } = useParams<{ id: string }>();
@@ -72,11 +78,18 @@ export function ProjectPage() {
 
   const sections: Record<string, ReactNode> = {
     termine: (
-      <EventList events={events} parent={{ project_id: projectId }} eventTypes={settings?.event_types ?? []} />
+      <EventList
+        titleKey="project.termine"
+        events={events}
+        parent={{ project_id: projectId }}
+        eventTypes={settings?.event_types ?? []}
+      />
     ),
     fakten: (
       <>
-        <SectionTitle>Notizen</SectionTitle>
+        <SectionTitle>
+          <EditableLabel k="project.fakten" />
+        </SectionTitle>
         <Card className="p-5">
           <InlineNotes
             value={project.notes}
@@ -91,8 +104,8 @@ export function ProjectPage() {
     ),
     kontakte: (
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-        <ContactList contacts={contacts} parent={{ project_id: projectId }} title="Projekt-Kontakte" />
-        <LinkList links={links} parent={{ project_id: projectId }} />
+        <ContactList contacts={contacts} parent={{ project_id: projectId }} titleKey="project.kontakte" />
+        <LinkList links={links} parent={{ project_id: projectId }} titleKey="project.links" />
       </div>
     ),
     aufgaben: (
@@ -107,7 +120,7 @@ export function ProjectPage() {
             </div>
           }
         >
-          Aufgaben
+          <EditableLabel k="project.aufgaben" />
         </SectionTitle>
         <TaskTable tasks={tasks} customColumns={columns} parent={{ project_id: projectId }} />
       </>
@@ -128,7 +141,8 @@ export function ProjectPage() {
         <div className="flex flex-wrap items-start justify-between gap-4 p-6">
           <div>
             <div className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
-              Projekt{artist ? ` · ${artist.name}` : ''}
+              <EditableLabel k="project.kicker" />
+              {artist ? ` · ${artist.name}` : ''}
             </div>
             <div className="mt-1 flex items-center gap-2">
               {project.code && (
@@ -165,7 +179,7 @@ export function ProjectPage() {
       <SectionArranger
         layoutKey="project_layout"
         sections={sections}
-        labels={SECTION_LABELS}
+        labelKeys={SECTION_LABEL_KEYS}
         fullWidthKeys={['aufgaben']}
       />
 

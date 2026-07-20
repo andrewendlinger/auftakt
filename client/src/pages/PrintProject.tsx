@@ -8,12 +8,14 @@ import { Markdown } from '../components/Markdown';
 import { Empty, PrintHeader, PrintPage, Section } from '../components/PrintSheet';
 import { contrastText, projectShade } from '../lib/colors';
 import { formatDate, formatEventWhen, weekdayShort } from '../lib/dates';
-import { useSaison } from '../hooks';
+import { useLabel, useSaison } from '../hooks';
 
 export function PrintProject() {
   const { id } = useParams<{ id: string }>();
   const projectId = Number(id);
   const saison = useSaison();
+  // Same sections as the project page, so the sheet prints the user's names for them.
+  const label = useLabel();
 
   const { data, isLoading } = useQuery({
     queryKey: ['print-project', projectId],
@@ -73,12 +75,12 @@ export function PrintProject() {
       </PrintHeader>
 
       {project.notes && (
-        <Section title="Notizen">
+        <Section title={label('project.fakten')}>
           <Markdown className="text-sm text-neutral-700">{project.notes}</Markdown>
         </Section>
       )}
 
-      <Section title="Kontakte">
+      <Section title={label('project.kontakte')}>
         {contacts.length === 0 ? (
           <Empty />
         ) : (
@@ -97,7 +99,7 @@ export function PrintProject() {
         )}
       </Section>
 
-      <Section title="Wichtige Termine">
+      <Section title={label('project.termine')}>
         {events.length === 0 ? (
           <Empty />
         ) : (
@@ -117,7 +119,8 @@ export function PrintProject() {
         )}
       </Section>
 
-      <Section title={`Offene Aufgaben (${openTasks.length})`}>
+      {/* See PrintArtist: the „nur offene“ qualifier lives in the count, not the name. */}
+      <Section title={`${label('project.aufgaben')} (${openTasks.length} offen)`}>
         {openTasks.length === 0 ? (
           <Empty />
         ) : (

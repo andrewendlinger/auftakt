@@ -7,6 +7,8 @@ import { openExternal } from '../lib/external';
 import { withAlpha } from '../lib/colors';
 import { ColorSwatchPicker } from './ColorSwatchPicker';
 import { TrashIcon } from './icons';
+import { EditableLabel } from './EditableLabel';
+import type { LabelKey } from '../lib/labels';
 import { useInvalidateAll, useUndoableDelete, resourceUndo } from '../hooks';
 
 const FIELDS: FieldDef[] = [
@@ -22,11 +24,12 @@ export type LinkParent = {
 };
 
 export function LinkList({
-  title = 'Dokumente & Links',
+  titleKey,
   links,
   parent,
 }: {
-  title?: string;
+  /** Heading id — the text itself lives in `lib/labels.ts` and is user-renameable. */
+  titleKey: LabelKey;
   links: LinkItem[];
   parent: LinkParent;
 }) {
@@ -57,7 +60,9 @@ export function LinkList({
 
   return (
     <div>
-      <SectionTitle right={<Btn onClick={() => setCreating(true)}>+ Link</Btn>}>{title}</SectionTitle>
+      <SectionTitle right={<Btn onClick={() => setCreating(true)}>+ Link</Btn>}>
+        <EditableLabel k={titleKey} />
+      </SectionTitle>
       {links.length === 0 ? (
         <EmptyState>Keine Dokumente hinterlegt.</EmptyState>
       ) : (

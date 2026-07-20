@@ -4,7 +4,8 @@ import type { LayoutEntry } from '../api/types';
 import { arrayMove, arrayMoveTo } from '../lib/arrays';
 import { useDragReorder } from '../lib/dragReorder';
 import { Btn } from './ui';
-import { useInvalidateAll, useSettings } from '../hooks';
+import type { LabelKey } from '../lib/labels';
+import { useInvalidateAll, useLabel, useSettings } from '../hooks';
 
 type LayoutKey = 'artist_layout' | 'project_layout';
 
@@ -19,16 +20,23 @@ type LayoutKey = 'artist_layout' | 'project_layout';
 export function SectionArranger({
   layoutKey,
   sections,
-  labels,
+  labelKeys,
   fullWidthKeys = [],
 }: {
   layoutKey: LayoutKey;
   sections: Record<string, ReactNode>;
-  labels: Record<string, string>;
+  /**
+   * Section key → the heading id it is named by, so the strip below shows whatever the user
+   * renamed that section's heading to. Stated explicitly rather than derived from
+   * `layoutKey`: the project page's `kontakte` section holds two headings, and this picks
+   * which of them names the section.
+   */
+  labelKeys: Record<string, LabelKey>;
   /** Sections that can't be set to half width (always full, no width toggle) — e.g. the task table. */
   fullWidthKeys?: string[];
 }) {
   const { data: settings } = useSettings();
+  const label = useLabel();
   const invalidate = useInvalidateAll();
   const [arranging, setArranging] = useState(false);
 
@@ -126,7 +134,7 @@ export function SectionArranger({
                     <span className="cursor-grab text-base leading-none text-neutral-400" title="Zum Verschieben ziehen">
                       ⠿
                     </span>
-                    {labels[key] ?? key}
+                    {labelKeys[key] ? label(labelKeys[key]) : key}
                   </span>
                   <span className="flex items-center gap-1">
                     {canHalf && (
