@@ -50,12 +50,14 @@ export function CustomColumnManager({
     [columns, projectId],
   );
 
+  // One transactional renumber rather than two sequential swaps: if the second PATCH failed,
+  // both rows kept the same sort_order and the `a.id` tiebreak above silently froze the ▲/▼
+  // buttons for that column. `managed` is a single scope group, and `visibleCols` orders by
+  // scope before sort_order, so renumbering it from 0 can't interleave the other group.
   const move = async (col: CustomColumn, dir: -1 | 1) => {
-    const i = managed.findIndex((c) => c.id === col.id);
-    const other = managed[i + dir];
-    if (!other) return;
-    await api.customColumns.update(col.id, { sort_order: other.sort_order });
-    await api.customColumns.update(other.id, { sort_order: col.sort_order });
+    const next = arrayMove(managed, managed.findIndex((c) => c.id === col.id), dir);
+    if (next === managed) return;
+    await api.customColumns.reorder(next.map((c) => c.id));
     await invalidate();
   };
 

@@ -25,7 +25,7 @@ import { ProjectBadge } from './ProjectBadge';
 import { PillSelect } from './PillSelect';
 import { EmptyState, Btn, DragHandle, IconButton } from './ui';
 import { Modal } from './fields';
-import { useInvalidateAll, useSettings, useUndoableDelete, resourceUndo } from '../hooks';
+import { useInvalidateAll, useSaison, useSettings, useUndoableDelete, resourceUndo } from '../hooks';
 
 /** Shared modern inline-edit input style (soft border, focus ring). */
 const INLINE_INPUT =
@@ -34,11 +34,12 @@ const INLINE_INPUT =
 export interface TaskTableParent {
   artist_id?: number;
   project_id?: number;
-  /** Season-wide "Festival" todos: created with neither artist nor project. */
+  /** Season-wide todos: created with neither artist nor project, chipped with the season name. */
   general?: boolean;
 }
 
-/** Muted chip marking a task's scope when it has no project badge (Allgemein / Festival). */
+/** Muted chip marking a task's scope when it has no project badge („Allgemein“ / the season name).
+ *  `tone="festival"` names the violet colour token, not the text. */
 function ScopeChip({ label, tone }: { label: string; tone: 'neutral' | 'festival' }) {
   const cls =
     tone === 'festival' ? 'bg-violet-100 text-violet-700' : 'bg-neutral-100 text-neutral-500';
@@ -163,6 +164,7 @@ export function TaskTable({
   const invalidate = useInvalidateAll();
   const del = useUndoableDelete();
   const { data: settings } = useSettings();
+  const saison = useSaison();
   const [sort, setSort] = useState<SortState>(null);
   // Effective ordering: a header click (`sort`) is a temporary single-key override; otherwise
   // follow the configured automatic hierarchy from Settings (empty → leave server order).
@@ -353,8 +355,9 @@ export function TaskTable({
             )}
             {/* Artist page: an artist-level todo (no project) is "Allgemein". */}
             {showProject && !t.project_id && <ScopeChip label="Allgemein" tone="neutral" />}
-            {/* Dashboard: a todo with no artist and no project is season-wide "Festival". */}
-            {showAssignment && seasonWide && <ScopeChip label="Festival" tone="festival" />}
+            {/* Dashboard: a todo with no artist and no project is season-wide — tag it with the
+                season's own name, not the generic word. `tone="festival"` is the violet token. */}
+            {showAssignment && seasonWide && <ScopeChip label={saison} tone="festival" />}
           </div>
         );
       },
@@ -457,7 +460,7 @@ export function TaskTable({
       ),
     });
     return cols;
-  }, [visibleCols, showAssignment, showProject, doneValue, statusOptions, priorityOptions, commit, commitCustom, childrenByParent, toggleExpand, requestDelete]);
+  }, [visibleCols, showAssignment, showProject, saison, doneValue, statusOptions, priorityOptions, commit, commitCustom, childrenByParent, toggleExpand, requestDelete]);
 
   const table = useReactTable({
     data: sortedTop,
@@ -931,6 +934,7 @@ function AddTaskRow({
   defaultStatus: string;
   onAdded: () => Promise<void>;
 }) {
+  const saison = useSaison();
   const { title, setTitle, submit } = useTaskComposer(
     (title) =>
       api.tasks.create({
@@ -947,7 +951,7 @@ function AddTaskRow({
       <span className="text-neutral-300">＋</span>
       <input
         className="flex-1 bg-transparent px-1 py-1 text-sm outline-none placeholder:text-neutral-300"
-        placeholder={parent.general ? 'Neue allgemeine Aufgabe (Festival) … (Enter)' : 'Neue Aufgabe … (Enter)'}
+        placeholder={parent.general ? `Neue allgemeine Aufgabe (${saison}) … (Enter)` : 'Neue Aufgabe … (Enter)'}
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && void submit()}
