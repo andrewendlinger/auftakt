@@ -156,12 +156,14 @@ function ProjectCard({ project, artistColor }: { project: Project; artistColor: 
     <Link to={`/project/${project.id}`}>
       <Card className="overflow-hidden transition hover:shadow-md">
         <div className="flex items-center gap-2 px-4 py-2" style={{ background: shade }}>
-          <span
-            className="rounded-md bg-black/15 px-1.5 py-0.5 text-xs font-bold"
-            style={{ color: contrastText(shade) }}
-          >
-            {project.code}
-          </span>
+          {project.code && (
+            <span
+              className="rounded-md bg-black/15 px-1.5 py-0.5 text-xs font-bold"
+              style={{ color: contrastText(shade) }}
+            >
+              {project.code}
+            </span>
+          )}
           {project.status && (
             <span className="ml-auto text-xs font-medium" style={{ color: contrastText(shade) }}>
               {project.status}

@@ -20,7 +20,12 @@ function buildHits(r: SearchResults): Hit[] {
 
   for (const a of r.artists) hits.push({ key: `a${a.id}`, group: 'Künstler', label: a.name, to: `/artist/${a.id}` });
   for (const p of r.projects)
-    hits.push({ key: `p${p.id}`, group: 'Projekte', label: `${p.code} · ${p.name}`, to: `/project/${p.id}` });
+    hits.push({
+      key: `p${p.id}`,
+      group: 'Projekte',
+      label: p.code ? `${p.code} · ${p.name}` : p.name,
+      to: `/project/${p.id}`,
+    });
   for (const t of r.tasks)
     hits.push({
       key: `t${t.id}`,

@@ -119,7 +119,7 @@ export function ProjectPage() {
         trail={[
           { label: 'Übersicht', to: '/' },
           ...(artist ? [{ label: artist.name, to: `/artist/${artist.id}` }] : []),
-          { label: project.code },
+          { label: project.code || project.name },
         ]}
       />
 
@@ -131,12 +131,14 @@ export function ProjectPage() {
               Projekt{artist ? ` · ${artist.name}` : ''}
             </div>
             <div className="mt-1 flex items-center gap-2">
-              <span
-                className="rounded-md px-2 py-0.5 text-sm font-bold"
-                style={{ background: shade, color: contrastText(shade) }}
-              >
-                {project.code}
-              </span>
+              {project.code && (
+                <span
+                  className="rounded-md px-2 py-0.5 text-sm font-bold"
+                  style={{ background: shade, color: contrastText(shade) }}
+                >
+                  {project.code}
+                </span>
+              )}
               {project.status && (
                 <span className="rounded-full bg-white/70 px-2 py-0.5 text-xs font-medium text-neutral-600">
                   {project.status}

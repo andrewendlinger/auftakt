@@ -279,9 +279,10 @@ export function TaskTable({
                 {t.artist_name}
               </Link>
             )}
-            {t.project_id && t.project_code && (
+            {/* Imported projects can have no K-code; fall back to the name so the chip still shows. */}
+            {t.project_id && (t.project_code || t.project_name) && (
               <ProjectBadge
-                code={t.project_code}
+                code={t.project_code || t.project_name!}
                 projectId={t.project_id}
                 artistColor={t.artist_color}
                 projectColor={t.project_color}
