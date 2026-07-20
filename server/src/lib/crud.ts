@@ -77,6 +77,26 @@ export function crudRouter(opts: CrudOptions): Router {
     res.json(rows);
   };
 
+  // Batch manual ordering: one request per drag instead of N patches, and atomic — a partial
+  // apply would leave two rows sharing an ordinal. Only offered where `sort_order` is already
+  // client-writable, so the allowlist stays the single authority on what a client may set.
+  if (writable.includes('sort_order')) {
+    r.post('/reorder', (req, res) => {
+      const ids = (req.body as { ids?: unknown } | undefined)?.ids;
+      if (!Array.isArray(ids) || ids.some((id) => !Number.isInteger(Number(id)))) {
+        return res.status(400).json({ error: 'ids must be a list of row ids' });
+      }
+      const db = getDb();
+      const stmt = db.prepare(
+        `UPDATE ${table} SET sort_order = ?, updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL`,
+      );
+      db.transaction(() => {
+        ids.forEach((id, i) => stmt.run(i, Number(id)));
+      })();
+      res.json({ ok: true, count: ids.length });
+    });
+  }
+
   r.get('/', customList ?? defaultList);
 
   r.get('/:id', (req, res) => {

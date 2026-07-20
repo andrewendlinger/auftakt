@@ -59,6 +59,8 @@ function resource<T, Create = Partial<T>, Update = Partial<T>>(path: string) {
     update: (id: ID, data: Update) => http<T>('PATCH', `${path}/${id}`, data),
     remove: (id: ID) => http<{ id: ID; deleted: boolean }>('DELETE', `${path}/${id}`),
     restore: (id: ID) => http<T>('POST', `${path}/${id}/restore`),
+    /** Renumber sort_order to match `ids`. Only exists server-side where sort_order is writable. */
+    reorder: (ids: ID[]) => http<{ ok: true; count: number }>('POST', `${path}/reorder`, { ids }),
   };
 }
 

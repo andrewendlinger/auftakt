@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from 'react';
 
 export function Card({
   children,
@@ -102,6 +102,34 @@ export function ReorderArrows({
         ▼
       </button>
     </div>
+  );
+}
+
+/**
+ * The ⠿ grab handle that arms a drag. Spread `useDragReorder().handleProps(key)` onto it.
+ * Hidden until the enclosing `group` is hovered, so it never competes with the row's own
+ * content — pass `className="opacity-100"` to pin it visible.
+ */
+export function DragHandle({
+  className = '',
+  ...rest
+}: HTMLAttributes<HTMLSpanElement>) {
+  return (
+    <span
+      aria-hidden
+      title="Zum Verschieben ziehen"
+      className={`cursor-grab select-none leading-none text-neutral-400 opacity-0 transition-opacity group-hover:opacity-100 active:cursor-grabbing ${className}`}
+      // A handle is only ever grabbed, never clicked. Swallowing the click keeps a press that
+      // didn't turn into a drag from activating whatever encloses it — on a project card that
+      // would otherwise navigate into the project.
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      {...rest}
+    >
+      ⠿
+    </span>
   );
 }
 

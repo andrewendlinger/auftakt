@@ -1,7 +1,8 @@
-import { useMemo, useState, type DragEvent, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { LayoutEntry } from '../api/types';
-import { arrayMove } from '../lib/arrays';
+import { arrayMove, arrayMoveTo } from '../lib/arrays';
+import { useDragReorder } from '../lib/dragReorder';
 import { Btn } from './ui';
 import { useInvalidateAll, useSettings } from '../hooks';
 
@@ -30,8 +31,6 @@ export function SectionArranger({
   const { data: settings } = useSettings();
   const invalidate = useInvalidateAll();
   const [arranging, setArranging] = useState(false);
-  const [dragKey, setDragKey] = useState<string | null>(null);
-  const [overKey, setOverKey] = useState<string | null>(null);
 
   // `sections` (fresh ReactNodes) and an inline `fullWidthKeys` literal change identity
   // every render, but `order` only depends on their string content — key the memo on
@@ -85,37 +84,17 @@ export function SectionArranger({
     void persist(next);
   };
 
-  const reorder = (fromKey: string, toKey: string) => {
-    const from = order.findIndex((e) => e.key === fromKey);
-    const to = order.findIndex((e) => e.key === toKey);
-    if (from === -1 || to === -1 || from === to) return;
-    const next = [...order];
-    const [moved] = next.splice(from, 1);
-    next.splice(to, 0, moved!);
-    void persist(next);
-  };
-
-  const onDragStart = (e: DragEvent<HTMLDivElement>, key: string) => {
-    setDragKey(key);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', key);
-  };
-  const onDragOver = (e: DragEvent<HTMLDivElement>, key: string) => {
-    if (!dragKey) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    if (overKey !== key) setOverKey(key);
-  };
-  const onDrop = (e: DragEvent<HTMLDivElement>, key: string) => {
-    e.preventDefault();
-    if (dragKey && dragKey !== key) reorder(dragKey, key);
-    setDragKey(null);
-    setOverKey(null);
-  };
-  const onDragEnd = () => {
-    setDragKey(null);
-    setOverKey(null);
-  };
+  const drag = useDragReorder<string>({
+    enabled: arranging,
+    onReorder: (fromKey, toKey) => {
+      const next = arrayMoveTo(
+        order,
+        order.findIndex((e) => e.key === fromKey),
+        order.findIndex((e) => e.key === toKey),
+      );
+      if (next !== order) void persist(next);
+    },
+  });
 
   return (
     <>
@@ -128,11 +107,10 @@ export function SectionArranger({
         {order.map((entry, i) => {
           const key = entry.key;
           const canHalf = !fullWidthKeys.includes(key);
-          const isDropTarget = arranging && overKey === key && !!dragKey && dragKey !== key;
           const arrangeCls = arranging
             ? `select-none rounded-2xl p-3 ring-2 ring-dashed ${
-                isDropTarget ? 'ring-neutral-600' : 'ring-neutral-300'
-              } ${dragKey === key ? 'opacity-40' : ''}`
+                drag.isDropTarget(key) ? 'ring-neutral-600' : 'ring-neutral-300'
+              } ${drag.isDragging(key) ? 'opacity-40' : ''}`
             : '';
           return (
             <div
@@ -140,11 +118,7 @@ export function SectionArranger({
               data-section={key}
               data-width={entry.width}
               className={`${entry.width === 'full' ? 'sm:col-span-2' : ''} ${arrangeCls}`}
-              draggable={arranging}
-              onDragStart={arranging ? (e) => onDragStart(e, key) : undefined}
-              onDragOver={arranging ? (e) => onDragOver(e, key) : undefined}
-              onDrop={arranging ? (e) => onDrop(e, key) : undefined}
-              onDragEnd={arranging ? onDragEnd : undefined}
+              {...drag.itemProps(key)}
             >
               {arranging && (
                 <div className="mb-3 flex items-center justify-between rounded-lg bg-neutral-100 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">

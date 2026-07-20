@@ -176,6 +176,19 @@ const TASKS: DemoTask[] = [
   { id: 38, project_id: 4, parent_id: 36, title: 'Backup-Termin halten', status: 'new', priority: 'niedrig', color: '#a855f7' },
   { id: 39, project_id: 6, title: 'Getränke für die Crew organisieren', status: 'new', priority: 'niedrig' },
   { id: 40, project_id: 2, title: 'Feedbackbogen entwerfen', status: 'new', priority: 'niedrig' },
+
+  // Manual drag order: one block of same-rank siblings (identical status, priority and a null
+  // due date), so every automatic rule ties and only sort_order separates them — the only
+  // arrangement in which a row is draggable. The parent below repeats it one level down, and
+  // task 45 is the odd rank that must refuse every drop in the block.
+  { id: 41, project_id: 5, title: 'Requisiten sichten', status: 'new', priority: 'mittel' },
+  { id: 42, project_id: 5, title: 'Kostüme aussortieren', status: 'new', priority: 'mittel' },
+  { id: 43, project_id: 5, title: 'Werkstatt aufräumen', status: 'new', priority: 'mittel' },
+  { id: 44, project_id: 5, title: 'Bestandsliste ergänzen', status: 'new', priority: 'mittel' },
+  { id: 45, project_id: 5, title: 'Versicherung prüfen (andere Rangstufe)', status: 'new', priority: 'hoch' },
+  { id: 46, project_id: 5, parent_id: 41, title: 'Fundus Halle A', status: 'new', priority: 'mittel' },
+  { id: 47, project_id: 5, parent_id: 41, title: 'Fundus Halle B', status: 'new', priority: 'mittel' },
+  { id: 48, project_id: 5, parent_id: 41, title: 'Fundus Aussenlager', status: 'new', priority: 'mittel' },
 ];
 
 /** One row per link parent type, so all four branches of the links CHECK are covered. */

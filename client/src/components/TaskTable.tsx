@@ -13,7 +13,9 @@ import type { CustomColumn, CustomColumnOption, Task, TaskSortRule } from '../ap
 import { doneValueOf, parseColumnOptions, parseCustomValues } from '../api/types';
 import { formatDate } from '../lib/dates';
 import { withAlpha } from '../lib/colors';
-import { SORTABLE_TASK_COLUMNS } from '../lib/taskSort';
+import { MANUAL_SORT_ID, SORTABLE_TASK_COLUMNS } from '../lib/taskSort';
+import { arrayMoveTo } from '../lib/arrays';
+import { useDragReorder } from '../lib/dragReorder';
 import { Markdown } from './Markdown';
 import { MarkdownTextarea } from './MarkdownTextarea';
 import { ColorSwatchPicker } from './ColorSwatchPicker';
@@ -21,7 +23,7 @@ import { CHILD_BAND, TREE, TreeGutterCell, groupRows, spineColorFor } from './Ta
 import { TrashIcon } from './icons';
 import { ProjectBadge } from './ProjectBadge';
 import { PillSelect } from './PillSelect';
-import { EmptyState, Btn, IconButton } from './ui';
+import { EmptyState, Btn, DragHandle, IconButton } from './ui';
 import { Modal } from './fields';
 import { useInvalidateAll, useSettings, useUndoableDelete, resourceUndo } from '../hooks';
 
@@ -79,6 +81,7 @@ function makeSortValue(
   const priorityRank = rankMap(priorityOptions);
   const colById = new Map(cols.map((c) => [c.id, c]));
   return (task, id) => {
+    if (id === 'manual') return task.sort_order;
     if (id === 'title') return task.title.toLowerCase();
     if (id === 'status') return statusRank.get(task.status) ?? statusRank.size;
     if (id === 'priority') return priorityRank.get(task.priority) ?? priorityRank.size;
@@ -96,11 +99,40 @@ function makeSortValue(
 }
 
 /**
+ * Compare two tasks under a rule hierarchy, returning 0 when they are of *equal rank*. Done
+ * tasks always sink first, regardless of the rules, so the "done at the bottom + crossed out"
+ * baseline survives any configuration.
+ *
+ * Split out from `sortTasks` because equal rank is also what decides whether one row may be
+ * dragged onto another: manual order is only ever a tiebreaker, so a drop that would cross a
+ * rank boundary has to be refused rather than silently rewrite the task's fields.
+ */
+function compareByRules(
+  a: Task,
+  b: Task,
+  rules: TaskSortRule[],
+  getValue: (task: Task, id: string) => string | number,
+  doneValue: string,
+): number {
+  const da = a.status === doneValue ? 1 : 0;
+  const db = b.status === doneValue ? 1 : 0;
+  if (da !== db) return da - db;
+  for (const rule of rules) {
+    const dir = rule.dir === 'asc' ? 1 : -1;
+    const va = getValue(a, rule.id);
+    const vb = getValue(b, rule.id);
+    if (va < vb) return -1 * dir;
+    if (va > vb) return 1 * dir;
+  }
+  return 0;
+}
+
+/**
  * Order tasks by a multi-key hierarchy (Settings → Automatische Sortierung, or a single
- * header-click override), reading each key via a precomputed `getValue` accessor. Done tasks
- * always sink to the bottom first, regardless of the rules, so the "done at the bottom +
- * crossed out" baseline survives any configuration. An empty rule list leaves the server
- * order (priority → due, done last) untouched.
+ * header-click override), reading each key via a precomputed `getValue` accessor. Ties fall
+ * through to the manual drag order (`sort_order`) — relying on the sort being stable would
+ * instead preserve the *server's* order, which ranks priority and due date above sort_order.
+ * An empty rule list leaves the server order (priority → due, done last) untouched.
  */
 function sortTasks(
   tasks: Task[],
@@ -109,19 +141,12 @@ function sortTasks(
   doneValue: string,
 ): Task[] {
   if (rules.length === 0) return tasks;
-  return [...tasks].sort((a, b) => {
-    const da = a.status === doneValue ? 1 : 0;
-    const db = b.status === doneValue ? 1 : 0;
-    if (da !== db) return da - db;
-    for (const rule of rules) {
-      const dir = rule.dir === 'asc' ? 1 : -1;
-      const va = getValue(a, rule.id);
-      const vb = getValue(b, rule.id);
-      if (va < vb) return -1 * dir;
-      if (va > vb) return 1 * dir;
-    }
-    return 0;
-  });
+  return [...tasks].sort(
+    (a, b) =>
+      compareByRules(a, b, rules, getValue, doneValue) ||
+      a.sort_order - b.sort_order ||
+      a.id - b.id,
+  );
 }
 
 export function TaskTable({
@@ -217,6 +242,48 @@ export function TaskTable({
     }
     return m;
   }, [childrenByParent, activeRules, getSortValue, doneValue]);
+
+  // --- manual reordering ---
+  // A row may only be dropped on a sibling of equal rank: same list (both top-level, or the same
+  // parent's children) and indistinguishable under the active rules. `manual` is stripped from
+  // the rank test — as the tiebreaker it differs for every pair, which would forbid every drop.
+  const rankRules = useMemo(
+    () => activeRules.filter((r) => r.id !== MANUAL_SORT_ID),
+    [activeRules],
+  );
+  const byId = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
+  const siblingsOf = useCallback(
+    (task: Task) =>
+      task.parent_id != null && idSet.has(task.parent_id)
+        ? sortedChildren.get(task.parent_id) ?? []
+        : sortedTop,
+    [idSet, sortedChildren, sortedTop],
+  );
+  const drag = useDragReorder<number>({
+    mode: 'armed',
+    canDrop: (fromId, toId) => {
+      const from = byId.get(fromId);
+      const to = byId.get(toId);
+      if (!from || !to) return false;
+      if ((from.parent_id ?? null) !== (to.parent_id ?? null)) return false;
+      return compareByRules(from, to, rankRules, getSortValue, doneValue) === 0;
+    },
+    onReorder: async (fromId, toId) => {
+      const from = byId.get(fromId);
+      if (!from) return;
+      const siblings = siblingsOf(from);
+      const next = arrayMoveTo(
+        siblings,
+        siblings.findIndex((t) => t.id === fromId),
+        siblings.findIndex((t) => t.id === toId),
+      );
+      if (next === siblings) return;
+      // Renumber the whole sibling list by displayed position, so sort_order always mirrors
+      // what the user is looking at and stays meaningful once the rules re-sort it.
+      await api.tasks.reorder(next.map((t) => t.id));
+      await invalidate();
+    },
+  });
 
   // Which parents are expanded, as a TanStack ExpandedState keyed by task id (via getRowId).
   const expanded = useMemo<ExpandedState>(() => {
@@ -481,8 +548,13 @@ export function TaskTable({
                         : child
                           ? 'hover:bg-neutral-50/70'
                           : 'hover:bg-neutral-50/40'
-                    }`}
+                    } ${
+                      drag.isDropTarget(row.original.id)
+                        ? 'outline outline-2 -outline-offset-2 outline-neutral-500'
+                        : ''
+                    } ${drag.isDragging(row.original.id) ? 'opacity-40' : ''}`}
                     style={layers.length ? { backgroundImage: layers.join(', ') } : undefined}
+                    {...drag.itemProps(row.original.id)}
                   >
                     <TreeGutterCell
                       kind={child ? 'child' : row.getCanExpand() ? 'parent' : 'leaf'}
@@ -491,6 +563,7 @@ export function TaskTable({
                       spineColor={spineColor}
                       accentColor={colored ? color : null}
                       onToggle={() => toggleExpand(row.original.id)}
+                      dragHandle={<DragHandle {...drag.handleProps(row.original.id)} />}
                     />
                     {row.getVisibleCells().map((cell) => (
                       <td key={cell.id} className="px-3 py-2">

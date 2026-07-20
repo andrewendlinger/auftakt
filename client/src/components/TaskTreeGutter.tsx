@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { Row } from '@tanstack/react-table';
 import { withAlpha } from '../lib/colors';
 import { ChevronRightIcon } from './icons';
@@ -12,10 +13,12 @@ import { IconButton } from './ui';
  * like a rendering bug rather than hierarchy.
  */
 export const TREE = {
-  /** Gutter column width. Must stay ≥ the 28px chevron button. */
-  width: 40,
-  /** X of the vertical rail = horizontal centre of the gutter. */
-  spineX: 20,
+  /** Gutter column width: the `handleLane` plus a 40px rail column (≥ the 28px chevron button). */
+  width: 56,
+  /** Leading strip reserved for the hover-revealed drag handle, left of everything else. */
+  handleLane: 16,
+  /** X of the vertical rail = horizontal centre of the rail column, after the handle lane. */
+  spineX: 36,
   /** Y of a connector = centre of the first text line of a `py-2` row. */
   lineY: 18,
   /** Elbow arm length — this is the subtask indent, absorbed entirely by the gutter so that
@@ -79,6 +82,7 @@ export function TreeGutterCell({
   spineColor,
   accentColor,
   onToggle,
+  dragHandle,
 }: {
   kind: TreeKind;
   expanded?: boolean;
@@ -87,6 +91,8 @@ export function TreeGutterCell({
   spineColor: string;
   accentColor?: string | null;
   onToggle?: () => void;
+  /** Grab handle, revealed on row hover. Absolutely placed so it never shifts the connectors. */
+  dragHandle?: ReactNode;
 }) {
   // `-bottom-px` bridges the 1px collapsed row border; without it the rail looks dashed.
   const line = { background: spineColor, left: TREE.spineX };
@@ -99,9 +105,19 @@ export function TreeGutterCell({
         ...(accentColor ? { boxShadow: `inset 3px 0 0 0 ${accentColor}` } : null),
       }}
     >
+      {dragHandle && (
+        <span
+          className="absolute flex justify-center"
+          style={{ left: 0, width: TREE.handleLane, top: TREE.lineY - 7 }}
+        >
+          {dragHandle}
+        </span>
+      )}
+
       {kind === 'parent' && (
         <>
-          <div className="flex justify-center pt-1">
+          {/* Centre the chevron in the rail column, not the whole cell, so it stays over the rail. */}
+          <div className="flex justify-center pt-1" style={{ paddingLeft: TREE.handleLane }}>
             <IconButton
               size="sm"
               aria-expanded={expanded}

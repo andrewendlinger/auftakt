@@ -4,16 +4,18 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Project } from '../api/types';
 import { contrastText, projectShade, withAlpha } from '../lib/colors';
+import { arrayMoveTo } from '../lib/arrays';
+import { useDragReorder } from '../lib/dragReorder';
 import { Markdown } from '../components/Markdown';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { SectionArranger } from '../components/SectionArranger';
-import { Card, SectionTitle, Spinner, EmptyState } from '../components/ui';
+import { Card, DragHandle, SectionTitle, Spinner, EmptyState } from '../components/ui';
 import { EventList } from '../components/EventList';
 import { ContactList } from '../components/ContactList';
 import { TaskTable } from '../components/TaskTable';
 import { EditArtistButton, NewProjectButton } from '../components/EntityButtons';
 import { ExcelButton } from '../components/ExcelButton';
-import { useSettings } from '../hooks';
+import { useInvalidateAll, useSettings } from '../hooks';
 
 const SECTION_LABELS: Record<string, string> = {
   termine: 'Termine',
@@ -71,11 +73,7 @@ export function ArtistPage() {
         {projects.length === 0 ? (
           <EmptyState>Noch keine Projekte.</EmptyState>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {projects.map((p) => (
-              <ProjectCard key={p.id} project={p} artistColor={color} />
-            ))}
-          </div>
+          <ProjectGrid projects={projects} artistColor={color} />
         )}
       </>
     ),
@@ -150,12 +148,61 @@ function initials(name: string): string {
     .join('');
 }
 
-function ProjectCard({ project, artistColor }: { project: Project; artistColor: string }) {
+/**
+ * The project cards, reorderable by dragging the ⠿ handle in a card's colour bar. Order is the
+ * `sort_order` column, which the projects list already sorts by, so a drop is one batch request
+ * and the server round-trip returns the list already in the new order.
+ */
+function ProjectGrid({ projects, artistColor }: { projects: Project[]; artistColor: string }) {
+  const invalidate = useInvalidateAll();
+  const drag = useDragReorder<number>({
+    mode: 'armed',
+    onReorder: async (fromId, toId) => {
+      const next = arrayMoveTo(
+        projects,
+        projects.findIndex((p) => p.id === fromId),
+        projects.findIndex((p) => p.id === toId),
+      );
+      if (next === projects) return;
+      await api.projects.reorder(next.map((p) => p.id));
+      await invalidate();
+    },
+  });
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {projects.map((p) => (
+        <ProjectCard key={p.id} project={p} artistColor={artistColor} drag={drag} />
+      ))}
+    </div>
+  );
+}
+
+function ProjectCard({
+  project,
+  artistColor,
+  drag,
+}: {
+  project: Project;
+  artistColor: string;
+  drag: ReturnType<typeof useDragReorder<number>>;
+}) {
   const shade = projectShade(artistColor, project.color, project.id);
   return (
-    <Link to={`/project/${project.id}`}>
+    <Link
+      to={`/project/${project.id}`}
+      data-project-card={project.id}
+      className={`group block rounded-2xl transition ${
+        drag.isDropTarget(project.id) ? 'ring-2 ring-neutral-500' : ''
+      } ${drag.isDragging(project.id) ? 'opacity-40' : ''}`}
+      {...drag.itemProps(project.id)}
+    >
       <Card className="overflow-hidden transition hover:shadow-md">
         <div className="flex items-center gap-2 px-4 py-2" style={{ background: shade }}>
+          <DragHandle
+            className="text-base"
+            style={{ color: contrastText(shade) }}
+            {...drag.handleProps(project.id)}
+          />
           {project.code && (
             <span
               className="rounded-md bg-black/15 px-1.5 py-0.5 text-xs font-bold"
