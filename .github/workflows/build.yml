@@ -38,6 +38,12 @@ jobs:
           npm --prefix server install
           npm --prefix client install
 
+      # The only correctness gate in the repo: there are no tests and no linter, and
+      # `npm run build` is vite + esbuild, neither of which does type analysis. Without
+      # this step a type error reaches a published installer.
+      - name: Typecheck
+        run: npm run typecheck
+
       # --publish never: GitHub Releases are created by the separate `release` job
       # below, so electron-builder must not also try to publish.
       - name: Build installers (dmg on macOS, NSIS on Windows)
@@ -47,8 +53,12 @@ jobs:
       # tell where a downloaded installer came from. This signs a statement tying
       # each artifact to this commit and workflow run; verify a download with
       #   gh attestation verify <file> --repo <owner>/<repo>
-      # Requires the repository to be public (or GitHub Advanced Security).
+      # Requires the repository to be public (or GitHub Advanced Security), so it is
+      # skipped while this repo is private — otherwise it would fail here, before the
+      # upload step, and take the whole release down with it (`release` needs `build`).
+      # Making the repo public re-enables provenance on its own, with no edit here.
       - name: Attest build provenance
+        if: ${{ !github.event.repository.private }}
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: release/*.${{ matrix.os == 'windows-latest' && 'exe' || 'dmg' }}
