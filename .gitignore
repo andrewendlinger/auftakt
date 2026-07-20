@@ -1,0 +1,33 @@
+# dependencies
+node_modules/
+**/node_modules/
+
+# build output
+dist/
+build/*
+# ...but keep the committed app-icon assets (electron-builder buildResources)
+!build/icon.png
+!build/icon.icns
+release/
+server/dist/
+client/dist/
+
+# live database + dev data (never commit the DB or backups)
+.data/
+*.db
+*.db-wal
+*.db-shm
+
+# real import data: the CSVs hold real names, e-mail addresses and internal
+# notes. Stays local — seed.ts falls back to sample data when absent.
+files/
+
+# logs / os
+*.log
+.DS_Store
+
+# electron
+out/
+
+# TODO
+TODO.md

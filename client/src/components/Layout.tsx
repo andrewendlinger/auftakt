@@ -1,0 +1,41 @@
+import { NavLink, Outlet } from 'react-router-dom';
+import { GlobalSearch } from './GlobalSearch';
+import { SeasonSwitcher } from './SeasonSwitcher';
+
+function navClass({ isActive }: { isActive: boolean }): string {
+  return `rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+    isActive ? 'bg-white/20 text-white' : 'text-white/75 hover:bg-white/10 hover:text-white'
+  }`;
+}
+
+export function Layout() {
+  return (
+    <div className="min-h-full">
+      <header className="sticky top-0 z-20 bg-neutral-900 text-white shadow-md no-print">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-6 gap-y-3 px-6 py-3">
+          <div className="flex items-center gap-3">
+            <span className="text-lg font-bold tracking-tight">Auftakt</span>
+            <SeasonSwitcher />
+          </div>
+          <nav className="flex items-center gap-1">
+            <NavLink to="/" end className={navClass}>
+              Übersicht
+            </NavLink>
+            <NavLink to="/archiv" className={navClass}>
+              Archiv
+            </NavLink>
+            <NavLink to="/einstellungen" className={navClass}>
+              Einstellungen
+            </NavLink>
+          </nav>
+          <div className="ml-auto flex-1 md:min-w-72 md:max-w-md">
+            <GlobalSearch />
+          </div>
+        </div>
+      </header>
+      <main className="mx-auto max-w-7xl px-6 py-8">
+        <Outlet />
+      </main>
+    </div>
+  );
+}

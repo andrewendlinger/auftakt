@@ -1,0 +1,644 @@
+import Database from 'better-sqlite3';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = dirname(fileURLToPath(import.meta.url));
+
+/*
+ * Seasons: one SQLite file per season (2026, 2027, …) inside a data directory,
+ * with a small seasons.json registry above them recording the active season.
+ * Switching seasons re-opens the active file in-process (no restart). The live
+ * DBs are never placed in a cloud-synced folder; only backups go there.
+ */
+
+export interface Season {
+  id: number;
+  label: string;
+  file: string; // basename inside the data dir
+  createdAt: string;
+}
+interface Registry {
+  activeId: number;
+  seasons: Season[];
+}
+
+const DEFAULT_SEASON_LABEL = 'Festival 2026';
+
+/** The directory that holds seasons.json and the per-season .db files. */
+function dataDir(): string {
+  const env = process.env.AUFTAKT_DATA_DIR;
+  if (env && env.trim() !== '') return env;
+  // Back-compat: a single-file override still works — use its folder + name.
+  const legacy = process.env.AUFTAKT_DB_PATH;
+  if (legacy && legacy.trim() !== '') return dirname(legacy);
+  return resolve(here, '../../.data');
+}
+
+/** Season 1 keeps the familiar file name so existing databases carry over. */
+function legacyFileName(): string {
+  const legacy = process.env.AUFTAKT_DB_PATH;
+  return legacy && legacy.trim() !== '' ? basename(legacy) : 'auftakt.db';
+}
+
+function registryPath(): string {
+  return join(dataDir(), 'seasons.json');
+}
+
+function readRegistry(): Registry {
+  try {
+    const reg = JSON.parse(readFileSync(registryPath(), 'utf8')) as Registry;
+    if (reg && Array.isArray(reg.seasons) && reg.seasons.length) return reg;
+  } catch {
+    /* bootstrap below */
+  }
+  // First run: register the (possibly pre-existing) legacy DB as the first season.
+  const reg: Registry = {
+    activeId: 1,
+    seasons: [{ id: 1, label: DEFAULT_SEASON_LABEL, file: legacyFileName(), createdAt: new Date().toISOString() }],
+  };
+  saveRegistry(reg);
+  return reg;
+}
+
+function saveRegistry(reg: Registry): void {
+  mkdirSync(dataDir(), { recursive: true });
+  writeFileSync(registryPath(), JSON.stringify(reg, null, 2));
+}
+
+function activeSeason(reg: Registry = readRegistry()): Season {
+  return reg.seasons.find((s) => s.id === reg.activeId) ?? reg.seasons[0]!;
+}
+
+export function resolveDbPath(): string {
+  return join(dataDir(), activeSeason().file);
+}
+
+export function listSeasons(): { activeId: number; activeFile: string; seasons: Season[] } {
+  const reg = readRegistry();
+  return { activeId: reg.activeId, activeFile: join(dataDir(), activeSeason(reg).file), seasons: reg.seasons };
+}
+
+/** Create a fully-initialised new season DB and register it (does not activate it). */
+export function createSeason(label: string): Season {
+  const reg = readRegistry();
+  const id = Math.max(0, ...reg.seasons.map((s) => s.id)) + 1;
+  const season: Season = { id, label, file: `season-${id}.db`, createdAt: new Date().toISOString() };
+  mkdirSync(dataDir(), { recursive: true });
+  const fresh = new Database(join(dataDir(), season.file));
+  fresh.pragma('journal_mode = WAL');
+  fresh.pragma('foreign_keys = ON');
+  fresh.exec(SCHEMA);
+  ensureDefaultSettings(fresh);
+  ensureBuiltinColumns(fresh);
+  setSetting(fresh, 'saison', label);
+  fresh.close();
+  reg.seasons.push(season);
+  saveRegistry(reg);
+  return season;
+}
+
+/** Switch the active season; closes the current handle so the next getDb() opens the new file. */
+export function activateSeason(id: number): void {
+  const reg = readRegistry();
+  if (!reg.seasons.some((s) => s.id === id)) throw new Error('unknown season');
+  reg.activeId = id;
+  saveRegistry(reg);
+  closeDb();
+}
+
+export function renameSeason(id: number, label: string): void {
+  const reg = readRegistry();
+  const s = reg.seasons.find((x) => x.id === id);
+  if (!s) throw new Error('unknown season');
+  s.label = label;
+  saveRegistry(reg);
+  if (id === reg.activeId) setSetting(getDb(), 'saison', label);
+}
+
+export function deleteSeason(id: number): void {
+  const reg = readRegistry();
+  if (reg.seasons.length <= 1) throw new Error('cannot delete the last season');
+  if (id === reg.activeId) throw new Error('cannot delete the active season');
+  const s = reg.seasons.find((x) => x.id === id);
+  if (!s) throw new Error('unknown season');
+  reg.seasons = reg.seasons.filter((x) => x.id !== id);
+  saveRegistry(reg);
+  for (const suffix of ['', '-wal', '-shm']) {
+    try {
+      const p = join(dataDir(), s.file + suffix);
+      if (existsSync(p)) unlinkSync(p);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/** Keep the active season's registry label in sync with the in-DB `saison` setting. */
+export function setActiveSeasonLabel(label: string): void {
+  const reg = readRegistry();
+  const s = activeSeason(reg);
+  if (s.label !== label) {
+    s.label = label;
+    saveRegistry(reg);
+  }
+}
+
+/** Columns copied between season DBs (ids preserved so FKs & custom_values stay linked). */
+const COPY_COLS: Record<string, string[]> = {
+  artists: ['id', 'name', 'color', 'notes', 'image', 'sort_order'],
+  projects: ['id', 'artist_id', 'code', 'name', 'status', 'description', 'notes', 'color', 'sort_order'],
+  contacts: ['id', 'artist_id', 'project_id', 'role', 'name', 'email', 'phone', 'notes', 'color', 'sort_order'],
+  events: ['id', 'artist_id', 'project_id', 'type', 'title', 'start_at', 'end_at', 'all_day', 'location', 'notes', 'sort_order'],
+  tasks: ['id', 'artist_id', 'project_id', 'title', 'status', 'priority', 'due_date', 'comment', 'color', 'custom_values', 'erledigt_am', 'parent_id', 'sort_order'],
+  links: ['id', 'artist_id', 'project_id', 'event_id', 'task_id', 'label', 'url', 'color', 'sort_order'],
+  custom_columns: ['id', 'name', 'type', 'scope', 'project_id', 'options', 'icon', 'key', 'kind', 'enabled', 'deletable', 'sort_order'],
+};
+
+function copyRows(target: Database.Database, table: string, rows: unknown[]): void {
+  if (rows.length === 0) return;
+  const cols = COPY_COLS[table]!;
+  const stmt = target.prepare(
+    `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map((c) => '@' + c).join(', ')})`,
+  );
+  const tx = target.transaction(() => {
+    for (const r of rows as Array<Record<string, unknown>>) {
+      const o: Record<string, unknown> = {};
+      for (const c of cols) o[c] = r[c] === undefined ? null : r[c];
+      stmt.run(o);
+    }
+  });
+  tx();
+}
+
+/**
+ * Copy data from one season into another (a freshly created, empty one).
+ * Artists (and their contacts/events) always come over; projects and tasks are
+ * opt-in. Links are kept only where their single parent was copied.
+ */
+export function copySeasonData(
+  targetId: number,
+  sourceId: number,
+  opts: { projects: boolean; tasks: boolean },
+): void {
+  const reg = readRegistry();
+  const src = reg.seasons.find((s) => s.id === sourceId);
+  const tgt = reg.seasons.find((s) => s.id === targetId);
+  if (!src || !tgt) throw new Error('unknown season');
+  // Open read-write (we only SELECT): a read-only handle can't create the WAL
+  // shared-memory file for an inactive season, which would fail the copy.
+  const source = new Database(join(dataDir(), src.file));
+  const target = new Database(join(dataDir(), tgt.file));
+  const q = (sql: string): Array<Record<string, unknown>> =>
+    source.prepare(sql).all() as Array<Record<string, unknown>>;
+  try {
+    target.pragma('foreign_keys = OFF');
+
+    copyRows(target, 'artists', q('SELECT * FROM artists WHERE deleted_at IS NULL'));
+    if (opts.projects) {
+      copyRows(target, 'projects', q('SELECT * FROM projects WHERE deleted_at IS NULL'));
+      copyRows(target, 'custom_columns', q("SELECT * FROM custom_columns WHERE deleted_at IS NULL AND kind = 'custom' AND scope = 'project'"));
+    }
+
+    const scopeCond = opts.projects ? 'artist_id IS NOT NULL OR project_id IS NOT NULL' : 'artist_id IS NOT NULL';
+    copyRows(target, 'contacts', q(`SELECT * FROM contacts WHERE deleted_at IS NULL AND (${scopeCond})`));
+    const events = q(`SELECT * FROM events WHERE deleted_at IS NULL AND (${scopeCond})`);
+    copyRows(target, 'events', events);
+    const eventIds = new Set(events.map((e) => e.id));
+
+    const taskIds = new Set<unknown>();
+    if (opts.tasks) {
+      copyRows(target, 'custom_columns', q("SELECT * FROM custom_columns WHERE deleted_at IS NULL AND kind = 'custom' AND scope = 'global'"));
+      const tasks = q(`SELECT * FROM tasks WHERE deleted_at IS NULL${opts.projects ? '' : ' AND project_id IS NULL'}`);
+      copyRows(target, 'tasks', tasks);
+      for (const t of tasks) taskIds.add(t.id);
+    }
+
+    const links = q('SELECT * FROM links WHERE deleted_at IS NULL').filter(
+      (l) =>
+        l.artist_id != null ||
+        (l.project_id != null && opts.projects) ||
+        (l.event_id != null && eventIds.has(l.event_id)) ||
+        (l.task_id != null && taskIds.has(l.task_id)),
+    );
+    copyRows(target, 'links', links);
+
+    target.pragma('foreign_keys = ON');
+  } finally {
+    source.close();
+    target.close();
+  }
+}
+
+const SCHEMA = /* sql */ `
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS artists (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  color      TEXT NOT NULL DEFAULT '#888888',
+  notes      TEXT,
+  image      TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  deleted_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  artist_id   INTEGER NOT NULL REFERENCES artists(id),
+  code        TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  status      TEXT,
+  description TEXT,
+  notes       TEXT,
+  color       TEXT,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  deleted_at  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS contacts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  artist_id  INTEGER REFERENCES artists(id),
+  project_id INTEGER REFERENCES projects(id),
+  role       TEXT,
+  name       TEXT NOT NULL,
+  email      TEXT,
+  phone      TEXT,
+  notes      TEXT,
+  color      TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  deleted_at TEXT,
+  CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) = 1)
+);
+
+CREATE TABLE IF NOT EXISTS events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  artist_id  INTEGER REFERENCES artists(id),
+  project_id INTEGER REFERENCES projects(id),
+  type       TEXT NOT NULL,
+  title      TEXT NOT NULL,
+  start_at   TEXT NOT NULL,
+  end_at     TEXT,
+  all_day    INTEGER NOT NULL DEFAULT 0,
+  location   TEXT,
+  notes      TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  deleted_at TEXT,
+  CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) = 1)
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  artist_id     INTEGER REFERENCES artists(id),
+  project_id    INTEGER REFERENCES projects(id),
+  title         TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'offen',
+  priority      TEXT NOT NULL DEFAULT 'mittel',
+  due_date      TEXT,
+  comment       TEXT,
+  color         TEXT,
+  custom_values TEXT NOT NULL DEFAULT '{}',
+  erledigt_am   TEXT,
+  parent_id     INTEGER REFERENCES tasks(id),
+  sort_order    INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  deleted_at    TEXT,
+  -- 0 parents = a season-wide ("Festival") todo, 1 = artist-level or project todo.
+  CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) <= 1)
+);
+
+CREATE TABLE IF NOT EXISTS custom_columns (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  type       TEXT NOT NULL,
+  scope      TEXT NOT NULL DEFAULT 'global',
+  project_id INTEGER REFERENCES projects(id),
+  options    TEXT,
+  icon       TEXT,
+  key        TEXT,
+  kind       TEXT NOT NULL DEFAULT 'custom',
+  enabled    INTEGER NOT NULL DEFAULT 1,
+  deletable  INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  deleted_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS links (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  artist_id  INTEGER REFERENCES artists(id),
+  project_id INTEGER REFERENCES projects(id),
+  event_id   INTEGER REFERENCES events(id),
+  task_id    INTEGER REFERENCES tasks(id),
+  label      TEXT NOT NULL,
+  url        TEXT,
+  color      TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  deleted_at TEXT,
+  CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) + (event_id IS NOT NULL) + (task_id IS NOT NULL) = 1)
+);
+
+CREATE INDEX IF NOT EXISTS idx_projects_artist  ON projects(artist_id);
+CREATE INDEX IF NOT EXISTS idx_contacts_artist  ON contacts(artist_id);
+CREATE INDEX IF NOT EXISTS idx_contacts_project ON contacts(project_id);
+CREATE INDEX IF NOT EXISTS idx_events_artist    ON events(artist_id);
+CREATE INDEX IF NOT EXISTS idx_events_project   ON events(project_id);
+CREATE INDEX IF NOT EXISTS idx_events_start     ON events(start_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_artist     ON tasks(artist_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_project    ON tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_sort       ON tasks(status, priority, due_date);
+CREATE INDEX IF NOT EXISTS idx_links_parents    ON links(artist_id, project_id, event_id, task_id);
+`;
+
+export const DEFAULT_EVENT_TYPES = ['Auftritt', 'Termin', 'Anreise', 'Deadline'];
+export const DEFAULT_PROJECT_STATUSES = ['Not Started', 'In Progress', 'Done'];
+
+export interface ColumnOption {
+  value: string;
+  label: string;
+  color: string;
+  /** For the Status column: the single terminal category that drives the done → archive lifecycle. */
+  done?: boolean;
+}
+
+/** The task Status column is a select whose "done" option grays out, sinks and later archives the task. */
+export const DEFAULT_STATUS_OPTIONS: ColumnOption[] = [
+  { value: 'new', label: 'Not Started', color: '#e2e8f0' },
+  { value: 'active', label: 'In Progress', color: '#dbeafe' },
+  { value: 'done', label: 'Done', color: '#dcfce7', done: true },
+];
+
+export const DEFAULT_PRIORITY_OPTIONS: ColumnOption[] = [
+  { value: 'hoch', label: 'hoch', color: '#fee2e2' },
+  { value: 'mittel', label: 'mittel', color: '#fef3c7' },
+  { value: 'niedrig', label: 'niedrig', color: '#e2e8f0' },
+];
+
+interface BuiltinColumn {
+  key: string;
+  name: string;
+  type: string;
+  sort_order: number;
+  enabled: number;
+  deletable: number;
+  options: ColumnOption[] | null;
+}
+
+/**
+ * The task table is data-driven: every column (built-in and custom) is a
+ * custom_columns row. Built-ins bind to real task fields via `key`; customs
+ * bind to tasks.custom_values. Status is leftmost. Priorität, Fällig, "Erstellt
+ * am" are off by default; "Zuletzt bearbeitet" is on. `created`/`updated` are
+ * read-only and render tasks.created_at / updated_at.
+ */
+const BUILTIN_COLUMNS: BuiltinColumn[] = [
+  { key: 'status', name: 'Status', type: 'status', sort_order: 0, enabled: 1, deletable: 0, options: DEFAULT_STATUS_OPTIONS },
+  { key: 'title', name: 'Aufgabe', type: 'title', sort_order: 1, enabled: 1, deletable: 0, options: null },
+  { key: 'priority', name: 'Priorität', type: 'priority', sort_order: 2, enabled: 0, deletable: 1, options: DEFAULT_PRIORITY_OPTIONS },
+  { key: 'due', name: 'Fällig', type: 'due', sort_order: 3, enabled: 0, deletable: 1, options: null },
+  { key: 'comment', name: 'Kommentar', type: 'comment', sort_order: 4, enabled: 1, deletable: 1, options: null },
+  { key: 'updated', name: 'Zuletzt bearbeitet', type: 'updated', sort_order: 5, enabled: 1, deletable: 1, options: null },
+  { key: 'created', name: 'Erstellt am', type: 'created', sort_order: 6, enabled: 0, deletable: 1, options: null },
+];
+
+/**
+ * Default hierarchy for the automatic task ordering in the main task table.
+ * Each rule sorts by a builtin column id; `status` asc follows the status option
+ * order (Not Started → In Progress → Done). Users can reorder/extend this in Settings.
+ */
+export const DEFAULT_TASK_SORT = [
+  { id: 'status', dir: 'asc' },
+  { id: 'priority', dir: 'asc' },
+  { id: 'due', dir: 'asc' },
+];
+
+const DEFAULT_SETTINGS: Record<string, string> = {
+  saison: 'Festival 2026',
+  timezone: 'Europe/Berlin',
+  backup_dir: '',
+  first_run_done: '0',
+  event_types: JSON.stringify(DEFAULT_EVENT_TYPES),
+  project_statuses: JSON.stringify(DEFAULT_PROJECT_STATUSES),
+  task_sort: JSON.stringify(DEFAULT_TASK_SORT),
+};
+
+/** Number of days a soft-deleted row survives before being purged. */
+export const PURGE_AFTER_DAYS = 30;
+/** Number of days a completed task stays in the live views before archiving. */
+export const ARCHIVE_AFTER_DAYS = 30;
+
+let instance: Database.Database | null = null;
+
+export function getDb(): Database.Database {
+  if (instance) return instance;
+  const path = resolveDbPath();
+  mkdirSync(dirname(path), { recursive: true });
+  const db = new Database(path);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  db.exec(SCHEMA);
+  ensureDefaultSettings(db);
+  migrateColumns(db);
+  ensureBuiltinColumns(db);
+  migrateTaskStatus(db);
+  migrateTasksAllowGeneral(db);
+  migrateArtistImage(db);
+  migrateItemColors(db);
+  migrateTaskParentId(db);
+  instance = db;
+  return db;
+}
+
+/** Close the cached connection so the next getDb() re-opens the (possibly changed) active season. */
+export function closeDb(): void {
+  if (instance) {
+    instance.close();
+    instance = null;
+  }
+}
+
+/** Add the data-driven-column fields to custom_columns on databases created before they existed. */
+function migrateColumns(db: Database.Database): void {
+  const have = new Set(
+    (db.prepare('PRAGMA table_info(custom_columns)').all() as Array<{ name: string }>).map((c) => c.name),
+  );
+  const add = (name: string, ddl: string): void => {
+    if (!have.has(name)) db.exec(`ALTER TABLE custom_columns ADD COLUMN ${ddl}`);
+  };
+  add('key', 'key TEXT');
+  add('kind', "kind TEXT NOT NULL DEFAULT 'custom'");
+  add('enabled', 'enabled INTEGER NOT NULL DEFAULT 1');
+  add('deletable', 'deletable INTEGER NOT NULL DEFAULT 1');
+  add('icon', 'icon TEXT');
+}
+
+/** Add a column to a table if a pre-existing database doesn't have it yet. Idempotent. */
+function ensureColumn(db: Database.Database, table: string, name: string, ddl: string): void {
+  const have = new Set(
+    (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name),
+  );
+  if (!have.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
+
+/** Add the artist profile-image column (stored as a data URL) to older databases. */
+function migrateArtistImage(db: Database.Database): void {
+  ensureColumn(db, 'artists', 'image', 'image TEXT');
+}
+
+/** Add the per-item color column to tasks/contacts/links in older databases. */
+function migrateItemColors(db: Database.Database): void {
+  ensureColumn(db, 'tasks', 'color', 'color TEXT');
+  ensureColumn(db, 'contacts', 'color', 'color TEXT');
+  ensureColumn(db, 'links', 'color', 'color TEXT');
+}
+
+/** Add the subtask parent link (tasks.parent_id → tasks.id) to older databases. Idempotent. */
+function migrateTaskParentId(db: Database.Database): void {
+  ensureColumn(db, 'tasks', 'parent_id', 'parent_id INTEGER REFERENCES tasks(id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id)');
+}
+
+/** Insert the built-in task columns (Status, Aufgabe, Priorität, Fällig, Kommentar) if missing. Idempotent. */
+export function ensureBuiltinColumns(db: Database.Database): void {
+  const has = db.prepare('SELECT 1 FROM custom_columns WHERE key = ? AND deleted_at IS NULL LIMIT 1');
+  const ins = db.prepare(
+    `INSERT INTO custom_columns (name, type, scope, project_id, options, key, kind, enabled, deletable, sort_order)
+     VALUES (@name, @type, 'global', NULL, @options, @key, 'builtin', @enabled, @deletable, @sort_order)`,
+  );
+  const tx = db.transaction(() => {
+    for (const b of BUILTIN_COLUMNS) {
+      if (!has.get(b.key)) {
+        ins.run({
+          name: b.name,
+          type: b.type,
+          options: b.options ? JSON.stringify(b.options) : null,
+          key: b.key,
+          enabled: b.enabled,
+          deletable: b.deletable,
+          sort_order: b.sort_order,
+        });
+      }
+    }
+  });
+  tx();
+}
+
+/** Map the legacy two-state task status to the New/Active/Done model. Idempotent. */
+function migrateTaskStatus(db: Database.Database): void {
+  db.prepare("UPDATE tasks SET status = 'active' WHERE status = 'offen'").run();
+  db.prepare("UPDATE tasks SET status = 'done' WHERE status = 'erledigt'").run();
+}
+
+/**
+ * Relax the tasks parent CHECK from "= 1" to "<= 1" so season-wide ("Festival") todos
+ * with no artist/project are allowed. SQLite can't ALTER a CHECK, so rebuild the table
+ * (the standard 12-step). Idempotent: only runs while the old constraint is present.
+ */
+function migrateTasksAllowGeneral(db: Database.Database): void {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'")
+    .get() as { sql?: string } | undefined;
+  if (!row?.sql || row.sql.includes('<= 1')) return; // already migrated (or fresh SCHEMA)
+
+  // foreign_keys must be toggled OUTSIDE the transaction to take effect.
+  db.pragma('foreign_keys = OFF');
+  const rebuild = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE tasks_new (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        artist_id     INTEGER REFERENCES artists(id),
+        project_id    INTEGER REFERENCES projects(id),
+        title         TEXT NOT NULL,
+        status        TEXT NOT NULL DEFAULT 'offen',
+        priority      TEXT NOT NULL DEFAULT 'mittel',
+        due_date      TEXT,
+        comment       TEXT,
+        custom_values TEXT NOT NULL DEFAULT '{}',
+        erledigt_am   TEXT,
+        sort_order    INTEGER NOT NULL DEFAULT 0,
+        created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        deleted_at    TEXT,
+        CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) <= 1)
+      );
+      INSERT INTO tasks_new SELECT
+        id, artist_id, project_id, title, status, priority, due_date, comment,
+        custom_values, erledigt_am, sort_order, created_at, updated_at, deleted_at
+      FROM tasks;
+      DROP TABLE tasks;
+      ALTER TABLE tasks_new RENAME TO tasks;
+      CREATE INDEX IF NOT EXISTS idx_tasks_artist  ON tasks(artist_id);
+      CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+      CREATE INDEX IF NOT EXISTS idx_tasks_sort    ON tasks(status, priority, due_date);
+    `);
+  });
+  rebuild();
+  db.pragma('foreign_keys = ON');
+}
+
+/** The Status option flagged `done` — the terminal category driving gray-out/sink/archive. */
+export function doneStatusValue(db: Database.Database): string {
+  const row = db
+    .prepare("SELECT options FROM custom_columns WHERE key = 'status' AND deleted_at IS NULL LIMIT 1")
+    .get() as { options?: string | null } | undefined;
+  if (row?.options) {
+    try {
+      const opts = JSON.parse(row.options) as ColumnOption[];
+      const done = opts.find((o) => o.done);
+      if (done) return done.value;
+    } catch {
+      /* fall through */
+    }
+  }
+  return 'done';
+}
+
+function ensureDefaultSettings(db: Database.Database): void {
+  const stmt = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
+  const tx = db.transaction(() => {
+    for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) stmt.run(key, value);
+  });
+  tx();
+}
+
+export function getSetting(db: Database.Database, key: string): string | null {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as
+    | { value: string | null }
+    | undefined;
+  return row ? row.value : null;
+}
+
+export function setSetting(db: Database.Database, key: string, value: string): void {
+  db.prepare(
+    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+  ).run(key, value);
+}
+
+/** Hard-delete rows whose deleted_at is older than PURGE_AFTER_DAYS. Runs on startup. */
+export function purgeExpired(db: Database.Database): void {
+  const tables = ['artists', 'projects', 'contacts', 'events', 'tasks', 'custom_columns', 'links'];
+  const cutoff = `-${PURGE_AFTER_DAYS} days`;
+  const tx = db.transaction(() => {
+    for (const t of tables) {
+      db.prepare(
+        `DELETE FROM ${t} WHERE deleted_at IS NOT NULL AND deleted_at < datetime('now', ?)`,
+      ).run(cutoff);
+    }
+  });
+  tx();
+}

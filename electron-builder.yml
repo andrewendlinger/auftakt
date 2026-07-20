@@ -1,0 +1,37 @@
+appId: com.auftakt.app
+productName: Auftakt
+copyright: © 2026 Auftakt
+
+directories:
+  output: release
+  buildResources: build
+
+# No Apple Developer ID → electron-builder skips signing and the arm64 app would be
+# "damaged". Ad-hoc sign the bundle so it is at least a valid arm64 app (see README).
+afterSign: scripts/afterSign.cjs
+
+# Built artifacts + the one native dependency (better-sqlite3 is added
+# automatically as a production dependency and rebuilt for Electron's ABI).
+files:
+  - electron/dist/**
+  - server/dist/**
+  - client/dist/**
+  - package.json
+
+asar: true
+asarUnpack:
+  - '**/node_modules/better-sqlite3/**'
+  - '**/*.node'
+
+mac:
+  target: dmg
+  category: public.app-category.productivity
+
+win:
+  target: nsis
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  shortcutName: Auftakt
