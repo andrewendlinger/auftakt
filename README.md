@@ -101,3 +101,26 @@ scripts/  build.mjs (esbuild-Bündel für Server + Electron)
   Europe/Berlin gespeichert)
 - „Neue Saison“: frische DB + Künstler/Kontakte aus der letzten Saison importieren
 - Mehrbenutzer: derselbe Server auf einem geteilten Rechner
+
+## Sicherheit
+
+Alle Daten bleiben lokal; die App sendet nichts an einen Server. Die Installer
+auf der [Releases-Seite](https://github.com/andrewendlinger/auftakt/releases)
+werden von GitHub Actions aus diesem Quellcode gebaut und tragen eine
+Build-Provenance-Attestierung — prüfbar mit `gh attestation verify`. Details und
+Meldeweg für Sicherheitsprobleme: [SECURITY.md](SECURITY.md).
+
+## Lizenz
+
+[PolyForm Strict License 1.0.0](LICENSE.md) — der Quellcode ist einsehbar, und
+die App darf für nichtkommerzielle Zwecke genutzt werden (privat, Hobby, sowie
+gemeinnützige, Bildungs- und öffentliche Einrichtungen). Weitergabe und
+Veränderung sind nicht gestattet.
+
+**Kommerzielle bzw. betriebliche Nutzung ist damit nicht abgedeckt.** Für eine
+kommerzielle Lizenz bitte melden — siehe [LICENSE.md](LICENSE.md).
+
+## Beiträge
+
+Dies ist ein Einzelentwickler-Projekt; Pull Requests werden derzeit nicht
+angenommen. Fehlerberichte und Ideen sind als Issue willkommen.

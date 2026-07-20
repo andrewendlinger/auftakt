@@ -13,6 +13,11 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # id-token + attestations are needed to sign the build provenance below.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v5
 
@@ -37,6 +42,16 @@ jobs:
       # below, so electron-builder must not also try to publish.
       - name: Build installers (dmg on macOS, NSIS on Windows)
         run: npm run build && npx electron-builder --publish never
+
+      # The app is not signed with an Apple Developer ID, so users have no way to
+      # tell where a downloaded installer came from. This signs a statement tying
+      # each artifact to this commit and workflow run; verify a download with
+      #   gh attestation verify <file> --repo <owner>/<repo>
+      # Requires the repository to be public (or GitHub Advanced Security).
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: release/*.${{ matrix.os == 'windows-latest' && 'exe' || 'dmg' }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
