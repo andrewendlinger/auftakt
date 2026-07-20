@@ -8,12 +8,7 @@ seasonsRouter.get('/', (_req, res) => {
 });
 
 seasonsRouter.post('/', (req, res) => {
-  const body = (req.body ?? {}) as {
-    label?: unknown;
-    copyFrom?: unknown;
-    includeProjects?: unknown;
-    includeTasks?: unknown;
-  };
+  const body = (req.body ?? {}) as Record<string, unknown>;
   const label = String(body.label ?? '').trim();
   if (!label) return res.status(400).json({ error: 'label required' });
   const season = createSeason(label);
@@ -21,11 +16,19 @@ seasonsRouter.post('/', (req, res) => {
   if (copyFrom && !Number.isNaN(copyFrom)) {
     try {
       copySeasonData(season.id, copyFrom, {
+        artists: !!body.includeArtists,
+        contacts: !!body.includeContacts,
+        events: !!body.includeEvents,
         projects: !!body.includeProjects,
         tasks: !!body.includeTasks,
+        columns: !!body.includeColumns,
+        settings: !!body.includeSettings,
       });
     } catch (err) {
+      // The season exists and may be half-populated; deleting it now would be the
+      // worse outcome, so hand the failure back and let the user see it.
       console.error('Saison-Kopie fehlgeschlagen:', err);
+      return res.status(201).json({ ...season, copyError: (err as Error).message });
     }
   }
   res.status(201).json(season);

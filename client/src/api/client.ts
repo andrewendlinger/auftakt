@@ -9,6 +9,7 @@ import type {
   Project,
   SearchResults,
   Season,
+  SeasonCopyOptions,
   SeasonList,
   Settings,
   Task,
@@ -81,10 +82,18 @@ export const api = {
   duplicateEvent: (id: ID) => http<EventItem>('POST', `/events/${id}/duplicate`),
 
   seasons: () => http<SeasonList>('GET', '/seasons'),
-  createSeason: (
-    label: string,
-    opts?: { copyFrom?: ID; includeProjects?: boolean; includeTasks?: boolean },
-  ) => http<Season>('POST', '/seasons', { label, ...opts }),
+  createSeason: (label: string, opts?: { copyFrom?: ID } & Partial<SeasonCopyOptions>) =>
+    http<Season>('POST', '/seasons', {
+      label,
+      copyFrom: opts?.copyFrom,
+      includeArtists: opts?.artists,
+      includeContacts: opts?.contacts,
+      includeEvents: opts?.events,
+      includeProjects: opts?.projects,
+      includeTasks: opts?.tasks,
+      includeColumns: opts?.columns,
+      includeSettings: opts?.settings,
+    }),
   activateSeason: (id: ID) => http<SeasonList>('POST', `/seasons/${id}/activate`),
   renameSeason: (id: ID, label: string) => http<SeasonList>('PATCH', `/seasons/${id}`, { label }),
   deleteSeason: (id: ID) => http<SeasonList>('DELETE', `/seasons/${id}`),

@@ -176,57 +176,144 @@ function copyRows(target: Database.Database, table: string, rows: unknown[]): vo
   tx();
 }
 
+/** What a new season carries over from an existing one. Every group is optional. */
+export interface SeasonCopyOptions {
+  artists: boolean;
+  contacts: boolean;
+  events: boolean;
+  projects: boolean;
+  tasks: boolean;
+  /** Task-table configuration: the built-in column setup plus global custom columns. */
+  columns: boolean;
+  /** The settings table, minus SETTINGS_NOT_COPIED. */
+  settings: boolean;
+}
+
+/**
+ * Settings a copy must not carry: the new season names itself, and the other two
+ * describe this machine rather than the season.
+ */
+const SETTINGS_NOT_COPIED = new Set(['saison', 'backup_dir', 'first_run_done']);
+
+/**
+ * Carry the task table's configuration over. Built-ins are matched by `key` and
+ * updated in place — the target already has its own from ensureBuiltinColumns(),
+ * and `task_sort` refers to them by key, so those ids have to stay put. Custom
+ * columns are inserted with their ids preserved, because tasks.custom_values is
+ * keyed by column id.
+ */
+function copyColumnConfig(
+  target: Database.Database,
+  builtins: Array<Record<string, unknown>>,
+  customs: Array<Record<string, unknown>>,
+): void {
+  const upd = target.prepare(
+    `UPDATE custom_columns
+        SET name = @name, options = @options, icon = @icon, enabled = @enabled, sort_order = @sort_order
+      WHERE key = @key AND kind = 'builtin'`,
+  );
+  const tx = target.transaction(() => {
+    for (const b of builtins) {
+      upd.run({
+        name: b.name,
+        options: b.options ?? null,
+        icon: b.icon ?? null,
+        enabled: b.enabled,
+        sort_order: b.sort_order,
+        key: b.key,
+      });
+    }
+  });
+  tx();
+  copyRows(target, 'custom_columns', customs);
+}
+
+/** Upsert, not insert: the target already holds ensureDefaultSettings()'s rows. */
+function copySettings(target: Database.Database, rows: Array<Record<string, unknown>>): void {
+  const stmt = target.prepare(
+    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+  );
+  const tx = target.transaction(() => {
+    for (const r of rows) {
+      if (SETTINGS_NOT_COPIED.has(String(r.key))) continue;
+      stmt.run(String(r.key), (r.value ?? null) as string | null);
+    }
+  });
+  tx();
+}
+
 /**
  * Copy data from one season into another (a freshly created, empty one).
- * Artists (and their contacts/events) always come over; projects and tasks are
- * opt-in. Links are kept only where their single parent was copied.
+ * Every group is opt-in; a row only comes over if the parent it hangs off did
+ * too, which is also how links have always worked.
  */
-export function copySeasonData(
-  targetId: number,
-  sourceId: number,
-  opts: { projects: boolean; tasks: boolean },
-): void {
+export function copySeasonData(targetId: number, sourceId: number, opts: SeasonCopyOptions): void {
   const reg = readRegistry();
   const src = reg.seasons.find((s) => s.id === sourceId);
   const tgt = reg.seasons.find((s) => s.id === targetId);
   if (!src || !tgt) throw new Error('unknown season');
+
+  // Close the dependency graph the schema imposes, so the result never depends on
+  // what the client sent: projects.artist_id is NOT NULL, and contacts/events each
+  // hang off exactly one artist or project. Tasks need their columns because
+  // custom_values is keyed by column id and `status` has to name an option the
+  // target's Status column actually offers.
+  const o = { ...opts };
+  if (o.projects || o.contacts || o.events) o.artists = true;
+  if (o.tasks) o.columns = true;
+
   // Open read-write (we only SELECT): a read-only handle can't create the WAL
   // shared-memory file for an inactive season, which would fail the copy.
   const source = new Database(join(dataDir(), src.file));
   const target = new Database(join(dataDir(), tgt.file));
   const q = (sql: string): Array<Record<string, unknown>> =>
     source.prepare(sql).all() as Array<Record<string, unknown>>;
+  const live = (table: string, extra = ''): Array<Record<string, unknown>> =>
+    q(`SELECT * FROM ${table} WHERE deleted_at IS NULL${extra}`);
   try {
     target.pragma('foreign_keys = OFF');
 
-    copyRows(target, 'artists', q('SELECT * FROM artists WHERE deleted_at IS NULL'));
-    if (opts.projects) {
-      copyRows(target, 'projects', q('SELECT * FROM projects WHERE deleted_at IS NULL'));
-      copyRows(target, 'custom_columns', q("SELECT * FROM custom_columns WHERE deleted_at IS NULL AND kind = 'custom' AND scope = 'project'"));
+    if (o.artists) copyRows(target, 'artists', live('artists'));
+    if (o.projects) {
+      copyRows(target, 'projects', live('projects'));
+      copyRows(target, 'custom_columns', live('custom_columns', " AND kind = 'custom' AND scope = 'project'"));
     }
 
-    const scopeCond = opts.projects ? 'artist_id IS NOT NULL OR project_id IS NOT NULL' : 'artist_id IS NOT NULL';
-    copyRows(target, 'contacts', q(`SELECT * FROM contacts WHERE deleted_at IS NULL AND (${scopeCond})`));
-    const events = q(`SELECT * FROM events WHERE deleted_at IS NULL AND (${scopeCond})`);
+    const kept = (r: Record<string, unknown>): boolean =>
+      (r.artist_id != null && o.artists) || (r.project_id != null && o.projects);
+
+    if (o.contacts) copyRows(target, 'contacts', live('contacts').filter(kept));
+    const events = o.events ? live('events').filter(kept) : [];
     copyRows(target, 'events', events);
     const eventIds = new Set(events.map((e) => e.id));
 
-    const taskIds = new Set<unknown>();
-    if (opts.tasks) {
-      copyRows(target, 'custom_columns', q("SELECT * FROM custom_columns WHERE deleted_at IS NULL AND kind = 'custom' AND scope = 'global'"));
-      const tasks = q(`SELECT * FROM tasks WHERE deleted_at IS NULL${opts.projects ? '' : ' AND project_id IS NULL'}`);
-      copyRows(target, 'tasks', tasks);
-      for (const t of tasks) taskIds.add(t.id);
+    if (o.columns) {
+      copyColumnConfig(
+        target,
+        live('custom_columns', " AND kind = 'builtin'"),
+        live('custom_columns', " AND kind = 'custom' AND scope = 'global'"),
+      );
     }
 
-    const links = q('SELECT * FROM links WHERE deleted_at IS NULL').filter(
+    // Tasks with no parent at all are the season-wide ("Festival") todos.
+    const tasks = o.tasks
+      ? live('tasks').filter((t) => kept(t) || (t.artist_id == null && t.project_id == null))
+      : [];
+    const taskIds = new Set(tasks.map((t) => t.id));
+    // A subtask whose parent stayed behind becomes a root task, not a dangling FK.
+    for (const t of tasks) if (t.parent_id != null && !taskIds.has(t.parent_id)) t.parent_id = null;
+    copyRows(target, 'tasks', tasks);
+
+    const links = live('links').filter(
       (l) =>
-        l.artist_id != null ||
-        (l.project_id != null && opts.projects) ||
+        (l.artist_id != null && o.artists) ||
+        (l.project_id != null && o.projects) ||
         (l.event_id != null && eventIds.has(l.event_id)) ||
         (l.task_id != null && taskIds.has(l.task_id)),
     );
     copyRows(target, 'links', links);
+
+    if (o.settings) copySettings(target, q('SELECT key, value FROM settings'));
 
     target.pragma('foreign_keys = ON');
   } finally {

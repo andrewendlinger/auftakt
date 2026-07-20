@@ -138,6 +138,19 @@ export interface Season {
   label: string;
   file: string;
   createdAt: string;
+  /** Set when the season was created but copying from another one failed. */
+  copyError?: string;
+}
+
+/** What a new season carries over from an existing one. Every group is optional. */
+export interface SeasonCopyOptions {
+  artists: boolean;
+  contacts: boolean;
+  events: boolean;
+  projects: boolean;
+  tasks: boolean;
+  columns: boolean;
+  settings: boolean;
 }
 
 export interface SeasonList {
