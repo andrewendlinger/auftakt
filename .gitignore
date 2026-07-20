@@ -31,3 +31,8 @@ out/
 
 # TODO
 TODO.md
+TODO-security.md
+
+# agent tooling (local only)
+CLAUDE.md
+.claude/
