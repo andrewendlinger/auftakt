@@ -1,0 +1,305 @@
+/**
+ * Builds a disposable demo database with invented data.
+ *
+ * Why this exists alongside seed.ts: the CSV importer cannot express subtasks
+ * (`parent_id` is absent from its INSERT), per-task colors, or `custom_values`, so a CSV
+ * fixture set cannot exercise the features that most need eyeballing. This writes rows
+ * directly instead, and covers every edge the UI has a branch for — see the sections below.
+ *
+ * Dates are relative to today, so due dates stay meaningful and the archive cutoff keeps
+ * working however long from now this runs.
+ */
+import { rmSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Pin the data dir before the first getDb() call, which caches its connection. Defaulting it
+ * here rather than in the npm script is what makes this script incapable of touching the real
+ * database in `.data/` — unlike `npm run seed`, which clears whatever is active.
+ *
+ * Safe as a plain statement despite ESM hoisting: db.ts reads AUFTAKT_DATA_DIR inside
+ * dataDir(), never at import time.
+ */
+const DEMO_DIR = process.env.AUFTAKT_DATA_DIR?.trim() || resolve(here, '../../.demo');
+process.env.AUFTAKT_DATA_DIR = DEMO_DIR;
+
+const { getDb, setSetting, getSetting, setActiveSeasonLabel, ARCHIVE_AFTER_DAYS } =
+  await import('./db');
+
+/** Distinct from the real data's default so the season chip never reads "Festival 2026". */
+const SEASON_LABEL = 'Demofest 2026';
+
+/* ---------- relative dates ---------- */
+
+const DAY_MS = 86_400_000;
+
+/** Date `n` days from today as `YYYY-MM-DD` (negative = past). */
+function days(n: number): string {
+  return new Date(Date.now() + n * DAY_MS).toISOString().slice(0, 10);
+}
+
+/** `YYYY-MM-DDTHH:MM` — the app's naive-local format for a timed event. */
+function at(n: number, time: string): string {
+  return `${days(n)}T${time}`;
+}
+
+/**
+ * `YYYY-MM-DD HH:MM:SS` — SQLite's `datetime()` format. Used for erledigt_am and deleted_at
+ * because both are compared against `datetime('now', ...)` as strings (queries.ts:27,
+ * db.ts:639); an ISO string with its `T` separator would sort inconsistently against those.
+ */
+function stamp(n: number): string {
+  return new Date(Date.now() + n * DAY_MS).toISOString().slice(0, 19).replace('T', ' ');
+}
+
+/** Comfortably past the archive cutoff, so `#/archiv` is never empty. */
+const ARCHIVED = -(ARCHIVE_AFTER_DAYS + 15);
+
+/* ---------- the dataset ---------- */
+
+const ARTISTS = [
+  { id: 1, name: 'Nordlicht Quartett', color: '#3b82f6', notes: 'Streichquartett, Residenz über das ganze Festival.' },
+  { id: 2, name: 'Ana Belém Trio', color: '#ec4899', notes: 'Anreise aus Lissabon — Visa früh klären.' },
+  { id: 3, name: 'Kollektiv Halbton', color: '#10b981', notes: null },
+  { id: 4, name: 'Jonas Wehrmann', color: '#f59e0b', notes: 'Solopianist, spielt auch den Meisterkurs.' },
+];
+
+const PROJECTS = [
+  { id: 1, artist_id: 1, code: 'NQ1', name: 'Eröffnungskonzert', status: 'In Progress', description: 'Eröffnung im großen Saal.' },
+  { id: 2, artist_id: 1, code: 'NQ2', name: 'Schulworkshop', status: 'Not Started', description: 'Vormittagsformat für zwei Schulklassen.' },
+  { id: 3, artist_id: 2, code: 'AB1', name: 'Hauptkonzert', status: 'In Progress', description: null },
+  { id: 4, artist_id: 2, code: 'AB2', name: 'Radio-Session', status: 'In Progress', description: 'Mitschnitt für den Kultursender.' },
+  { id: 5, artist_id: 3, code: 'KH1', name: 'Klanginstallation', status: 'In Progress', description: 'Läuft durchgehend im Foyer.' },
+  { id: 6, artist_id: 3, code: 'KH2', name: 'Late-Night-Set', status: 'Not Started', description: null },
+  { id: 7, artist_id: 4, code: 'JW1', name: 'Solo-Rezital', status: 'Done', description: 'Programm steht, Werbung läuft.' },
+  { id: 8, artist_id: 4, code: 'JW2', name: 'Meisterkurs', status: 'In Progress', description: 'Drei Tage, zwölf Teilnehmende.' },
+];
+
+const CONTACTS = [
+  { id: 1, artist_id: null, project_id: 1, role: 'Management', name: 'Merle Dahlke', email: 'merle.dahlke@example.org', phone: '+49 151 0000001' },
+  { id: 2, artist_id: 1, project_id: null, role: 'Tourmanagement', name: 'Piet Aalders', email: 'piet@example.org', phone: null },
+  { id: 3, artist_id: null, project_id: 3, role: 'Booking', name: 'Rosa Enríquez', email: 'rosa@example.org', phone: '+351 900 000 000' },
+  { id: 4, artist_id: 3, project_id: null, role: 'Label', name: 'Halbton Records', email: 'kontakt@example.org', phone: null },
+  { id: 5, artist_id: null, project_id: 7, role: 'Agentur', name: 'Ines Kubowski', email: 'ines@example.org', phone: '+49 151 0000002' },
+];
+
+/** Mix of all-day (date-only start) and timed rows — the UI renders them differently. */
+const EVENTS = [
+  { id: 1, artist_id: null, project_id: 1, type: 'Auftritt', title: 'Eröffnungskonzert', start_at: at(14, '19:30'), end_at: at(14, '21:15'), all_day: 0, location: 'Großer Saal' },
+  { id: 2, artist_id: null, project_id: 1, type: 'Deadline', title: 'Programmtext-Abgabe', start_at: days(4), end_at: null, all_day: 1, location: null },
+  { id: 3, artist_id: null, project_id: 3, type: 'Auftritt', title: 'Hauptkonzert Ana Belém Trio', start_at: at(16, '20:00'), end_at: at(16, '22:00'), all_day: 0, location: 'Kammermusiksaal' },
+  { id: 4, artist_id: 2, project_id: null, type: 'Anreise', title: 'Anreise aus Lissabon', start_at: days(15), end_at: null, all_day: 1, location: 'Flughafen' },
+  { id: 5, artist_id: null, project_id: 5, type: 'Termin', title: 'Aufbau Klanginstallation', start_at: days(10), end_at: days(12), all_day: 1, location: 'Foyer' },
+  { id: 6, artist_id: null, project_id: 7, type: 'Auftritt', title: 'Solo-Rezital', start_at: at(-9, '19:00'), end_at: at(-9, '20:30'), all_day: 0, location: 'Großer Saal' },
+  { id: 7, artist_id: null, project_id: 8, type: 'Termin', title: 'Meisterkurs Tag 1', start_at: days(21), end_at: null, all_day: 1, location: 'Probenraum 2' },
+];
+
+interface DemoTask {
+  id: number;
+  artist_id?: number | null;
+  project_id?: number | null;
+  parent_id?: number | null;
+  title: string;
+  status?: string;
+  priority?: string;
+  due_date?: string | null;
+  comment?: string | null;
+  color?: string | null;
+  erledigt_am?: string | null;
+  deleted_at?: string | null;
+}
+
+/**
+ * Task fixtures, grouped by the UI state each block is here to produce. Ids are explicit so
+ * `parent_id` references stay stable across edits.
+ */
+const TASKS: DemoTask[] = [
+  // Subtask tree: a plain parent with a coloured child and a recently-done child.
+  { id: 1, project_id: 1, title: 'Instrumente – Anmietung und Transport', status: 'active', priority: 'hoch', due_date: days(12) },
+  { id: 2, project_id: 1, parent_id: 1, title: 'Anmietung Schlagzeug klären', status: 'active' },
+  { id: 3, project_id: 1, parent_id: 1, title: 'Transporter buchen', status: 'active', color: '#f59e0b' },
+  { id: 4, project_id: 1, parent_id: 1, title: 'Rückgabe nach dem Konzert planen', status: 'done', erledigt_am: stamp(-3) },
+  { id: 5, project_id: 1, title: 'Bühnenplan an Technik schicken', status: 'active', priority: 'hoch', due_date: days(5), comment: 'Siehe Rider, Abschnitt **3.2** — Monitorwege.' },
+  { id: 6, project_id: 1, title: 'Backline-Liste final abgleichen', status: 'new', priority: 'niedrig' },
+
+  // Coloured parent: the group rail picks up the parent's colour.
+  { id: 7, project_id: 3, title: 'Hotelzimmer buchen', status: 'active', priority: 'hoch', due_date: days(9), color: '#3b82f6' },
+  { id: 8, project_id: 3, parent_id: 7, title: 'Doppelzimmer bestätigen', status: 'active' },
+  { id: 9, project_id: 3, parent_id: 7, title: 'Anreise mit Management abstimmen', status: 'new' },
+  { id: 10, project_id: 3, title: 'Setlist final freigeben', status: 'active', due_date: days(15) },
+
+  // Orphan: parent is soft-deleted, so the child must render flat with no connector.
+  // deleted_at stays recent — purgeExpired() hard-deletes past PURGE_AFTER_DAYS and
+  // tasks.parent_id is a real FK.
+  { id: 11, project_id: 5, title: 'Gelöschter Elterntask', status: 'active', deleted_at: stamp(-2) },
+  { id: 12, project_id: 5, parent_id: 11, title: 'Verwaiste Unteraufgabe', status: 'active' },
+
+  { id: 13, project_id: 5, title: 'Sensorik im Foyer testen', status: 'active', priority: 'hoch', due_date: days(3) },
+  { id: 14, project_id: 6, title: 'Lichtkonzept abstimmen', status: 'new', priority: 'niedrig' },
+  { id: 15, project_id: 6, title: 'Übergabe an DJ-Set klären', status: 'active' },
+
+  // Artist-level todos (no project) — these render the "Allgemein" chip.
+  { id: 16, artist_id: 1, title: 'Pressefotos anfordern', status: 'active', due_date: days(20) },
+  { id: 17, artist_id: 2, title: 'Vertrag gegenzeichnen', status: 'active', priority: 'hoch', due_date: days(2) },
+  { id: 18, artist_id: 2, parent_id: 17, title: 'Scan an Buchhaltung', status: 'new' },
+  { id: 19, artist_id: 4, title: 'Reisekostenformular schicken', status: 'new', priority: 'niedrig' },
+
+  // Season-wide todos: neither artist nor project — the violet "Festival" chip.
+  { id: 20, title: 'Programmheft in den Druck geben', status: 'active', priority: 'hoch', due_date: days(7) },
+  { id: 21, title: 'Akkreditierungen an Presse versenden', status: 'active', due_date: days(11) },
+  { id: 22, parent_id: 20, title: 'Korrekturlauf Programmheft', status: 'active' },
+  { id: 23, title: 'Helfer-Briefing terminieren', status: 'new', priority: 'niedrig' },
+
+  // Archived: done longer ago than ARCHIVE_AFTER_DAYS, so they leave the live views.
+  { id: 24, project_id: 1, title: 'Probenraum gebucht', status: 'done', erledigt_am: stamp(ARCHIVED) },
+  { id: 25, project_id: 3, title: 'Technikrider geprüft', status: 'done', erledigt_am: stamp(ARCHIVED - 7) },
+  { id: 26, artist_id: 3, title: 'Vorvertrag unterschrieben', status: 'done', erledigt_am: stamp(ARCHIVED - 3) },
+  { id: 27, title: 'Save-the-Date verschickt', status: 'done', erledigt_am: stamp(ARCHIVED - 16) },
+
+  // Recently done: struck through but still in the live list.
+  { id: 28, project_id: 7, title: 'Flügel stimmen lassen', status: 'done', erledigt_am: stamp(-1) },
+  { id: 29, project_id: 7, title: 'Programmtext eingereicht', status: 'done', erledigt_am: stamp(-6) },
+
+  { id: 30, project_id: 7, title: 'Saalbestuhlung klären', status: 'active', due_date: days(18) },
+  { id: 31, project_id: 8, title: 'Teilnehmerliste finalisieren', status: 'active', priority: 'hoch', due_date: days(4) },
+  { id: 32, project_id: 8, title: 'Räume für Meisterkurs buchen', status: 'active', due_date: days(8) },
+  { id: 33, project_id: 8, parent_id: 32, title: 'Zweitraum als Fallback anfragen', status: 'new', priority: 'niedrig' },
+  { id: 34, project_id: 2, title: 'Schulen kontaktieren', status: 'active', due_date: days(25) },
+  { id: 35, project_id: 2, title: 'Material für Workshop drucken', status: 'new', priority: 'niedrig' },
+  { id: 36, project_id: 4, title: 'Studiotermin bestätigen', status: 'active', priority: 'hoch', due_date: days(6) },
+  { id: 37, project_id: 4, parent_id: 36, title: 'Techniker anfragen', status: 'active' },
+  { id: 38, project_id: 4, parent_id: 36, title: 'Backup-Termin halten', status: 'new', priority: 'niedrig', color: '#a855f7' },
+  { id: 39, project_id: 6, title: 'Getränke für die Crew organisieren', status: 'new', priority: 'niedrig' },
+  { id: 40, project_id: 2, title: 'Feedbackbogen entwerfen', status: 'new', priority: 'niedrig' },
+];
+
+/** One row per link parent type, so all four branches of the links CHECK are covered. */
+const LINKS = [
+  { id: 1, artist_id: null, project_id: 1, event_id: null, task_id: null, label: 'Technikrider (PDF)', url: 'https://example.org/rider.pdf' },
+  { id: 2, artist_id: 2, project_id: null, event_id: null, task_id: null, label: 'Künstlerwebsite', url: 'https://example.org/ana-belem' },
+  { id: 3, artist_id: null, project_id: null, event_id: 1, task_id: null, label: 'Saalplan', url: 'https://example.org/saalplan' },
+  { id: 4, artist_id: null, project_id: null, event_id: null, task_id: 20, label: 'Druckerei-Angebot', url: 'https://example.org/angebot' },
+];
+
+/** Custom task columns — the only way to exercise the data-driven task table. */
+const CUSTOM_COLUMNS = [
+  {
+    name: 'Bereich',
+    type: 'select',
+    icon: '🏷',
+    options: JSON.stringify([
+      { value: 'technik', label: 'Technik', color: '#dbeafe' },
+      { value: 'logistik', label: 'Logistik', color: '#fef3c7' },
+      { value: 'kommunikation', label: 'Kommunikation', color: '#dcfce7' },
+    ]),
+  },
+  { name: 'Bestätigt', type: 'checkbox', icon: '✓', options: null },
+];
+
+/** taskId → [Bereich, Bestätigt]. Left sparse on purpose so empty cells show too. */
+const CUSTOM_VALUES: Record<number, [string | null, boolean | null]> = {
+  1: ['logistik', false],
+  3: ['logistik', true],
+  5: ['technik', true],
+  7: ['logistik', false],
+  10: ['kommunikation', null],
+  13: ['technik', false],
+  20: ['kommunikation', true],
+  21: ['kommunikation', false],
+  31: [null, true],
+  36: ['technik', false],
+};
+
+/* ---------- insert ---------- */
+
+function main(): void {
+  // Clean slate. Dropping the directory is simpler than replicating seed.ts's clearTables(),
+  // and getDb() rebuilds schema, defaults, migrations and seasons.json from nothing.
+  rmSync(DEMO_DIR, { recursive: true, force: true });
+  const db = getDb();
+
+  const insArtist = db.prepare(
+    `INSERT INTO artists (id, name, color, notes, sort_order) VALUES (@id, @name, @color, @notes, @sort_order)`,
+  );
+  const insProject = db.prepare(
+    `INSERT INTO projects (id, artist_id, code, name, status, description, sort_order)
+     VALUES (@id, @artist_id, @code, @name, @status, @description, @sort_order)`,
+  );
+  const insContact = db.prepare(
+    `INSERT INTO contacts (id, artist_id, project_id, role, name, email, phone, sort_order)
+     VALUES (@id, @artist_id, @project_id, @role, @name, @email, @phone, @sort_order)`,
+  );
+  const insEvent = db.prepare(
+    `INSERT INTO events (id, artist_id, project_id, type, title, start_at, end_at, all_day, location, sort_order)
+     VALUES (@id, @artist_id, @project_id, @type, @title, @start_at, @end_at, @all_day, @location, @sort_order)`,
+  );
+  const insTask = db.prepare(
+    `INSERT INTO tasks (id, artist_id, project_id, parent_id, title, status, priority, due_date,
+                        comment, color, custom_values, erledigt_am, deleted_at, sort_order)
+     VALUES (@id, @artist_id, @project_id, @parent_id, @title, @status, @priority, @due_date,
+             @comment, @color, @custom_values, @erledigt_am, @deleted_at, @sort_order)`,
+  );
+  const insLink = db.prepare(
+    `INSERT INTO links (id, artist_id, project_id, event_id, task_id, label, url, sort_order)
+     VALUES (@id, @artist_id, @project_id, @event_id, @task_id, @label, @url, @sort_order)`,
+  );
+  const insColumn = db.prepare(
+    `INSERT INTO custom_columns (name, type, scope, project_id, options, icon, kind, enabled, deletable, sort_order)
+     VALUES (@name, @type, 'global', NULL, @options, @icon, 'custom', 1, 1, @sort_order)`,
+  );
+
+  const tx = db.transaction(() => {
+    ARTISTS.forEach((a, i) => insArtist.run({ ...a, sort_order: i }));
+    PROJECTS.forEach((p, i) => insProject.run({ ...p, sort_order: i }));
+    CONTACTS.forEach((c, i) => insContact.run({ ...c, sort_order: i }));
+    EVENTS.forEach((e, i) => insEvent.run({ ...e, sort_order: i }));
+
+    // Custom columns first: their generated ids are the keys inside tasks.custom_values.
+    const colIds = CUSTOM_COLUMNS.map(
+      (c, i) => Number(insColumn.run({ ...c, sort_order: 100 + i }).lastInsertRowid),
+    );
+
+    TASKS.forEach((t, i) => {
+      const [bereich, bestaetigt] = CUSTOM_VALUES[t.id] ?? [null, null];
+      const cv: Record<string, unknown> = {};
+      if (bereich !== null) cv[String(colIds[0])] = bereich;
+      if (bestaetigt !== null) cv[String(colIds[1])] = bestaetigt;
+      insTask.run({
+        artist_id: null,
+        project_id: null,
+        parent_id: null,
+        status: 'active',
+        priority: 'mittel',
+        due_date: null,
+        comment: null,
+        color: null,
+        erledigt_am: null,
+        deleted_at: null,
+        ...t,
+        custom_values: JSON.stringify(cv),
+        sort_order: i,
+      });
+    });
+
+    LINKS.forEach((l, i) => insLink.run({ ...l, sort_order: i }));
+  });
+  tx();
+
+  // The season switcher reads the registry label in seasons.json, not the `saison` setting,
+  // so both have to be set or the chip still says "Festival 2026".
+  setSetting(db, 'saison', SEASON_LABEL);
+  setActiveSeasonLabel(SEASON_LABEL);
+
+  console.log(`Demo-Datenbank neu gebaut in ${DEMO_DIR}`);
+  console.log('\nRow counts:');
+  for (const t of ['artists', 'projects', 'contacts', 'events', 'tasks', 'links', 'custom_columns']) {
+    const n = (db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n;
+    console.log(`  ${t.padEnd(15)} ${n}`);
+  }
+  console.log(`\n  Saison          ${getSetting(db, 'saison')}`);
+}
+
+main();

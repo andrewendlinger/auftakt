@@ -13,6 +13,8 @@
     "dev:server": "npm --prefix server run dev",
     "dev:client": "npm --prefix client run dev",
     "seed": "npm --prefix server run seed",
+    "demo": "node scripts/demo.mjs",
+    "demo:seed": "npm --prefix server run demo",
     "typecheck": "npm --prefix server run typecheck && npm --prefix client run typecheck && tsc -p electron/tsconfig.json",
     "build:client": "npm --prefix client run build",
     "build:bundles": "node scripts/build.mjs",

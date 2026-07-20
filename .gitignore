@@ -18,6 +18,10 @@ client/dist/
 *.db-wal
 *.db-shm
 
+# generated demo database — the fixtures live in server/src/demo.ts, this is
+# just its output. Rebuild with `npm run demo:seed`.
+.demo/
+
 # real import data: the CSVs hold real names, e-mail addresses and internal
 # notes. Stays local — seed.ts falls back to sample data when absent.
 files/

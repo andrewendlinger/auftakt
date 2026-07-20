@@ -19,14 +19,26 @@ REST-Grenze — **keine Electron-APIs in React** (nur eine schmale
 
 ```bash
 npm run setup     # installiert root, server und client
-npm run seed      # befüllt die Datenbank mit Beispieldaten
+npm run demo      # Demo-Datenbank bauen + starten → http://localhost:5317
+```
+
+`npm run demo` baut eine Demo-Datenbank aus `server/src/demo.ts` und startet die
+Anwendung damit. Der Datensatz deckt alle Sonderfälle ab (Unteraufgaben, farbige
+Aufgaben, archivierte Aufgaben, eigene Spalten, festivalweite Todos) und liegt in
+`./.demo/` — **die echte Datenbank in `./.data/` wird dabei nie angefasst.**
+`npm run demo:seed` baut ihn neu, jeder Lauf beginnt bei null.
+
+Für die echten Daten stattdessen:
+
+```bash
+npm run seed      # befüllt ./.data/ (Achtung: löscht den bisherigen Inhalt)
 npm run dev       # Server (4317) + Client (5317) → http://localhost:5317
 ```
 
-`npm run seed` erzeugt realistische Beispieldaten. Optional lässt sich stattdessen
-aus CSVs importieren: `AUFTAKT_IMPORT_DIR` auf einen Ordner mit
-`{artists,contacts,projects,events,tasks,links}.csv` zeigen lassen (UTF-8,
-ISO-Daten, leere Zellen = unbekannt).
+`npm run seed` importiert aus CSVs, wenn `AUFTAKT_IMPORT_DIR` auf einen Ordner mit
+`{artists,contacts,projects,events,tasks,links}.csv` zeigt (UTF-8, komma-getrennt,
+ISO-Daten, leere Zellen = unbekannt) — sonst legt es einen minimalen Beispieldatensatz
+aus fünf Zeilen an.
 
 ## Daten & Speicherorte
 
@@ -90,7 +102,9 @@ scripts/  build.mjs (esbuild-Bündel für Server + Electron)
 | Befehl | Zweck |
 | --- | --- |
 | `npm run dev` | Server + Client im Browser |
-| `npm run seed` | Datenbank mit Beispieldaten neu befüllen |
+| `npm run demo` | Demo-Datenbank bauen und damit starten (rührt `./.data/` nicht an) |
+| `npm run demo:seed` | Nur die Demo-Datenbank neu bauen |
+| `npm run seed` | Echte Datenbank in `./.data/` neu befüllen |
 | `npm run typecheck` | Typecheck Server + Client + Electron |
 | `npm run build` | Client-Build + Server-/Electron-Bündel |
 | `npm run dist` | Installer für die aktuelle Plattform |
