@@ -136,6 +136,57 @@ function ImageField({ value, onChange }: { value: string; onChange: (v: string) 
   );
 }
 
+/**
+ * Colour input for `type: 'color'`. When the field is empty but the entity still renders a
+ * colour (a project inherits a shade of its artist's colour), `fallback` is that effective
+ * colour — previewing it keeps the swatch honest, and the dashed border plus hint separate
+ * "inherits" from "explicitly set". Without a `fallback` this behaves as it always did.
+ */
+function ColorField({
+  value,
+  onChange,
+  fallback,
+  hint,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  fallback?: string;
+  hint?: string;
+  placeholder?: string;
+}) {
+  const inherited = !value && !!fallback;
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <input
+          type="color"
+          value={value || fallback || '#888888'}
+          onChange={(e) => onChange(e.target.value)}
+          className={`h-9 w-12 cursor-pointer rounded border ${
+            inherited ? 'border-dashed border-neutral-400' : 'border-neutral-300'
+          }`}
+        />
+        <TextInput
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={(inherited ? fallback : null) ?? placeholder ?? '#RRGGBB'}
+        />
+      </div>
+      {inherited && hint && <p className="text-xs text-neutral-400">{hint}</p>}
+      {!inherited && fallback && (
+        <button
+          type="button"
+          onClick={() => onChange('')}
+          className="self-start text-xs text-neutral-400 transition hover:text-neutral-700"
+        >
+          Zurücksetzen
+        </button>
+      )}
+    </div>
+  );
+}
+
 export interface FieldDef {
   name: string;
   label: string;
@@ -144,6 +195,13 @@ export interface FieldDef {
   required?: boolean;
   placeholder?: string;
   span2?: boolean;
+  /** For `type: 'color'`: the colour that actually renders when the field is left empty.
+   *  Previewed as a dashed "inherited" swatch instead of a hardcoded grey. Omit when an
+   *  empty value really does mean "no colour" (contacts, links) or when the column is
+   *  NOT NULL and the DB default is the grey we already show (artists). */
+  fallback?: string;
+  /** Sentence shown under an inherited colour field, explaining where the colour comes from. */
+  fallbackHint?: string;
 }
 
 type Values = Record<string, string>;
@@ -239,15 +297,13 @@ export function RecordFormModal({
                 ))}
               </Select>
             ) : f.type === 'color' ? (
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  value={vals[f.name] || '#888888'}
-                  onChange={(e) => set(f.name, e.target.value)}
-                  className="h-9 w-12 cursor-pointer rounded border border-neutral-300"
-                />
-                <TextInput value={vals[f.name]} onChange={(e) => set(f.name, e.target.value)} placeholder="#RRGGBB" />
-              </div>
+              <ColorField
+                value={vals[f.name] ?? ''}
+                onChange={(v) => set(f.name, v)}
+                fallback={f.fallback}
+                hint={f.fallbackHint}
+                placeholder={f.placeholder}
+              />
             ) : (
               <TextInput
                 type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : f.type === 'email' ? 'email' : f.type === 'tel' ? 'tel' : 'text'}

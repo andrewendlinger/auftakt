@@ -67,7 +67,7 @@ export function ArtistPage() {
     ),
     projekte: (
       <>
-        <SectionTitle right={<NewProjectButton artistId={artistId} />}>Projekte</SectionTitle>
+        <SectionTitle right={<NewProjectButton artistId={artistId} artistColor={color} />}>Projekte</SectionTitle>
         {projects.length === 0 ? (
           <EmptyState>Noch keine Projekte.</EmptyState>
         ) : (

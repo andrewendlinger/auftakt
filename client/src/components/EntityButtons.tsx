@@ -4,12 +4,14 @@ import { Btn } from './ui';
 import { RecordFormModal, type FieldDef } from './fields';
 import { api } from '../api/client';
 import type { Artist, Project } from '../api/types';
-import { pickArtistColor } from '../lib/colors';
+import { pickArtistColor, projectShade } from '../lib/colors';
 import { useInvalidateAll, useSettings } from '../hooks';
 
 const ARTIST_FIELDS: FieldDef[] = [
   { name: 'name', label: 'Name', required: true, span2: true },
   { name: 'image', label: 'Profilbild', type: 'image' },
+  // No `fallback`: artists.color is NOT NULL DEFAULT '#888888', so the plain grey swatch is
+  // exactly what an empty field ends up rendering. Nothing is inherited here.
   { name: 'color', label: 'Farbe', type: 'color' },
   { name: 'notes', label: 'Notizen', type: 'textarea' },
 ];
@@ -76,18 +78,19 @@ export function EditArtistButton({ artist }: { artist: Artist }) {
   );
 }
 
-function projectFields(statuses: string[]): FieldDef[] {
+/** `fallback` is the shade the project renders with no explicit colour — see ColorField. */
+function projectFields(statuses: string[], fallback: string, fallbackHint: string): FieldDef[] {
   return [
     { name: 'code', label: 'Kürzel (Badge)', required: true, placeholder: 'z. B. K3a' },
     { name: 'name', label: 'Name', required: true },
     { name: 'status', label: 'Status', type: 'select', options: statuses.map((s) => ({ value: s, label: s })) },
-    { name: 'color', label: 'Farbe (optional, sonst Schattierung)', type: 'color' },
+    { name: 'color', label: 'Farbe (optional, sonst Schattierung)', type: 'color', fallback, fallbackHint },
     { name: 'description', label: 'Beschreibung', type: 'textarea' },
     { name: 'notes', label: 'Notizen', type: 'textarea' },
   ];
 }
 
-export function NewProjectButton({ artistId }: { artistId: number }) {
+export function NewProjectButton({ artistId, artistColor }: { artistId: number; artistColor: string }) {
   const invalidate = useInvalidateAll();
   const { data: settings } = useSettings();
   const [open, setOpen] = useState(false);
@@ -99,8 +102,14 @@ export function NewProjectButton({ artistId }: { artistId: number }) {
       {open && (
         <RecordFormModal
           title="Neues Projekt"
-          fields={projectFields(settings?.project_statuses ?? [])}
-          initial={{ status: (settings?.project_statuses ?? [])[0] ?? '', color: '' }}
+          // The exact shade keys off the project id (projectShade), which doesn't exist yet —
+          // preview the artist colour and say so rather than showing a grey that never renders.
+          fields={projectFields(
+            settings?.project_statuses ?? [],
+            artistColor,
+            'Schattierung wird beim Anlegen aus der Künstlerfarbe abgeleitet.',
+          )}
+          initial={{ status: (settings?.project_statuses ?? [])[0] ?? '' }}
           onSubmit={async (v) => {
             await api.projects.create({ ...v, artist_id: artistId });
             await invalidate();
@@ -112,7 +121,7 @@ export function NewProjectButton({ artistId }: { artistId: number }) {
   );
 }
 
-export function EditProjectButton({ project }: { project: Project }) {
+export function EditProjectButton({ project, artistColor }: { project: Project; artistColor: string }) {
   const invalidate = useInvalidateAll();
   const { data: settings } = useSettings();
   const [open, setOpen] = useState(false);
@@ -124,7 +133,13 @@ export function EditProjectButton({ project }: { project: Project }) {
       {open && (
         <RecordFormModal
           title="Projekt bearbeiten"
-          fields={projectFields(settings?.project_statuses ?? [])}
+          // Pass null, not project.color: the fallback must be the *inherited* shade, which is
+          // what renders once the user clears the field — not an echo of the explicit colour.
+          fields={projectFields(
+            settings?.project_statuses ?? [],
+            projectShade(artistColor, null, project.id),
+            'Automatisch aus der Künstlerfarbe abgeleitet.',
+          )}
           initial={project}
           onSubmit={async (v) => {
             await api.projects.update(project.id, v);

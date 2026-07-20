@@ -150,7 +150,7 @@ export function ProjectPage() {
               <Markdown className="mt-1 max-w-2xl text-sm text-neutral-600">{project.description}</Markdown>
             )}
           </div>
-          <EditProjectButton project={project} />
+          <EditProjectButton project={project} artistColor={artistColor} />
         </div>
       </Card>
 

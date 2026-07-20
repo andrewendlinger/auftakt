@@ -69,7 +69,9 @@ const ARTISTS = [
 
 const PROJECTS = [
   { id: 1, artist_id: 1, code: 'NQ1', name: 'Eröffnungskonzert', status: 'In Progress', description: 'Eröffnung im großen Saal.' },
-  { id: 2, artist_id: 1, code: 'NQ2', name: 'Schulworkshop', status: 'Not Started', description: 'Vormittagsformat für zwei Schulklassen.' },
+  // The only project with an explicit colour — deliberately off its artist's blue, so the
+  // "explicitly set" and "inherits a shade" states of the colour field are both eyeballable.
+  { id: 2, artist_id: 1, code: 'NQ2', name: 'Schulworkshop', status: 'Not Started', description: 'Vormittagsformat für zwei Schulklassen.', color: '#8b5cf6' },
   { id: 3, artist_id: 2, code: 'AB1', name: 'Hauptkonzert', status: 'In Progress', description: null },
   { id: 4, artist_id: 2, code: 'AB2', name: 'Radio-Session', status: 'In Progress', description: 'Mitschnitt für den Kultursender.' },
   { id: 5, artist_id: 3, code: 'KH1', name: 'Klanginstallation', status: 'In Progress', description: 'Läuft durchgehend im Foyer.' },
@@ -225,8 +227,8 @@ function main(): void {
     `INSERT INTO artists (id, name, color, notes, sort_order) VALUES (@id, @name, @color, @notes, @sort_order)`,
   );
   const insProject = db.prepare(
-    `INSERT INTO projects (id, artist_id, code, name, status, description, sort_order)
-     VALUES (@id, @artist_id, @code, @name, @status, @description, @sort_order)`,
+    `INSERT INTO projects (id, artist_id, code, name, status, description, color, sort_order)
+     VALUES (@id, @artist_id, @code, @name, @status, @description, @color, @sort_order)`,
   );
   const insContact = db.prepare(
     `INSERT INTO contacts (id, artist_id, project_id, role, name, email, phone, sort_order)
@@ -253,7 +255,7 @@ function main(): void {
 
   const tx = db.transaction(() => {
     ARTISTS.forEach((a, i) => insArtist.run({ ...a, sort_order: i }));
-    PROJECTS.forEach((p, i) => insProject.run({ ...p, sort_order: i }));
+    PROJECTS.forEach((p, i) => insProject.run({ color: null, ...p, sort_order: i }));
     CONTACTS.forEach((c, i) => insContact.run({ ...c, sort_order: i }));
     EVENTS.forEach((e, i) => insEvent.run({ ...e, sort_order: i }));
 
