@@ -283,7 +283,9 @@ function ProjectCard({
             // Render Markdown like the project page does; bound the preview height
             // (line-clamp doesn't clamp block-level Markdown output cleanly).
             <div className="mt-1 max-h-16 overflow-hidden text-sm text-neutral-500">
-              <Markdown>{project.description}</Markdown>
+              {/* The whole card is a <Link>; render preview links as plain text so a Markdown
+                  link in the description can't nest an <a> inside that outer anchor. */}
+              <Markdown plainLinks>{project.description}</Markdown>
             </div>
           )}
           {/* Task insights for this project — the cross-project overview the FB asked for, per

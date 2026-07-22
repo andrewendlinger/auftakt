@@ -5,7 +5,7 @@ import { RecordFormModal, type FieldDef } from './fields';
 import { api } from '../api/client';
 import type { Artist, CustomColumnOption, Project } from '../api/types';
 import { pickArtistColor, projectShade } from '../lib/colors';
-import { useInvalidateAll, useProjectStatusOptions, useUndoablePatch } from '../hooks';
+import { useInvalidateAll, useLabel, useProjectStatusOptions, useUndoablePatch } from '../hooks';
 
 const ARTIST_FIELDS: FieldDef[] = [
   { name: 'name', label: 'Name', required: true, span2: true },
@@ -29,6 +29,9 @@ function stripEmptyColor(values: Record<string, string | null>): Record<string, 
 export function NewArtistButton() {
   const invalidate = useInvalidateAll();
   const [open, setOpen] = useState(false);
+  // Follow the „Künstler" heading rename (WP-F) — this button sits under the dashboard's
+  // `dash.artists` section, so it tracks that key, not the artist page's kicker.
+  const artistLabel = useLabel()('dash.artists');
   const { data: artists = [] } = useQuery({
     queryKey: ['artists'],
     queryFn: () => api.artists.list(),
@@ -36,11 +39,11 @@ export function NewArtistButton() {
   return (
     <>
       <Btn variant="primary" onClick={() => setOpen(true)}>
-        + Künstler
+        + {artistLabel}
       </Btn>
       {open && (
         <RecordFormModal
-          title="Neuer Künstler"
+          title={`${artistLabel} anlegen`}
           fields={ARTIST_FIELDS}
           initial={{ color: pickArtistColor(artists.map((a) => a.color)) }}
           onSubmit={async (v) => {
@@ -57,6 +60,9 @@ export function NewArtistButton() {
 export function EditArtistButton({ artist }: { artist: Artist }) {
   const undoablePatch = useUndoablePatch();
   const [open, setOpen] = useState(false);
+  // The edit button lives on the artist page, under the `artist.kicker` heading — follow that
+  // rename rather than the dashboard's `dash.artists`.
+  const artistLabel = useLabel()('artist.kicker');
   return (
     <>
       <Btn variant="subtle" onClick={() => setOpen(true)}>
@@ -64,7 +70,7 @@ export function EditArtistButton({ artist }: { artist: Artist }) {
       </Btn>
       {open && (
         <RecordFormModal
-          title="Künstler bearbeiten"
+          title={`${artistLabel} bearbeiten`}
           fields={ARTIST_FIELDS}
           initial={artist}
           onSubmit={async (v) => {
@@ -72,7 +78,7 @@ export function EditArtistButton({ artist }: { artist: Artist }) {
               res: api.artists,
               row: artist,
               patch: stripEmptyColor(v),
-              label: 'Änderung am Künstler',
+              label: `Änderung an ${artistLabel}`,
             });
           }}
           onClose={() => setOpen(false)}

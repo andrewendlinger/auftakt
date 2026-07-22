@@ -13,7 +13,7 @@ import { TaskStatChips } from '../components/TaskStatChips';
 import { AttentionList } from '../components/AttentionList';
 import { NewArtistButton } from '../components/EntityButtons';
 import { EditableLabel } from '../components/EditableLabel';
-import { useTaskStatsConfig } from '../hooks';
+import { useLabel, useTaskStatsConfig } from '../hooks';
 
 export function Dashboard() {
   const { data, isLoading } = useQuery({ queryKey: ['dashboard'], queryFn: api.dashboard });
@@ -22,6 +22,7 @@ export function Dashboard() {
     queryFn: () => api.customColumns.list({ scope: 'global' }),
   });
   const { windowDays } = useTaskStatsConfig();
+  const artistLabel = useLabel()('dash.artists');
 
   const doneValue = doneValueOf(customColumns);
   // Group every live task under the artist it resolves to, for the enriched artist-card stats.
@@ -49,7 +50,7 @@ export function Dashboard() {
           <EditableLabel k="dash.artists" />
         </SectionTitle>
         {data.artists.length === 0 ? (
-          <EmptyState>Noch keine Künstler angelegt.</EmptyState>
+          <EmptyState>Noch keine {artistLabel} angelegt.</EmptyState>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {data.artists.map((a) => (

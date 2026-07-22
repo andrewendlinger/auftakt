@@ -30,6 +30,18 @@ function MdLink({ href, children }: ComponentPropsWithoutRef<'a'>) {
 }
 
 /**
+ * Link styled as plain text — no <a>, so a preview can render inside an enclosing <a> (e.g. a
+ * clickable card) without nesting anchors. Keeps the link colour/underline as a visual hint.
+ */
+function MdLinkText({ children }: ComponentPropsWithoutRef<'a'>) {
+  return (
+    <span className="text-sky-700 underline decoration-sky-300 underline-offset-2 break-words">
+      {children}
+    </span>
+  );
+}
+
+/**
  * Render user text as GitHub-flavoured Markdown (**bold**, lists, links, tables …).
  * Single newlines become <br> (remark-breaks) so note-style line breaks survive, and
  * bare URLs auto-link (remark-gfm). Raw HTML is not rendered — safe by default.
@@ -37,9 +49,12 @@ function MdLink({ href, children }: ComponentPropsWithoutRef<'a'>) {
 export function Markdown({
   children,
   className = '',
+  plainLinks = false,
 }: {
   children: string | null | undefined;
   className?: string;
+  /** Render links as non-interactive text — use when the Markdown sits inside an enclosing <a>. */
+  plainLinks?: boolean;
 }) {
   // Parsing GFM is not free; memoise on the text so a parent re-render (e.g. sorting
   // the task table) doesn't re-parse every unchanged note/comment cell.
@@ -49,12 +64,12 @@ export function Markdown({
         <ReactMarkdown
           remarkPlugins={[remarkGfm, remarkBreaks]}
           rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
-          components={{ a: MdLink }}
+          components={{ a: plainLinks ? MdLinkText : MdLink }}
         >
           {children}
         </ReactMarkdown>
       ) : null,
-    [children],
+    [children, plainLinks],
   );
   if (!children) return null;
   return <div className={`prose-md ${className}`}>{rendered}</div>;
