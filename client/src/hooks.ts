@@ -43,6 +43,12 @@ export function useProjectStatusOptions(): CustomColumnOption[] {
   return useMemo(() => normalizeSelectOptions(data?.project_statuses), [data?.project_statuses]);
 }
 
+/** Link categories (WP-P). Unset parses to `[]` — the LinkList then renders flat, no groups. */
+export function useLinkCategoryOptions(): CustomColumnOption[] {
+  const { data } = useSettings();
+  return useMemo(() => normalizeSelectOptions(data?.link_categories), [data?.link_categories]);
+}
+
 /**
  * The task-insight preferences as a resolved `{ metrics, windowDays }` — the single boundary where
  * `task_stats` / `attention_window_days` are parsed. An unset `task_stats` falls back to the

@@ -249,14 +249,28 @@ const TASKS: DemoTask[] = [
   { id: 52, project_id: 9, title: 'Aufgabe im gestrichenen Projekt', status: 'active' },
 ];
 
-/** One row per link parent type, so all four branches of the links CHECK are covered. */
+/** Colored link categories (WP-P) — the "Dokumente & Links" lists group by these. */
+const LINK_CATEGORIES = [
+  { value: 'vertrag', label: 'Vertrag', color: '#fee2e2' },
+  { value: 'technik', label: 'Technik', color: '#dbeafe' },
+  { value: 'presse', label: 'Presse', color: '#dcfce7' },
+];
+
+/**
+ * One row per link parent type, so all four branches of the links CHECK are covered.
+ * Project 1 spans two categories plus an uncategorized link, so the grouped rendering
+ * (incl. "Ohne Kategorie" last) is eyeballable on one page.
+ */
 const LINKS = [
-  { id: 1, artist_id: null, project_id: 1, event_id: null, task_id: null, label: 'Technikrider (PDF)', url: 'https://example.org/rider.pdf' },
+  { id: 1, artist_id: null, project_id: 1, event_id: null, task_id: null, label: 'Technikrider (PDF)', url: 'https://example.org/rider.pdf', category: 'technik' },
   { id: 2, artist_id: 2, project_id: null, event_id: null, task_id: null, label: 'Künstlerwebsite', url: 'https://example.org/ana-belem' },
   { id: 3, artist_id: null, project_id: null, event_id: 1, task_id: null, label: 'Saalplan', url: 'https://example.org/saalplan' },
   { id: 4, artist_id: null, project_id: null, event_id: null, task_id: 20, label: 'Druckerei-Angebot', url: 'https://example.org/angebot' },
   // Soft-deleted document — a leaf in the trash.
   { id: 5, artist_id: null, project_id: 2, event_id: null, task_id: null, label: 'Veraltetes Angebot', url: 'https://example.org/alt-angebot', deleted_at: stamp(-1) },
+  { id: 6, artist_id: null, project_id: 1, event_id: null, task_id: null, label: 'Vertrag (unterschrieben)', url: 'https://example.org/vertrag.pdf', category: 'vertrag' },
+  { id: 7, artist_id: null, project_id: 1, event_id: null, task_id: null, label: 'Bühnenplan', url: 'https://example.org/buehnenplan', category: 'technik' },
+  { id: 8, artist_id: null, project_id: 1, event_id: null, task_id: null, label: 'Sonstiges Dokument', url: null },
 ];
 
 /** Custom task columns — the only way to exercise the data-driven task table. */
@@ -318,8 +332,8 @@ function main(): void {
              @comment, @color, @custom_values, @erledigt_am, @deleted_at, @sort_order)`,
   );
   const insLink = db.prepare(
-    `INSERT INTO links (id, artist_id, project_id, event_id, task_id, label, url, deleted_at, sort_order)
-     VALUES (@id, @artist_id, @project_id, @event_id, @task_id, @label, @url, @deleted_at, @sort_order)`,
+    `INSERT INTO links (id, artist_id, project_id, event_id, task_id, label, url, category, deleted_at, sort_order)
+     VALUES (@id, @artist_id, @project_id, @event_id, @task_id, @label, @url, @category, @deleted_at, @sort_order)`,
   );
   const insColumn = db.prepare(
     `INSERT INTO custom_columns (name, type, scope, project_id, options, icon, kind, enabled, deletable, sort_order)
@@ -359,7 +373,7 @@ function main(): void {
       });
     });
 
-    LINKS.forEach((l, i) => insLink.run({ deleted_at: null, ...l, sort_order: i }));
+    LINKS.forEach((l, i) => insLink.run({ category: null, deleted_at: null, ...l, sort_order: i }));
   });
   tx();
 
@@ -367,6 +381,7 @@ function main(): void {
   // so both have to be set or the chip still says "Festival 2026".
   setSetting(db, 'saison', SEASON_LABEL);
   setActiveSeasonLabel(SEASON_LABEL);
+  setSetting(db, 'link_categories', JSON.stringify(LINK_CATEGORIES));
 
   console.log(`Demo-Datenbank neu gebaut in ${DEMO_DIR}`);
   console.log('\nRow counts:');

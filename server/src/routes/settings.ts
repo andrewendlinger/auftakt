@@ -6,6 +6,7 @@ import { getDb, setActiveSeasonLabel } from '../db';
 const ARRAY_KEYS = new Set([
   'event_types',
   'project_statuses',
+  'link_categories',
   'project_layout',
   'artist_layout',
   'task_sort',

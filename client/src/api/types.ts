@@ -131,6 +131,8 @@ export interface LinkItem extends SoftDeletable {
   label: string;
   url: string | null;
   color: string | null;
+  /** A `link_categories` option `value` (rename-safe), or null for "Ohne Kategorie". */
+  category: string | null;
 }
 
 /** The content entities a user directly deletes and can find again in the archive's trash. */
@@ -213,6 +215,8 @@ export interface Settings {
    */
   event_types: Array<string | CustomColumnOption>;
   project_statuses: Array<string | CustomColumnOption>;
+  /** Link categories (WP-P); unset on older seasons. Read via `useLinkCategoryOptions`. */
+  link_categories?: Array<string | CustomColumnOption>;
   /** Layout of the project-page sections (termine/fakten/kontakte/aufgaben) — order + width. */
   project_layout?: LayoutEntry[];
   /** Layout of the artist-page sections (termine/projekte/kontakte/aufgaben) — order + width. */

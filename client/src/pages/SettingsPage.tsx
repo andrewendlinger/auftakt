@@ -12,6 +12,7 @@ import { ALL_METRICS } from '../lib/taskStats';
 import {
   useEventTypeOptions,
   useInvalidateAll,
+  useLinkCategoryOptions,
   useProjectStatusOptions,
   useSettings,
   useTaskStatsConfig,
@@ -30,13 +31,16 @@ export function SettingsPage() {
 
   const eventTypeOptions = useEventTypeOptions();
   const projectStatusOptions = useProjectStatusOptions();
+  const linkCategoryOptions = useLinkCategoryOptions();
 
   // Usage counts drive the "in use → can't delete" guard. The dataset is tiny and blanket-
   // invalidated on every write, so listing all events/projects here is cheap and needs no endpoint.
   const { data: allEvents = [] } = useQuery({ queryKey: ['events', 'all'], queryFn: () => api.events.list() });
   const { data: allProjects = [] } = useQuery({ queryKey: ['projects', 'all'], queryFn: () => api.projects.list() });
+  const { data: allLinks = [] } = useQuery({ queryKey: ['links', 'all'], queryFn: () => api.links.list() });
   const eventTypeUsage = useMemo(() => countBy(allEvents.map((e) => e.type)), [allEvents]);
   const projectStatusUsage = useMemo(() => countBy(allProjects.map((p) => p.status)), [allProjects]);
+  const linkCategoryUsage = useMemo(() => countBy(allLinks.map((l) => l.category)), [allLinks]);
 
   useEffect(() => {
     if (settings) setSaison(settings.saison ?? '');
@@ -138,6 +142,22 @@ export function SettingsPage() {
           usageNoun="Projekten"
           addLabel="+ Status"
           onSave={(v) => patch({ project_statuses: v })}
+        />
+      </Card>
+
+      <Card className="p-5">
+        <SectionTitle>Dokument-Kategorien</SectionTitle>
+        <p className="mt-1 mb-3 text-xs text-neutral-400">
+          Kategorien für Dokumente & Links, jeweils mit eigener Farbe — die Liste wird danach
+          gruppiert. Umbenennen ändert nur die Anzeige – bestehende Links behalten ihre Kategorie.
+          Ohne Kategorien bleibt die Liste ungruppiert.
+        </p>
+        <SelectOptionsSetting
+          options={linkCategoryOptions}
+          usage={linkCategoryUsage}
+          usageNoun="Links"
+          addLabel="+ Kategorie"
+          onSave={(v) => patch({ link_categories: v })}
         />
       </Card>
 

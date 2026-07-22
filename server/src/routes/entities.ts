@@ -35,7 +35,7 @@ export const contactsRouter = crudRouter({
 
 export const linksRouter = crudRouter({
   table: 'links',
-  writable: ['artist_id', 'project_id', 'event_id', 'task_id', 'label', 'url', 'color', 'sort_order'],
+  writable: ['artist_id', 'project_id', 'event_id', 'task_id', 'label', 'url', 'color', 'category', 'sort_order'],
   required: ['label'],
   filters: ['artist_id', 'project_id', 'event_id', 'task_id'],
   order: 'sort_order ASC, id ASC',

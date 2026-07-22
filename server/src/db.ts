@@ -156,7 +156,7 @@ const COPY_COLS: Record<string, string[]> = {
   contacts: ['id', 'artist_id', 'project_id', 'role', 'name', 'email', 'phone', 'notes', 'color', 'sort_order'],
   events: ['id', 'artist_id', 'project_id', 'type', 'title', 'start_at', 'end_at', 'all_day', 'location', 'notes', 'sort_order'],
   tasks: ['id', 'artist_id', 'project_id', 'title', 'status', 'priority', 'due_date', 'comment', 'color', 'custom_values', 'erledigt_am', 'parent_id', 'sort_order'],
-  links: ['id', 'artist_id', 'project_id', 'event_id', 'task_id', 'label', 'url', 'color', 'sort_order'],
+  links: ['id', 'artist_id', 'project_id', 'event_id', 'task_id', 'label', 'url', 'color', 'category', 'sort_order'],
   custom_columns: ['id', 'name', 'type', 'scope', 'project_id', 'options', 'icon', 'key', 'kind', 'enabled', 'deletable', 'sort_order'],
 };
 
@@ -443,6 +443,7 @@ CREATE TABLE IF NOT EXISTS links (
   label      TEXT NOT NULL,
   url        TEXT,
   color      TEXT,
+  category   TEXT,
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -572,6 +573,7 @@ export function getDb(): Database.Database {
   migrateTaskParentId(db);
   migrateEventsOptionalStart(db);
   migrateProjectsMergeNotes(db);
+  migrateLinksCategory(db);
   instance = db;
   return db;
 }
@@ -719,6 +721,11 @@ function migrateItemColors(db: Database.Database): void {
   ensureColumn(db, 'tasks', 'color', 'color TEXT');
   ensureColumn(db, 'contacts', 'color', 'color TEXT');
   ensureColumn(db, 'links', 'color', 'color TEXT');
+}
+
+/** Add the link-category column (stores a link_categories option `value`, WP-P). Idempotent. */
+function migrateLinksCategory(db: Database.Database): void {
+  ensureColumn(db, 'links', 'category', 'category TEXT');
 }
 
 /** Add the subtask parent link (tasks.parent_id → tasks.id) to older databases. Idempotent. */
