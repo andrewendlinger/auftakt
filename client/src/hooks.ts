@@ -4,6 +4,12 @@ import { api } from './api/client';
 import type { CustomColumnOption, ID, LabelOverride, Settings } from './api/types';
 import { LABEL_DEFAULTS, isLabelKey, type LabelKey } from './lib/labels';
 import { normalizeSelectOptions } from './lib/selectOptions';
+import {
+  ALL_METRICS,
+  DEFAULT_ATTENTION_DAYS,
+  DEFAULT_METRICS,
+  type TaskMetric,
+} from './lib/taskStats';
 import { useToast } from './components/Toast';
 import { useUndo } from './components/UndoProvider';
 
@@ -35,6 +41,26 @@ export function useEventTypeOptions(): CustomColumnOption[] {
 export function useProjectStatusOptions(): CustomColumnOption[] {
   const { data } = useSettings();
   return useMemo(() => normalizeSelectOptions(data?.project_statuses), [data?.project_statuses]);
+}
+
+/**
+ * The task-insight preferences as a resolved `{ metrics, windowDays }` — the single boundary where
+ * `task_stats` / `attention_window_days` are parsed. An unset `task_stats` falls back to the
+ * defaults; an explicitly empty array is honoured (the user turned every metric off). The window
+ * is stored as a scalar string and coerced/clamped here so callers never touch the raw setting.
+ */
+export function useTaskStatsConfig(): { metrics: TaskMetric[]; windowDays: number } {
+  const { data } = useSettings();
+  return useMemo(() => {
+    const raw = data?.task_stats;
+    const valid = new Set<string>(ALL_METRICS.map((m) => m.key));
+    const metrics = Array.isArray(raw)
+      ? (raw as unknown[]).filter((k): k is TaskMetric => typeof k === 'string' && valid.has(k))
+      : DEFAULT_METRICS;
+    const n = Number(data?.attention_window_days);
+    const windowDays = Number.isFinite(n) && n >= 1 ? Math.min(Math.round(n), 365) : DEFAULT_ATTENTION_DAYS;
+    return { metrics, windowDays };
+  }, [data?.task_stats, data?.attention_window_days]);
 }
 
 /**

@@ -8,11 +8,13 @@ import { Breadcrumbs } from '../components/Breadcrumbs';
 import { CustomColumnManager } from '../components/CustomColumnManager';
 import { OptionsEditor, normalizeOptions } from '../components/OptionsEditor';
 import { TaskSortEditor } from '../components/TaskSortEditor';
+import { ALL_METRICS } from '../lib/taskStats';
 import {
   useEventTypeOptions,
   useInvalidateAll,
   useProjectStatusOptions,
   useSettings,
+  useTaskStatsConfig,
 } from '../hooks';
 
 export function SettingsPage() {
@@ -81,6 +83,15 @@ export function SettingsPage() {
           value={settings.task_sort ?? []}
           onChange={(v) => patch({ task_sort: v })}
         />
+      </Card>
+
+      <Card className="p-5">
+        <SectionTitle>Aufgaben-Übersicht</SectionTitle>
+        <p className="mt-1 mb-3 text-xs text-neutral-400">
+          Welche Kennzahlen auf den Projekt- und Künstlerkarten sowie in der Übersicht angezeigt
+          werden, und ab wann eine fällige Aufgabe unter „Braucht Aufmerksamkeit" auftaucht.
+        </p>
+        <TaskStatsSetting onSave={(task_stats, attention_window_days) => patch({ task_stats, attention_window_days })} />
       </Card>
 
       <Card className="p-5">
@@ -170,6 +181,88 @@ export function SettingsPage() {
       {managingColumns && (
         <CustomColumnManager columns={globalCols} onClose={() => setManagingColumns(false)} />
       )}
+    </div>
+  );
+}
+
+/**
+ * Editor for the task-insight prefs: which metrics show (toggle chips) and the
+ * „Braucht Aufmerksamkeit" window in days. Local draft + one „Speichern" (like the option
+ * editors), reseeded when the server data changes. An empty metric set is a valid save — the
+ * user chose to show none.
+ */
+function TaskStatsSetting({
+  onSave,
+}: {
+  onSave: (metrics: string[], windowDays: number) => Promise<void>;
+}) {
+  const cfg = useTaskStatsConfig();
+  const [metrics, setMetrics] = useState<Set<string>>(() => new Set(cfg.metrics));
+  const [windowDays, setWindowDays] = useState<number>(cfg.windowDays);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setMetrics(new Set(cfg.metrics));
+    setWindowDays(cfg.windowDays);
+  }, [cfg.metrics, cfg.windowDays]);
+
+  const enabled = ALL_METRICS.filter((m) => metrics.has(m.key)).map((m) => m.key);
+  const sameSet = (a: string[], b: string[]) =>
+    a.length === b.length && [...a].sort().join() === [...b].sort().join();
+  const dirty = !sameSet(enabled, cfg.metrics) || windowDays !== cfg.windowDays;
+
+  const toggle = (key: string) =>
+    setMetrics((s) => {
+      const n = new Set(s);
+      if (n.has(key)) n.delete(key);
+      else n.add(key);
+      return n;
+    });
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await onSave(enabled, windowDays);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
+        {ALL_METRICS.map((m) => {
+          const on = metrics.has(m.key);
+          return (
+            <button
+              key={m.key}
+              type="button"
+              onClick={() => toggle(m.key)}
+              className={`rounded-full px-3 py-1 text-sm font-medium transition ${
+                on ? 'bg-neutral-900 text-white' : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+              }`}
+            >
+              {on ? '✓ ' : ''}
+              {m.label}
+            </button>
+          );
+        })}
+      </div>
+      <div>
+        <Label>Zeitfenster „Braucht Aufmerksamkeit" (Tage)</Label>
+        <input
+          type="number"
+          min={1}
+          max={365}
+          value={windowDays}
+          onChange={(e) => setWindowDays(Math.max(1, Math.min(365, Math.round(Number(e.target.value)) || 1)))}
+          className="w-24 rounded-lg border border-neutral-300 bg-white px-2 py-1.5 text-sm text-neutral-800 outline-none transition focus:border-neutral-500 focus:ring-2 focus:ring-neutral-900/5"
+        />
+      </div>
+      <div className="flex justify-end">
+        <Btn variant="primary" onClick={save} disabled={busy || !dirty}>
+          Speichern
+        </Btn>
+      </div>
     </div>
   );
 }

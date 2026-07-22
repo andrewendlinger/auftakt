@@ -10,6 +10,7 @@ const ARRAY_KEYS = new Set([
   'artist_layout',
   'task_sort',
   'labels',
+  'task_stats',
 ]);
 
 function safeParse(s: string): unknown {

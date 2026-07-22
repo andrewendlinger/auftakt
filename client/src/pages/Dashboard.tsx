@@ -1,16 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { ArtistCard as ArtistCardT, EventItem } from '../api/types';
-import { contrastText, withAlpha } from '../lib/colors';
+import type { ArtistCard as ArtistCardT, EventItem, Task } from '../api/types';
+import { doneValueOf } from '../api/types';
+import { withAlpha } from '../lib/colors';
 import { formatEventWhen, weekdayShort } from '../lib/dates';
-import { Card, SectionTitle, Spinner, EmptyState, IconButton } from '../components/ui';
+import { Card, SectionTitle, Spinner, EmptyState } from '../components/ui';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { TaskTable } from '../components/TaskTable';
+import { TaskStatChips } from '../components/TaskStatChips';
+import { AttentionList } from '../components/AttentionList';
 import { NewArtistButton } from '../components/EntityButtons';
-import { ExcelButton } from '../components/ExcelButton';
 import { EditableLabel } from '../components/EditableLabel';
+import { useTaskStatsConfig } from '../hooks';
 
 export function Dashboard() {
   const { data, isLoading } = useQuery({ queryKey: ['dashboard'], queryFn: api.dashboard });
@@ -18,24 +21,26 @@ export function Dashboard() {
     queryKey: ['customColumns', 'global'],
     queryFn: () => api.customColumns.list({ scope: 'global' }),
   });
-  const [artistFilter, setArtistFilter] = useState('');
-  const [projectFilter, setProjectFilter] = useState('');
+  const { windowDays } = useTaskStatsConfig();
 
-  const projectOptions = useMemo(() => {
-    const map = new Map<number, string>();
+  const doneValue = doneValueOf(customColumns);
+  // Group every live task under the artist it resolves to, for the enriched artist-card stats.
+  const tasksByArtist = useMemo(() => {
+    const m = new Map<number, Task[]>();
     for (const t of data?.tasks ?? []) {
-      if (t.project_id && t.project_code) map.set(t.project_id, `${t.project_code} · ${t.project_name}`);
+      if (t.resolved_artist_id == null) continue;
+      const arr = m.get(t.resolved_artist_id);
+      if (arr) arr.push(t);
+      else m.set(t.resolved_artist_id, [t]);
     }
-    return [...map.entries()];
+    return m;
   }, [data]);
 
   if (isLoading || !data) return <Spinner />;
 
-  const tasks = data.tasks.filter(
-    (t) =>
-      (!artistFilter || String(t.resolved_artist_id) === artistFilter) &&
-      (!projectFilter || String(t.project_id) === projectFilter),
-  );
+  // Season-wide todos (no artist, no project): the editable „Festival-Aufgaben" list, which also
+  // carries the only create surface for this scope.
+  const festivalTasks = data.tasks.filter((t) => !t.artist_id && !t.project_id && !t.resolved_artist_id);
 
   return (
     <div className="space-y-10">
@@ -48,7 +53,12 @@ export function Dashboard() {
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {data.artists.map((a) => (
-              <ArtistCard key={a.id} artist={a} />
+              <ArtistCard
+                key={a.id}
+                artist={a}
+                tasks={tasksByArtist.get(a.id) ?? []}
+                doneValue={doneValue}
+              />
             ))}
           </div>
         )}
@@ -73,69 +83,33 @@ export function Dashboard() {
         )}
       </section>
 
-      <section>
-        <SectionTitle
-          right={
-            <div className="flex items-center gap-2">
-              <select
-                value={artistFilter}
-                onChange={(e) => setArtistFilter(e.target.value)}
-                className="rounded-lg border border-neutral-200 bg-white px-2 py-1 text-sm"
-              >
-                <option value="">Alle Künstler</option>
-                {data.artists.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={projectFilter}
-                onChange={(e) => setProjectFilter(e.target.value)}
-                className="rounded-lg border border-neutral-200 bg-white px-2 py-1 text-sm"
-              >
-                <option value="">Alle Projekte</option>
-                {projectOptions.map(([id, label]) => (
-                  <option key={id} value={id}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-              {(artistFilter || projectFilter) && (
-                <IconButton
-                  title="Filter zurücksetzen"
-                  onClick={() => {
-                    setArtistFilter('');
-                    setProjectFilter('');
-                  }}
-                >
-                  ×
-                </IconButton>
-              )}
-              <ExcelButton
-                params={{
-                  scope: 'live',
-                  artist_id: artistFilter || undefined,
-                  project_id: projectFilter || undefined,
-                }}
-              />
-            </div>
-          }
-        >
+      <section className="space-y-6">
+        <SectionTitle>
           <EditableLabel k="dash.tasks" />
         </SectionTitle>
-        <TaskTable
-          tasks={tasks}
-          customColumns={customColumns}
-          showAssignment
-          parent={artistFilter || projectFilter ? undefined : { general: true }}
-        />
+
+        {/* Festival-wide KPIs at a glance — the scannable overview that replaced the long table. */}
+        <TaskStatChips tasks={data.tasks} doneValue={doneValue} variant="tiles" />
+
+        <div>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+            <EditableLabel k="dash.festival" />
+          </h3>
+          <TaskTable tasks={festivalTasks} customColumns={customColumns} parent={{ general: true }} />
+        </div>
+
+        <div>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+            <EditableLabel k="dash.aufmerksamkeit" />
+          </h3>
+          <AttentionList tasks={data.tasks} doneValue={doneValue} windowDays={windowDays} />
+        </div>
       </section>
     </div>
   );
 }
 
-function ArtistCard({ artist }: { artist: ArtistCardT }) {
+function ArtistCard({ artist, tasks, doneValue }: { artist: ArtistCardT; tasks: Task[]; doneValue: string }) {
   return (
     <Link to={`/artist/${artist.id}`}>
       <Card className="overflow-hidden transition hover:shadow-md">
@@ -153,22 +127,14 @@ function ArtistCard({ artist }: { artist: ArtistCardT }) {
             )}
             <h3 className="text-lg font-semibold text-neutral-800">{artist.name}</h3>
           </div>
-          <div className="mt-3 flex gap-2 text-xs">
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
             <span
               className="rounded-full px-2 py-0.5 font-medium"
               style={{ background: withAlpha(artist.color, 0.15), color: '#525252' }}
             >
               {artist.project_count} {artist.project_count === 1 ? 'Projekt' : 'Projekte'}
             </span>
-            <span
-              className="rounded-full px-2 py-0.5 font-medium"
-              style={{
-                background: artist.open_task_count > 0 ? artist.color : '#f1f5f9',
-                color: artist.open_task_count > 0 ? contrastText(artist.color) : '#94a3b8',
-              }}
-            >
-              {artist.open_task_count} offen
-            </span>
+            <TaskStatChips tasks={tasks} doneValue={doneValue} />
           </div>
         </div>
       </Card>

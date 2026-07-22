@@ -189,6 +189,13 @@ const TASKS: DemoTask[] = [
   { id: 46, project_id: 5, parent_id: 41, title: 'Fundus Halle A', status: 'new', priority: 'mittel' },
   { id: 47, project_id: 5, parent_id: 41, title: 'Fundus Halle B', status: 'new', priority: 'mittel' },
   { id: 48, project_id: 5, parent_id: 41, title: 'Fundus Aussenlager', status: 'new', priority: 'mittel' },
+
+  // Overdue and due-tomorrow, on artist 1 (project NQ1 + one general todo): without these every
+  // demo due date is in the future, so the „Überfällig" metric and the „Braucht Aufmerksamkeit"
+  // list would have nothing to show.
+  { id: 49, project_id: 1, title: 'Werbematerial finalisieren', status: 'active', priority: 'hoch', due_date: days(-4) },
+  { id: 50, project_id: 1, title: 'Pressemitteilung freigeben', status: 'active', due_date: days(1) },
+  { id: 51, artist_id: 1, title: 'Rider an Veranstalter schicken', status: 'active', priority: 'hoch', due_date: days(-1) },
 ];
 
 /** One row per link parent type, so all four branches of the links CHECK are covered. */

@@ -1,7 +1,7 @@
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import { doneValueOf } from '../api/types';
+import { doneValueOf, type Task } from '../api/types';
 import { Spinner } from '../components/ui';
 import { Markdown } from '../components/Markdown';
 import { Empty, PrintHeader, PrintPage, Section } from '../components/PrintSheet';
@@ -38,9 +38,12 @@ export function PrintArtist() {
 
   if (isLoading || !data) return <Spinner />;
   const { artist, events, tasks, columns, contacts } = data;
-  // "Open" = not the Status column's terminal "done" category.
+  // "Open" = not the Status column's terminal "done" category. The handout mirrors the app's
+  // general/project split: general (no project) and project tasks each get their own subsection.
   const doneValue = doneValueOf(columns);
   const openTasks = tasks.filter((t) => t.status !== doneValue);
+  const generalOpen = openTasks.filter((t) => !t.project_id);
+  const projectOpen = openTasks.filter((t) => t.project_id);
 
   return (
     <PrintPage>
@@ -89,27 +92,35 @@ export function PrintArtist() {
       </Section>
 
       {/* "n offen" rather than a fixed „Offene “ prefix: the sheet omits done tasks and has to
-          keep saying so, but the prefix would read „Offene Alle Aufgaben“ once renamed. */}
-      <Section title={`${label('artist.aufgaben')} (${openTasks.length} offen)`}>
-        {openTasks.length === 0 ? (
-          <Empty />
-        ) : (
-          <table className="w-full text-sm">
-            <tbody>
-              {openTasks.map((t) => (
-                <tr key={t.id} className="border-b border-neutral-100 align-top">
-                  <td className="w-4 py-1 pr-2">☐</td>
-                  <td className="py-1 pr-3">
-                    {t.title}
-                    {t.project_code ? <span className="ml-1 text-neutral-400">[{t.project_code}]</span> : ''}
-                  </td>
-                  <td className="w-24 py-1 text-neutral-500">{t.due_date ? formatDate(t.due_date) : ''}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+          keep saying so, but the prefix would read „Offene Allgemeine Aufgaben“ once renamed. */}
+      <Section title={`${label('artist.aufgaben')} (${generalOpen.length} offen)`}>
+        <PrintTaskTable tasks={generalOpen} />
+      </Section>
+
+      <Section title={`${label('artist.projektaufgaben')} (${projectOpen.length} offen)`}>
+        <PrintTaskTable tasks={projectOpen} />
       </Section>
     </PrintPage>
+  );
+}
+
+/** Checkbox list of open tasks; the project code rides along as a `[K-code]` tag when present. */
+function PrintTaskTable({ tasks }: { tasks: Task[] }) {
+  if (tasks.length === 0) return <Empty />;
+  return (
+    <table className="w-full text-sm">
+      <tbody>
+        {tasks.map((t) => (
+          <tr key={t.id} className="border-b border-neutral-100 align-top">
+            <td className="w-4 py-1 pr-2">☐</td>
+            <td className="py-1 pr-3">
+              {t.title}
+              {t.project_code ? <span className="ml-1 text-neutral-400">[{t.project_code}]</span> : ''}
+            </td>
+            <td className="w-24 py-1 text-neutral-500">{t.due_date ? formatDate(t.due_date) : ''}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }

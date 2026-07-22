@@ -203,6 +203,10 @@ export interface Settings {
   task_sort?: TaskSortRule[];
   /** User-renamed headings; only overrides are stored, defaults live in `lib/labels.ts`. */
   labels?: LabelOverride[];
+  /** Enabled task-insight metric keys (`TaskMetric`); parsed via `useTaskStatsConfig`. */
+  task_stats?: string[];
+  /** „Braucht Aufmerksamkeit" window in days, stored as a scalar string. */
+  attention_window_days?: string;
   [key: string]: unknown;
 }
 

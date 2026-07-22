@@ -19,14 +19,21 @@ export const LABEL_DEFAULTS = {
 
   'dash.artists': 'Künstler',
   'dash.events': 'Nächste Termine · 14 Tage',
-  'dash.tasks': 'Alle Aufgaben',
+  'dash.tasks': 'Aufgaben',
+  'dash.festival': 'Festival-Aufgaben',
+  'dash.aufmerksamkeit': 'Braucht Aufmerksamkeit',
 
   /** The kicker above the artist H1, not the page title (which is the artist's name). */
   'artist.kicker': 'Künstler',
   'artist.termine': 'Wichtige Termine',
   'artist.projekte': 'Projekte',
+  'artist.aufmerksamkeit': 'Braucht Aufmerksamkeit',
   'artist.kontakte': 'Künstler-Kontakte',
-  'artist.aufgaben': 'Aufgaben',
+  'artist.aufgaben': 'Allgemeine Aufgaben',
+  // PDF-only: the one-pager lists project tasks under their own heading. There is no artist-page
+  // section for it (the app shows project tasks as card stats), so it has no in-app ✎ — renaming
+  // „Allgemeine Aufgaben" still flows to both app and PDF via the key above.
+  'artist.projektaufgaben': 'Projekt-Aufgaben',
 
   'project.kicker': 'Projekt',
   'project.termine': 'Wichtige Termine',
