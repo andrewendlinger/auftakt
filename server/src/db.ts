@@ -156,8 +156,9 @@ const COPY_COLS: Record<string, string[]> = {
   contacts: ['id', 'artist_id', 'project_id', 'role', 'name', 'email', 'phone', 'notes', 'color', 'sort_order'],
   events: ['id', 'artist_id', 'project_id', 'type', 'title', 'start_at', 'end_at', 'all_day', 'location', 'notes', 'sort_order'],
   tasks: ['id', 'artist_id', 'project_id', 'title', 'status', 'priority', 'due_date', 'comment', 'color', 'custom_values', 'erledigt_am', 'parent_id', 'sort_order'],
-  links: ['id', 'artist_id', 'project_id', 'event_id', 'task_id', 'label', 'url', 'color', 'category', 'sort_order'],
+  links: ['id', 'artist_id', 'project_id', 'event_id', 'task_id', 'section_id', 'label', 'url', 'color', 'category', 'sort_order'],
   custom_columns: ['id', 'name', 'type', 'scope', 'project_id', 'options', 'icon', 'key', 'kind', 'enabled', 'deletable', 'sort_order'],
+  custom_sections: ['id', 'artist_id', 'project_id', 'name', 'type', 'value', 'sort_order'],
 };
 
 function copyRows(target: Database.Database, table: string, rows: unknown[]): void {
@@ -310,12 +311,21 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
     for (const t of tasks) if (t.parent_id != null && !taskIds.has(t.parent_id)) t.parent_id = null;
     copyRows(target, 'tasks', tasks);
 
+    // Widget sections follow the entity they sit on; dashboard widgets (no parent) travel
+    // with the settings group, which also carries their `dashboard_layout` ordering.
+    const sections = live('custom_sections').filter(
+      (s) => kept(s) || (s.artist_id == null && s.project_id == null && o.settings),
+    );
+    copyRows(target, 'custom_sections', sections);
+    const sectionIds = new Set(sections.map((s) => s.id));
+
     const links = live('links').filter(
       (l) =>
         (l.artist_id != null && o.artists) ||
         (l.project_id != null && o.projects) ||
         (l.event_id != null && eventIds.has(l.event_id)) ||
-        (l.task_id != null && taskIds.has(l.task_id)),
+        (l.task_id != null && taskIds.has(l.task_id)) ||
+        (l.section_id != null && sectionIds.has(l.section_id)),
     );
     copyRows(target, 'links', links);
 
@@ -434,12 +444,31 @@ CREATE TABLE IF NOT EXISTS custom_columns (
   deleted_at TEXT
 );
 
+-- User-added widget sections (WP-S): named, typed page sections that join the
+-- SectionArranger layout. Per-entity by decision — a widget on one artist's page
+-- exists only there, so each row carries its own content (no custom_values blob).
+CREATE TABLE IF NOT EXISTS custom_sections (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  artist_id  INTEGER REFERENCES artists(id),
+  project_id INTEGER REFERENCES projects(id),
+  name       TEXT NOT NULL,
+  type       TEXT NOT NULL CHECK (type IN ('text', 'links')),
+  value      TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  deleted_at TEXT,
+  -- 0 parents = a dashboard (Übersicht) widget, 1 = artist- or project-page widget.
+  CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) <= 1)
+);
+
 CREATE TABLE IF NOT EXISTS links (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   artist_id  INTEGER REFERENCES artists(id),
   project_id INTEGER REFERENCES projects(id),
   event_id   INTEGER REFERENCES events(id),
   task_id    INTEGER REFERENCES tasks(id),
+  section_id INTEGER REFERENCES custom_sections(id),
   label      TEXT NOT NULL,
   url        TEXT,
   color      TEXT,
@@ -448,7 +477,7 @@ CREATE TABLE IF NOT EXISTS links (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   deleted_at TEXT,
-  CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) + (event_id IS NOT NULL) + (task_id IS NOT NULL) = 1)
+  CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) + (event_id IS NOT NULL) + (task_id IS NOT NULL) + (section_id IS NOT NULL) = 1)
 );
 
 CREATE INDEX IF NOT EXISTS idx_projects_artist  ON projects(artist_id);
@@ -461,6 +490,10 @@ CREATE INDEX IF NOT EXISTS idx_tasks_artist     ON tasks(artist_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_project    ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_sort       ON tasks(status, priority, due_date);
 CREATE INDEX IF NOT EXISTS idx_links_parents    ON links(artist_id, project_id, event_id, task_id);
+-- idx_links_section lives in migrateLinksSectionParent, not here: on a pre-WP-S database this
+-- SCHEMA runs before the links rebuild, when links.section_id does not exist yet.
+CREATE INDEX IF NOT EXISTS idx_sections_artist  ON custom_sections(artist_id);
+CREATE INDEX IF NOT EXISTS idx_sections_project ON custom_sections(project_id);
 `;
 
 // event_types / project_statuses are coloured options (WP-I): `{ value, label, color }[]`.
@@ -574,6 +607,7 @@ export function getDb(): Database.Database {
   migrateEventsOptionalStart(db);
   migrateProjectsMergeNotes(db);
   migrateLinksCategory(db);
+  migrateLinksSectionParent(db);
   instance = db;
   return db;
 }
@@ -881,6 +915,60 @@ function migrateProjectsMergeNotes(db: Database.Database): void {
   `);
 }
 
+/**
+ * Add `section_id` as the fifth exclusive link parent (custom "Dokumente & Links" widgets,
+ * WP-S). The parent CHECK can't be ALTERed, so rebuild the table (the standard 12-step).
+ * Runs after migrateLinksCategory — the column list below names `category`, which a database
+ * jumping several versions gets in that same open. Idempotent: only runs while the old
+ * constraint is present. `custom_sections` already exists (SCHEMA runs before migrations).
+ */
+function migrateLinksSectionParent(db: Database.Database): void {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'links'")
+    .get() as { sql?: string } | undefined;
+  if (!row?.sql || row.sql.includes('section_id')) {
+    // Already migrated or fresh SCHEMA — the index still has to be ensured here (it can't be
+    // in SCHEMA, whose exec precedes this rebuild on old databases).
+    db.exec('CREATE INDEX IF NOT EXISTS idx_links_section ON links(section_id)');
+    return;
+  }
+
+  // foreign_keys must be toggled OUTSIDE the transaction to take effect.
+  db.pragma('foreign_keys = OFF');
+  const rebuild = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE links_new (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        artist_id  INTEGER REFERENCES artists(id),
+        project_id INTEGER REFERENCES projects(id),
+        event_id   INTEGER REFERENCES events(id),
+        task_id    INTEGER REFERENCES tasks(id),
+        section_id INTEGER REFERENCES custom_sections(id),
+        label      TEXT NOT NULL,
+        url        TEXT,
+        color      TEXT,
+        category   TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        deleted_at TEXT,
+        CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) + (event_id IS NOT NULL) + (task_id IS NOT NULL) + (section_id IS NOT NULL) = 1)
+      );
+      INSERT INTO links_new (id, artist_id, project_id, event_id, task_id, label, url, color, category,
+                             sort_order, created_at, updated_at, deleted_at)
+        SELECT id, artist_id, project_id, event_id, task_id, label, url, color, category,
+               sort_order, created_at, updated_at, deleted_at
+        FROM links;
+      DROP TABLE links;
+      ALTER TABLE links_new RENAME TO links;
+      CREATE INDEX IF NOT EXISTS idx_links_parents ON links(artist_id, project_id, event_id, task_id);
+      CREATE INDEX IF NOT EXISTS idx_links_section ON links(section_id);
+    `);
+  });
+  rebuild();
+  db.pragma('foreign_keys = ON');
+}
+
 /** The Status option flagged `done` — the terminal category driving gray-out/sink/archive. */
 export function doneStatusValue(db: Database.Database): string {
   const row = db
@@ -923,9 +1011,15 @@ export function setSetting(db: Database.Database, key: string, value: string): v
 export function purgeExpired(db: Database.Database): void {
   // Children before parents (foreign_keys = ON): deleting an expired parent while a row still
   // references it would throw. e.g. links reference every other table, so they go first.
-  const tables = ['links', 'custom_columns', 'tasks', 'events', 'contacts', 'projects', 'artists'];
+  const tables = ['links', 'custom_sections', 'custom_columns', 'tasks', 'events', 'contacts', 'projects', 'artists'];
   const cutoff = `-${PURGE_AFTER_DAYS} days`;
   const tx = db.transaction(() => {
+    // A widget's links are invisible once their section is in the trash, but stay *live* rows —
+    // purge them along with their expired section or the FK would block the section's delete.
+    db.prepare(
+      `DELETE FROM links WHERE section_id IN
+         (SELECT id FROM custom_sections WHERE deleted_at IS NOT NULL AND deleted_at < datetime('now', ?))`,
+    ).run(cutoff);
     for (const t of tables) {
       db.prepare(
         `DELETE FROM ${t} WHERE deleted_at IS NOT NULL AND deleted_at < datetime('now', ?)`,

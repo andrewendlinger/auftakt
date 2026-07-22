@@ -8,6 +8,7 @@ import {
   artistsRouter,
   contactsRouter,
   customColumnsRouter,
+  customSectionsRouter,
   eventsRouter,
   linksRouter,
   projectsRouter,
@@ -24,7 +25,13 @@ import { backupRouter } from './routes/backup';
 const PORT = Number(process.env.AUFTAKT_PORT ?? 4317);
 
 const db = getDb();
-purgeExpired(db); // hard-delete rows soft-deleted more than 30 days ago
+// Hard-delete rows soft-deleted more than 30 days ago. Never fatal: a purge blocked by a
+// lingering FK reference must not keep the whole app from starting.
+try {
+  purgeExpired(db);
+} catch (err) {
+  console.error('purgeExpired failed (continuing without purge):', err);
+}
 
 const app = express();
 app.use(cors());
@@ -41,6 +48,7 @@ app.use('/api/events', eventsRouter);
 app.use('/api/tasks', tasksRouter);
 app.use('/api/links', linksRouter);
 app.use('/api/custom-columns', customColumnsRouter);
+app.use('/api/custom-sections', customSectionsRouter);
 app.use('/api/deleted', deletedRouter);
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/search', searchRouter);

@@ -128,6 +128,7 @@ export interface LinkItem extends SoftDeletable {
   project_id: ID | null;
   event_id: ID | null;
   task_id: ID | null;
+  section_id: ID | null;
   label: string;
   url: string | null;
   color: string | null;
@@ -135,8 +136,21 @@ export interface LinkItem extends SoftDeletable {
   category: string | null;
 }
 
+/**
+ * A user-added widget section (WP-S) on the dashboard (both parents null), an artist page or
+ * a project page. Per-entity: the row carries its own content — `value` holds the rich text
+ * for `type: 'text'`; a `links` widget's items are the links with this `section_id`.
+ */
+export interface CustomSection extends SoftDeletable {
+  artist_id: ID | null;
+  project_id: ID | null;
+  name: string;
+  type: 'text' | 'links';
+  value: string | null;
+}
+
 /** The content entities a user directly deletes and can find again in the archive's trash. */
-export type DeletedType = 'artist' | 'project' | 'contact' | 'event' | 'task' | 'link';
+export type DeletedType = 'artist' | 'project' | 'contact' | 'event' | 'task' | 'link' | 'section';
 
 /** One soft-deleted row surfaced in the "Gelöschte Items" section. */
 export interface DeletedItem {
@@ -221,6 +235,8 @@ export interface Settings {
   project_layout?: LayoutEntry[];
   /** Layout of the artist-page sections (termine/projekte/kontakte/aufgaben) — order + width. */
   artist_layout?: LayoutEntry[];
+  /** Layout of the dashboard sections (artists/events/tasks + custom widgets) — order + width. */
+  dashboard_layout?: LayoutEntry[];
   /** Automatic ordering hierarchy for the main task table. */
   task_sort?: TaskSortRule[];
   /** User-renamed headings; only overrides are stored, defaults live in `lib/labels.ts`. */

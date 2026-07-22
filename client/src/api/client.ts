@@ -2,6 +2,7 @@ import type {
   Artist,
   Contact,
   CustomColumn,
+  CustomSection,
   Dashboard,
   DeletedItem,
   DeletedType,
@@ -80,6 +81,7 @@ export const api = {
   tasks: resource<Task>('/tasks'),
   links: resource<LinkItem>('/links'),
   customColumns: resource<CustomColumn>('/custom-columns'),
+  customSections: resource<CustomSection>('/custom-sections'),
 
   duplicateEvent: (id: ID) => http<EventItem>('POST', `/events/${id}/duplicate`),
 

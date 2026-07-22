@@ -16,6 +16,7 @@ import { Card, DragHandle, SectionTitle, Spinner, EmptyState } from '../componen
 import { EventList } from '../components/EventList';
 import { ContactList } from '../components/ContactList';
 import { InlineNotes } from '../components/InlineNotes';
+import { AddSectionButton, customSectionEntries } from '../components/CustomSections';
 import { TaskTable } from '../components/TaskTable';
 import { TaskStatChips } from '../components/TaskStatChips';
 import { AttentionList } from '../components/AttentionList';
@@ -64,6 +65,10 @@ export function ArtistPage() {
   const { data: customColumns = [] } = useQuery({
     queryKey: ['customColumns', 'global'],
     queryFn: () => api.customColumns.list({ scope: 'global' }),
+  });
+  const { data: customSections = [] } = useQuery({
+    queryKey: ['customSections', 'artist', artistId],
+    queryFn: () => api.customSections.list({ artist_id: artistId }),
   });
 
   if (isLoading || !artist) return <Spinner />;
@@ -149,6 +154,8 @@ export function ArtistPage() {
       </>
     ),
   };
+  const custom = customSectionEntries(customSections);
+  Object.assign(sections, custom.nodes);
 
   return (
     <div className="space-y-8">
@@ -195,7 +202,9 @@ export function ArtistPage() {
         layoutKey="artist_layout"
         sections={sections}
         labelKeys={SECTION_LABEL_KEYS}
+        titles={custom.titles}
         fullWidthKeys={['aufgaben', 'aufmerksamkeit']}
+        addAction={<AddSectionButton parent={{ artist_id: artistId }} />}
       />
     </div>
   );

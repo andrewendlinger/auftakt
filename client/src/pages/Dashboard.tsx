@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
@@ -13,13 +13,27 @@ import { TaskStatChips } from '../components/TaskStatChips';
 import { AttentionList } from '../components/AttentionList';
 import { NewArtistButton } from '../components/EntityButtons';
 import { EditableLabel } from '../components/EditableLabel';
+import { SectionArranger } from '../components/SectionArranger';
+import { AddSectionButton, customSectionEntries } from '../components/CustomSections';
+import type { LabelKey } from '../lib/labels';
 import { useLabel, useTaskStatsConfig } from '../hooks';
+
+/** Which heading names each section in the "Bereiche anordnen" strip. */
+const SECTION_LABEL_KEYS = {
+  artists: 'dash.artists',
+  events: 'dash.events',
+  tasks: 'dash.tasks',
+} as const satisfies Record<string, LabelKey>;
 
 export function Dashboard() {
   const { data, isLoading } = useQuery({ queryKey: ['dashboard'], queryFn: api.dashboard });
   const { data: customColumns = [] } = useQuery({
     queryKey: ['customColumns', 'global'],
     queryFn: () => api.customColumns.list({ scope: 'global' }),
+  });
+  const { data: customSections = [] } = useQuery({
+    queryKey: ['customSections', 'dashboard'],
+    queryFn: () => api.customSections.list({ scope: 'dashboard' }),
   });
   const { windowDays } = useTaskStatsConfig();
   const artistLabel = useLabel()('dash.artists');
@@ -43,8 +57,8 @@ export function Dashboard() {
   // carries the only create surface for this scope.
   const festivalTasks = data.tasks.filter((t) => !t.artist_id && !t.project_id && !t.resolved_artist_id);
 
-  return (
-    <div className="space-y-10">
+  const sections: Record<string, ReactNode> = {
+    artists: (
       <section>
         <SectionTitle right={<NewArtistButton />}>
           <EditableLabel k="dash.artists" />
@@ -64,7 +78,8 @@ export function Dashboard() {
           </div>
         )}
       </section>
-
+    ),
+    events: (
       <section>
         <SectionTitle>
           <EditableLabel k="dash.events" />
@@ -83,7 +98,8 @@ export function Dashboard() {
           <UpcomingList events={data.upcoming14} />
         )}
       </section>
-
+    ),
+    tasks: (
       <section className="space-y-6">
         <SectionTitle>
           <EditableLabel k="dash.tasks" />
@@ -106,6 +122,21 @@ export function Dashboard() {
           <AttentionList tasks={data.tasks} doneValue={doneValue} windowDays={windowDays} />
         </div>
       </section>
+    ),
+  };
+  const custom = customSectionEntries(customSections);
+  Object.assign(sections, custom.nodes);
+
+  return (
+    <div className="space-y-8">
+      <SectionArranger
+        layoutKey="dashboard_layout"
+        sections={sections}
+        labelKeys={SECTION_LABEL_KEYS}
+        titles={custom.titles}
+        fullWidthKeys={['tasks']}
+        addAction={<AddSectionButton parent={{}} />}
+      />
     </div>
   );
 }

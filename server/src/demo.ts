@@ -249,6 +249,20 @@ const TASKS: DemoTask[] = [
   { id: 52, project_id: 9, title: 'Aufgabe im gestrichenen Projekt', status: 'active' },
 ];
 
+/**
+ * Custom widget sections (WP-S): one text and one links widget per surface — dashboard
+ * (both parents NULL), artist 1 and project 1 — plus a soft-deleted one whose live link
+ * exercises the trash cascade count and the purge path.
+ */
+const CUSTOM_SECTIONS = [
+  { id: 1, artist_id: null, project_id: null, name: 'Saison-Motto', type: 'text', value: 'Diese Saison steht unter dem Motto **„Klang & Raum"** 🎶.' },
+  { id: 2, artist_id: null, project_id: null, name: 'Wichtige Dokumente', type: 'links', value: null },
+  { id: 3, artist_id: 1, project_id: null, name: 'Reiseplanung', type: 'text', value: 'Anreise gemeinsam im Nightliner — Details im [Tourplan](https://example.org/tourplan).\n\n- Abfahrt 08:00\n- Ankunft ca. 14:30' },
+  { id: 4, artist_id: null, project_id: 1, name: 'Werbematerial', type: 'links', value: null },
+  // Soft-deleted widget — its live link 11 makes the "Bereich" trash row's cascade count visible.
+  { id: 5, artist_id: null, project_id: 1, name: 'Alte Sammlung', type: 'links', value: null, deleted_at: stamp(-6) },
+];
+
 /** Colored link categories (WP-P) — the "Dokumente & Links" lists group by these. */
 const LINK_CATEGORIES = [
   { value: 'vertrag', label: 'Vertrag', color: '#fee2e2' },
@@ -271,6 +285,12 @@ const LINKS = [
   { id: 6, artist_id: null, project_id: 1, event_id: null, task_id: null, label: 'Vertrag (unterschrieben)', url: 'https://example.org/vertrag.pdf', category: 'vertrag' },
   { id: 7, artist_id: null, project_id: 1, event_id: null, task_id: null, label: 'Bühnenplan', url: 'https://example.org/buehnenplan', category: 'technik' },
   { id: 8, artist_id: null, project_id: 1, event_id: null, task_id: null, label: 'Sonstiges Dokument', url: null },
+  // Links inside custom widgets (section_id as the fifth exclusive parent, WP-S).
+  { id: 9, section_id: 2, label: 'Festival-Handbuch', url: 'https://example.org/handbuch.pdf', category: 'presse' },
+  { id: 10, section_id: 2, label: 'Lageplan Gelände', url: 'https://example.org/lageplan' },
+  { id: 11, section_id: 4, label: 'Plakatmotiv (Druckdaten)', url: 'https://example.org/plakat.pdf', category: 'presse' },
+  // Live link under the soft-deleted widget 5 — invisible in the app, counted in its trash row.
+  { id: 12, section_id: 5, label: 'Verwaistes Dokument', url: 'https://example.org/verwaist' },
 ];
 
 /** Custom task columns — the only way to exercise the data-driven task table. */
@@ -332,8 +352,12 @@ function main(): void {
              @comment, @color, @custom_values, @erledigt_am, @deleted_at, @sort_order)`,
   );
   const insLink = db.prepare(
-    `INSERT INTO links (id, artist_id, project_id, event_id, task_id, label, url, category, deleted_at, sort_order)
-     VALUES (@id, @artist_id, @project_id, @event_id, @task_id, @label, @url, @category, @deleted_at, @sort_order)`,
+    `INSERT INTO links (id, artist_id, project_id, event_id, task_id, section_id, label, url, category, deleted_at, sort_order)
+     VALUES (@id, @artist_id, @project_id, @event_id, @task_id, @section_id, @label, @url, @category, @deleted_at, @sort_order)`,
+  );
+  const insSection = db.prepare(
+    `INSERT INTO custom_sections (id, artist_id, project_id, name, type, value, deleted_at, sort_order)
+     VALUES (@id, @artist_id, @project_id, @name, @type, @value, @deleted_at, @sort_order)`,
   );
   const insColumn = db.prepare(
     `INSERT INTO custom_columns (name, type, scope, project_id, options, icon, kind, enabled, deletable, sort_order)
@@ -373,7 +397,21 @@ function main(): void {
       });
     });
 
-    LINKS.forEach((l, i) => insLink.run({ category: null, deleted_at: null, ...l, sort_order: i }));
+    CUSTOM_SECTIONS.forEach((s, i) => insSection.run({ deleted_at: null, ...s, sort_order: i }));
+    // Sections first: widget links reference custom_sections(id).
+    LINKS.forEach((l, i) =>
+      insLink.run({
+        artist_id: null,
+        project_id: null,
+        event_id: null,
+        task_id: null,
+        section_id: null,
+        category: null,
+        deleted_at: null,
+        ...l,
+        sort_order: i,
+      }),
+    );
   });
   tx();
 
@@ -385,7 +423,7 @@ function main(): void {
 
   console.log(`Demo-Datenbank neu gebaut in ${DEMO_DIR}`);
   console.log('\nRow counts:');
-  for (const t of ['artists', 'projects', 'contacts', 'events', 'tasks', 'links', 'custom_columns']) {
+  for (const t of ['artists', 'projects', 'contacts', 'events', 'tasks', 'links', 'custom_columns', 'custom_sections']) {
     const n = (db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n;
     console.log(`  ${t.padEnd(15)} ${n}`);
   }

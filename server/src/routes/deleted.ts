@@ -17,6 +17,7 @@ const TYPES = {
   event: 'events',
   task: 'tasks',
   link: 'links',
+  section: 'custom_sections',
 } as const;
 type DeletedType = keyof typeof TYPES;
 
@@ -32,6 +33,7 @@ const CHILD_EDGES: Record<string, Array<readonly [table: string, fk: string]>> =
     ['events', 'artist_id'],
     ['tasks', 'artist_id'],
     ['links', 'artist_id'],
+    ['custom_sections', 'artist_id'],
   ],
   projects: [
     ['contacts', 'project_id'],
@@ -39,6 +41,7 @@ const CHILD_EDGES: Record<string, Array<readonly [table: string, fk: string]>> =
     ['tasks', 'project_id'],
     ['custom_columns', 'project_id'],
     ['links', 'project_id'],
+    ['custom_sections', 'project_id'],
   ],
   events: [['links', 'event_id']],
   tasks: [
@@ -48,10 +51,11 @@ const CHILD_EDGES: Record<string, Array<readonly [table: string, fk: string]>> =
   contacts: [],
   links: [],
   custom_columns: [],
+  custom_sections: [['links', 'section_id']],
 };
 
 /** Delete children before parents so no FK is violated mid-transaction (foreign_keys = ON). */
-const DELETE_ORDER = ['links', 'custom_columns', 'tasks', 'events', 'contacts', 'projects', 'artists'];
+const DELETE_ORDER = ['links', 'custom_sections', 'custom_columns', 'tasks', 'events', 'contacts', 'projects', 'artists'];
 
 /** table → the type name used in cascade counts (`custom_columns` has no user-facing type). */
 const TABLE_TYPE: Record<string, string> = {
@@ -62,6 +66,7 @@ const TABLE_TYPE: Record<string, string> = {
   tasks: 'task',
   links: 'link',
   custom_columns: 'column',
+  custom_sections: 'section',
 };
 
 /** Compact per-type list of soft-deleted rows: id, a human label, an owner sublabel, timestamps. */
@@ -91,14 +96,21 @@ const LIST_SQL: Record<DeletedType, string> = {
          LEFT JOIN projects p ON p.id = t.project_id
          LEFT JOIN artists a ON a.id = COALESCE(t.artist_id, p.artist_id)
          WHERE t.deleted_at IS NOT NULL`,
-  link: `SELECT l.id, l.label AS label, COALESCE(a.name, p.code, e.title, t.title) AS sublabel,
+  link: `SELECT l.id, l.label AS label, COALESCE(a.name, p.code, e.title, t.title, s.name) AS sublabel,
            l.deleted_at, datetime(l.deleted_at, '+${PURGE_AFTER_DAYS} days') AS purge_at
          FROM links l
          LEFT JOIN artists a ON a.id = l.artist_id
          LEFT JOIN projects p ON p.id = l.project_id
          LEFT JOIN events e ON e.id = l.event_id
          LEFT JOIN tasks t ON t.id = l.task_id
+         LEFT JOIN custom_sections s ON s.id = l.section_id
          WHERE l.deleted_at IS NOT NULL`,
+  section: `SELECT s.id, s.name AS label, COALESCE(a.name, p.code, 'Übersicht') AS sublabel,
+              s.deleted_at, datetime(s.deleted_at, '+${PURGE_AFTER_DAYS} days') AS purge_at
+            FROM custom_sections s
+            LEFT JOIN artists a ON a.id = s.artist_id
+            LEFT JOIN projects p ON p.id = s.project_id
+            WHERE s.deleted_at IS NOT NULL`,
 };
 
 interface DeletedRow {

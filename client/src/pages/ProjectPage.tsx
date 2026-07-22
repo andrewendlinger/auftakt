@@ -17,6 +17,7 @@ import { EditProjectButton } from '../components/EntityButtons';
 import { ProjectStatusPill } from '../components/ProjectStatusPill';
 import { ExcelButton } from '../components/ExcelButton';
 import { InlineNotes } from '../components/InlineNotes';
+import { AddSectionButton, customSectionEntries } from '../components/CustomSections';
 import { useEventTypeOptions, useUndoablePatch } from '../hooks';
 
 /**
@@ -69,6 +70,10 @@ export function ProjectPage() {
   const { data: projectCols = [] } = useQuery({
     queryKey: ['customColumns', 'project', projectId],
     queryFn: () => api.customColumns.list({ scope: 'project', project_id: projectId }),
+  });
+  const { data: customSections = [] } = useQuery({
+    queryKey: ['customSections', 'project', projectId],
+    queryFn: () => api.customSections.list({ project_id: projectId }),
   });
 
   if (isLoading || !project) return <Spinner />;
@@ -129,6 +134,8 @@ export function ProjectPage() {
       </>
     ),
   };
+  const custom = customSectionEntries(customSections);
+  Object.assign(sections, custom.nodes);
   return (
     <div className="space-y-8">
       <Breadcrumbs
@@ -176,7 +183,9 @@ export function ProjectPage() {
         layoutKey="project_layout"
         sections={sections}
         labelKeys={SECTION_LABEL_KEYS}
+        titles={custom.titles}
         fullWidthKeys={['aufgaben']}
+        addAction={<AddSectionButton parent={{ project_id: projectId }} />}
       />
 
       {managingColumns && (

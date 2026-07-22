@@ -9,6 +9,7 @@ const ARRAY_KEYS = new Set([
   'link_categories',
   'project_layout',
   'artist_layout',
+  'dashboard_layout',
   'task_sort',
   'labels',
   'task_stats',

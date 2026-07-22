@@ -35,10 +35,43 @@ export const contactsRouter = crudRouter({
 
 export const linksRouter = crudRouter({
   table: 'links',
-  writable: ['artist_id', 'project_id', 'event_id', 'task_id', 'label', 'url', 'color', 'category', 'sort_order'],
+  writable: ['artist_id', 'project_id', 'event_id', 'task_id', 'section_id', 'label', 'url', 'color', 'category', 'sort_order'],
   required: ['label'],
-  filters: ['artist_id', 'project_id', 'event_id', 'task_id'],
+  filters: ['artist_id', 'project_id', 'event_id', 'task_id', 'section_id'],
   order: 'sort_order ASC, id ASC',
+});
+
+/**
+ * User-added widget sections (WP-S). `type` stays writable on PATCH like every other column
+ * (crudRouter has one allowlist for create+patch); the client never changes it after create.
+ * The list is custom because the dashboard scope means "both parents NULL", which the
+ * equality-only `filters` can't express.
+ */
+export const customSectionsRouter = crudRouter({
+  table: 'custom_sections',
+  writable: ['artist_id', 'project_id', 'name', 'type', 'value', 'sort_order'],
+  required: ['name', 'type'],
+  order: 'sort_order ASC, id ASC',
+  customList: (req, res) => {
+    const where = ['deleted_at IS NULL'];
+    const params: unknown[] = [];
+    const artistId = num(req.query.artist_id);
+    const projectId = num(req.query.project_id);
+    if (artistId !== undefined) {
+      where.push('artist_id = ?');
+      params.push(artistId);
+    }
+    if (projectId !== undefined) {
+      where.push('project_id = ?');
+      params.push(projectId);
+    }
+    if (req.query.scope === 'dashboard') where.push('artist_id IS NULL AND project_id IS NULL');
+    res.json(
+      getDb()
+        .prepare(`SELECT * FROM custom_sections WHERE ${where.join(' AND ')} ORDER BY sort_order ASC, id ASC`)
+        .all(...params),
+    );
+  },
 });
 
 export const customColumnsRouter = crudRouter({

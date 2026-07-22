@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { SectionTitle, Btn, EmptyState } from './ui';
 import { RecordFormModal, type FieldDef } from './fields';
 import { api } from '../api/client';
@@ -40,17 +40,24 @@ export type LinkParent = {
   project_id?: number;
   event_id?: number;
   task_id?: number;
+  section_id?: number;
 };
 
 export function LinkList({
   titleKey,
+  title,
   links,
   parent,
+  extraActions,
 }: {
   /** Heading id — the text itself lives in `lib/labels.ts` and is user-renameable. */
-  titleKey: LabelKey;
+  titleKey?: LabelKey;
+  /** Rendered instead of the label heading — a custom widget's own (renameable) name. */
+  title?: ReactNode;
   links: LinkItem[];
   parent: LinkParent;
+  /** Rendered next to "+ Link" — a custom widget's delete button. */
+  extraActions?: ReactNode;
 }) {
   const invalidate = useInvalidateAll();
   const undoablePatch = useUndoablePatch();
@@ -70,6 +77,7 @@ export function LinkList({
       project_id: parent.project_id ?? null,
       event_id: parent.event_id ?? null,
       task_id: parent.task_id ?? null,
+      section_id: parent.section_id ?? null,
     });
     await invalidate();
   };
@@ -127,8 +135,15 @@ export function LinkList({
 
   return (
     <div>
-      <SectionTitle right={<Btn onClick={() => setCreating(true)}>+ Link</Btn>}>
-        <EditableLabel k={titleKey} />
+      <SectionTitle
+        right={
+          <div className="flex items-center gap-1">
+            <Btn onClick={() => setCreating(true)}>+ Link</Btn>
+            {extraActions}
+          </div>
+        }
+      >
+        {titleKey ? <EditableLabel k={titleKey} /> : title}
       </SectionTitle>
       {links.length === 0 ? (
         <EmptyState>Keine Dokumente hinterlegt.</EmptyState>

@@ -20,6 +20,7 @@ const TYPE_LABELS: Record<DeletedType | 'column', { one: string; many: string }>
   project: { one: 'Projekt', many: 'Projekte' },
   contact: { one: 'Kontakt', many: 'Kontakte' },
   link: { one: 'Dokument', many: 'Dokumente' },
+  section: { one: 'Bereich', many: 'Bereiche' },
   column: { one: 'Spalte', many: 'Spalten' },
 };
 
