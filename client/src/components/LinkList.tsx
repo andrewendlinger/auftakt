@@ -9,7 +9,7 @@ import { ColorSwatchPicker } from './ColorSwatchPicker';
 import { TrashIcon } from './icons';
 import { EditableLabel } from './EditableLabel';
 import type { LabelKey } from '../lib/labels';
-import { useInvalidateAll, useUndoableDelete, resourceUndo } from '../hooks';
+import { useInvalidateAll, useUndoableDelete, useUndoablePatch, resourceUndo } from '../hooks';
 
 const FIELDS: FieldDef[] = [
   { name: 'label', label: 'Bezeichnung', required: true, placeholder: 'z. B. TechRider Quartett' },
@@ -34,28 +34,28 @@ export function LinkList({
   parent: LinkParent;
 }) {
   const invalidate = useInvalidateAll();
+  const undoablePatch = useUndoablePatch();
   const del = useUndoableDelete();
   const [editing, setEditing] = useState<LinkItem | null>(null);
   const [creating, setCreating] = useState(false);
 
   const save = async (values: Record<string, string | null>) => {
     if (editing) {
-      await api.links.update(editing.id, values);
-    } else {
-      await api.links.create({
-        ...values,
-        artist_id: parent.artist_id ?? null,
-        project_id: parent.project_id ?? null,
-        event_id: parent.event_id ?? null,
-        task_id: parent.task_id ?? null,
-      });
+      await undoablePatch({ res: api.links, row: editing, patch: values, label: 'Änderung am Link' });
+      return;
     }
+    await api.links.create({
+      ...values,
+      artist_id: parent.artist_id ?? null,
+      project_id: parent.project_id ?? null,
+      event_id: parent.event_id ?? null,
+      task_id: parent.task_id ?? null,
+    });
     await invalidate();
   };
 
   const setColor = async (l: LinkItem, color: string | null) => {
-    await api.links.update(l.id, { color });
-    await invalidate();
+    await undoablePatch({ res: api.links, row: l, patch: { color }, label: 'Farbänderung' });
   };
 
   return (

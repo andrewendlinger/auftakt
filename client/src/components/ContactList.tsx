@@ -10,7 +10,7 @@ import { ColorSwatchPicker } from './ColorSwatchPicker';
 import { TrashIcon } from './icons';
 import { EditableLabel } from './EditableLabel';
 import type { LabelKey } from '../lib/labels';
-import { useInvalidateAll, useUndoableDelete, resourceUndo } from '../hooks';
+import { useInvalidateAll, useUndoableDelete, useUndoablePatch, resourceUndo } from '../hooks';
 
 const FIELDS: FieldDef[] = [
   { name: 'name', label: 'Name', required: true },
@@ -31,26 +31,31 @@ export function ContactList({
   parent: { artist_id?: number; project_id?: number };
 }) {
   const invalidate = useInvalidateAll();
+  const undoablePatch = useUndoablePatch();
   const del = useUndoableDelete();
   const [editing, setEditing] = useState<Contact | null>(null);
   const [creating, setCreating] = useState(false);
 
   const save = async (values: Record<string, string | null>) => {
     if (editing) {
-      await api.contacts.update(editing.id, values);
-    } else {
-      await api.contacts.create({
-        ...values,
-        artist_id: parent.artist_id ?? null,
-        project_id: parent.project_id ?? null,
+      await undoablePatch({
+        res: api.contacts,
+        row: editing,
+        patch: values,
+        label: 'Änderung am Kontakt',
       });
+      return;
     }
+    await api.contacts.create({
+      ...values,
+      artist_id: parent.artist_id ?? null,
+      project_id: parent.project_id ?? null,
+    });
     await invalidate();
   };
 
   const setColor = async (c: Contact, color: string | null) => {
-    await api.contacts.update(c.id, { color });
-    await invalidate();
+    await undoablePatch({ res: api.contacts, row: c, patch: { color }, label: 'Farbänderung' });
   };
 
   return (

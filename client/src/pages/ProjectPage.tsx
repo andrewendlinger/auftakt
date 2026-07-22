@@ -17,7 +17,7 @@ import { CustomColumnManager } from '../components/CustomColumnManager';
 import { EditProjectButton } from '../components/EntityButtons';
 import { ExcelButton } from '../components/ExcelButton';
 import { InlineNotes } from '../components/InlineNotes';
-import { useInvalidateAll, useSettings } from '../hooks';
+import { useSettings, useUndoablePatch } from '../hooks';
 
 /**
  * Which heading names each section in the "Bereiche anordnen" strip. `kontakte` holds two
@@ -34,7 +34,7 @@ export function ProjectPage() {
   const { id } = useParams<{ id: string }>();
   const projectId = Number(id);
   const { data: settings } = useSettings();
-  const invalidate = useInvalidateAll();
+  const undoablePatch = useUndoablePatch();
   const [managingColumns, setManagingColumns] = useState(false);
 
   const { data: project, isLoading } = useQuery({
@@ -95,8 +95,12 @@ export function ProjectPage() {
             value={project.notes}
             placeholder="+ Notiz hinzufügen"
             onSave={async (v) => {
-              await api.projects.update(project.id, { notes: v });
-              await invalidate();
+              await undoablePatch({
+                res: api.projects,
+                row: project,
+                patch: { notes: v },
+                label: 'Notizänderung',
+              });
             }}
           />
         </Card>

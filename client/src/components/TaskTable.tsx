@@ -25,7 +25,14 @@ import { ProjectBadge } from './ProjectBadge';
 import { PillSelect } from './PillSelect';
 import { EmptyState, Btn, DragHandle, IconButton } from './ui';
 import { Modal } from './fields';
-import { useInvalidateAll, useSaison, useSettings, useUndoableDelete, resourceUndo } from '../hooks';
+import {
+  useInvalidateAll,
+  useSaison,
+  useSettings,
+  useUndoableDelete,
+  useUndoablePatch,
+  resourceUndo,
+} from '../hooks';
 
 /** Shared modern inline-edit input style (soft border, focus ring). */
 const INLINE_INPUT =
@@ -163,6 +170,7 @@ export function TaskTable({
 }) {
   const invalidate = useInvalidateAll();
   const del = useUndoableDelete();
+  const undoablePatch = useUndoablePatch();
   const { data: settings } = useSettings();
   const saison = useSaison();
   const [sort, setSort] = useState<SortState>(null);
@@ -193,18 +201,30 @@ export function TaskTable({
   );
 
   const commit = useCallback(
-    async (id: number, patch: Partial<Task> | { custom_values: Record<string, unknown> }) => {
-      await api.tasks.update(id, patch as Partial<Task>);
-      await invalidate();
+    async (
+      task: Task,
+      patch: Partial<Task> | { custom_values: Record<string, unknown> },
+      label: string,
+    ) => {
+      await undoablePatch({
+        res: api.tasks,
+        row: task,
+        patch: patch as Partial<Task>,
+        label,
+        // The server derives erledigt_am from status and can't reconstruct the old value, so the
+        // inverse has to carry it — otherwise undoing a status flip re-stamps it with today and
+        // silently un-archives a task that had aged out.
+        extraKeys: 'status' in patch ? ['erledigt_am'] : [],
+      });
     },
-    [invalidate],
+    [undoablePatch],
   );
 
   const commitCustom = useCallback(
     async (task: Task, colId: number, value: unknown) => {
       const cv = parseCustomValues(task.custom_values);
       cv[String(colId)] = value;
-      await commit(task.id, { custom_values: cv });
+      await commit(task, { custom_values: cv }, 'Änderung');
     },
     [commit],
   );
@@ -451,7 +471,7 @@ export function TaskTable({
           )}
           <ColorSwatchPicker
             value={row.original.color}
-            onChange={(color) => commit(row.original.id, { color })}
+            onChange={(color) => commit(row.original, { color }, 'Farbänderung')}
           />
           <IconButton variant="danger" size="sm" title="Löschen" onClick={() => requestDelete(row.original)}>
             <TrashIcon className="h-4 w-4" />
@@ -653,14 +673,18 @@ function ColumnCell({
   doneValue: string;
   statusOptions: CustomColumnOption[];
   priorityOptions: CustomColumnOption[];
-  commit: (id: number, patch: Partial<Task>) => void;
+  commit: (task: Task, patch: Partial<Task>, label: string) => void;
   commitCustom: (task: Task, colId: number, value: unknown) => void;
 }) {
   if (col.kind === 'builtin') {
     switch (col.key) {
       case 'status':
         return (
-          <PillSelect value={task.status} options={statusOptions} onChange={(v) => commit(task.id, { status: v })} />
+          <PillSelect
+            value={task.status}
+            options={statusOptions}
+            onChange={(v) => commit(task, { status: v }, 'Statusänderung')}
+          />
         );
       case 'title':
         return (
@@ -668,7 +692,7 @@ function ColumnCell({
             task={task}
             isChild={isChild}
             doneValue={doneValue}
-            onCommit={(v) => commit(task.id, { title: v })}
+            onCommit={(v) => commit(task, { title: v }, 'Titeländerung')}
           />
         );
       case 'priority':
@@ -677,13 +701,13 @@ function ColumnCell({
             value={task.priority}
             options={priorityOptions}
             placeholder="Priorität"
-            onChange={(v) => commit(task.id, { priority: v })}
+            onChange={(v) => commit(task, { priority: v }, 'Prioritätsänderung')}
           />
         );
       case 'due':
-        return <DueCell task={task} onCommit={(v) => commit(task.id, { due_date: v })} />;
+        return <DueCell task={task} onCommit={(v) => commit(task, { due_date: v }, 'Datumsänderung')} />;
       case 'comment':
-        return <CommentCell task={task} onCommit={(v) => commit(task.id, { comment: v })} />;
+        return <CommentCell task={task} onCommit={(v) => commit(task, { comment: v }, 'Kommentaränderung')} />;
       case 'created':
         return <TimestampCell value={task.created_at} />;
       case 'updated':

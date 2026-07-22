@@ -5,7 +5,7 @@ import { RecordFormModal, type FieldDef } from './fields';
 import { api } from '../api/client';
 import type { Artist, Project } from '../api/types';
 import { pickArtistColor, projectShade } from '../lib/colors';
-import { useInvalidateAll, useSettings } from '../hooks';
+import { useInvalidateAll, useSettings, useUndoablePatch } from '../hooks';
 
 const ARTIST_FIELDS: FieldDef[] = [
   { name: 'name', label: 'Name', required: true, span2: true },
@@ -55,7 +55,7 @@ export function NewArtistButton() {
 }
 
 export function EditArtistButton({ artist }: { artist: Artist }) {
-  const invalidate = useInvalidateAll();
+  const undoablePatch = useUndoablePatch();
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -68,8 +68,12 @@ export function EditArtistButton({ artist }: { artist: Artist }) {
           fields={ARTIST_FIELDS}
           initial={artist}
           onSubmit={async (v) => {
-            await api.artists.update(artist.id, stripEmptyColor(v));
-            await invalidate();
+            await undoablePatch({
+              res: api.artists,
+              row: artist,
+              patch: stripEmptyColor(v),
+              label: 'Änderung am Künstler',
+            });
           }}
           onClose={() => setOpen(false)}
         />
@@ -122,7 +126,7 @@ export function NewProjectButton({ artistId, artistColor }: { artistId: number; 
 }
 
 export function EditProjectButton({ project, artistColor }: { project: Project; artistColor: string }) {
-  const invalidate = useInvalidateAll();
+  const undoablePatch = useUndoablePatch();
   const { data: settings } = useSettings();
   const [open, setOpen] = useState(false);
   return (
@@ -142,8 +146,12 @@ export function EditProjectButton({ project, artistColor }: { project: Project; 
           )}
           initial={project}
           onSubmit={async (v) => {
-            await api.projects.update(project.id, v);
-            await invalidate();
+            await undoablePatch({
+              res: api.projects,
+              row: project,
+              patch: v,
+              label: 'Änderung am Projekt',
+            });
           }}
           onClose={() => setOpen(false)}
         />

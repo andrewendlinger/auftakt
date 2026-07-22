@@ -65,10 +65,18 @@ export const tasksRouter = crudRouter({
     'custom_values',
     'parent_id',
     'sort_order',
+    // Deliberate exception to "the allowlist is the single authority on what a client may set":
+    // the undo stack has to be able to put the *original* completion date back. Without it,
+    // undoing a status flip re-stamps erledigt_am with today, which silently un-archives a task
+    // that had aged past ARCHIVE_AFTER_DAYS. Normal edits never send it — see the guard below.
+    'erledigt_am',
   ],
   required: ['title'],
   jsonColumns: ['custom_values'],
   transform: (body, { mode, existing }) => {
+    // An explicit erledigt_am wins over the derivation: that is the undo path restoring a value
+    // this transform itself destroyed. Checked first so a status+erledigt_am pair isn't reverted.
+    if ('erledigt_am' in body) return body;
     // Stamp/clear erledigt_am against the Status column's editable "done" value.
     if ('status' in body) {
       const done = doneStatusValue(getDb());

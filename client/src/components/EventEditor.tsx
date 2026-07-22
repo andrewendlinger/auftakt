@@ -4,7 +4,7 @@ import { MarkdownTextarea } from './MarkdownTextarea';
 import { Btn } from './ui';
 import { api } from '../api/client';
 import type { EventItem } from '../api/types';
-import { useInvalidateAll } from '../hooks';
+import { useInvalidateAll, useUndoablePatch } from '../hooks';
 
 export interface EventParent {
   artist_id?: number;
@@ -23,6 +23,7 @@ export function EventEditor({
   onClose: () => void;
 }) {
   const invalidate = useInvalidateAll();
+  const undoablePatch = useUndoablePatch();
   const [type, setType] = useState(event?.type ?? eventTypes[0] ?? 'Termin');
   const [title, setTitle] = useState(event?.title ?? '');
   const [allDay, setAllDay] = useState<boolean>(!!event?.all_day);
@@ -53,9 +54,12 @@ export function EventEditor({
       notes: notes.trim() === '' ? null : notes,
     };
     try {
-      if (event) await api.events.update(event.id, payload);
-      else await api.events.create(payload);
-      await invalidate();
+      if (event) {
+        await undoablePatch({ res: api.events, row: event, patch: payload, label: 'Änderung am Termin' });
+      } else {
+        await api.events.create(payload);
+        await invalidate();
+      }
       onClose();
     } finally {
       setBusy(false);
