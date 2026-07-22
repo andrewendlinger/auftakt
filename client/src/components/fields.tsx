@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Btn, IconButton } from './ui';
-import { MarkdownTextarea } from './MarkdownTextarea';
+import { RichTextEditor } from './RichTextEditor';
 import { resizeToDataUrl } from '../lib/image';
 
 // Viewport-relative, not a fixed rem cap: on a large window the old max-w-2xl left every
@@ -292,11 +292,11 @@ export function RecordFormModal({
             {f.type === 'image' ? (
               <ImageField value={vals[f.name] ?? ''} onChange={(v) => set(f.name, v)} />
             ) : f.type === 'textarea' ? (
-              <MarkdownTextarea
+              <RichTextEditor
                 value={vals[f.name] ?? ''}
                 onChange={(v) => set(f.name, v)}
                 placeholder={f.placeholder}
-                className={`${inputCls} min-h-40 resize-y`}
+                className={`${inputCls} min-h-40`}
               />
             ) : f.type === 'select' ? (
               <Select value={vals[f.name]} onChange={(e) => set(f.name, e.target.value)}>

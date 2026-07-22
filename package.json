@@ -17,6 +17,7 @@
     "demo:seed": "npm --prefix server run demo",
     "typecheck": "npm --prefix server run typecheck && npm --prefix client run typecheck && tsc -p electron/tsconfig.json",
     "check:backup": "node scripts/check-backup.mjs",
+    "check:markdown": "npm --prefix client run check:markdown",
     "build:client": "npm --prefix client run build",
     "build:bundles": "node scripts/build.mjs",
     "build": "npm run build:client && npm run build:bundles",

@@ -17,7 +17,7 @@ import { MANUAL_SORT_ID, SORTABLE_TASK_COLUMNS } from '../lib/taskSort';
 import { arrayMoveTo } from '../lib/arrays';
 import { useDragReorder } from '../lib/dragReorder';
 import { Markdown } from './Markdown';
-import { MarkdownTextarea } from './MarkdownTextarea';
+import { RichTextEditor } from './RichTextEditor';
 import { ColorSwatchPicker } from './ColorSwatchPicker';
 import { CHILD_BAND, TREE, TreeGutterCell, groupRows, spineColorFor } from './TaskTreeGutter';
 import { TrashIcon } from './icons';
@@ -810,11 +810,12 @@ function CommentCell({ task, onCommit }: { task: Task; onCommit: (v: string | nu
 
   if (editing) {
     return (
-      <MarkdownTextarea
+      <RichTextEditor
         autoFocus
+        compact
         value={value}
         onChange={setValue}
-        className={`min-h-24 w-full min-w-64 resize-y ${INLINE_INPUT}`}
+        className={`min-h-24 w-full min-w-64 ${INLINE_INPUT}`}
         onBlur={() => {
           setEditing(false);
           const v = value.trim() === '' ? null : value;

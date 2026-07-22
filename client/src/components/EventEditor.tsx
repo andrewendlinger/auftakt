@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Label, Modal, Select, TextInput } from './fields';
-import { MarkdownTextarea } from './MarkdownTextarea';
+import { RichTextEditor } from './RichTextEditor';
 import { Btn } from './ui';
 import { api } from '../api/client';
 import type { CustomColumnOption, EventItem } from '../api/types';
@@ -123,7 +123,7 @@ export function EventEditor({
         </div>
         <div className="col-span-2">
           <Label>Notizen</Label>
-          <MarkdownTextarea value={notes} onChange={setNotes} />
+          <RichTextEditor value={notes} onChange={setNotes} />
         </div>
       </div>
     </Modal>

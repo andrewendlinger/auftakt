@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Markdown } from './Markdown';
-import { MarkdownTextarea } from './MarkdownTextarea';
+import { RichTextEditor } from './RichTextEditor';
 
 /**
  * Click-to-edit multi-line notes: shows linkified text, edits in place in a
- * textarea (blur/⌘↵ saves, Esc cancels). Used for "Bestätigte Fakten" etc.
+ * rich-text editor (blur/⌘↵ saves, Esc cancels). Used for "Bestätigte Fakten" etc.
  */
 export function InlineNotes({
   value,
@@ -30,18 +30,23 @@ export function InlineNotes({
 
   if (editing) {
     return (
-      <MarkdownTextarea
+      <RichTextEditor
         autoFocus
+        compact
         value={text}
         onChange={setText}
-        className="min-h-32 w-full resize-y rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-800 outline-none transition focus:border-neutral-500 focus:ring-2 focus:ring-neutral-900/5"
+        className="min-h-32 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-800 outline-none transition focus:border-neutral-500 focus:ring-2 focus:ring-neutral-900/5"
         onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === 'Escape') {
+            e.preventDefault();
             setText(value ?? '');
             setEditing(false);
           }
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) (e.target as HTMLTextAreaElement).blur();
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            (e.target as HTMLElement).blur();
+          }
         }}
       />
     );

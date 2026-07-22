@@ -60,15 +60,51 @@ const ARCHIVED = -(ARCHIVE_AFTER_DAYS + 15);
 
 /* ---------- the dataset ---------- */
 
+// A ~one-page project description exercising every rich-text construct (WP-Q): headings,
+// bold, legacy <u>, nested bullet+ordered lists (3-space indent, the unit the renderer nests),
+// a link, a GFM table, a blockquote and emoji. Its purpose is to eyeball the WYSIWYG editor
+// and its Markdown round-trip in `npm run demo`.
+const RICH_DESCRIPTION = `# Eröffnungskonzert
+
+Das **Eröffnungskonzert** eröffnet das Festival im großen Saal — der wichtigste Abend der ersten Woche 🎉.
+
+## Ablauf
+
+- 14:00 — Soundcheck
+- 19:00 — Einlass
+   1. VIP-Gäste zuerst
+   2. dann Abendkasse
+- 20:00 — Beginn
+
+## Technik
+
+Die Bühne braucht <u>zwingend</u> zwei Monitore. Kontakt über [die Technik-Seite](https://festival.example.com/technik).
+
+| Position | Person |
+| --- | --- |
+| Licht | Anna |
+| Ton | Ben |
+
+> Aufbau nur mit Helm 🎧`;
+
+const RICH_PROJECT_NOTES = `**Bestätigt:** Termin, Saal und Honorar stehen. Rider liegt vor — Details im [Ordner](https://example.com/rider).`;
+
+const RICH_ARTIST_NOTES = `Streichquartett, <u>Residenz</u> über das ganze Festival. Reisen gemeinsam an 🚐.
+
+- Bevorzugt vegetarisches Catering
+- Braucht Stimmzimmer ab Mittag`;
+
+const RICH_EVENT_NOTES = `Doors 19:00, Beginn **19:30**. Zugabe ist abgesprochen 🎻.`;
+
 const ARTISTS = [
-  { id: 1, name: 'Nordlicht Quartett', color: '#3b82f6', notes: 'Streichquartett, Residenz über das ganze Festival.' },
+  { id: 1, name: 'Nordlicht Quartett', color: '#3b82f6', notes: RICH_ARTIST_NOTES },
   { id: 2, name: 'Ana Belém Trio', color: '#ec4899', notes: 'Anreise aus Lissabon — Visa früh klären.' },
   { id: 3, name: 'Kollektiv Halbton', color: '#10b981', notes: null },
   { id: 4, name: 'Jonas Wehrmann', color: '#f59e0b', notes: 'Solopianist, spielt auch den Meisterkurs.' },
 ];
 
 const PROJECTS = [
-  { id: 1, artist_id: 1, code: 'NQ1', name: 'Eröffnungskonzert', status: 'In Progress', description: 'Eröffnung im großen Saal.' },
+  { id: 1, artist_id: 1, code: 'NQ1', name: 'Eröffnungskonzert', status: 'In Progress', description: RICH_DESCRIPTION, notes: RICH_PROJECT_NOTES },
   // The only project with an explicit colour — deliberately off its artist's blue, so the
   // "explicitly set" and "inherits a shade" states of the colour field are both eyeballable.
   { id: 2, artist_id: 1, code: 'NQ2', name: 'Schulworkshop', status: 'Not Started', description: 'Vormittagsformat für zwei Schulklassen.', color: '#8b5cf6' },
@@ -90,7 +126,7 @@ const CONTACTS = [
 
 /** Mix of all-day (date-only start) and timed rows — the UI renders them differently. */
 const EVENTS = [
-  { id: 1, artist_id: null, project_id: 1, type: 'Auftritt', title: 'Eröffnungskonzert', start_at: at(14, '19:30'), end_at: at(14, '21:15'), all_day: 0, location: 'Großer Saal' },
+  { id: 1, artist_id: null, project_id: 1, type: 'Auftritt', title: 'Eröffnungskonzert', start_at: at(14, '19:30'), end_at: at(14, '21:15'), all_day: 0, location: 'Großer Saal', notes: RICH_EVENT_NOTES },
   { id: 2, artist_id: null, project_id: 1, type: 'Deadline', title: 'Programmtext-Abgabe', start_at: days(4), end_at: null, all_day: 1, location: null },
   { id: 3, artist_id: null, project_id: 3, type: 'Auftritt', title: 'Hauptkonzert Ana Belém Trio', start_at: at(16, '20:00'), end_at: at(16, '22:00'), all_day: 0, location: 'Kammermusiksaal' },
   { id: 4, artist_id: 2, project_id: null, type: 'Anreise', title: 'Anreise aus Lissabon', start_at: days(15), end_at: null, all_day: 1, location: 'Flughafen' },
@@ -247,16 +283,16 @@ function main(): void {
     `INSERT INTO artists (id, name, color, notes, sort_order) VALUES (@id, @name, @color, @notes, @sort_order)`,
   );
   const insProject = db.prepare(
-    `INSERT INTO projects (id, artist_id, code, name, status, description, color, sort_order)
-     VALUES (@id, @artist_id, @code, @name, @status, @description, @color, @sort_order)`,
+    `INSERT INTO projects (id, artist_id, code, name, status, description, notes, color, sort_order)
+     VALUES (@id, @artist_id, @code, @name, @status, @description, @notes, @color, @sort_order)`,
   );
   const insContact = db.prepare(
     `INSERT INTO contacts (id, artist_id, project_id, role, name, email, phone, sort_order)
      VALUES (@id, @artist_id, @project_id, @role, @name, @email, @phone, @sort_order)`,
   );
   const insEvent = db.prepare(
-    `INSERT INTO events (id, artist_id, project_id, type, title, start_at, end_at, all_day, location, sort_order)
-     VALUES (@id, @artist_id, @project_id, @type, @title, @start_at, @end_at, @all_day, @location, @sort_order)`,
+    `INSERT INTO events (id, artist_id, project_id, type, title, start_at, end_at, all_day, location, notes, sort_order)
+     VALUES (@id, @artist_id, @project_id, @type, @title, @start_at, @end_at, @all_day, @location, @notes, @sort_order)`,
   );
   const insTask = db.prepare(
     `INSERT INTO tasks (id, artist_id, project_id, parent_id, title, status, priority, due_date,
@@ -275,9 +311,9 @@ function main(): void {
 
   const tx = db.transaction(() => {
     ARTISTS.forEach((a, i) => insArtist.run({ ...a, sort_order: i }));
-    PROJECTS.forEach((p, i) => insProject.run({ color: null, ...p, sort_order: i }));
+    PROJECTS.forEach((p, i) => insProject.run({ color: null, notes: null, ...p, sort_order: i }));
     CONTACTS.forEach((c, i) => insContact.run({ ...c, sort_order: i }));
-    EVENTS.forEach((e, i) => insEvent.run({ ...e, sort_order: i }));
+    EVENTS.forEach((e, i) => insEvent.run({ notes: null, ...e, sort_order: i }));
 
     // Custom columns first: their generated ids are the keys inside tasks.custom_values.
     const colIds = CUSTOM_COLUMNS.map(
