@@ -3,6 +3,8 @@ import type {
   Contact,
   CustomColumn,
   Dashboard,
+  DeletedItem,
+  DeletedType,
   EventItem,
   ID,
   LinkItem,
@@ -80,6 +82,14 @@ export const api = {
   customColumns: resource<CustomColumn>('/custom-columns'),
 
   duplicateEvent: (id: ID) => http<EventItem>('POST', `/events/${id}/duplicate`),
+
+  /** The archive's trash: list soft-deleted rows, restore one, or permanently (cascade) purge one. */
+  deleted: {
+    list: () => http<DeletedItem[]>('GET', '/deleted'),
+    restore: (type: DeletedType, id: ID) => http<{ ok: true }>('POST', `/deleted/${type}/${id}/restore`),
+    purge: (type: DeletedType, id: ID) =>
+      http<{ ok: true; removed: DeletedItem['dependents'] }>('DELETE', `/deleted/${type}/${id}`),
+  },
 
   seasons: () => http<SeasonList>('GET', '/seasons'),
   createSeason: (label: string, opts?: { copyFrom?: ID } & Partial<SeasonCopyOptions>) =>

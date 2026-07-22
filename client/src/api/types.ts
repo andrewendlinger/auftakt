@@ -134,6 +134,24 @@ export interface LinkItem extends SoftDeletable {
   color: string | null;
 }
 
+/** The content entities a user directly deletes and can find again in the archive's trash. */
+export type DeletedType = 'artist' | 'project' | 'contact' | 'event' | 'task' | 'link';
+
+/** One soft-deleted row surfaced in the "Gelöschte Items" section. */
+export interface DeletedItem {
+  type: DeletedType;
+  id: ID;
+  /** Human label (e.g. task title, "CODE · Projektname"). */
+  label: string;
+  /** Owner context (artist name / project code), or null for season-wide/leaf rows. */
+  sublabel: string | null;
+  deleted_at: string;
+  /** When the automatic purge removes it (deleted_at + PURGE_AFTER_DAYS). */
+  purge_at: string;
+  /** What a permanent delete cascades to. `column` = a project's custom columns. */
+  dependents: { total: number; byType: Partial<Record<DeletedType | 'column', number>> };
+}
+
 export interface Season {
   id: ID;
   label: string;

@@ -14,6 +14,7 @@ import {
   tasksRouter,
 } from './routes/entities';
 import { dashboardRouter } from './routes/dashboard';
+import { deletedRouter } from './routes/deleted';
 import { searchRouter } from './routes/search';
 import { settingsRouter } from './routes/settings';
 import { exportRouter } from './routes/export';
@@ -40,6 +41,7 @@ app.use('/api/events', eventsRouter);
 app.use('/api/tasks', tasksRouter);
 app.use('/api/links', linksRouter);
 app.use('/api/custom-columns', customColumnsRouter);
+app.use('/api/deleted', deletedRouter);
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/settings', settingsRouter);

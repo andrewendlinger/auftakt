@@ -887,7 +887,9 @@ export function setSetting(db: Database.Database, key: string, value: string): v
 
 /** Hard-delete rows whose deleted_at is older than PURGE_AFTER_DAYS. Runs on startup. */
 export function purgeExpired(db: Database.Database): void {
-  const tables = ['artists', 'projects', 'contacts', 'events', 'tasks', 'custom_columns', 'links'];
+  // Children before parents (foreign_keys = ON): deleting an expired parent while a row still
+  // references it would throw. e.g. links reference every other table, so they go first.
+  const tables = ['links', 'custom_columns', 'tasks', 'events', 'contacts', 'projects', 'artists'];
   const cutoff = `-${PURGE_AFTER_DAYS} days`;
   const tx = db.transaction(() => {
     for (const t of tables) {

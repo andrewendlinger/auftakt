@@ -114,6 +114,8 @@ const PROJECTS = [
   { id: 6, artist_id: 3, code: 'KH2', name: 'Late-Night-Set', status: 'Not Started', description: null },
   { id: 7, artist_id: 4, code: 'JW1', name: 'Solo-Rezital', status: 'Done', description: 'Programm steht, Werbung läuft.' },
   { id: 8, artist_id: 4, code: 'JW2', name: 'Meisterkurs', status: 'In Progress', description: 'Drei Tage, zwölf Teilnehmende.' },
+  // Soft-deleted (in the trash) — its live child task 52 makes the cascade count demonstrable.
+  { id: 9, artist_id: 4, code: 'JW3', name: 'Gestrichenes Nebenkonzert', status: 'Not Started', description: null, deleted_at: stamp(-4) },
 ];
 
 const CONTACTS = [
@@ -122,6 +124,8 @@ const CONTACTS = [
   { id: 3, artist_id: null, project_id: 3, role: 'Booking', name: 'Rosa Enríquez', email: 'rosa@example.org', phone: '+351 900 000 000' },
   { id: 4, artist_id: 3, project_id: null, role: 'Label', name: 'Halbton Records', email: 'kontakt@example.org', phone: null },
   { id: 5, artist_id: null, project_id: 7, role: 'Agentur', name: 'Ines Kubowski', email: 'ines@example.org', phone: '+49 151 0000002' },
+  // Soft-deleted contact — a leaf in the trash (nothing references it).
+  { id: 6, artist_id: 1, project_id: null, role: 'Fahrer', name: 'Ehemaliger Fahrer', email: null, phone: null, deleted_at: stamp(-5) },
 ];
 
 /** Mix of all-day (date-only start) and timed rows — the UI renders them differently. */
@@ -135,6 +139,8 @@ const EVENTS = [
   { id: 7, artist_id: null, project_id: 8, type: 'Termin', title: 'Meisterkurs Tag 1', start_at: days(21), end_at: null, all_day: 1, location: 'Probenraum 2' },
   // start_at NULL = "Datum offen" (TBD) — renders as its own block above the dated events.
   { id: 8, artist_id: null, project_id: 7, type: 'Termin', title: 'Nachholtermin Solo-Rezital', start_at: null, end_at: null, all_day: 0, location: null },
+  // Soft-deleted event — a leaf in the trash.
+  { id: 9, artist_id: null, project_id: 3, type: 'Termin', title: 'Abgesagter Soundcheck', start_at: days(9), end_at: null, all_day: 1, location: null, deleted_at: stamp(-8) },
 ];
 
 interface DemoTask {
@@ -234,6 +240,9 @@ const TASKS: DemoTask[] = [
   { id: 49, project_id: 1, title: 'Werbematerial finalisieren', status: 'active', priority: 'hoch', due_date: days(-4) },
   { id: 50, project_id: 1, title: 'Pressemitteilung freigeben', status: 'active', due_date: days(1) },
   { id: 51, artist_id: 1, title: 'Rider an Veranstalter schicken', status: 'active', priority: 'hoch', due_date: days(-1) },
+
+  // Live task under a soft-deleted project (id 9) — purging that project cascades this away.
+  { id: 52, project_id: 9, title: 'Aufgabe im gestrichenen Projekt', status: 'active' },
 ];
 
 /** One row per link parent type, so all four branches of the links CHECK are covered. */
@@ -242,6 +251,8 @@ const LINKS = [
   { id: 2, artist_id: 2, project_id: null, event_id: null, task_id: null, label: 'Künstlerwebsite', url: 'https://example.org/ana-belem' },
   { id: 3, artist_id: null, project_id: null, event_id: 1, task_id: null, label: 'Saalplan', url: 'https://example.org/saalplan' },
   { id: 4, artist_id: null, project_id: null, event_id: null, task_id: 20, label: 'Druckerei-Angebot', url: 'https://example.org/angebot' },
+  // Soft-deleted document — a leaf in the trash.
+  { id: 5, artist_id: null, project_id: 2, event_id: null, task_id: null, label: 'Veraltetes Angebot', url: 'https://example.org/alt-angebot', deleted_at: stamp(-1) },
 ];
 
 /** Custom task columns — the only way to exercise the data-driven task table. */
@@ -285,16 +296,16 @@ function main(): void {
     `INSERT INTO artists (id, name, color, notes, sort_order) VALUES (@id, @name, @color, @notes, @sort_order)`,
   );
   const insProject = db.prepare(
-    `INSERT INTO projects (id, artist_id, code, name, status, description, notes, color, sort_order)
-     VALUES (@id, @artist_id, @code, @name, @status, @description, @notes, @color, @sort_order)`,
+    `INSERT INTO projects (id, artist_id, code, name, status, description, notes, color, deleted_at, sort_order)
+     VALUES (@id, @artist_id, @code, @name, @status, @description, @notes, @color, @deleted_at, @sort_order)`,
   );
   const insContact = db.prepare(
-    `INSERT INTO contacts (id, artist_id, project_id, role, name, email, phone, sort_order)
-     VALUES (@id, @artist_id, @project_id, @role, @name, @email, @phone, @sort_order)`,
+    `INSERT INTO contacts (id, artist_id, project_id, role, name, email, phone, deleted_at, sort_order)
+     VALUES (@id, @artist_id, @project_id, @role, @name, @email, @phone, @deleted_at, @sort_order)`,
   );
   const insEvent = db.prepare(
-    `INSERT INTO events (id, artist_id, project_id, type, title, start_at, end_at, all_day, location, notes, sort_order)
-     VALUES (@id, @artist_id, @project_id, @type, @title, @start_at, @end_at, @all_day, @location, @notes, @sort_order)`,
+    `INSERT INTO events (id, artist_id, project_id, type, title, start_at, end_at, all_day, location, notes, deleted_at, sort_order)
+     VALUES (@id, @artist_id, @project_id, @type, @title, @start_at, @end_at, @all_day, @location, @notes, @deleted_at, @sort_order)`,
   );
   const insTask = db.prepare(
     `INSERT INTO tasks (id, artist_id, project_id, parent_id, title, status, priority, due_date,
@@ -303,8 +314,8 @@ function main(): void {
              @comment, @color, @custom_values, @erledigt_am, @deleted_at, @sort_order)`,
   );
   const insLink = db.prepare(
-    `INSERT INTO links (id, artist_id, project_id, event_id, task_id, label, url, sort_order)
-     VALUES (@id, @artist_id, @project_id, @event_id, @task_id, @label, @url, @sort_order)`,
+    `INSERT INTO links (id, artist_id, project_id, event_id, task_id, label, url, deleted_at, sort_order)
+     VALUES (@id, @artist_id, @project_id, @event_id, @task_id, @label, @url, @deleted_at, @sort_order)`,
   );
   const insColumn = db.prepare(
     `INSERT INTO custom_columns (name, type, scope, project_id, options, icon, kind, enabled, deletable, sort_order)
@@ -313,9 +324,9 @@ function main(): void {
 
   const tx = db.transaction(() => {
     ARTISTS.forEach((a, i) => insArtist.run({ ...a, sort_order: i }));
-    PROJECTS.forEach((p, i) => insProject.run({ color: null, notes: null, ...p, sort_order: i }));
-    CONTACTS.forEach((c, i) => insContact.run({ ...c, sort_order: i }));
-    EVENTS.forEach((e, i) => insEvent.run({ notes: null, ...e, sort_order: i }));
+    PROJECTS.forEach((p, i) => insProject.run({ color: null, notes: null, deleted_at: null, ...p, sort_order: i }));
+    CONTACTS.forEach((c, i) => insContact.run({ deleted_at: null, ...c, sort_order: i }));
+    EVENTS.forEach((e, i) => insEvent.run({ notes: null, deleted_at: null, ...e, sort_order: i }));
 
     // Custom columns first: their generated ids are the keys inside tasks.custom_values.
     const colIds = CUSTOM_COLUMNS.map(
@@ -344,7 +355,7 @@ function main(): void {
       });
     });
 
-    LINKS.forEach((l, i) => insLink.run({ ...l, sort_order: i }));
+    LINKS.forEach((l, i) => insLink.run({ deleted_at: null, ...l, sort_order: i }));
   });
   tx();
 
