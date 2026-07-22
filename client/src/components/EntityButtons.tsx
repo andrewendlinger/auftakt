@@ -12,8 +12,8 @@ const ARTIST_FIELDS: FieldDef[] = [
   { name: 'image', label: 'Profilbild', type: 'image' },
   // No `fallback`: artists.color is NOT NULL DEFAULT '#888888', so the plain grey swatch is
   // exactly what an empty field ends up rendering. Nothing is inherited here.
+  // No notes field: "Allgemeines / Beschreibung" is edited inline on the artist page.
   { name: 'color', label: 'Farbe', type: 'color' },
-  { name: 'notes', label: 'Notizen', type: 'textarea' },
 ];
 
 function stripEmptyColor(values: Record<string, string | null>): Record<string, string | null> {
@@ -94,9 +94,8 @@ function projectFields(statuses: CustomColumnOption[], fallback: string, fallbac
     { name: 'code', label: 'Kürzel (Badge)', required: true, placeholder: 'z. B. K3a' },
     { name: 'name', label: 'Name', required: true },
     { name: 'status', label: 'Status', type: 'select', options: statuses.map((o) => ({ value: o.value, label: o.label })) },
+    // No description field: "Allgemeines / Beschreibung" is edited inline on the project page.
     { name: 'color', label: 'Farbe (optional, sonst Schattierung)', type: 'color', fallback, fallbackHint },
-    { name: 'description', label: 'Beschreibung', type: 'textarea' },
-    { name: 'notes', label: 'Notizen', type: 'textarea' },
   ];
 }
 

@@ -89,8 +89,8 @@ function seedFromCsv(db: Database.Database, dir: string): void {
     `INSERT INTO artists (id, name, color, notes, sort_order) VALUES (@id, @name, @color, @notes, @sort_order)`,
   );
   const insProject = db.prepare(
-    `INSERT INTO projects (id, artist_id, code, name, status, description, notes, color, sort_order)
-     VALUES (@id, @artist_id, @code, @name, @status, @description, @notes, @color, @sort_order)`,
+    `INSERT INTO projects (id, artist_id, code, name, status, description, color, sort_order)
+     VALUES (@id, @artist_id, @code, @name, @status, @description, @color, @sort_order)`,
   );
   const insContact = db.prepare(
     `INSERT INTO contacts (id, artist_id, project_id, role, name, email, phone, notes, sort_order)
@@ -123,14 +123,16 @@ function seedFromCsv(db: Database.Database, dir: string): void {
     });
 
     projects.forEach((r, i) => {
+      // Legacy CSVs carry description AND notes; the schema keeps one field, so merge.
+      const description = nn(r.description);
+      const notes = nn(r.notes);
       insProject.run({
         id: Number(r.id),
         artist_id: Number(r.artist_id),
         code: r.code,
         name: r.name,
         status: mapProjectStatus(nn(r.status)),
-        description: nn(r.description),
-        notes: nn(r.notes),
+        description: description && notes ? `${description}\n\n${notes}` : (description ?? notes),
         color: nn(r.color), // NULL => auto-derived shade at render time
         sort_order: i,
       });

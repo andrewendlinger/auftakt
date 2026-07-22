@@ -3,7 +3,6 @@ import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { contrastText, projectShade, withAlpha } from '../lib/colors';
-import { Markdown } from '../components/Markdown';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { SectionArranger } from '../components/SectionArranger';
 import { EditableLabel } from '../components/EditableLabel';
@@ -93,14 +92,13 @@ export function ProjectPage() {
         </SectionTitle>
         <Card className="p-5">
           <InlineNotes
-            value={project.notes}
-            placeholder="+ Notiz hinzufügen"
+            value={project.description}
             onSave={async (v) => {
               await undoablePatch({
                 res: api.projects,
                 row: project,
-                patch: { notes: v },
-                label: 'Notizänderung',
+                patch: { description: v },
+                label: 'Textänderung',
               });
             }}
           />
@@ -161,9 +159,6 @@ export function ProjectPage() {
               {project.status && <ProjectStatusPill status={project.status} />}
             </div>
             <h1 className="mt-2 text-2xl font-bold text-neutral-800">{project.name}</h1>
-            {project.description && (
-              <Markdown className="mt-1 max-w-2xl text-sm text-neutral-600">{project.description}</Markdown>
-            )}
           </div>
           <div className="flex items-center gap-2">
             <a

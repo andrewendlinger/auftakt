@@ -15,16 +15,18 @@ import type { LabelKey } from '../lib/labels';
 import { Card, DragHandle, SectionTitle, Spinner, EmptyState } from '../components/ui';
 import { EventList } from '../components/EventList';
 import { ContactList } from '../components/ContactList';
+import { InlineNotes } from '../components/InlineNotes';
 import { TaskTable } from '../components/TaskTable';
 import { TaskStatChips } from '../components/TaskStatChips';
 import { AttentionList } from '../components/AttentionList';
 import { EditArtistButton, NewProjectButton } from '../components/EntityButtons';
 import { ProjectStatusPill } from '../components/ProjectStatusPill';
 import { ExcelButton } from '../components/ExcelButton';
-import { useEventTypeOptions, useInvalidateAll, useTaskStatsConfig } from '../hooks';
+import { useEventTypeOptions, useInvalidateAll, useTaskStatsConfig, useUndoablePatch } from '../hooks';
 
 /** Which heading names each section in the "Bereiche anordnen" strip. */
 const SECTION_LABEL_KEYS = {
+  allgemeines: 'artist.allgemeines',
   termine: 'artist.termine',
   aufmerksamkeit: 'artist.aufmerksamkeit',
   projekte: 'artist.projekte',
@@ -37,6 +39,7 @@ export function ArtistPage() {
   const artistId = Number(id);
   const eventTypes = useEventTypeOptions();
   const { windowDays } = useTaskStatsConfig();
+  const undoablePatch = useUndoablePatch();
 
   const { data: artist, isLoading } = useQuery({
     queryKey: ['artist', artistId],
@@ -81,6 +84,26 @@ export function ArtistPage() {
   }
 
   const sections: Record<string, ReactNode> = {
+    allgemeines: (
+      <>
+        <SectionTitle>
+          <EditableLabel k="artist.allgemeines" />
+        </SectionTitle>
+        <Card className="p-5">
+          <InlineNotes
+            value={artist.notes}
+            onSave={async (v) => {
+              await undoablePatch({
+                res: api.artists,
+                row: artist,
+                patch: { notes: v },
+                label: 'Textänderung',
+              });
+            }}
+          />
+        </Card>
+      </>
+    ),
     termine: (
       <EventList
         titleKey="artist.termine"
@@ -154,9 +177,6 @@ export function ArtistPage() {
                 <EditableLabel k="artist.kicker" />
               </div>
               <h1 className="text-2xl font-bold text-neutral-800">{artist.name}</h1>
-              {artist.notes && (
-                <Markdown className="mt-1 max-w-2xl text-sm text-neutral-600">{artist.notes}</Markdown>
-              )}
             </div>
           </div>
           <div className="flex items-center gap-2">

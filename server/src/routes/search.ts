@@ -29,10 +29,10 @@ searchRouter.get('/', (req, res) => {
   const projects = db
     .prepare(
       `SELECT id, artist_id, code, name FROM projects
-       WHERE deleted_at IS NULL AND (code LIKE ? OR name LIKE ? OR description LIKE ? OR notes LIKE ?)
+       WHERE deleted_at IS NULL AND (code LIKE ? OR name LIKE ? OR description LIKE ?)
        ORDER BY code LIMIT ?`,
     )
-    .all(like, like, like, like, LIMIT);
+    .all(like, like, like, LIMIT);
 
   const tasks = db
     .prepare(

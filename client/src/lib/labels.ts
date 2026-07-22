@@ -25,6 +25,7 @@ export const LABEL_DEFAULTS = {
 
   /** The kicker above the artist H1, not the page title (which is the artist's name). */
   'artist.kicker': 'Künstler',
+  'artist.allgemeines': 'Allgemeines / Beschreibung',
   'artist.termine': 'Wichtige Termine',
   'artist.projekte': 'Projekte',
   'artist.aufmerksamkeit': 'Braucht Aufmerksamkeit',
@@ -37,7 +38,7 @@ export const LABEL_DEFAULTS = {
 
   'project.kicker': 'Projekt',
   'project.termine': 'Wichtige Termine',
-  'project.fakten': 'Notizen',
+  'project.fakten': 'Allgemeines / Beschreibung',
   // The project page's `kontakte` section renders two lists side by side, so it owns two
   // ids — renaming one leaves the other alone.
   'project.kontakte': 'Projekt-Kontakte',

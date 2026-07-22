@@ -3,8 +3,9 @@ import { Markdown } from './Markdown';
 import { RichTextEditor } from './RichTextEditor';
 
 /**
- * Click-to-edit multi-line notes: shows linkified text, edits in place in a
- * rich-text editor (blur/⌘↵ saves, Esc cancels). Used for "Bestätigte Fakten" etc.
+ * Click-to-edit multi-line text: shows linkified text, a single click edits in place in a
+ * rich-text editor (blur/⌘↵ saves, Esc cancels). Clicking a link inside the rendered text
+ * follows the link instead of opening the editor. Used for "Allgemeines / Beschreibung" etc.
  */
 export function InlineNotes({
   value,
@@ -61,16 +62,14 @@ export function InlineNotes({
   }
 
   return (
-    <div className="group">
-      <div className="cursor-text text-sm text-neutral-700" onDoubleClick={start}>
-        <Markdown>{value}</Markdown>
-      </div>
-      <button
-        className="mt-1 text-[11px] text-neutral-400 opacity-0 transition hover:text-neutral-600 group-hover:opacity-100"
-        onClick={start}
-      >
-        ✎ bearbeiten
-      </button>
+    <div
+      className="cursor-text text-sm text-neutral-700"
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('a')) return; // follow links, don't edit
+        start();
+      }}
+    >
+      <Markdown>{value}</Markdown>
     </div>
   );
 }

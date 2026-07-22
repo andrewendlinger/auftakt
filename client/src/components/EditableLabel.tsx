@@ -12,7 +12,8 @@ import { LABEL_DEFAULTS } from '../lib/labels';
  *
  * The pencil rather than a click-anywhere target: headings sit next to action buttons and are
  * read far more often than they are edited, so a bare click-to-edit would fire by accident.
- * `InlineNotes` draws the same line with its double-click.
+ * (Body text is different: `InlineNotes` is click-anywhere, because a text block is its own
+ * click target with nothing else competing for the click.)
  */
 export function EditableLabel({
   k,

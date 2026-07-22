@@ -87,6 +87,8 @@ Die Bühne braucht <u>zwingend</u> zwei Monitore. Kontakt über [die Technik-Sei
 
 > Aufbau nur mit Helm 🎧`;
 
+// Appended to RICH_DESCRIPTION below — the shape migrateProjectsMergeNotes() leaves behind
+// when a pre-merge project had both text fields filled.
 const RICH_PROJECT_NOTES = `**Bestätigt:** Termin, Saal und Honorar stehen. Rider liegt vor — Details im [Ordner](https://example.com/rider).`;
 
 const RICH_ARTIST_NOTES = `Streichquartett, <u>Residenz</u> über das ganze Festival. Reisen gemeinsam an 🚐.
@@ -104,7 +106,7 @@ const ARTISTS = [
 ];
 
 const PROJECTS = [
-  { id: 1, artist_id: 1, code: 'NQ1', name: 'Eröffnungskonzert', status: 'In Progress', description: RICH_DESCRIPTION, notes: RICH_PROJECT_NOTES },
+  { id: 1, artist_id: 1, code: 'NQ1', name: 'Eröffnungskonzert', status: 'In Progress', description: `${RICH_DESCRIPTION}\n\n${RICH_PROJECT_NOTES}` },
   // The only project with an explicit colour — deliberately off its artist's blue, so the
   // "explicitly set" and "inherits a shade" states of the colour field are both eyeballable.
   { id: 2, artist_id: 1, code: 'NQ2', name: 'Schulworkshop', status: 'Not Started', description: 'Vormittagsformat für zwei Schulklassen.', color: '#8b5cf6' },
@@ -119,8 +121,10 @@ const PROJECTS = [
 ];
 
 const CONTACTS = [
-  { id: 1, artist_id: null, project_id: 1, role: 'Management', name: 'Merle Dahlke', email: 'merle.dahlke@example.org', phone: '+49 151 0000001' },
-  { id: 2, artist_id: 1, project_id: null, role: 'Tourmanagement', name: 'Piet Aalders', email: 'piet@example.org', phone: null },
+  // Two with notes (one rich, one plain), the rest without — the inline contact text
+  // field needs both the filled and the hover-only-placeholder branch on screen.
+  { id: 1, artist_id: null, project_id: 1, role: 'Management', name: 'Merle Dahlke', email: 'merle.dahlke@example.org', phone: '+49 151 0000001', notes: 'Erreichbar **vormittags**, sonst per [Mail](mailto:merle.dahlke@example.org).' },
+  { id: 2, artist_id: 1, project_id: null, role: 'Tourmanagement', name: 'Piet Aalders', email: 'piet@example.org', phone: null, notes: 'Regelt auch die Backline.' },
   { id: 3, artist_id: null, project_id: 3, role: 'Booking', name: 'Rosa Enríquez', email: 'rosa@example.org', phone: '+351 900 000 000' },
   { id: 4, artist_id: 3, project_id: null, role: 'Label', name: 'Halbton Records', email: 'kontakt@example.org', phone: null },
   { id: 5, artist_id: null, project_id: 7, role: 'Agentur', name: 'Ines Kubowski', email: 'ines@example.org', phone: '+49 151 0000002' },
@@ -296,12 +300,12 @@ function main(): void {
     `INSERT INTO artists (id, name, color, notes, sort_order) VALUES (@id, @name, @color, @notes, @sort_order)`,
   );
   const insProject = db.prepare(
-    `INSERT INTO projects (id, artist_id, code, name, status, description, notes, color, deleted_at, sort_order)
-     VALUES (@id, @artist_id, @code, @name, @status, @description, @notes, @color, @deleted_at, @sort_order)`,
+    `INSERT INTO projects (id, artist_id, code, name, status, description, color, deleted_at, sort_order)
+     VALUES (@id, @artist_id, @code, @name, @status, @description, @color, @deleted_at, @sort_order)`,
   );
   const insContact = db.prepare(
-    `INSERT INTO contacts (id, artist_id, project_id, role, name, email, phone, deleted_at, sort_order)
-     VALUES (@id, @artist_id, @project_id, @role, @name, @email, @phone, @deleted_at, @sort_order)`,
+    `INSERT INTO contacts (id, artist_id, project_id, role, name, email, phone, notes, deleted_at, sort_order)
+     VALUES (@id, @artist_id, @project_id, @role, @name, @email, @phone, @notes, @deleted_at, @sort_order)`,
   );
   const insEvent = db.prepare(
     `INSERT INTO events (id, artist_id, project_id, type, title, start_at, end_at, all_day, location, notes, deleted_at, sort_order)
@@ -324,8 +328,8 @@ function main(): void {
 
   const tx = db.transaction(() => {
     ARTISTS.forEach((a, i) => insArtist.run({ ...a, sort_order: i }));
-    PROJECTS.forEach((p, i) => insProject.run({ color: null, notes: null, deleted_at: null, ...p, sort_order: i }));
-    CONTACTS.forEach((c, i) => insContact.run({ deleted_at: null, ...c, sort_order: i }));
+    PROJECTS.forEach((p, i) => insProject.run({ color: null, deleted_at: null, ...p, sort_order: i }));
+    CONTACTS.forEach((c, i) => insContact.run({ notes: null, deleted_at: null, ...c, sort_order: i }));
     EVENTS.forEach((e, i) => insEvent.run({ notes: null, deleted_at: null, ...e, sort_order: i }));
 
     // Custom columns first: their generated ids are the keys inside tasks.custom_values.

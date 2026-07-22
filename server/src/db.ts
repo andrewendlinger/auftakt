@@ -152,7 +152,7 @@ export function setActiveSeasonLabel(label: string): void {
 /** Columns copied between season DBs (ids preserved so FKs & custom_values stay linked). */
 const COPY_COLS: Record<string, string[]> = {
   artists: ['id', 'name', 'color', 'notes', 'image', 'sort_order'],
-  projects: ['id', 'artist_id', 'code', 'name', 'status', 'description', 'notes', 'color', 'sort_order'],
+  projects: ['id', 'artist_id', 'code', 'name', 'status', 'description', 'color', 'sort_order'],
   contacts: ['id', 'artist_id', 'project_id', 'role', 'name', 'email', 'phone', 'notes', 'color', 'sort_order'],
   events: ['id', 'artist_id', 'project_id', 'type', 'title', 'start_at', 'end_at', 'all_day', 'location', 'notes', 'sort_order'],
   tasks: ['id', 'artist_id', 'project_id', 'title', 'status', 'priority', 'due_date', 'comment', 'color', 'custom_values', 'erledigt_am', 'parent_id', 'sort_order'],
@@ -275,7 +275,13 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
 
     if (o.artists) copyRows(target, 'artists', live('artists'));
     if (o.projects) {
-      copyRows(target, 'projects', live('projects'));
+      // Source seasons are opened raw (migrations only run on the active DB), so an old
+      // file may still carry the dropped projects.notes column — merge, don't discard.
+      const projects = live('projects');
+      for (const p of projects) {
+        if (p.notes) p.description = p.description ? `${p.description}\n\n${p.notes}` : p.notes;
+      }
+      copyRows(target, 'projects', projects);
       copyRows(target, 'custom_columns', live('custom_columns', " AND kind = 'custom' AND scope = 'project'"));
     }
 
@@ -347,7 +353,6 @@ CREATE TABLE IF NOT EXISTS projects (
   name        TEXT NOT NULL,
   status      TEXT,
   description TEXT,
-  notes       TEXT,
   color       TEXT,
   sort_order  INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
@@ -566,6 +571,7 @@ export function getDb(): Database.Database {
   migrateItemColors(db);
   migrateTaskParentId(db);
   migrateEventsOptionalStart(db);
+  migrateProjectsMergeNotes(db);
   instance = db;
   return db;
 }
@@ -845,6 +851,27 @@ function migrateEventsOptionalStart(db: Database.Database): void {
   });
   rebuild();
   db.pragma('foreign_keys = ON');
+}
+
+/**
+ * Merge projects.notes into description (paragraph break when both are filled), then drop
+ * the column — "Allgemeines / Beschreibung" is the one free-text field a project keeps.
+ * Plain DROP COLUMN is legal here (SQLite ≥ 3.35): notes is not indexed, not in a CHECK
+ * and referenced nowhere else. Idempotent: only runs while the column exists.
+ */
+function migrateProjectsMergeNotes(db: Database.Database): void {
+  const have = new Set(
+    (db.prepare('PRAGMA table_info(projects)').all() as Array<{ name: string }>).map((c) => c.name),
+  );
+  if (!have.has('notes')) return;
+  db.exec(`
+    UPDATE projects SET description =
+      CASE WHEN description IS NOT NULL AND description != ''
+           THEN description || char(10) || char(10) || notes
+           ELSE notes END
+    WHERE notes IS NOT NULL AND notes != '';
+    ALTER TABLE projects DROP COLUMN notes;
+  `);
 }
 
 /** The Status option flagged `done` — the terminal category driving gray-out/sink/archive. */

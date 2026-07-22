@@ -5,7 +5,7 @@ import { api } from '../api/client';
 import type { Contact } from '../api/types';
 import { linkify } from '../lib/linkify';
 import { withAlpha } from '../lib/colors';
-import { Markdown } from './Markdown';
+import { InlineNotes } from './InlineNotes';
 import { ColorSwatchPicker } from './ColorSwatchPicker';
 import { TrashIcon } from './icons';
 import { EditableLabel } from './EditableLabel';
@@ -17,7 +17,7 @@ const FIELDS: FieldDef[] = [
   { name: 'role', label: 'Rolle', placeholder: 'z. B. Management, Tech, Tour-Organisation' },
   { name: 'email', label: 'E-Mail', type: 'email' },
   { name: 'phone', label: 'Telefon', type: 'tel' },
-  { name: 'notes', label: 'Notizen', type: 'textarea' },
+  // No notes field: "Allgemeines / Beschreibung" is edited inline on the contact card.
 ];
 
 export function ContactList({
@@ -83,9 +83,16 @@ export function ContactList({
                   {c.email && <span className="text-neutral-600">{linkify(c.email)}</span>}
                   {c.phone && <span className="text-neutral-600">{linkify(c.phone)}</span>}
                 </div>
-                {c.notes && (
-                  <Markdown className="mt-0.5 text-sm text-neutral-500">{c.notes}</Markdown>
-                )}
+                {/* Inline-edited; the add placeholder only appears on row hover so contact
+                    lists without notes don't grow a button per row. */}
+                <div className={`mt-0.5 text-neutral-500 ${c.notes ? '' : 'opacity-0 transition group-hover:opacity-100'}`}>
+                  <InlineNotes
+                    value={c.notes}
+                    onSave={(v) =>
+                      undoablePatch({ res: api.contacts, row: c, patch: { notes: v }, label: 'Textänderung' })
+                    }
+                  />
+                </div>
               </div>
               <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
                 <ColorSwatchPicker value={c.color} onChange={(color) => setColor(c, color)} />

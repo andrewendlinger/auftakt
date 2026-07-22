@@ -19,7 +19,7 @@ export const artistsRouter = crudRouter({
 
 export const projectsRouter = crudRouter({
   table: 'projects',
-  writable: ['artist_id', 'code', 'name', 'status', 'description', 'notes', 'color', 'sort_order'],
+  writable: ['artist_id', 'code', 'name', 'status', 'description', 'color', 'sort_order'],
   required: ['artist_id', 'code', 'name'],
   filters: ['artist_id'],
   order: 'sort_order ASC, id ASC',

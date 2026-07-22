@@ -27,7 +27,6 @@ export interface Project extends SoftDeletable {
   name: string;
   status: string | null;
   description: string | null;
-  notes: string | null;
   color: string | null;
 }
 
