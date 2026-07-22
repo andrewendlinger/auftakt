@@ -6,6 +6,7 @@ import { customValueOf, doneValueOf, parseColumnOptions } from '../api/types';
 import { Spinner } from '../components/ui';
 import { Markdown } from '../components/Markdown';
 import { Empty, PrintHeader, PrintPage, Section } from '../components/PrintSheet';
+import { ProjectStatusPill } from '../components/ProjectStatusPill';
 import { contrastText, projectShade } from '../lib/colors';
 import { formatDate, formatEventWhen, weekdayShort } from '../lib/dates';
 import { useLabel, useSaison } from '../hooks';
@@ -61,11 +62,7 @@ export function PrintProject() {
                 {project.code}
               </span>
             )}
-            {project.status && (
-              <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-600">
-                {project.status}
-              </span>
-            )}
+            {project.status && <ProjectStatusPill status={project.status} />}
           </>
         }
       >

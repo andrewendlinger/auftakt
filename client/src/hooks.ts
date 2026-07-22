@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api/client';
-import type { ID, LabelOverride, Settings } from './api/types';
+import type { CustomColumnOption, ID, LabelOverride, Settings } from './api/types';
 import { LABEL_DEFAULTS, isLabelKey, type LabelKey } from './lib/labels';
+import { normalizeSelectOptions } from './lib/selectOptions';
 import { useToast } from './components/Toast';
 import { useUndo } from './components/UndoProvider';
 
@@ -19,6 +20,21 @@ export function useSettings() {
 export function useSaison(): string {
   const { data } = useSettings();
   return (data?.saison as string) ?? 'Auftakt';
+}
+
+/**
+ * The event-type / project-status options as coloured `{ value, label, color }[]`, normalising
+ * the legacy plain-string form so every read site gets the same shape. This is the single
+ * boundary where the two settings are parsed — consumers never touch the raw setting.
+ */
+export function useEventTypeOptions(): CustomColumnOption[] {
+  const { data } = useSettings();
+  return useMemo(() => normalizeSelectOptions(data?.event_types), [data?.event_types]);
+}
+
+export function useProjectStatusOptions(): CustomColumnOption[] {
+  const { data } = useSettings();
+  return useMemo(() => normalizeSelectOptions(data?.project_statuses), [data?.project_statuses]);
 }
 
 /**

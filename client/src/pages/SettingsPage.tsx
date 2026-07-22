@@ -1,12 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import { Card, SectionTitle, Spinner, Btn, IconButton } from '../components/ui';
+import type { CustomColumnOption } from '../api/types';
+import { Card, SectionTitle, Spinner, Btn } from '../components/ui';
 import { Label, TextInput } from '../components/fields';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { CustomColumnManager } from '../components/CustomColumnManager';
+import { OptionsEditor, normalizeOptions } from '../components/OptionsEditor';
 import { TaskSortEditor } from '../components/TaskSortEditor';
-import { useInvalidateAll, useSettings } from '../hooks';
+import {
+  useEventTypeOptions,
+  useInvalidateAll,
+  useProjectStatusOptions,
+  useSettings,
+} from '../hooks';
 
 export function SettingsPage() {
   const { data: settings, isLoading } = useSettings();
@@ -18,6 +25,16 @@ export function SettingsPage() {
     queryKey: ['customColumns', 'global'],
     queryFn: () => api.customColumns.list({ scope: 'global' }),
   });
+
+  const eventTypeOptions = useEventTypeOptions();
+  const projectStatusOptions = useProjectStatusOptions();
+
+  // Usage counts drive the "in use → can't delete" guard. The dataset is tiny and blanket-
+  // invalidated on every write, so listing all events/projects here is cheap and needs no endpoint.
+  const { data: allEvents = [] } = useQuery({ queryKey: ['events', 'all'], queryFn: () => api.events.list() });
+  const { data: allProjects = [] } = useQuery({ queryKey: ['projects', 'all'], queryFn: () => api.projects.list() });
+  const eventTypeUsage = useMemo(() => countBy(allEvents.map((e) => e.type)), [allEvents]);
+  const projectStatusUsage = useMemo(() => countBy(allProjects.map((p) => p.status)), [allProjects]);
 
   useEffect(() => {
     if (settings) setSaison(settings.saison ?? '');
@@ -85,25 +102,31 @@ export function SettingsPage() {
       <Card className="p-5">
         <SectionTitle>Termin-Typen</SectionTitle>
         <p className="mt-1 mb-3 text-xs text-neutral-400">
-          Kategorien für Wichtige Termine (z. B. Auftritt, Probe, Anreise). Beim Import gefundene Typen
-          werden automatisch ergänzt.
+          Kategorien für Wichtige Termine (z. B. Auftritt, Probe, Anreise), jeweils mit eigener Farbe.
+          Umbenennen ändert nur die Anzeige – bestehende Termine behalten ihren Typ. Beim Import
+          gefundene Typen werden automatisch ergänzt.
         </p>
-        <ListEditor
-          value={settings.event_types ?? []}
-          onChange={(v) => patch({ event_types: v })}
-          placeholder="Neuer Typ…"
+        <SelectOptionsSetting
+          options={eventTypeOptions}
+          usage={eventTypeUsage}
+          usageNoun="Terminen"
+          addLabel="+ Typ"
+          onSave={(v) => patch({ event_types: v })}
         />
       </Card>
 
       <Card className="p-5">
         <SectionTitle>Projekt-Status</SectionTitle>
         <p className="mt-1 mb-3 text-xs text-neutral-400">
-          Auswahlmöglichkeiten für den Status eines Projekts. Frei wählbar – dient nur der Übersicht.
+          Auswahlmöglichkeiten für den Status eines Projekts, jeweils mit eigener Farbe. Umbenennen
+          ändert nur die Anzeige – bestehende Projekte behalten ihren Status.
         </p>
-        <ListEditor
-          value={settings.project_statuses ?? []}
-          onChange={(v) => patch({ project_statuses: v })}
-          placeholder="Neuer Status…"
+        <SelectOptionsSetting
+          options={projectStatusOptions}
+          usage={projectStatusUsage}
+          usageNoun="Projekten"
+          addLabel="+ Status"
+          onSave={(v) => patch({ project_statuses: v })}
         />
       </Card>
 
@@ -151,51 +174,71 @@ export function SettingsPage() {
   );
 }
 
-function ListEditor({
-  value,
-  onChange,
-  placeholder,
+/** Tally non-empty values into a `{ value: count }` map for the delete-in-use guard. */
+function countBy(values: Array<string | null | undefined>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const v of values) {
+    if (!v) continue;
+    out[v] = (out[v] ?? 0) + 1;
+  }
+  return out;
+}
+
+/**
+ * The coloured-options editor for `event_types` / `project_statuses` (WP-I). Local draft state so
+ * label/colour edits don't hit the server per keystroke — one PATCH on „Speichern", exactly like
+ * the task-column editor. Removing a value still used by an event/project is blocked on save so a
+ * rename can never orphan data (the whole point of this WP); renaming is free because
+ * `normalizeOptions` keeps each option's stored `value` stable and edits only its label.
+ */
+function SelectOptionsSetting({
+  options,
+  usage,
+  usageNoun,
+  addLabel,
+  onSave,
 }: {
-  value: string[];
-  onChange: (v: string[]) => void;
-  placeholder?: string;
+  options: CustomColumnOption[];
+  usage: Record<string, number>;
+  usageNoun: string;
+  addLabel: string;
+  onSave: (v: CustomColumnOption[]) => Promise<void>;
 }) {
-  const [input, setInput] = useState('');
-  const add = () => {
-    const v = input.trim();
-    if (!v || value.includes(v)) return;
-    onChange([...value, v]);
-    setInput('');
+  const [draft, setDraft] = useState<CustomColumnOption[]>(options);
+  const [busy, setBusy] = useState(false);
+  // Reseed when the server data changes (after a save, or a season switch).
+  useEffect(() => setDraft(options), [options]);
+
+  const dirty = JSON.stringify(draft) !== JSON.stringify(options);
+
+  const save = async () => {
+    const cleaned = normalizeOptions(draft);
+    const removed = options.filter((o) => !cleaned.some((c) => c.value === o.value));
+    const blocked = removed.filter((o) => (usage[o.value] ?? 0) > 0);
+    if (blocked.length) {
+      const lines = blocked.map((o) => `• „${o.label}“ wird von ${usage[o.value]} ${usageNoun} verwendet`);
+      window.alert(
+        `Diese Kategorie(n) werden noch verwendet und können nicht gelöscht werden:\n\n${lines.join(
+          '\n',
+        )}\n\nBenenne sie um oder weise die betroffenen Einträge zuerst einer anderen Kategorie zu.`,
+      );
+      return;
+    }
+    setBusy(true);
+    try {
+      await onSave(cleaned);
+    } finally {
+      setBusy(false);
+    }
   };
+
   return (
     <div>
-      <div className="mb-3 flex flex-wrap gap-2">
-        {value.map((item) => (
-          <span
-            key={item}
-            className="inline-flex items-center gap-1 rounded-full bg-neutral-100 py-1 pl-3 pr-1 text-sm text-neutral-700"
-          >
-            {item}
-            <IconButton
-              variant="danger"
-              size="sm"
-              title="Entfernen"
-              onClick={() => onChange(value.filter((x) => x !== item))}
-            >
-              ×
-            </IconButton>
-          </span>
-        ))}
-      </div>
-      <div className="flex gap-2">
-        <TextInput
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && add()}
-          placeholder={placeholder}
-          className="max-w-xs"
-        />
-        <Btn onClick={add}>+ Hinzufügen</Btn>
+      <OptionsEditor value={draft} onChange={setDraft} addLabel={addLabel} />
+      <div className="mt-3 flex justify-end">
+        <Btn variant="primary" onClick={save} disabled={busy || !dirty}>
+          Speichern
+        </Btn>
       </div>
     </div>
   );

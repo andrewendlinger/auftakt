@@ -3,25 +3,14 @@ import { SectionTitle, Btn, EmptyState } from './ui';
 import { ProjectBadge } from './ProjectBadge';
 import { EventEditor, type EventParent } from './EventEditor';
 import { api } from '../api/client';
-import type { EventItem } from '../api/types';
+import type { CustomColumnOption, EventItem } from '../api/types';
+import { contrastText } from '../lib/colors';
 import { formatEventWhen, weekdayShort } from '../lib/dates';
 import { Markdown } from './Markdown';
 import { TrashIcon } from './icons';
 import { EditableLabel } from './EditableLabel';
 import type { LabelKey } from '../lib/labels';
 import { useInvalidateAll, useUndoableDelete, resourceUndo } from '../hooks';
-
-const TYPE_COLORS: Record<string, { bg: string; fg: string }> = {
-  Auftritt: { bg: '#fef3c7', fg: '#92400e' },
-  Termin: { bg: '#e2e8f0', fg: '#334155' },
-  Anreise: { bg: '#e0f2fe', fg: '#075985' },
-  Deadline: { bg: '#fee2e2', fg: '#991b1b' },
-  Probe: { bg: '#ede9fe', fg: '#5b21b6' },
-};
-
-function typeColor(type: string) {
-  return TYPE_COLORS[type] ?? { bg: '#f1f5f9', fg: '#475569' };
-}
 
 export function EventList({
   titleKey,
@@ -35,7 +24,8 @@ export function EventList({
   titleKey: LabelKey;
   events: EventItem[];
   parent: EventParent;
-  eventTypes: string[];
+  /** Coloured event-type options; the chip colour + label are looked up by `events.type`. */
+  eventTypes: CustomColumnOption[];
   emptyLabel?: string;
   showProject?: boolean;
 }) {
@@ -43,6 +33,7 @@ export function EventList({
   const del = useUndoableDelete();
   const [editing, setEditing] = useState<EventItem | null>(null);
   const [creating, setCreating] = useState(false);
+  const typeByValue = new Map(eventTypes.map((o) => [o.value, o]));
 
   return (
     <div>
@@ -61,7 +52,8 @@ export function EventList({
       ) : (
         <ul className="space-y-2">
           {events.map((ev) => {
-            const tc = typeColor(ev.type);
+            const opt = typeByValue.get(ev.type);
+            const bg = opt?.color ?? '#f1f5f9';
             return (
               <li
                 key={ev.id}
@@ -75,9 +67,9 @@ export function EventList({
                   <div className="flex flex-wrap items-center gap-2">
                     <span
                       className="rounded px-1.5 py-0.5 text-[11px] font-semibold"
-                      style={{ background: tc.bg, color: tc.fg }}
+                      style={{ background: bg, color: contrastText(bg) }}
                     >
-                      {ev.type}
+                      {opt?.label ?? ev.type}
                     </span>
                     {showProject && ev.project_id && ev.project_code && (
                       <ProjectBadge

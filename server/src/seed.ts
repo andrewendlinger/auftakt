@@ -206,9 +206,19 @@ function seedFromCsv(db: Database.Database, dir: string): void {
   });
   tx();
 
-  // Absorb any event types found in the data (e.g. "Probe") into the editable list.
-  const merged = Array.from(new Set([...DEFAULT_EVENT_TYPES, ...foundEventTypes]));
-  setSetting(db, 'event_types', JSON.stringify(merged));
+  // Absorb any event types found in the data (e.g. "Probe") into the editable list as
+  // coloured options (WP-I): defaults first, then any novel imported type, deduped by value.
+  const LEGACY_EVENT_COLORS: Record<string, string> = {
+    Auftritt: '#fef3c7', Termin: '#e2e8f0', Anreise: '#e0f2fe', Deadline: '#fee2e2', Probe: '#ede9fe',
+  };
+  const FALLBACK_COLORS = ['#fee2e2', '#fef3c7', '#dcfce7', '#e0f2fe', '#ede9fe', '#fce7f3', '#f1f5f9'];
+  const byValue = new Map(DEFAULT_EVENT_TYPES.map((o) => [o.value, o]));
+  let fi = 0;
+  for (const name of foundEventTypes) {
+    if (byValue.has(name)) continue;
+    byValue.set(name, { value: name, label: name, color: LEGACY_EVENT_COLORS[name] ?? FALLBACK_COLORS[fi++ % FALLBACK_COLORS.length]! });
+  }
+  setSetting(db, 'event_types', JSON.stringify([...byValue.values()]));
 }
 
 /** Minimal sample data when ./files is empty — keeps a fresh install usable. */

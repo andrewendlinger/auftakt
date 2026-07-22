@@ -15,9 +15,10 @@ import { LinkList } from '../components/LinkList';
 import { TaskTable } from '../components/TaskTable';
 import { CustomColumnManager } from '../components/CustomColumnManager';
 import { EditProjectButton } from '../components/EntityButtons';
+import { ProjectStatusPill } from '../components/ProjectStatusPill';
 import { ExcelButton } from '../components/ExcelButton';
 import { InlineNotes } from '../components/InlineNotes';
-import { useSettings, useUndoablePatch } from '../hooks';
+import { useEventTypeOptions, useUndoablePatch } from '../hooks';
 
 /**
  * Which heading names each section in the "Bereiche anordnen" strip. `kontakte` holds two
@@ -33,7 +34,7 @@ const SECTION_LABEL_KEYS = {
 export function ProjectPage() {
   const { id } = useParams<{ id: string }>();
   const projectId = Number(id);
-  const { data: settings } = useSettings();
+  const eventTypes = useEventTypeOptions();
   const undoablePatch = useUndoablePatch();
   const [managingColumns, setManagingColumns] = useState(false);
 
@@ -82,7 +83,7 @@ export function ProjectPage() {
         titleKey="project.termine"
         events={events}
         parent={{ project_id: projectId }}
-        eventTypes={settings?.event_types ?? []}
+        eventTypes={eventTypes}
       />
     ),
     fakten: (
@@ -157,11 +158,7 @@ export function ProjectPage() {
                   {project.code}
                 </span>
               )}
-              {project.status && (
-                <span className="rounded-full bg-white/70 px-2 py-0.5 text-xs font-medium text-neutral-600">
-                  {project.status}
-                </span>
-              )}
+              {project.status && <ProjectStatusPill status={project.status} />}
             </div>
             <h1 className="mt-2 text-2xl font-bold text-neutral-800">{project.name}</h1>
             {project.description && (

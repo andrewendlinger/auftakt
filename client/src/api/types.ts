@@ -188,8 +188,13 @@ export interface Settings {
   timezone: string;
   backup_dir: string | null;
   first_run_done: string;
-  event_types: string[];
-  project_statuses: string[];
+  /**
+   * Coloured options `{ value, label, color }[]` (WP-I). Existing seasons still hold the legacy
+   * plain `string[]`, hence the union — always read through `normalizeSelectOptions`
+   * (`useEventTypeOptions` / `useProjectStatusOptions`), never off the raw setting.
+   */
+  event_types: Array<string | CustomColumnOption>;
+  project_statuses: Array<string | CustomColumnOption>;
   /** Layout of the project-page sections (termine/fakten/kontakte/aufgaben) — order + width. */
   project_layout?: LayoutEntry[];
   /** Layout of the artist-page sections (termine/projekte/kontakte/aufgaben) — order + width. */

@@ -6,10 +6,9 @@ import { api } from '../api/client';
 import type { CustomColumn, CustomColumnOption, CustomColumnType } from '../api/types';
 import { parseColumnOptions, parseCustomValues } from '../api/types';
 import { arrayMove } from '../lib/arrays';
-import { contrastText } from '../lib/colors';
+import { OPTION_PALETTE } from '../lib/selectOptions';
+import { OptionsEditor, normalizeOptions } from './OptionsEditor';
 import { useInvalidateAll } from '../hooks';
-
-const OPTION_PALETTE = ['#fee2e2', '#fef3c7', '#dcfce7', '#e0f2fe', '#ede9fe', '#fce7f3', '#f1f5f9'];
 
 /** A handful of common symbols; users can also type any emoji into the free field. */
 const ICON_PRESETS = ['👤', '👥', '📞', '📧', '✅', '⭐', '📅', '🎵', '🎸', '🎤', '💶', '📝', '📌', '🏨', '🚗', '✈️'];
@@ -291,70 +290,6 @@ function ColumnEditModal({
   );
 }
 
-/** Editable list of colored options with a native color picker; one "done" for status. */
-function OptionsEditor({
-  value,
-  onChange,
-  allowDone,
-}: {
-  value: CustomColumnOption[];
-  onChange: (v: CustomColumnOption[]) => void;
-  allowDone?: boolean;
-}) {
-  const update = (i: number, patch: Partial<CustomColumnOption>) => {
-    const setDone = patch.done === true;
-    onChange(value.map((o, idx) => (idx === i ? { ...o, ...patch } : setDone ? { ...o, done: false } : o)));
-  };
-  const removeAt = (i: number) => onChange(value.filter((_, idx) => idx !== i));
-  // Reorder: the option order here is the order values appear in the pill dropdown
-  // and drives status sorting, so ↑ ↓ lets the user set e.g. new → active → done.
-  const move = (i: number, dir: -1 | 1) => {
-    const next = arrayMove(value, i, dir);
-    if (next !== value) onChange(next);
-  };
-  const addOption = () =>
-    onChange([
-      ...value,
-      { label: '', value: '', color: OPTION_PALETTE[value.length % OPTION_PALETTE.length]! },
-    ]);
-
-  return (
-    <div className="space-y-2">
-      {value.map((o, i) => (
-        <div key={i} className="flex items-center gap-2">
-          <ReorderArrows
-            first={i === 0}
-            last={i === value.length - 1}
-            onUp={() => move(i, -1)}
-            onDown={() => move(i, 1)}
-          />
-          <input
-            type="color"
-            value={o.color}
-            onChange={(e) => update(i, { color: e.target.value })}
-            className="h-8 w-9 shrink-0 cursor-pointer rounded border border-neutral-300"
-            title="Farbe"
-          />
-          <input
-            value={o.label}
-            onChange={(e) => update(i, { label: e.target.value })}
-            placeholder="Bezeichnung"
-            className="flex-1 rounded-lg border border-neutral-300 px-2.5 py-1.5 text-sm outline-none focus:border-neutral-500"
-          />
-          {allowDone && (
-            <label className="flex shrink-0 items-center gap-1 text-xs text-neutral-500" title="Diese Kategorie gilt als erledigt (rutscht nach unten, wandert ins Archiv).">
-              <input type="radio" checked={!!o.done} onChange={() => update(i, { done: true })} />
-              erledigt
-            </label>
-          )}
-          <IconButton variant="danger" size="sm" onClick={() => removeAt(i)} title="Entfernen">✕</IconButton>
-        </div>
-      ))}
-      <button type="button" className="text-sm text-neutral-500 hover:text-neutral-800" onClick={addOption}>+ Kategorie</button>
-    </div>
-  );
-}
-
 /** Emoji/symbol picker: a preset grid plus a free field for any other emoji. */
 function IconPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
@@ -392,17 +327,6 @@ function IconPicker({ value, onChange }: { value: string; onChange: (v: string) 
       />
     </div>
   );
-}
-
-/** value defaults to the (trimmed) label; keep existing values stable so task data stays linked. */
-function normalizeOptions(options: CustomColumnOption[]): CustomColumnOption[] {
-  return options
-    .map((o) => {
-      const label = o.label.trim();
-      const value = (o.value && o.value.trim()) || label;
-      return { label, value, color: o.color, ...(o.done ? { done: true } : {}) };
-    })
-    .filter((o) => o.label);
 }
 
 /* ---------- add a new custom column ---------- */

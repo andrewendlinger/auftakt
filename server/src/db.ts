@@ -457,8 +457,21 @@ CREATE INDEX IF NOT EXISTS idx_tasks_sort       ON tasks(status, priority, due_d
 CREATE INDEX IF NOT EXISTS idx_links_parents    ON links(artist_id, project_id, event_id, task_id);
 `;
 
-export const DEFAULT_EVENT_TYPES = ['Auftritt', 'Termin', 'Anreise', 'Deadline'];
-export const DEFAULT_PROJECT_STATUSES = ['Not Started', 'In Progress', 'Done'];
+// event_types / project_statuses are coloured options (WP-I): `{ value, label, color }[]`.
+// value is the stable key stored on events.type / projects.status; label is the editable
+// display name; renaming edits only the label so existing rows stay linked (no migration).
+// The event-type colours match the formerly-hardcoded client palette so nothing changes visually.
+export const DEFAULT_EVENT_TYPES: ColumnOption[] = [
+  { value: 'Auftritt', label: 'Auftritt', color: '#fef3c7' },
+  { value: 'Termin', label: 'Termin', color: '#e2e8f0' },
+  { value: 'Anreise', label: 'Anreise', color: '#e0f2fe' },
+  { value: 'Deadline', label: 'Deadline', color: '#fee2e2' },
+];
+export const DEFAULT_PROJECT_STATUSES: ColumnOption[] = [
+  { value: 'Not Started', label: 'Not Started', color: '#e2e8f0' },
+  { value: 'In Progress', label: 'In Progress', color: '#dbeafe' },
+  { value: 'Done', label: 'Done', color: '#dcfce7' },
+];
 
 export interface ColumnOption {
   value: string;

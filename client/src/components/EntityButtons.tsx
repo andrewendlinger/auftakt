@@ -3,9 +3,9 @@ import { useQuery } from '@tanstack/react-query';
 import { Btn } from './ui';
 import { RecordFormModal, type FieldDef } from './fields';
 import { api } from '../api/client';
-import type { Artist, Project } from '../api/types';
+import type { Artist, CustomColumnOption, Project } from '../api/types';
 import { pickArtistColor, projectShade } from '../lib/colors';
-import { useInvalidateAll, useSettings, useUndoablePatch } from '../hooks';
+import { useInvalidateAll, useProjectStatusOptions, useUndoablePatch } from '../hooks';
 
 const ARTIST_FIELDS: FieldDef[] = [
   { name: 'name', label: 'Name', required: true, span2: true },
@@ -83,11 +83,11 @@ export function EditArtistButton({ artist }: { artist: Artist }) {
 }
 
 /** `fallback` is the shade the project renders with no explicit colour — see ColorField. */
-function projectFields(statuses: string[], fallback: string, fallbackHint: string): FieldDef[] {
+function projectFields(statuses: CustomColumnOption[], fallback: string, fallbackHint: string): FieldDef[] {
   return [
     { name: 'code', label: 'Kürzel (Badge)', required: true, placeholder: 'z. B. K3a' },
     { name: 'name', label: 'Name', required: true },
-    { name: 'status', label: 'Status', type: 'select', options: statuses.map((s) => ({ value: s, label: s })) },
+    { name: 'status', label: 'Status', type: 'select', options: statuses.map((o) => ({ value: o.value, label: o.label })) },
     { name: 'color', label: 'Farbe (optional, sonst Schattierung)', type: 'color', fallback, fallbackHint },
     { name: 'description', label: 'Beschreibung', type: 'textarea' },
     { name: 'notes', label: 'Notizen', type: 'textarea' },
@@ -96,7 +96,7 @@ function projectFields(statuses: string[], fallback: string, fallbackHint: strin
 
 export function NewProjectButton({ artistId, artistColor }: { artistId: number; artistColor: string }) {
   const invalidate = useInvalidateAll();
-  const { data: settings } = useSettings();
+  const statuses = useProjectStatusOptions();
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -109,11 +109,11 @@ export function NewProjectButton({ artistId, artistColor }: { artistId: number; 
           // The exact shade keys off the project id (projectShade), which doesn't exist yet —
           // preview the artist colour and say so rather than showing a grey that never renders.
           fields={projectFields(
-            settings?.project_statuses ?? [],
+            statuses,
             artistColor,
             'Schattierung wird beim Anlegen aus der Künstlerfarbe abgeleitet.',
           )}
-          initial={{ status: (settings?.project_statuses ?? [])[0] ?? '' }}
+          initial={{ status: statuses[0]?.value ?? '' }}
           onSubmit={async (v) => {
             await api.projects.create({ ...v, artist_id: artistId });
             await invalidate();
@@ -127,7 +127,7 @@ export function NewProjectButton({ artistId, artistColor }: { artistId: number; 
 
 export function EditProjectButton({ project, artistColor }: { project: Project; artistColor: string }) {
   const undoablePatch = useUndoablePatch();
-  const { data: settings } = useSettings();
+  const statuses = useProjectStatusOptions();
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -140,7 +140,7 @@ export function EditProjectButton({ project, artistColor }: { project: Project; 
           // Pass null, not project.color: the fallback must be the *inherited* shade, which is
           // what renders once the user clears the field — not an echo of the explicit colour.
           fields={projectFields(
-            settings?.project_statuses ?? [],
+            statuses,
             projectShade(artistColor, null, project.id),
             'Automatisch aus der Künstlerfarbe abgeleitet.',
           )}

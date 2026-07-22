@@ -3,7 +3,7 @@ import { Label, Modal, Select, TextInput } from './fields';
 import { MarkdownTextarea } from './MarkdownTextarea';
 import { Btn } from './ui';
 import { api } from '../api/client';
-import type { EventItem } from '../api/types';
+import type { CustomColumnOption, EventItem } from '../api/types';
 import { useInvalidateAll, useUndoablePatch } from '../hooks';
 
 export interface EventParent {
@@ -19,12 +19,12 @@ export function EventEditor({
 }: {
   event: EventItem | null;
   parent: EventParent;
-  eventTypes: string[];
+  eventTypes: CustomColumnOption[];
   onClose: () => void;
 }) {
   const invalidate = useInvalidateAll();
   const undoablePatch = useUndoablePatch();
-  const [type, setType] = useState(event?.type ?? eventTypes[0] ?? 'Termin');
+  const [type, setType] = useState(event?.type ?? eventTypes[0]?.value ?? 'Termin');
   const [title, setTitle] = useState(event?.title ?? '');
   const [allDay, setAllDay] = useState<boolean>(!!event?.all_day);
   const [start, setStart] = useState(event?.start_at ?? '');
@@ -85,8 +85,8 @@ export function EventEditor({
           <Label>Typ</Label>
           <Select value={type} onChange={(e) => setType(e.target.value)}>
             {eventTypes.map((t) => (
-              <option key={t} value={t}>
-                {t}
+              <option key={t.value} value={t.value}>
+                {t.label}
               </option>
             ))}
           </Select>

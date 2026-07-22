@@ -16,8 +16,9 @@ import { EventList } from '../components/EventList';
 import { ContactList } from '../components/ContactList';
 import { TaskTable } from '../components/TaskTable';
 import { EditArtistButton, NewProjectButton } from '../components/EntityButtons';
+import { ProjectStatusPill } from '../components/ProjectStatusPill';
 import { ExcelButton } from '../components/ExcelButton';
-import { useInvalidateAll, useSettings } from '../hooks';
+import { useEventTypeOptions, useInvalidateAll } from '../hooks';
 
 /** Which heading names each section in the "Bereiche anordnen" strip. */
 const SECTION_LABEL_KEYS = {
@@ -30,7 +31,7 @@ const SECTION_LABEL_KEYS = {
 export function ArtistPage() {
   const { id } = useParams<{ id: string }>();
   const artistId = Number(id);
-  const { data: settings } = useSettings();
+  const eventTypes = useEventTypeOptions();
 
   const { data: artist, isLoading } = useQuery({
     queryKey: ['artist', artistId],
@@ -66,7 +67,7 @@ export function ArtistPage() {
         titleKey="artist.termine"
         events={events}
         parent={{ artist_id: artistId }}
-        eventTypes={settings?.event_types ?? []}
+        eventTypes={eventTypes}
         showProject
         emptyLabel="Keine Termine für diesen Künstler."
       />
@@ -221,11 +222,7 @@ function ProjectCard({
               {project.code}
             </span>
           )}
-          {project.status && (
-            <span className="ml-auto text-xs font-medium" style={{ color: contrastText(shade) }}>
-              {project.status}
-            </span>
-          )}
+          {project.status && <ProjectStatusPill status={project.status} className="ml-auto" />}
         </div>
         <div className="p-4">
           <h3 className="font-semibold text-neutral-800">{project.name}</h3>

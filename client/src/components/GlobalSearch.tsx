@@ -4,6 +4,8 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { SearchResults } from '../api/types';
 import { formatDate } from '../lib/dates';
+import { findOption } from '../lib/selectOptions';
+import { useEventTypeOptions } from '../hooks';
 
 interface Hit {
   key: string;
@@ -13,7 +15,7 @@ interface Hit {
   to: string;
 }
 
-function buildHits(r: SearchResults): Hit[] {
+function buildHits(r: SearchResults, typeLabel: (value: string) => string): Hit[] {
   const hits: Hit[] = [];
   const parentTo = (projectId: number | null, artistId: number | null): string =>
     projectId ? `/project/${projectId}` : `/artist/${artistId}`;
@@ -39,7 +41,7 @@ function buildHits(r: SearchResults): Hit[] {
       key: `e${e.id}`,
       group: 'Termine',
       label: e.title,
-      sub: `${e.type} · ${formatDate(e.start_at)}`,
+      sub: `${typeLabel(e.type)} · ${formatDate(e.start_at)}`,
       to: parentTo(e.project_id, e.resolved_artist_id),
     });
   for (const c of r.contacts)
@@ -79,7 +81,8 @@ export function GlobalSearch() {
     enabled: debounced.trim().length >= 2,
   });
 
-  const hits = data ? buildHits(data) : [];
+  const eventTypes = useEventTypeOptions();
+  const hits = data ? buildHits(data, (v) => findOption(eventTypes, v)?.label ?? v) : [];
   const groups = [...new Set(hits.map((h) => h.group))];
 
   const go = (to: string) => {
