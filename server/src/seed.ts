@@ -162,7 +162,7 @@ function seedFromCsv(db: Database.Database, dir: string): void {
         project_id: ni(r.project_id),
         type: eventType ?? 'Termin',
         title: r.title,
-        start_at: allDay ? startRaw.trim() : toIsoLocal(startRaw),
+        start_at: startRaw.trim() === '' ? null : allDay ? startRaw.trim() : toIsoLocal(startRaw), // NULL = "Datum offen" (TBD)
         end_at: endRaw === null ? null : allDay ? endRaw : toIsoLocal(endRaw),
         all_day: allDay,
         location: nn(r.location),

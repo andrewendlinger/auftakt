@@ -56,7 +56,7 @@ export function formatDateTime(iso: string | null | undefined): string {
 }
 
 export interface EventLike {
-  start_at: string;
+  start_at: string | null;
   end_at?: string | null;
   all_day?: number | boolean;
 }

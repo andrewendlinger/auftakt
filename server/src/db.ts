@@ -378,7 +378,7 @@ CREATE TABLE IF NOT EXISTS events (
   project_id INTEGER REFERENCES projects(id),
   type       TEXT NOT NULL,
   title      TEXT NOT NULL,
-  start_at   TEXT NOT NULL,
+  start_at   TEXT,
   end_at     TEXT,
   all_day    INTEGER NOT NULL DEFAULT 0,
   location   TEXT,
@@ -565,6 +565,7 @@ export function getDb(): Database.Database {
   migrateArtistImage(db);
   migrateItemColors(db);
   migrateTaskParentId(db);
+  migrateEventsOptionalStart(db);
   instance = db;
   return db;
 }
@@ -792,6 +793,54 @@ function migrateTasksAllowGeneral(db: Database.Database): void {
       CREATE INDEX IF NOT EXISTS idx_tasks_artist  ON tasks(artist_id);
       CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
       CREATE INDEX IF NOT EXISTS idx_tasks_sort    ON tasks(status, priority, due_date);
+    `);
+  });
+  rebuild();
+  db.pragma('foreign_keys = ON');
+}
+
+/**
+ * Drop NOT NULL from events.start_at so date-less ("TBD") events are allowed. NULL is the
+ * storage form — "Datum offen" is purely a display label. SQLite can't ALTER a column
+ * constraint, so rebuild the table (the standard 12-step). Idempotent: only runs while the
+ * old constraint is present.
+ */
+function migrateEventsOptionalStart(db: Database.Database): void {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'")
+    .get() as { sql?: string } | undefined;
+  if (!row?.sql || !/start_at\s+TEXT\s+NOT\s+NULL/.test(row.sql)) return; // already migrated (or fresh SCHEMA)
+
+  // foreign_keys must be toggled OUTSIDE the transaction to take effect.
+  db.pragma('foreign_keys = OFF');
+  const rebuild = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE events_new (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        artist_id  INTEGER REFERENCES artists(id),
+        project_id INTEGER REFERENCES projects(id),
+        type       TEXT NOT NULL,
+        title      TEXT NOT NULL,
+        start_at   TEXT,
+        end_at     TEXT,
+        all_day    INTEGER NOT NULL DEFAULT 0,
+        location   TEXT,
+        notes      TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        deleted_at TEXT,
+        CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) = 1)
+      );
+      INSERT INTO events_new SELECT
+        id, artist_id, project_id, type, title, start_at, end_at, all_day,
+        location, notes, sort_order, created_at, updated_at, deleted_at
+      FROM events;
+      DROP TABLE events;
+      ALTER TABLE events_new RENAME TO events;
+      CREATE INDEX IF NOT EXISTS idx_events_artist  ON events(artist_id);
+      CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id);
+      CREATE INDEX IF NOT EXISTS idx_events_start   ON events(start_at);
     `);
   });
   rebuild();

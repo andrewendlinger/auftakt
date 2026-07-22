@@ -104,7 +104,7 @@ export function PrintProject() {
             {events.map((e) => (
               <li key={e.id} className="flex gap-3">
                 <span className="w-40 shrink-0 text-neutral-500">
-                  {weekdayShort(e.start_at)} {formatEventWhen(e)}
+                  {e.start_at ? `${weekdayShort(e.start_at)} ${formatEventWhen(e)}` : 'Datum offen'}
                 </span>
                 <span>
                   <span className="font-medium">{e.title}</span>

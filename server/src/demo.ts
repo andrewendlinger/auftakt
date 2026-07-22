@@ -133,6 +133,8 @@ const EVENTS = [
   { id: 5, artist_id: null, project_id: 5, type: 'Termin', title: 'Aufbau Klanginstallation', start_at: days(10), end_at: days(12), all_day: 1, location: 'Foyer' },
   { id: 6, artist_id: null, project_id: 7, type: 'Auftritt', title: 'Solo-Rezital', start_at: at(-9, '19:00'), end_at: at(-9, '20:30'), all_day: 0, location: 'Großer Saal' },
   { id: 7, artist_id: null, project_id: 8, type: 'Termin', title: 'Meisterkurs Tag 1', start_at: days(21), end_at: null, all_day: 1, location: 'Probenraum 2' },
+  // start_at NULL = "Datum offen" (TBD) — renders as its own block above the dated events.
+  { id: 8, artist_id: null, project_id: 7, type: 'Termin', title: 'Nachholtermin Solo-Rezital', start_at: null, end_at: null, all_day: 0, location: null },
 ];
 
 interface DemoTask {

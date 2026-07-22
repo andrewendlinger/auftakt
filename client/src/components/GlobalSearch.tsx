@@ -41,7 +41,7 @@ function buildHits(r: SearchResults, typeLabel: (value: string) => string): Hit[
       key: `e${e.id}`,
       group: 'Termine',
       label: e.title,
-      sub: `${typeLabel(e.type)} · ${formatDate(e.start_at)}`,
+      sub: `${typeLabel(e.type)} · ${e.start_at ? formatDate(e.start_at) : 'Datum offen'}`,
       to: parentTo(e.project_id, e.resolved_artist_id),
     });
   for (const c of r.contacts)

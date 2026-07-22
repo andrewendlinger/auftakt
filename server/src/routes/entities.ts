@@ -114,7 +114,8 @@ export const eventsRouter = crudRouter({
     'notes',
     'sort_order',
   ],
-  required: ['type', 'title', 'start_at'],
+  // start_at is optional: NULL means "Datum offen" (TBD), rendered as a label client-side.
+  required: ['type', 'title'],
   customList: (req, res) => {
     res.json(
       listEvents(getDb(), {

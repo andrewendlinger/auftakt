@@ -57,7 +57,8 @@ export interface EventItem extends SoftDeletable, Partial<Resolved> {
   project_id: ID | null;
   type: string;
   title: string;
-  start_at: string;
+  /** NULL = kein festes Datum („Datum offen" / TBD). */
+  start_at: string | null;
   end_at: string | null;
   all_day: number;
   location: string | null;
@@ -233,7 +234,7 @@ export interface SearchResults {
     id: ID;
     title: string;
     type: string;
-    start_at: string;
+    start_at: string | null;
     all_day: number;
     project_id: ID | null;
     artist_id: ID | null;

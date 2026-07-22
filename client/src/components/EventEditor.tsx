@@ -27,6 +27,9 @@ export function EventEditor({
   const [type, setType] = useState(event?.type ?? eventTypes[0]?.value ?? 'Termin');
   const [title, setTitle] = useState(event?.title ?? '');
   const [allDay, setAllDay] = useState<boolean>(!!event?.all_day);
+  // TBD = no fixed date yet; stored as start_at NULL. The pickers keep their values while
+  // the box is ticked so un-ticking restores them.
+  const [tbd, setTbd] = useState<boolean>(event ? !event.start_at : false);
   const [start, setStart] = useState(event?.start_at ?? '');
   const [end, setEnd] = useState(event?.end_at ?? '');
   const [location, setLocation] = useState(event?.location ?? '');
@@ -40,15 +43,15 @@ export function EventEditor({
   };
 
   const submit = async () => {
-    if (!title.trim() || !start.trim()) return;
+    if (!title.trim()) return;
     setBusy(true);
     const payload = {
       artist_id: event ? event.artist_id : (parent.artist_id ?? null),
       project_id: event ? event.project_id : (parent.project_id ?? null),
       type,
       title: title.trim(),
-      start_at: start,
-      end_at: end.trim() === '' ? null : end,
+      start_at: tbd || start.trim() === '' ? null : start,
+      end_at: tbd || end.trim() === '' ? null : end,
       all_day: allDay ? 1 : 0,
       location: location.trim() === '' ? null : location,
       notes: notes.trim() === '' ? null : notes,
@@ -91,10 +94,14 @@ export function EventEditor({
             ))}
           </Select>
         </div>
-        <div className="col-span-2 flex items-end sm:col-span-1">
+        <div className="col-span-2 flex flex-col justify-end gap-1.5 sm:col-span-1">
           <label className="flex cursor-pointer items-center gap-2 text-sm text-neutral-700">
             <input type="checkbox" checked={allDay} onChange={(e) => toggleAllDay(e.target.checked)} />
             Ganztägig / mehrtägig (ohne Uhrzeit)
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-neutral-700">
+            <input type="checkbox" checked={tbd} onChange={(e) => setTbd(e.target.checked)} />
+            Datum offen (TBD)
           </label>
         </div>
         <div className="col-span-2">
@@ -102,10 +109,12 @@ export function EventEditor({
           <TextInput value={title} onChange={(e) => setTitle(e.target.value)} />
         </div>
         <div className="col-span-2 sm:col-span-1">
-          <Label>Beginn *</Label>
+          <Label>Beginn</Label>
           <TextInput
             type={allDay ? 'date' : 'datetime-local'}
             value={start}
+            disabled={tbd}
+            className="disabled:bg-neutral-100 disabled:text-neutral-400"
             onChange={(e) => setStart(e.target.value)}
           />
         </div>
@@ -114,6 +123,8 @@ export function EventEditor({
           <TextInput
             type={allDay ? 'date' : 'datetime-local'}
             value={end}
+            disabled={tbd}
+            className="disabled:bg-neutral-100 disabled:text-neutral-400"
             onChange={(e) => setEnd(e.target.value)}
           />
         </div>
