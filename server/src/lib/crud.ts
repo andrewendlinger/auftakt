@@ -132,6 +132,13 @@ export function crudRouter(opts: CrudOptions): Router {
     let body = pick((req.body ?? {}) as Body, writable);
     if (transform) body = transform(body, { mode: 'update', existing });
     applyJson(body, jsonColumns);
+    // A partial update may omit a required field, but must not blank one it does send
+    // (e.g. an empty task title). Only keys present in the payload are checked.
+    for (const key of required) {
+      if (key in body && (body[key] === undefined || body[key] === null || body[key] === '')) {
+        return res.status(400).json({ error: `${key} is required` });
+      }
+    }
     const cols = Object.keys(body);
     if (cols.length > 0) {
       const setClause = cols.map((c) => `${c} = ?`).join(', ');
