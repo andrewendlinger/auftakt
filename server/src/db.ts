@@ -429,6 +429,74 @@ function copyRows(target: Database.Database, table: string, rows: unknown[]): vo
   tx();
 }
 
+/**
+ * Copy custom columns, remapping ids **only on collision**. The target already holds its
+ * builtin columns (fresh AUTOINCREMENT ids from ensureBuiltinColumns), so a source custom
+ * whose id overlaps a target builtin would violate the PRIMARY KEY and abort the whole
+ * copy (SRV-04). When the id is free we keep it — a healthy DB is then byte-for-byte
+ * unchanged, so custom_values and task_sort keep referring to the same ids; when it is
+ * taken we insert without an id and record old->new so tasks.custom_values can be rewritten
+ * (remapCustomValues) before the tasks are copied. AUTOINCREMENT hands out ids strictly
+ * above the current max, so a remapped id can never collide with an id kept as-is.
+ */
+function copyCustomColumns(
+  target: Database.Database,
+  rows: Array<Record<string, unknown>>,
+): Map<number, number> {
+  const map = new Map<number, number>();
+  if (rows.length === 0) return map;
+  const cols = COPY_COLS.custom_columns!;
+  const colsNoId = cols.filter((c) => c !== 'id');
+  const exists = target.prepare('SELECT 1 FROM custom_columns WHERE id = ?');
+  const insWithId = target.prepare(
+    `INSERT INTO custom_columns (${cols.join(', ')}) VALUES (${cols.map((c) => '@' + c).join(', ')})`,
+  );
+  const insNoId = target.prepare(
+    `INSERT INTO custom_columns (${colsNoId.join(', ')}) VALUES (${colsNoId.map((c) => '@' + c).join(', ')})`,
+  );
+  const tx = target.transaction(() => {
+    for (const r of rows) {
+      const oldId = Number(r.id);
+      const o: Record<string, unknown> = {};
+      for (const c of colsNoId) o[c] = r[c] === undefined ? null : r[c];
+      if (exists.get(oldId)) {
+        const info = insNoId.run(o);
+        map.set(oldId, Number(info.lastInsertRowid));
+      } else {
+        insWithId.run({ ...o, id: oldId });
+        map.set(oldId, oldId);
+      }
+    }
+  });
+  tx();
+  return map;
+}
+
+/**
+ * Rewrite a task's custom_values JSON so its keys (custom-column ids) follow any id remap
+ * copyCustomColumns performed. An identity map leaves the stored string untouched; keys for
+ * columns that were not copied are kept as-is, matching the previous verbatim copy.
+ */
+function remapCustomValues(raw: unknown, map: Map<number, number>): unknown {
+  if (raw == null || map.size === 0) return raw;
+  let obj: Record<string, unknown>;
+  try {
+    obj = JSON.parse(String(raw)) as Record<string, unknown>;
+  } catch {
+    return raw;
+  }
+  if (!obj || typeof obj !== 'object') return raw;
+  let changed = false;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    const mapped = map.get(Number(k));
+    const newKey = mapped !== undefined ? String(mapped) : k;
+    if (newKey !== k) changed = true;
+    out[newKey] = v;
+  }
+  return changed ? JSON.stringify(out) : raw;
+}
+
 /** What a new season carries over from an existing one. Every group is optional. */
 export interface SeasonCopyOptions {
   artists: boolean;
@@ -452,14 +520,15 @@ const SETTINGS_NOT_COPIED = new Set(['saison', 'backup_dir', 'first_run_done']);
  * Carry the task table's configuration over. Built-ins are matched by `key` and
  * updated in place — the target already has its own from ensureBuiltinColumns(),
  * and `task_sort` refers to them by key, so those ids have to stay put. Custom
- * columns are inserted with their ids preserved, because tasks.custom_values is
- * keyed by column id.
+ * columns keep their ids where free and are remapped only on collision (see
+ * copyCustomColumns); the returned old->new map lets the caller fix tasks.custom_values,
+ * which is keyed by column id.
  */
 function copyColumnConfig(
   target: Database.Database,
   builtins: Array<Record<string, unknown>>,
   customs: Array<Record<string, unknown>>,
-): void {
+): Map<number, number> {
   const upd = target.prepare(
     `UPDATE custom_columns
         SET name = @name, options = @options, icon = @icon, enabled = @enabled, sort_order = @sort_order
@@ -478,7 +547,7 @@ function copyColumnConfig(
     }
   });
   tx();
-  copyRows(target, 'custom_columns', customs);
+  return copyCustomColumns(target, customs);
 }
 
 /** Upsert, not insert: the target already holds ensureDefaultSettings()'s rows. */
@@ -526,6 +595,13 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
   try {
     target.pragma('foreign_keys = OFF');
 
+    // Accumulates every custom-column id remap (project- and global-scoped) so the task
+    // copy below can rewrite tasks.custom_values keys. Empty/identity for a healthy DB.
+    const columnIdMap = new Map<number, number>();
+    const mergeInto = (m: Map<number, number>): void => {
+      for (const [k, v] of m) columnIdMap.set(k, v);
+    };
+
     if (o.artists) copyRows(target, 'artists', live('artists'));
     if (o.projects) {
       // Source seasons are opened raw (migrations only run on the active DB), so an old
@@ -535,7 +611,9 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
         if (p.notes) p.description = p.description ? `${p.description}\n\n${p.notes}` : p.notes;
       }
       copyRows(target, 'projects', projects);
-      copyRows(target, 'custom_columns', live('custom_columns', " AND kind = 'custom' AND scope = 'project'"));
+      mergeInto(
+        copyCustomColumns(target, live('custom_columns', " AND kind = 'custom' AND scope = 'project'")),
+      );
     }
 
     const kept = (r: Record<string, unknown>): boolean =>
@@ -547,10 +625,12 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
     const eventIds = new Set(events.map((e) => e.id));
 
     if (o.columns) {
-      copyColumnConfig(
-        target,
-        live('custom_columns', " AND kind = 'builtin'"),
-        live('custom_columns', " AND kind = 'custom' AND scope = 'global'"),
+      mergeInto(
+        copyColumnConfig(
+          target,
+          live('custom_columns', " AND kind = 'builtin'"),
+          live('custom_columns', " AND kind = 'custom' AND scope = 'global'"),
+        ),
       );
     }
 
@@ -561,6 +641,8 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
     const taskIds = new Set(tasks.map((t) => t.id));
     // A subtask whose parent stayed behind becomes a root task, not a dangling FK.
     for (const t of tasks) if (t.parent_id != null && !taskIds.has(t.parent_id)) t.parent_id = null;
+    // Follow any custom-column id remap so values stay attached to the right column.
+    for (const t of tasks) t.custom_values = remapCustomValues(t.custom_values, columnIdMap);
     copyRows(target, 'tasks', tasks);
 
     // Widget sections follow the entity they sit on; dashboard widgets (no parent) travel
