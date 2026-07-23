@@ -129,9 +129,11 @@ deletedRouter.get('/', (_req, res) => {
 deletedRouter.post('/:type/:id/restore', (req, res) => {
   const table = tableFor(req.params.type);
   if (!table) return res.status(400).json({ error: 'Unbekannter Typ' });
-  getDb()
+  const info = getDb()
     .prepare(`UPDATE ${table} SET deleted_at = NULL, updated_at = datetime('now') WHERE id = ?`)
     .run(Number(req.params.id));
+  // 404 when the row is gone (hard-purged), matching the sibling hard-delete handler.
+  if (info.changes === 0) return res.status(404).json({ error: 'Nicht gefunden' });
   res.json({ ok: true });
 });
 

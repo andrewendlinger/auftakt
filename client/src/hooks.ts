@@ -190,8 +190,15 @@ export function useUndoableDelete(): (args: UndoableDeleteArgs) => Promise<void>
       message: `${label} gelöscht`,
       actionLabel: 'Rückgängig',
       onAction: async () => {
-        await restore();
-        await invalidate();
+        try {
+          await restore();
+        } catch {
+          // The row was hard-purged (or the season swapped) since the delete, so the restore
+          // 404s. Surface it softly instead of leaving an unhandled rejection.
+          toast.show({ message: `${label} konnte nicht wiederhergestellt werden` });
+        } finally {
+          await invalidate();
+        }
       },
     });
   };

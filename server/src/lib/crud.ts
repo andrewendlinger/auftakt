@@ -160,9 +160,12 @@ export function crudRouter(opts: CrudOptions): Router {
   });
 
   r.post('/:id/restore', (req, res) => {
-    getDb()
+    // changes === 0 means the id doesn't exist (e.g. hard-purged since deletion) — 404
+    // instead of a misleading 200 with a null body.
+    const info = getDb()
       .prepare(`UPDATE ${table} SET deleted_at = NULL, updated_at = datetime('now') WHERE id = ?`)
       .run(req.params.id);
+    if (info.changes === 0) return res.status(404).json({ error: 'not found' });
     res.json(one(table, req.params.id));
   });
 
