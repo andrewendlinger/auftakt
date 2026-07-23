@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { NavLink, Outlet } from 'react-router-dom';
 import { api } from '../api/client';
 import type { CustomColumnOption } from '../api/types';
 import { Card, SectionTitle, Spinner, Btn } from '../components/ui';
@@ -18,10 +19,58 @@ import {
   useTaskStatsConfig,
 } from '../hooks';
 
+const TABS = [
+  { to: 'aufgaben', label: 'Aufgaben' },
+  { to: 'kategorien', label: 'Kategorien & Optionen' },
+  { to: 'daten', label: 'Saison & Daten' },
+];
+
+/**
+ * Shell of the settings sub-navigation: heading + tab bar; the actual cards live in the
+ * three tab pages below, rendered through the Outlet (routes in `main.tsx`).
+ */
 export function SettingsPage() {
-  const { data: settings, isLoading } = useSettings();
+  return (
+    <div className="max-w-3xl space-y-8">
+      <Breadcrumbs trail={[{ label: 'Übersicht', to: '/' }, { label: 'Einstellungen' }]} />
+      <div className="space-y-4">
+        <h1 className="text-2xl font-bold text-neutral-800">Einstellungen</h1>
+        <nav className="flex flex-wrap gap-1">
+          {TABS.map((t) => (
+            <NavLink
+              key={t.to}
+              to={t.to}
+              className={({ isActive }) =>
+                `rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                  isActive
+                    ? 'bg-neutral-900 text-white'
+                    : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                }`
+              }
+            >
+              {t.label}
+            </NavLink>
+          ))}
+        </nav>
+      </div>
+      <Outlet />
+    </div>
+  );
+}
+
+/** Patch one or more settings keys and blanket-invalidate — shared by all three tabs. */
+function usePatchSettings() {
   const invalidate = useInvalidateAll();
-  const [saison, setSaison] = useState('');
+  return async (p: Record<string, unknown>) => {
+    await api.patchSettings(p);
+    await invalidate();
+  };
+}
+
+/** Tab „Aufgaben": global columns, automatic sort rules, overview metrics. */
+export function SettingsTasksTab() {
+  const { data: settings, isLoading } = useSettings();
+  const patch = usePatchSettings();
   const [managingColumns, setManagingColumns] = useState(false);
 
   const { data: globalCols = [] } = useQuery({
@@ -29,37 +78,10 @@ export function SettingsPage() {
     queryFn: () => api.customColumns.list({ scope: 'global' }),
   });
 
-  const eventTypeOptions = useEventTypeOptions();
-  const projectStatusOptions = useProjectStatusOptions();
-  const linkCategoryOptions = useLinkCategoryOptions();
-
-  // Usage counts drive the "in use → can't delete" guard. The dataset is tiny and blanket-
-  // invalidated on every write, so listing all events/projects here is cheap and needs no endpoint.
-  const { data: allEvents = [] } = useQuery({ queryKey: ['events', 'all'], queryFn: () => api.events.list() });
-  const { data: allProjects = [] } = useQuery({ queryKey: ['projects', 'all'], queryFn: () => api.projects.list() });
-  const { data: allLinks = [] } = useQuery({ queryKey: ['links', 'all'], queryFn: () => api.links.list() });
-  const eventTypeUsage = useMemo(() => countBy(allEvents.map((e) => e.type)), [allEvents]);
-  const projectStatusUsage = useMemo(() => countBy(allProjects.map((p) => p.status)), [allProjects]);
-  const linkCategoryUsage = useMemo(() => countBy(allLinks.map((l) => l.category)), [allLinks]);
-
-  useEffect(() => {
-    if (settings) setSaison(settings.saison ?? '');
-  }, [settings]);
-
   if (isLoading || !settings) return <Spinner />;
 
-  const patch = async (p: Record<string, unknown>) => {
-    await api.patchSettings(p);
-    await invalidate();
-  };
-
-  const hasElectron = typeof window.auftakt?.exportDatabase === 'function';
-
   return (
-    <div className="max-w-3xl space-y-8">
-      <Breadcrumbs trail={[{ label: 'Übersicht', to: '/' }, { label: 'Einstellungen' }]} />
-      <h1 className="text-2xl font-bold text-neutral-800">Einstellungen</h1>
-
+    <div className="space-y-8">
       <Card className="p-5">
         <SectionTitle right={<Btn onClick={() => setManagingColumns(true)}>Verwalten</Btn>}>
           Aufgaben-Spalten
@@ -79,9 +101,9 @@ export function SettingsPage() {
       <Card className="p-5">
         <SectionTitle>Automatische Aufgaben-Sortierung</SectionTitle>
         <p className="mt-1 mb-3 text-xs text-neutral-400">
-          Bestimmt, wie Aufgaben in allen Tabellen automatisch angeordnet werden (von oben nach unten
-          angewandt). Erledigte Aufgaben rutschen immer nach unten. Die Reihenfolge der Status-Werte
-          selbst (z. B. Not Started → In Progress → Done) legst du bei den Status-Spaltenoptionen fest.
+          Bestimmt, wie Aufgaben in allen Tabellen automatisch angeordnet werden; Erledigtes
+          rutscht immer nach unten. Die Reihenfolge der Status-Werte selbst legst du bei den
+          Status-Spaltenoptionen fest.
         </p>
         <TaskSortEditor
           value={settings.task_sort ?? []}
@@ -98,28 +120,37 @@ export function SettingsPage() {
         <TaskStatsSetting onSave={(task_stats, attention_window_days) => patch({ task_stats, attention_window_days })} />
       </Card>
 
-      <Card className="p-5">
-        <SectionTitle>Saison</SectionTitle>
-        <p className="mt-1 mb-3 text-xs text-neutral-400">
-          Name dieser Saison – wird oben in der Kopfzeile angezeigt.
-        </p>
-        <div className="flex items-end gap-3">
-          <div className="flex-1">
-            <Label>Bezeichnung (im Kopf angezeigt)</Label>
-            <TextInput value={saison} onChange={(e) => setSaison(e.target.value)} />
-          </div>
-          <Btn variant="primary" onClick={() => patch({ saison })}>
-            Speichern
-          </Btn>
-        </div>
-      </Card>
+      {managingColumns && (
+        <CustomColumnManager columns={globalCols} onClose={() => setManagingColumns(false)} />
+      )}
+    </div>
+  );
+}
 
+/** Tab „Kategorien & Optionen": the three coloured-options lists. */
+export function SettingsCategoriesTab() {
+  const patch = usePatchSettings();
+
+  const eventTypeOptions = useEventTypeOptions();
+  const projectStatusOptions = useProjectStatusOptions();
+  const linkCategoryOptions = useLinkCategoryOptions();
+
+  // Usage counts drive the "in use → can't delete" guard. The dataset is tiny and blanket-
+  // invalidated on every write, so listing all events/projects here is cheap and needs no endpoint.
+  const { data: allEvents = [] } = useQuery({ queryKey: ['events', 'all'], queryFn: () => api.events.list() });
+  const { data: allProjects = [] } = useQuery({ queryKey: ['projects', 'all'], queryFn: () => api.projects.list() });
+  const { data: allLinks = [] } = useQuery({ queryKey: ['links', 'all'], queryFn: () => api.links.list() });
+  const eventTypeUsage = useMemo(() => countBy(allEvents.map((e) => e.type)), [allEvents]);
+  const projectStatusUsage = useMemo(() => countBy(allProjects.map((p) => p.status)), [allProjects]);
+  const linkCategoryUsage = useMemo(() => countBy(allLinks.map((l) => l.category)), [allLinks]);
+
+  return (
+    <div className="space-y-8">
       <Card className="p-5">
         <SectionTitle>Termin-Typen</SectionTitle>
         <p className="mt-1 mb-3 text-xs text-neutral-400">
-          Kategorien für Wichtige Termine (z. B. Auftritt, Probe, Anreise), jeweils mit eigener Farbe.
-          Umbenennen ändert nur die Anzeige – bestehende Termine behalten ihren Typ. Beim Import
-          gefundene Typen werden automatisch ergänzt.
+          Kategorien für Wichtige Termine (z. B. Auftritt, Probe, Anreise), jeweils mit eigener
+          Farbe. Umbenennen ändert nur die Anzeige – bestehende Termine behalten ihren Typ.
         </p>
         <SelectOptionsSetting
           options={eventTypeOptions}
@@ -150,7 +181,6 @@ export function SettingsPage() {
         <p className="mt-1 mb-3 text-xs text-neutral-400">
           Kategorien für Dokumente & Links, jeweils mit eigener Farbe — die Liste wird danach
           gruppiert. Umbenennen ändert nur die Anzeige – bestehende Links behalten ihre Kategorie.
-          Ohne Kategorien bleibt die Liste ungruppiert.
         </p>
         <SelectOptionsSetting
           options={linkCategoryOptions}
@@ -160,9 +190,47 @@ export function SettingsPage() {
           onSave={(v) => patch({ link_categories: v })}
         />
       </Card>
+    </div>
+  );
+}
+
+/** Tab „Saison & Daten": season name, database & backups (and later the update card, WP-N). */
+export function SettingsDataTab() {
+  const { data: settings, isLoading } = useSettings();
+  const patch = usePatchSettings();
+  const [saison, setSaison] = useState('');
+
+  useEffect(() => {
+    if (settings) setSaison(settings.saison ?? '');
+  }, [settings]);
+
+  if (isLoading || !settings) return <Spinner />;
+
+  const hasElectron = typeof window.auftakt?.exportDatabase === 'function';
+
+  return (
+    <div className="space-y-8">
+      <Card className="p-5">
+        <SectionTitle>Saison</SectionTitle>
+        <p className="mt-1 mb-3 text-xs text-neutral-400">
+          Name dieser Saison – wird oben in der Kopfzeile angezeigt.
+        </p>
+        <div className="flex items-end gap-3">
+          <div className="flex-1">
+            <Label>Bezeichnung (im Kopf angezeigt)</Label>
+            <TextInput value={saison} onChange={(e) => setSaison(e.target.value)} />
+          </div>
+          <Btn variant="primary" onClick={() => patch({ saison })}>
+            Speichern
+          </Btn>
+        </div>
+      </Card>
 
       <Card className="p-5">
         <SectionTitle>Datenbank & Backups</SectionTitle>
+        <p className="mt-1 mb-3 text-xs text-neutral-400">
+          Automatische Sicherung aller Saisons sowie Export und Import der Datenbank.
+        </p>
         <div className="space-y-3 text-sm">
           <div>
             <Label>Backup-Ordner</Label>
@@ -197,10 +265,6 @@ export function SettingsPage() {
           )}
         </div>
       </Card>
-
-      {managingColumns && (
-        <CustomColumnManager columns={globalCols} onClose={() => setManagingColumns(false)} />
-      )}
     </div>
   );
 }

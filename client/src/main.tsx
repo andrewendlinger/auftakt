@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { HashRouter, Route, Routes } from 'react-router-dom';
+import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import './index.css';
 import { Layout } from './components/Layout';
@@ -10,7 +10,12 @@ import { Dashboard } from './pages/Dashboard';
 import { ArtistPage } from './pages/ArtistPage';
 import { ProjectPage } from './pages/ProjectPage';
 import { ArchivePage } from './pages/ArchivePage';
-import { SettingsPage } from './pages/SettingsPage';
+import {
+  SettingsPage,
+  SettingsTasksTab,
+  SettingsCategoriesTab,
+  SettingsDataTab,
+} from './pages/SettingsPage';
 import { PrintArtist } from './pages/PrintArtist';
 import { PrintProject } from './pages/PrintProject';
 
@@ -32,7 +37,12 @@ createRoot(document.getElementById('root')!).render(
                 <Route path="artist/:id" element={<ArtistPage />} />
                 <Route path="project/:id" element={<ProjectPage />} />
                 <Route path="archiv" element={<ArchivePage />} />
-                <Route path="einstellungen" element={<SettingsPage />} />
+                <Route path="einstellungen" element={<SettingsPage />}>
+                  <Route index element={<Navigate to="/einstellungen/aufgaben" replace />} />
+                  <Route path="aufgaben" element={<SettingsTasksTab />} />
+                  <Route path="kategorien" element={<SettingsCategoriesTab />} />
+                  <Route path="daten" element={<SettingsDataTab />} />
+                </Route>
               </Route>
               <Route path="print/artist/:id" element={<PrintArtist />} />
               <Route path="print/project/:id" element={<PrintProject />} />
