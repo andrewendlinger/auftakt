@@ -64,12 +64,25 @@ function toIsoLocal(v: string): string {
 }
 
 function clearTables(db: Database.Database): void {
-  const tables = ['links', 'tasks', 'events', 'contacts', 'projects', 'artists', 'custom_columns'];
+  // Every seeded data table (settings deliberately survive). custom_sections was missing,
+  // so a re-seed left stale widget sections on re-used artist/project ids.
+  const tables = [
+    'links',
+    'tasks',
+    'events',
+    'contacts',
+    'projects',
+    'artists',
+    'custom_columns',
+    'custom_sections',
+  ];
   // PRAGMA foreign_keys is a no-op inside a transaction, so toggle it around one.
   db.pragma('foreign_keys = OFF');
+  const placeholders = tables.map(() => '?').join(',');
   const tx = db.transaction(() => {
     for (const t of tables) db.prepare(`DELETE FROM ${t}`).run();
-    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('links','tasks','events','contacts','projects','artists','custom_columns')").run();
+    // Derived from the same list so the AUTOINCREMENT reset can never drift from it.
+    db.prepare(`DELETE FROM sqlite_sequence WHERE name IN (${placeholders})`).run(...tables);
   });
   tx();
   db.pragma('foreign_keys = ON');
