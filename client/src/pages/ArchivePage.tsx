@@ -87,7 +87,7 @@ export function ArchivePage() {
 
   return (
     <div className="space-y-8">
-      <Breadcrumbs trail={[{ label: 'Übersicht', to: '/' }, { label: 'Archiv' }]} />
+      <Breadcrumbs trail={[{ label: 'Übersicht', to: '/dashboard' }, { label: 'Archiv' }]} />
 
       <div className="space-y-3">
         <SectionTitle

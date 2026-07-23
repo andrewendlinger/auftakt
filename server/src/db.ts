@@ -17,10 +17,54 @@ export interface Season {
   label: string;
   file: string; // basename inside the data dir
   createdAt: string;
+  /** User override for the card's „Angelegt am …" line; absent = auto text. */
+  subtitle?: string;
+  /** User override for the card's auto Zeitraum line; absent = auto text. */
+  period?: string;
 }
+
+export interface LandingDoc {
+  id: number;
+  label: string;
+  url: string | null;
+}
+
+/** A user-created Textfeld section on the landing page. */
+export interface LandingSection {
+  id: number;
+  name: string;
+  value: string | null; // Markdown
+}
+
+/** Mirrors the client's LayoutEntry — the landing page's section arrangement. */
+export interface LandingLayoutEntry {
+  key: string;
+  width: 'full' | 'half';
+  hidden?: boolean;
+}
+
+/** The user-renameable word for a season („Saison"/„Saisons" by default). */
+export interface SeasonTerms {
+  season?: string;
+  seasonPlural?: string;
+}
+
+/** Cross-season content on the landing page. Lives in seasons.json (not in any season
+ *  DB) so it survives season switches and rides along in backups automatically. */
+export interface LandingContent {
+  notes: string | null; // Markdown
+  documents: LandingDoc[];
+  layout: LandingLayoutEntry[];
+  sections: LandingSection[];
+}
+
 interface Registry {
   activeId: number;
   seasons: Season[];
+  /** Old files lack the newer keys — every read goes through defaults. */
+  landing?: Partial<LandingContent>;
+  /** App-global, not landing content: the header switcher shows it on every page. */
+  terms?: SeasonTerms;
 }
 
 const DEFAULT_SEASON_LABEL = 'Festival 2026';
@@ -74,14 +118,82 @@ export function resolveDbPath(): string {
   return join(dataDir(), activeSeason().file);
 }
 
-export function listSeasons(): { activeId: number; activeFile: string; seasons: Season[] } {
+export function listSeasons(): {
+  activeId: number;
+  activeFile: string;
+  seasons: Season[];
+  terms: SeasonTerms;
+} {
   const reg = readRegistry();
-  return { activeId: reg.activeId, activeFile: join(dataDir(), activeSeason(reg).file), seasons: reg.seasons };
+  return {
+    activeId: reg.activeId,
+    activeFile: join(dataDir(), activeSeason(reg).file),
+    seasons: reg.seasons,
+    terms: reg.terms ?? {},
+  };
 }
 
 /** Every registered season's DB file, resolved to an absolute path. Used by the backup run. */
 export function seasonFiles(): Array<{ label: string; file: string; path: string }> {
   return readRegistry().seasons.map((s) => ({ label: s.label, file: s.file, path: join(dataDir(), s.file) }));
+}
+
+export interface SeasonStats {
+  artists: number;
+  projects: number;
+  openTasks: number;
+  firstEvent: string | null; // YYYY-MM-DD
+  lastEvent: string | null;
+}
+
+/**
+ * Kennzahlen per season for the landing page. Inactive seasons are opened raw and
+ * read-write (same reason as copySeasonData: a read-only handle can't create the WAL
+ * shared-memory file) and may carry a legacy schema, since migrations only run on the
+ * active DB — so each season is wrapped in try/catch and reports null instead of
+ * failing the whole response.
+ */
+export function seasonStats(): Record<number, SeasonStats | null> {
+  const reg = readRegistry();
+  const out: Record<number, SeasonStats | null> = {};
+  for (const s of reg.seasons) {
+    const active = s.id === reg.activeId;
+    const path = join(dataDir(), s.file);
+    // Guard: new Database() would create a stray empty file for a missing season.
+    if (!active && !existsSync(path)) {
+      out[s.id] = null;
+      continue;
+    }
+    let db: Database.Database | null = null;
+    try {
+      db = active ? getDb() : new Database(path);
+      const count = (sql: string, ...args: unknown[]): number =>
+        (db!.prepare(sql).get(...args) as { n: number }).n;
+      // date() parses both storage forms: YYYY-MM-DD (all-day) and YYYY-MM-DDTHH:MM (timed).
+      const range = db
+        .prepare(
+          `SELECT MIN(date(start_at)) AS first, MAX(date(COALESCE(end_at, start_at))) AS last
+             FROM events WHERE deleted_at IS NULL AND start_at IS NOT NULL`,
+        )
+        .get() as { first: string | null; last: string | null };
+      out[s.id] = {
+        artists: count('SELECT COUNT(*) AS n FROM artists WHERE deleted_at IS NULL'),
+        projects: count('SELECT COUNT(*) AS n FROM projects WHERE deleted_at IS NULL'),
+        // NOT IN also excludes legacy 'erledigt' rows — old files never ran migrateTaskStatus.
+        openTasks: count(
+          "SELECT COUNT(*) AS n FROM tasks WHERE deleted_at IS NULL AND status NOT IN (?, 'erledigt')",
+          doneStatusValue(db),
+        ),
+        firstEvent: range.first,
+        lastEvent: range.last,
+      };
+    } catch {
+      out[s.id] = null; // legacy schema / unreadable file → the card degrades gracefully
+    } finally {
+      if (db && !active) db.close();
+    }
+  }
+  return out;
 }
 
 /** Create a fully-initialised new season DB and register it (does not activate it). */
@@ -112,13 +224,103 @@ export function activateSeason(id: number): void {
   closeDb();
 }
 
-export function renameSeason(id: number, label: string): void {
+export interface SeasonPatch {
+  label?: string;
+  subtitle?: string | null; // null clears the override
+  period?: string | null;
+}
+
+export function updateSeason(id: number, patch: SeasonPatch): void {
   const reg = readRegistry();
   const s = reg.seasons.find((x) => x.id === id);
   if (!s) throw new Error('unknown season');
-  s.label = label;
+  if (patch.label !== undefined) s.label = patch.label;
+  // Cleared overrides are deleted, not stored as '' — no empty-string litter in seasons.json.
+  if (patch.subtitle !== undefined) {
+    if (patch.subtitle) s.subtitle = patch.subtitle;
+    else delete s.subtitle;
+  }
+  if (patch.period !== undefined) {
+    if (patch.period) s.period = patch.period;
+    else delete s.period;
+  }
   saveRegistry(reg);
-  if (id === reg.activeId) setSetting(getDb(), 'saison', label);
+  if (patch.label !== undefined && id === reg.activeId) setSetting(getDb(), 'saison', patch.label);
+}
+
+/** Persist a manual card order: reorder reg.seasons itself — array order IS the order. */
+export function reorderSeasons(order: number[]): void {
+  const reg = readRegistry();
+  const ids = new Set(reg.seasons.map((s) => s.id));
+  if (
+    order.length !== reg.seasons.length ||
+    new Set(order).size !== order.length ||
+    !order.every((id) => ids.has(id))
+  ) {
+    throw new Error('order must contain every season id exactly once');
+  }
+  reg.seasons.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+  saveRegistry(reg); // activeId untouched
+}
+
+/** Empty/null deletes a key so the default term returns (mirrors subtitle/period). */
+export function setSeasonTerms(patch: { season?: string | null; seasonPlural?: string | null }): void {
+  const reg = readRegistry();
+  const t = { ...reg.terms };
+  if (patch.season !== undefined) {
+    if (patch.season) t.season = patch.season;
+    else delete t.season;
+  }
+  if (patch.seasonPlural !== undefined) {
+    if (patch.seasonPlural) t.seasonPlural = patch.seasonPlural;
+    else delete t.seasonPlural;
+  }
+  if (Object.keys(t).length) reg.terms = t;
+  else delete reg.terms;
+  saveRegistry(reg);
+}
+
+export function getLanding(): LandingContent {
+  const reg = readRegistry();
+  return {
+    notes: reg.landing?.notes ?? null,
+    documents: reg.landing?.documents ?? [],
+    layout: reg.landing?.layout ?? [],
+    sections: reg.landing?.sections ?? [],
+  };
+}
+
+/** Documents/sections without an id get max+1 assigned — the client sends new rows
+ *  id-less. Seeding the counter from current *and* incoming ids means a delete-then-add
+ *  never reuses the deleted id while its undo toast is still alive. */
+export function patchLanding(patch: {
+  notes?: string | null;
+  documents?: Array<{ id?: number; label: string; url: string | null }>;
+  layout?: LandingLayoutEntry[];
+  sections?: Array<{ id?: number; name: string; value: string | null }>;
+}): LandingContent {
+  const cur = getLanding();
+  let documents = cur.documents;
+  if (patch.documents !== undefined) {
+    let nextId =
+      Math.max(0, ...patch.documents.map((d) => d.id ?? 0), ...cur.documents.map((d) => d.id)) + 1;
+    documents = patch.documents.map((d) => ({ id: d.id ?? nextId++, label: d.label, url: d.url }));
+  }
+  let sections = cur.sections;
+  if (patch.sections !== undefined) {
+    let nextId =
+      Math.max(0, ...patch.sections.map((s) => s.id ?? 0), ...cur.sections.map((s) => s.id)) + 1;
+    sections = patch.sections.map((s) => ({ id: s.id ?? nextId++, name: s.name, value: s.value }));
+  }
+  const reg = readRegistry();
+  reg.landing = {
+    notes: patch.notes !== undefined ? patch.notes : cur.notes,
+    documents,
+    layout: patch.layout !== undefined ? patch.layout : cur.layout,
+    sections,
+  };
+  saveRegistry(reg);
+  return reg.landing as LandingContent;
 }
 
 export function deleteSeason(id: number): void {

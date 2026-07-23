@@ -1,0 +1,296 @@
+import { useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../api/client';
+import type { LayoutEntry, Season, SeasonCopyOptions, SeasonPatch, SeasonStats } from '../api/types';
+import { Card, Btn, DragHandle, Spinner, EmptyState } from '../components/ui';
+import { EditableText, EditableFallbackText } from '../components/EditableText';
+import {
+  AddLandingSectionButton,
+  LandingDocsSection,
+  LandingNotesSection,
+  LandingTextSection,
+  landingSectionKey,
+  useRemoveLandingSection,
+} from '../components/LandingCards';
+import { NewSeasonModal, reloadToDashboard } from '../components/SeasonModals';
+import { SectionArranger } from '../components/SectionArranger';
+import { useToast } from '../components/Toast';
+import { useInvalidateAll, useLabel, useSeasonTerm } from '../hooks';
+import { arrayMoveTo } from '../lib/arrays';
+import { useDragReorder } from '../lib/dragReorder';
+import { formatDate } from '../lib/dates';
+
+/**
+ * The start page: every season as a card, plus cross-season Notizen/Dokumente/Textfelder
+ * below — all arrangeable via SectionArranger, persisted in seasons.json (not per-season
+ * settings). Season cards keep the manual registry order and reorder via drag handle.
+ * A card click opens the season; the card texts edit in place. Deleting a season lives
+ * in Einstellungen, deliberately not here.
+ */
+
+/** Visual parity with the pre-arranger landing: Notizen | Dokumente side by side. */
+const DEFAULT_LANDING_LAYOUT: LayoutEntry[] = [
+  { key: 'saisons', width: 'full' },
+  { key: 'notizen', width: 'half' },
+  { key: 'dokumente', width: 'half' },
+];
+
+export function LandingPage() {
+  const { data, isLoading } = useQuery({ queryKey: ['seasons'], queryFn: api.seasons });
+  const { data: stats } = useQuery({ queryKey: ['seasonStats'], queryFn: api.seasonStats });
+  const { data: landing } = useQuery({ queryKey: ['landing'], queryFn: api.landing.get });
+  const navigate = useNavigate();
+  const toast = useToast();
+  const invalidate = useInvalidateAll();
+  const label = useLabel();
+  const term = useSeasonTerm();
+  const removeLandingSection = useRemoveLandingSection(landing);
+
+  const [creating, setCreating] = useState(false);
+  const [switching, setSwitching] = useState(false);
+
+  const seasons = data?.seasons ?? []; // registry order — manual and stable
+
+  const open = async (s: Season) => {
+    if (switching) return;
+    if (s.id === data?.activeId) {
+      navigate('/dashboard');
+      return;
+    }
+    setSwitching(true);
+    await api.activateSeason(s.id);
+    reloadToDashboard();
+  };
+
+  const update = async (id: number, patch: SeasonPatch) => {
+    await api.updateSeason(id, patch);
+    await invalidate(); // refreshes the cards, the header chip and the `saison` setting
+    if (patch.label !== undefined) toast.show({ message: `${term.singular} umbenannt.` });
+  };
+
+  const create = async (labelText: string, copyFrom: number | undefined, copy: SeasonCopyOptions) => {
+    const season = await api.createSeason(labelText, { copyFrom, ...copy });
+    // A toast would not survive the reload below, so say it in something that blocks.
+    if (season.copyError) {
+      alert(
+        `${term.singular} „${season.label}“ wurde angelegt, aber das Übernehmen ist fehlgeschlagen:\n\n${season.copyError}`,
+      );
+    }
+    await api.activateSeason(season.id);
+    reloadToDashboard();
+  };
+
+  const drag = useDragReorder<number>({
+    mode: 'armed',
+    onReorder: async (fromId, toId) => {
+      const next = arrayMoveTo(
+        seasons,
+        seasons.findIndex((s) => s.id === fromId),
+        seasons.findIndex((s) => s.id === toId),
+      );
+      if (next === seasons) return;
+      await api.reorderSeasons(next.map((s) => s.id));
+      await invalidate();
+    },
+  });
+
+  const seasonGrid =
+    isLoading || !data ? (
+      <Spinner />
+    ) : seasons.length === 0 ? (
+      // Defensive — the registry always bootstraps one season.
+      <EmptyState>{`Noch keine ${term.plural} angelegt.`}</EmptyState>
+    ) : (
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {seasons.map((s) => (
+          <SeasonCard
+            key={s.id}
+            season={s}
+            active={s.id === data.activeId}
+            stats={stats?.[s.id]}
+            disabled={switching}
+            drag={drag}
+            term={term.singular}
+            onOpen={() => open(s)}
+            onUpdate={(patch) => update(s.id, patch)}
+          />
+        ))}
+      </div>
+    );
+
+  const sections: Record<string, ReactNode> = { saisons: seasonGrid };
+  const titles: Record<string, string> = { saisons: term.plural };
+  if (landing) {
+    sections.notizen = <LandingNotesSection landing={landing} />;
+    sections.dokumente = <LandingDocsSection landing={landing} />;
+    for (const s of landing.sections) {
+      sections[landingSectionKey(s)] = <LandingTextSection section={s} all={landing.sections} />;
+      titles[landingSectionKey(s)] = s.name;
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-5xl space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-neutral-800">{term.plural}</h1>
+          <p className="mt-1 text-sm text-neutral-500">
+            Jede Karte ist eine eigene Datenbank — ein Klick öffnet sie.
+          </p>
+        </div>
+        <Btn variant="primary" onClick={() => setCreating(true)}>{`＋ ${term.singular} anlegen`}</Btn>
+      </div>
+
+      {landing ? (
+        <SectionArranger
+          layout={landing.layout.length ? landing.layout : DEFAULT_LANDING_LAYOUT}
+          onPersist={async (next) => {
+            await api.landing.patch({ layout: next });
+            await invalidate();
+          }}
+          sections={sections}
+          labelKeys={{ notizen: 'landing.notizen', dokumente: 'landing.dokumente' }}
+          titles={titles}
+          mandatoryKeys={['saisons']}
+          fullWidthKeys={['saisons']}
+          nonEmptyKeys={[
+            ...(landing.notes ? ['notizen'] : []),
+            ...(landing.documents.length ? ['dokumente'] : []),
+          ]}
+          toolbarAfterKey="saisons"
+          onRemoveCustom={removeLandingSection}
+          addAction={({ hiddenKeys, restore, prepend }) => (
+            <AddLandingSectionButton
+              landing={landing}
+              hiddenKeys={hiddenKeys}
+              hiddenNames={{ notizen: label('landing.notizen'), dokumente: label('landing.dokumente') }}
+              onRestore={restore}
+              onPrepend={prepend}
+            />
+          )}
+        />
+      ) : (
+        seasonGrid
+      )}
+
+      {creating && (
+        <NewSeasonModal seasons={data?.seasons ?? []} onSubmit={create} onClose={() => setCreating(false)} />
+      )}
+    </div>
+  );
+}
+
+/** The card's auto Zeitraum text when the user has not overridden it. */
+function periodFallback(stats: SeasonStats | null | undefined): string {
+  if (!stats?.firstEvent) return 'Noch keine Termine';
+  return stats.firstEvent === stats.lastEvent
+    ? formatDate(stats.firstEvent)
+    : `${formatDate(stats.firstEvent)} – ${formatDate(stats.lastEvent)}`;
+}
+
+function SeasonCard({
+  season,
+  active,
+  stats,
+  disabled,
+  drag,
+  term,
+  onOpen,
+  onUpdate,
+}: {
+  season: Season;
+  active: boolean;
+  /** undefined = still loading, null = file unreadable. */
+  stats: SeasonStats | null | undefined;
+  disabled: boolean;
+  drag: ReturnType<typeof useDragReorder<number>>;
+  term: string;
+  onOpen: () => void;
+  onUpdate: (patch: SeasonPatch) => void | Promise<void>;
+}) {
+  return (
+    // Not a <button>: the inline-edit inputs may not nest inside one. A role="button"
+    // div opens the season; the editable texts stop propagation. h-full all the way
+    // down so every card in a grid row is equally tall.
+    <div className="group relative h-full" {...drag.itemProps(season.id)}>
+      <div
+        role="button"
+        tabIndex={disabled ? -1 : 0}
+        aria-label={`${term} „${season.label}“ öffnen`}
+        className="block h-full w-full cursor-pointer text-left"
+        onClick={onOpen}
+        onKeyDown={(e) => {
+          // Only the wrapper itself — Enter inside an inline-edit input must not open the season.
+          if (e.target !== e.currentTarget) return;
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onOpen();
+          }
+        }}
+      >
+        <Card
+          className={`flex h-full flex-col p-5 transition hover:shadow-md ${
+            active ? 'ring-2 ring-neutral-900/15' : ''
+          } ${drag.isDropTarget(season.id) ? 'ring-2 ring-neutral-500' : ''} ${
+            drag.isDragging(season.id) ? 'opacity-40' : ''
+          }`}
+        >
+          <div className="flex items-center gap-2 pr-10">
+            <h3
+              className="min-w-0 flex-1 overflow-hidden text-lg font-semibold text-neutral-800"
+              title={season.label}
+            >
+              <EditableText truncate value={season.label} onSave={(label) => onUpdate({ label })} />
+            </h3>
+            {active && (
+              <span className="shrink-0 rounded-full bg-neutral-900 px-2 py-0.5 text-[11px] font-medium text-white">
+                Aktiv
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5">
+            <EditableFallbackText
+              className="text-xs text-neutral-400"
+              value={season.subtitle}
+              // createdAt is a full ISO string with Z; formatDate expects the naive-local shape.
+              fallback={`Angelegt am ${formatDate(season.createdAt.slice(0, 10))}`}
+              onSave={(subtitle) => onUpdate({ subtitle })}
+            />
+          </p>
+          {stats === null ? (
+            <p className="mt-4 text-xs text-neutral-400">Kennzahlen nicht verfügbar</p>
+          ) : (
+            <div className="mt-4 grid grid-cols-3 gap-2">
+              <Stat n={stats?.artists} label="Künstler" />
+              <Stat n={stats?.projects} label="Projekte" />
+              <Stat n={stats?.openTasks} label="Offene Aufgaben" />
+            </div>
+          )}
+          <p className="mt-auto pt-3">
+            <EditableFallbackText
+              className="text-xs text-neutral-500"
+              value={season.period}
+              fallback={periodFallback(stats)}
+              onSave={(period) => onUpdate({ period })}
+            />
+          </p>
+        </Card>
+      </div>
+      {/* Reorder handle where the trash used to sit — deleting lives in Einstellungen. */}
+      <DragHandle
+        className="absolute right-4 top-4 text-base"
+        {...drag.handleProps(season.id)}
+      />
+    </div>
+  );
+}
+
+function Stat({ n, label }: { n: number | undefined; label: string }) {
+  return (
+    <div className="rounded-xl bg-neutral-50 px-2 py-2 text-center">
+      <div className="text-lg font-semibold text-neutral-800">{n ?? '–'}</div>
+      <div className="text-[11px] text-neutral-500">{label}</div>
+    </div>
+  );
+}

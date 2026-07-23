@@ -42,6 +42,11 @@ export const LABEL_DEFAULTS = {
   'project.stats': 'Aufgaben-Statistiken',
   'project.aufmerksamkeit': 'Braucht Aufmerksamkeit',
   'project.aufgaben': 'Aufgaben',
+
+  // Landing-page sections. Overrides live in per-season settings while the landing's
+  // layout and content are cross-season (seasons.json) — an accepted asymmetry.
+  'landing.notizen': 'Notizen',
+  'landing.dokumente': 'Dokumente',
 } as const;
 
 export type LabelKey = keyof typeof LABEL_DEFAULTS;

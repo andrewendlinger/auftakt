@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { Link, NavLink, Outlet } from 'react-router-dom';
 import { GlobalSearch } from './GlobalSearch';
 import { SeasonSwitcher } from './SeasonSwitcher';
 
@@ -14,13 +14,16 @@ export function Layout() {
       <header className="sticky top-0 z-20 bg-neutral-900 text-white shadow-md no-print">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-6 gap-y-3 px-6 py-3">
           <div className="flex items-center gap-3">
-            <span className="text-lg font-bold tracking-tight">Auftakt</span>
+            {/* The brand is the way to the Saison-Übersicht (landing). */}
+            <Link to="/" className="text-lg font-bold tracking-tight transition hover:text-white/80">
+              Auftakt
+            </Link>
             <SeasonSwitcher />
           </div>
           {/* Fixed page names, deliberately not `EditableLabel`: renaming the app's own
               navigation only obscures where a link leads. */}
           <nav className="flex items-center gap-1">
-            <NavLink to="/" end className={navClass}>
+            <NavLink to="/dashboard" className={navClass}>
               Übersicht
             </NavLink>
             <NavLink to="/archiv" className={navClass}>

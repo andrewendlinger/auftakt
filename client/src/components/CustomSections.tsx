@@ -5,6 +5,7 @@ import type { CustomSection } from '../api/types';
 import { Card, SectionTitle, Btn } from './ui';
 import { Label, Modal, TextInput } from './fields';
 import { InlineNotes } from './InlineNotes';
+import { EditableText } from './EditableText';
 import { LinkList } from './LinkList';
 import type { LabelKey } from '../lib/labels';
 import { useInvalidateAll, useLabel, useUndoableDelete, useUndoablePatch, resourceUndo } from '../hooks';
@@ -220,53 +221,6 @@ function AddSectionModal({
   );
 }
 
-/** Click-to-edit widget title — the EditableLabel input pattern minus the label-key binding. */
-function EditableText({ value, onSave }: { value: string; onSave: (v: string) => void | Promise<void> }) {
-  const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(value);
-
-  if (editing) {
-    return (
-      <input
-        autoFocus
-        // Inherits the heading's own size/weight/tracking so the text doesn't jump on click.
-        className="min-w-32 rounded border border-neutral-300 bg-white px-1 py-0.5 font-[inherit] text-[inherit] uppercase tracking-[inherit] text-neutral-800 outline-none focus:border-neutral-500"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={() => {
-          setEditing(false);
-          const v = text.trim();
-          if (v && v !== value) void onSave(v);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-          if (e.key === 'Escape') {
-            setText(value);
-            setEditing(false);
-          }
-        }}
-      />
-    );
-  }
-  return (
-    <span className="group/label inline-flex items-center gap-1">
-      {value}
-      <button
-        type="button"
-        title="Umbenennen"
-        aria-label={`„${value}“ umbenennen`}
-        className="rounded px-0.5 text-[11px] leading-none text-neutral-400 opacity-0 transition group-hover/label:opacity-100 focus:opacity-100 hover:text-neutral-700"
-        onClick={() => {
-          setText(value);
-          setEditing(true);
-        }}
-      >
-        ✎
-      </button>
-    </span>
-  );
-}
-
 /** One rendered widget: renameable title, body per type. Removal lives in the arranger strip. */
 export function CustomSectionCard({ section }: { section: CustomSection }) {
   const undoablePatch = useUndoablePatch();
@@ -275,12 +229,12 @@ export function CustomSectionCard({ section }: { section: CustomSection }) {
     undoablePatch({ res: api.customSections, row: section, patch: { name }, label: 'Umbenennung' });
 
   if (section.type === 'links') {
-    return <SectionLinkList section={section} title={<EditableText value={section.name} onSave={rename} />} />;
+    return <SectionLinkList section={section} title={<EditableText value={section.name} onSave={rename} inputClassName="uppercase" />} />;
   }
   return (
     <>
       <SectionTitle>
-        <EditableText value={section.name} onSave={rename} />
+        <EditableText value={section.name} onSave={rename} inputClassName="uppercase" />
       </SectionTitle>
       <Card className="p-5">
         <InlineNotes

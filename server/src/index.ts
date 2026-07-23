@@ -20,6 +20,7 @@ import { searchRouter } from './routes/search';
 import { settingsRouter } from './routes/settings';
 import { exportRouter } from './routes/export';
 import { seasonsRouter } from './routes/seasons';
+import { landingRouter } from './routes/landing';
 import { backupRouter } from './routes/backup';
 
 const PORT = Number(process.env.AUFTAKT_PORT ?? 4317);
@@ -55,6 +56,7 @@ app.use('/api/search', searchRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/export', exportRouter);
 app.use('/api/seasons', seasonsRouter);
+app.use('/api/landing', landingRouter);
 app.use('/api/backup', backupRouter);
 
 // In the packaged Electron app the server also serves the built client (loaded

@@ -6,6 +6,7 @@ import './index.css';
 import { Layout } from './components/Layout';
 import { ToastProvider } from './components/Toast';
 import { UndoProvider } from './components/UndoProvider';
+import { LandingPage } from './pages/LandingPage';
 import { Dashboard } from './pages/Dashboard';
 import { ArtistPage } from './pages/ArtistPage';
 import { ProjectPage } from './pages/ProjectPage';
@@ -33,7 +34,8 @@ createRoot(document.getElementById('root')!).render(
           <HashRouter>
             <Routes>
               <Route element={<Layout />}>
-                <Route index element={<Dashboard />} />
+                <Route index element={<LandingPage />} />
+                <Route path="dashboard" element={<Dashboard />} />
                 <Route path="artist/:id" element={<ArtistPage />} />
                 <Route path="project/:id" element={<ProjectPage />} />
                 <Route path="archiv" element={<ArchivePage />} />

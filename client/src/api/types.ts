@@ -172,8 +172,18 @@ export interface Season {
   label: string;
   file: string;
   createdAt: string;
+  /** User override for the card's „Angelegt am …" line; absent = auto text. */
+  subtitle?: string;
+  /** User override for the card's auto Zeitraum line; absent = auto text. */
+  period?: string;
   /** Set when the season was created but copying from another one failed. */
   copyError?: string;
+}
+
+export interface SeasonPatch {
+  label?: string;
+  subtitle?: string | null; // null clears the override
+  period?: string | null;
 }
 
 /** What a new season carries over from an existing one. Every group is optional. */
@@ -187,11 +197,54 @@ export interface SeasonCopyOptions {
   settings: boolean;
 }
 
+/** The user-renameable word for a season („Saison"/„Saisons" by default). */
+export interface SeasonTerms {
+  season?: string;
+  seasonPlural?: string;
+}
+
 export interface SeasonList {
   activeId: ID;
   activeFile: string;
   seasons: Season[];
+  terms?: SeasonTerms;
 }
+
+/** Per-season Kennzahlen for the landing page; null when the file can't be read. */
+export interface SeasonStats {
+  artists: number;
+  projects: number;
+  openTasks: number;
+  firstEvent: string | null;
+  lastEvent: string | null;
+}
+
+export type SeasonStatsMap = Record<ID, SeasonStats | null>;
+
+/** Cross-season landing-page content, stored in the seasons.json registry. */
+export interface LandingDoc {
+  id: ID;
+  label: string;
+  url: string | null;
+}
+
+/** A user-created Textfeld section on the landing page. */
+export interface LandingSection {
+  id: ID;
+  name: string;
+  value: string | null; // Markdown
+}
+
+export interface LandingContent {
+  notes: string | null; // Markdown
+  documents: LandingDoc[];
+  layout: LayoutEntry[];
+  sections: LandingSection[];
+}
+
+/** New documents/sections are sent id-less; the server assigns max+1. */
+export type LandingDocInput = Omit<LandingDoc, 'id'> & { id?: ID };
+export type LandingSectionInput = Omit<LandingSection, 'id'> & { id?: ID };
 
 /** One section's placement in a page layout: its key and how wide it renders. */
 export interface LayoutEntry {

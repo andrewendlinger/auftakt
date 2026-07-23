@@ -8,12 +8,18 @@ import type {
   DeletedType,
   EventItem,
   ID,
+  LandingContent,
+  LandingDocInput,
+  LandingSectionInput,
+  LayoutEntry,
   LinkItem,
   Project,
   SearchResults,
   Season,
   SeasonCopyOptions,
   SeasonList,
+  SeasonPatch,
+  SeasonStatsMap,
   Settings,
   Task,
 } from './types';
@@ -94,6 +100,7 @@ export const api = {
   },
 
   seasons: () => http<SeasonList>('GET', '/seasons'),
+  seasonStats: () => http<SeasonStatsMap>('GET', '/seasons/stats'),
   createSeason: (label: string, opts?: { copyFrom?: ID } & Partial<SeasonCopyOptions>) =>
     http<Season>('POST', '/seasons', {
       label,
@@ -107,6 +114,20 @@ export const api = {
       includeSettings: opts?.settings,
     }),
   activateSeason: (id: ID) => http<SeasonList>('POST', `/seasons/${id}/activate`),
-  renameSeason: (id: ID, label: string) => http<SeasonList>('PATCH', `/seasons/${id}`, { label }),
+  updateSeason: (id: ID, patch: SeasonPatch) => http<SeasonList>('PATCH', `/seasons/${id}`, patch),
   deleteSeason: (id: ID) => http<SeasonList>('DELETE', `/seasons/${id}`),
+  reorderSeasons: (ids: ID[]) => http<SeasonList>('POST', '/seasons/reorder', { ids }),
+  updateSeasonTerms: (terms: { season?: string | null; seasonPlural?: string | null }) =>
+    http<SeasonList>('PATCH', '/seasons/terms', terms),
+
+  /** Cross-season landing-page content (Notizen, Dokumente, Textfelder, Layout). */
+  landing: {
+    get: () => http<LandingContent>('GET', '/landing'),
+    patch: (patch: {
+      notes?: string | null;
+      documents?: LandingDocInput[];
+      layout?: LayoutEntry[];
+      sections?: LandingSectionInput[];
+    }) => http<LandingContent>('PATCH', '/landing', patch),
+  },
 };

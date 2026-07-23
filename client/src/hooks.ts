@@ -29,6 +29,19 @@ export function useSaison(): string {
 }
 
 /**
+ * The user-renameable word for a season („Saison"/„Saisons" by default, e.g. „Jahr"/
+ * „Jahre"). Stored in the seasons.json registry — app-global, not per season — and
+ * rides on the ['seasons'] query the header switcher already fetches on every page.
+ */
+export function useSeasonTerm(): { singular: string; plural: string } {
+  const { data } = useQuery({ queryKey: ['seasons'], queryFn: api.seasons });
+  return {
+    singular: data?.terms?.season?.trim() || 'Saison',
+    plural: data?.terms?.seasonPlural?.trim() || 'Saisons',
+  };
+}
+
+/**
  * The event-type / project-status options as coloured `{ value, label, color }[]`, normalising
  * the legacy plain-string form so every read site gets the same shape. This is the single
  * boundary where the two settings are parsed — consumers never touch the raw setting.

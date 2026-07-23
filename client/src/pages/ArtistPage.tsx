@@ -174,7 +174,7 @@ export function ArtistPage() {
 
   return (
     <div className="space-y-8">
-      <Breadcrumbs trail={[{ label: 'Übersicht', to: '/' }, { label: artist.name }]} />
+      <Breadcrumbs trail={[{ label: 'Übersicht', to: '/dashboard' }, { label: artist.name }]} />
 
       <Card style={{ background: withAlpha(color, 0.12) }}>
         <div className="h-1.5 rounded-t-2xl" style={{ background: color }} />

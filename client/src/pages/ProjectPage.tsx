@@ -166,7 +166,7 @@ export function ProjectPage() {
     <div className="space-y-8">
       <Breadcrumbs
         trail={[
-          { label: 'Übersicht', to: '/' },
+          { label: 'Übersicht', to: '/dashboard' },
           ...(artist ? [{ label: artist.name, to: `/artist/${artist.id}` }] : []),
           { label: project.code || project.name },
         ]}

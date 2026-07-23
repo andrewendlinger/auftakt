@@ -26,8 +26,17 @@ const here = dirname(fileURLToPath(import.meta.url));
 const DEMO_DIR = process.env.AUFTAKT_DATA_DIR?.trim() || resolve(here, '../../.demo');
 process.env.AUFTAKT_DATA_DIR = DEMO_DIR;
 
-const { getDb, setSetting, getSetting, setActiveSeasonLabel, ARCHIVE_AFTER_DAYS } =
-  await import('./db');
+const {
+  getDb,
+  setSetting,
+  getSetting,
+  setActiveSeasonLabel,
+  createSeason,
+  copySeasonData,
+  updateSeason,
+  patchLanding,
+  ARCHIVE_AFTER_DAYS,
+} = await import('./db');
 
 /** Distinct from the real data's default so the season chip never reads "Festival 2026". */
 const SEASON_LABEL = 'Demofest 2026';
@@ -424,6 +433,40 @@ function main(): void {
   setSetting(db, 'saison', SEASON_LABEL);
   setActiveSeasonLabel(SEASON_LABEL);
   setSetting(db, 'link_categories', JSON.stringify(LINK_CATEGORIES));
+
+  // Two extra seasons so the Saison-Übersicht (landing page) has every card branch on
+  // screen: a populated inactive one (exercises the real copy path; no tasks → 0 offene
+  // Aufgaben) and an empty one („Noch keine Termine", Kennzahlen all zero). Season 1
+  // stays active.
+  const next = createSeason('Demofest 2027');
+  copySeasonData(next.id, 1, {
+    artists: true,
+    contacts: false,
+    events: true,
+    projects: true,
+    tasks: false,
+    columns: true,
+    settings: true,
+  });
+  createSeason('Demofest 2028 (in Planung)');
+
+  // Landing-card overrides on 2027 only — 2026/2028 keep the auto „Angelegt am"/Zeitraum
+  // fallbacks, so both branches render. Plus cross-season Notizen/Dokumente incl. a
+  // url-less document for the „(kein Link hinterlegt)" branch.
+  updateSeason(next.id, { subtitle: 'Planung startet im Herbst', period: 'Juni – Juli 2027' });
+  patchLanding({
+    notes:
+      'Saisonübergreifend: Förderanträge jeweils bis **März** einreichen 📌. Details im [Förderportal](https://example.org/foerderung).',
+    documents: [
+      { label: 'Fördervertrag Stadt (PDF)', url: 'https://example.org/foerdervertrag.pdf' },
+      { label: 'Vorlage Künstlervertrag', url: 'https://example.org/vertragsvorlage.docx' },
+      { label: 'Altes Sponsoring-Konzept', url: null },
+    ],
+    // One custom Textfeld so the landing's custom-section branch is on screen.
+    sections: [
+      { name: 'Ideen für 2027', value: 'Open-Air-Bühne prüfen · zweite Förderschiene recherchieren' },
+    ],
+  });
 
   console.log(`Demo-Datenbank neu gebaut in ${DEMO_DIR}`);
   console.log('\nRow counts:');

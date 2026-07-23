@@ -35,6 +35,8 @@ type LayoutKey = 'artist_layout' | 'project_layout' | 'dashboard_layout';
  */
 export function SectionArranger({
   layoutKey,
+  layout: layoutProp,
+  onPersist,
   sections,
   labelKeys,
   titles = {},
@@ -46,7 +48,12 @@ export function SectionArranger({
   onRemoveCustom,
   addAction,
 }: {
-  layoutKey: LayoutKey;
+  /** Settings key holding the layout — the default persistence. Omit when `layout` + `onPersist` are given. */
+  layoutKey?: LayoutKey;
+  /** Stored entries when the page persists elsewhere (the landing: seasons.json via /api/landing). */
+  layout?: LayoutEntry[];
+  /** Write-back override, paired with `layout`. */
+  onPersist?: (next: LayoutEntry[]) => Promise<void>;
   sections: Record<string, ReactNode>;
   /**
    * Section key → the heading id it is named by, so the strip below shows whatever the user
@@ -77,6 +84,7 @@ export function SectionArranger({
     prepend: (key: string) => void;
   }) => ReactNode;
 }) {
+  if (!layoutKey && !onPersist) throw new Error('SectionArranger needs layoutKey or layout+onPersist');
   const { data: settings } = useSettings();
   const label = useLabel();
   const invalidate = useInvalidateAll();
@@ -94,9 +102,10 @@ export function SectionArranger({
   const mandatorySig = mandatoryKeys.join(' ');
   const defaultHiddenSig = defaultHidden.join(' ');
 
+  const raw = layoutProp !== undefined ? layoutProp : layoutKey ? settings?.[layoutKey] : undefined;
+
   const { full, display, hiddenKeys } = useMemo(() => {
     const known = Object.keys(sections);
-    const raw = settings?.[layoutKey];
     const stored: LayoutEntry[] = Array.isArray(raw)
       ? (raw as unknown[]).map((item) => {
           if (typeof item === 'string') return { key: item, width: 'full' as const };
@@ -133,10 +142,14 @@ export function SectionArranger({
     const hiddenKeys = full.filter((e) => known.includes(e.key) && e.hidden).map((e) => e.key);
     return { full, display, hiddenKeys };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the *Sig strings capture the only content used
-  }, [sectionSig, settings, layoutKey, fullWidthSig, mandatorySig, defaultHiddenSig]);
+  }, [sectionSig, raw, fullWidthSig, mandatorySig, defaultHiddenSig]);
 
   const persist = async (next: LayoutEntry[]) => {
-    await api.patchSettings({ [layoutKey]: next });
+    if (onPersist) {
+      await onPersist(next);
+      return;
+    }
+    await api.patchSettings({ [layoutKey!]: next });
     await invalidate();
   };
 

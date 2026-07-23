@@ -1,42 +1,45 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { NavLink, Outlet } from 'react-router-dom';
-import { api } from '../api/client';
-import type { CustomColumnOption } from '../api/types';
-import { Card, SectionTitle, Spinner, Btn } from '../components/ui';
-import { Label, TextInput } from '../components/fields';
+import { api, ApiError } from '../api/client';
+import type { CustomColumnOption, Season } from '../api/types';
+import { Card, SectionTitle, Spinner, Btn, IconButton } from '../components/ui';
+import { Label, TextInput, Modal } from '../components/fields';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { CustomColumnManager } from '../components/CustomColumnManager';
 import { OptionsEditor, normalizeOptions } from '../components/OptionsEditor';
 import { TaskSortEditor } from '../components/TaskSortEditor';
+import { TrashIcon } from '../components/icons';
+import { useToast } from '../components/Toast';
 import { ALL_METRICS } from '../lib/taskStats';
 import {
   useEventTypeOptions,
   useInvalidateAll,
   useLinkCategoryOptions,
   useProjectStatusOptions,
+  useSeasonTerm,
   useSettings,
   useTaskStatsConfig,
 } from '../hooks';
-
-const TABS = [
-  { to: 'aufgaben', label: 'Aufgaben' },
-  { to: 'kategorien', label: 'Kategorien & Optionen' },
-  { to: 'daten', label: 'Saison & Daten' },
-];
 
 /**
  * Shell of the settings sub-navigation: heading + tab bar; the actual cards live in the
  * three tab pages below, rendered through the Outlet (routes in `main.tsx`).
  */
 export function SettingsPage() {
+  const term = useSeasonTerm();
+  const tabs = [
+    { to: 'aufgaben', label: 'Aufgaben' },
+    { to: 'kategorien', label: 'Kategorien & Optionen' },
+    { to: 'daten', label: `${term.singular} & Daten` },
+  ];
   return (
     <div className="max-w-3xl space-y-8">
-      <Breadcrumbs trail={[{ label: 'Übersicht', to: '/' }, { label: 'Einstellungen' }]} />
+      <Breadcrumbs trail={[{ label: 'Übersicht', to: '/dashboard' }, { label: 'Einstellungen' }]} />
       <div className="space-y-4">
         <h1 className="text-2xl font-bold text-neutral-800">Einstellungen</h1>
         <nav className="flex flex-wrap gap-1">
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <NavLink
               key={t.to}
               to={t.to}
@@ -194,15 +197,126 @@ export function SettingsCategoriesTab() {
   );
 }
 
-/** Tab „Saison & Daten": season name, database & backups (and later the update card, WP-N). */
-export function SettingsDataTab() {
-  const { data: settings, isLoading } = useSettings();
-  const patch = usePatchSettings();
-  const [saison, setSaison] = useState('');
+/** The season list with the only delete affordance in the app — deliberately not on the landing. */
+function SeasonManagementCard() {
+  const { data } = useQuery({ queryKey: ['seasons'], queryFn: api.seasons });
+  const invalidate = useInvalidateAll();
+  const toast = useToast();
+  const term = useSeasonTerm();
+  const [deleting, setDeleting] = useState<Season | null>(null);
+
+  const confirmDelete = async () => {
+    if (!deleting) return;
+    try {
+      await api.deleteSeason(deleting.id);
+      await invalidate();
+      toast.show({ message: `${term.singular} „${deleting.label}“ gelöscht.` });
+    } catch (err) {
+      toast.show({
+        message: err instanceof ApiError ? err.message : `${term.singular} konnte nicht gelöscht werden.`,
+      });
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  return (
+    <Card className="p-5">
+      <SectionTitle>{term.plural}</SectionTitle>
+      <p className="mt-1 mb-3 text-xs text-neutral-400">
+        Anlegen und Umbenennen auf der Übersichtsseite — Löschen nur hier.
+      </p>
+      <ul className="space-y-1">
+        {data?.seasons.map((s) => (
+          <li key={s.id} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-neutral-50">
+            <span className="flex-1 truncate text-sm text-neutral-700">{s.label}</span>
+            {s.id === data.activeId ? (
+              <span className="shrink-0 rounded-full bg-neutral-900 px-2 py-0.5 text-[11px] font-medium text-white">
+                Aktiv
+              </span>
+            ) : (
+              <IconButton
+                size="sm"
+                variant="danger"
+                title="Löschen"
+                className="opacity-0 group-hover:opacity-100"
+                onClick={() => setDeleting(s)}
+              >
+                <TrashIcon className="h-4 w-4" />
+              </IconButton>
+            )}
+          </li>
+        ))}
+      </ul>
+      {deleting && (
+        <Modal
+          title={`${term.singular} endgültig löschen`}
+          onClose={() => setDeleting(null)}
+          footer={
+            <>
+              <Btn onClick={() => setDeleting(null)}>Abbrechen</Btn>
+              <Btn variant="danger" onClick={confirmDelete}>Endgültig löschen</Btn>
+            </>
+          }
+        >
+          <p className="text-sm text-neutral-600">
+            „{deleting.label}“ und die zugehörige Datenbank-Datei werden endgültig gelöscht.
+            Das kann nicht rückgängig gemacht werden — {term.plural} landen nicht im Papierkorb.
+          </p>
+        </Modal>
+      )}
+    </Card>
+  );
+}
+
+/** The user-renameable word for a season, stored app-globally in seasons.json. */
+function SeasonTermCard() {
+  const { data } = useQuery({ queryKey: ['seasons'], queryFn: api.seasons });
+  const invalidate = useInvalidateAll();
+  const [singular, setSingular] = useState('');
+  const [plural, setPlural] = useState('');
 
   useEffect(() => {
-    if (settings) setSaison(settings.saison ?? '');
-  }, [settings]);
+    setSingular(data?.terms?.season ?? '');
+    setPlural(data?.terms?.seasonPlural ?? '');
+  }, [data?.terms]);
+
+  const save = async () => {
+    await api.updateSeasonTerms({
+      season: singular.trim() || null,
+      seasonPlural: plural.trim() || null,
+    });
+    await invalidate();
+  };
+
+  return (
+    <Card className="p-5">
+      <SectionTitle>Bezeichnung</SectionTitle>
+      <p className="mt-1 mb-3 text-xs text-neutral-400">
+        Wie diese Einheit überall in der App heißt — z. B. „Saison", „Jahr" oder „Jahrgang".
+        Leer lassen setzt zurück.
+      </p>
+      <div className="flex items-end gap-3">
+        <div className="flex-1">
+          <Label>Einzahl</Label>
+          <TextInput value={singular} placeholder="Saison" onChange={(e) => setSingular(e.target.value)} />
+        </div>
+        <div className="flex-1">
+          <Label>Mehrzahl</Label>
+          <TextInput value={plural} placeholder="Saisons" onChange={(e) => setPlural(e.target.value)} />
+        </div>
+        <Btn variant="primary" onClick={save}>
+          Speichern
+        </Btn>
+      </div>
+    </Card>
+  );
+}
+
+/** Tab „Saison & Daten": season management, Bezeichnung, database & backups (later: update card, WP-N). */
+export function SettingsDataTab() {
+  const { data: settings, isLoading } = useSettings();
+  const term = useSeasonTerm();
 
   if (isLoading || !settings) return <Spinner />;
 
@@ -210,26 +324,13 @@ export function SettingsDataTab() {
 
   return (
     <div className="space-y-8">
-      <Card className="p-5">
-        <SectionTitle>Saison</SectionTitle>
-        <p className="mt-1 mb-3 text-xs text-neutral-400">
-          Name dieser Saison – wird oben in der Kopfzeile angezeigt.
-        </p>
-        <div className="flex items-end gap-3">
-          <div className="flex-1">
-            <Label>Bezeichnung (im Kopf angezeigt)</Label>
-            <TextInput value={saison} onChange={(e) => setSaison(e.target.value)} />
-          </div>
-          <Btn variant="primary" onClick={() => patch({ saison })}>
-            Speichern
-          </Btn>
-        </div>
-      </Card>
+      <SeasonManagementCard />
+      <SeasonTermCard />
 
       <Card className="p-5">
         <SectionTitle>Datenbank & Backups</SectionTitle>
         <p className="mt-1 mb-3 text-xs text-neutral-400">
-          Automatische Sicherung aller Saisons sowie Export und Import der Datenbank.
+          Automatische Sicherung aller {term.plural} sowie Export und Import der Datenbank.
         </p>
         <div className="space-y-3 text-sm">
           <div>
@@ -241,8 +342,8 @@ export function SettingsDataTab() {
               </Btn>
             </div>
             <p className="mt-1 text-xs text-neutral-400">
-              Beim App-Start wird eine datierte Kopie <strong>aller Saisons</strong> hierhin gesichert (die letzten
-              30 Stände bleiben erhalten). In einen Cloud-Ordner (z. B. Google Drive) legen.
+              Beim App-Start wird eine datierte Kopie <strong>aller {term.plural}</strong> hierhin gesichert (die
+              letzten 30 Stände bleiben erhalten). In einen Cloud-Ordner (z. B. Google Drive) legen.
             </p>
             {hasElectron && !settings.backup_dir && (
               <p className="mt-1 text-xs text-amber-600">
