@@ -126,6 +126,10 @@ export const tasksRouter = crudRouter({
         cursor = row?.parent_id ?? null;
       }
     }
+    // A status-less create defaults to 'new' (the first Status option). Stamped here so it
+    // holds on every DB: the SQL column DEFAULT is stale ('offen') on databases predating the
+    // New/Active/Done model, and is never reached once the transform sets the value (SRV-07).
+    if (mode === 'create') body.status ??= 'new';
     // An explicit erledigt_am wins over the derivation: that is the undo path restoring a value
     // this transform itself destroyed. Checked first so a status+erledigt_am pair isn't reverted.
     if ('erledigt_am' in body) return body;
