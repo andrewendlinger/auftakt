@@ -92,7 +92,11 @@ exportRouter.get('/tasks.xlsx', async (req, res) => {
   ws.getRow(1).font = { bold: true };
   ws.getRow(1).alignment = { vertical: 'middle' };
   ws.views = [{ state: 'frozen', ySplit: 1 }];
-  ws.eachRow((r) => r.getCell('comment').alignment = { wrapText: true, vertical: 'top' });
+  // Skip row 1: the header's comment cell was just styled (bold, vertical middle) above, and
+  // wrapText/top would overwrite that (SRV-14).
+  ws.eachRow((r, n) => {
+    if (n > 1) r.getCell('comment').alignment = { wrapText: true, vertical: 'top' };
+  });
 
   res.setHeader(
     'Content-Type',
