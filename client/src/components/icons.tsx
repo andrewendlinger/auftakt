@@ -32,6 +32,16 @@ export function TrashIcon({ className = 'h-4 w-4' }: IconProps) {
   );
 }
 
+/** Corner-up-right arrow: „hierhin verschieben". */
+export function MoveIcon({ className = 'h-4 w-4' }: IconProps) {
+  return (
+    <svg className={className} {...common}>
+      <path d="M4 20v-7a4 4 0 0 1 4-4h12" />
+      <path d="M15 4l5 5-5 5" />
+    </svg>
+  );
+}
+
 export function ListIcon({ className = 'h-4 w-4' }: IconProps) {
   return (
     <svg className={className} {...common}>

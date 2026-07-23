@@ -247,6 +247,10 @@ const TASKS: DemoTask[] = [
 
   // Live task under a soft-deleted project (id 9) — purging that project cascades this away.
   { id: 52, project_id: 9, title: 'Aufgabe im gestrichenen Projekt', status: 'active' },
+
+  // Archived child under a live parent (task 1): absent from the live table, but the move
+  // dialog collects the tree via scope 'all' — its „mitverschoben" count must include it.
+  { id: 53, project_id: 1, parent_id: 1, title: 'Angebot Backline eingeholt', status: 'done', erledigt_am: stamp(ARCHIVED) },
 ];
 
 /**

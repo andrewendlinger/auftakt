@@ -20,7 +20,8 @@ import { Markdown } from './Markdown';
 import { RichTextEditor } from './RichTextEditor';
 import { ColorSwatchPicker } from './ColorSwatchPicker';
 import { CHILD_BAND, TREE, TreeGutterCell, groupRows, spineColorFor } from './TaskTreeGutter';
-import { TrashIcon } from './icons';
+import { MoveIcon, TrashIcon } from './icons';
+import { MoveTaskDialog } from './MoveTaskDialog';
 import { ProjectBadge } from './ProjectBadge';
 import { PillSelect } from './PillSelect';
 import { EmptyState, Btn, DragHandle, IconButton } from './ui';
@@ -185,6 +186,8 @@ export function TaskTable({
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const [addingChildFor, setAddingChildFor] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{ task: Task; children: Task[] } | null>(null);
+  // The task whose move dialog is open. Depth-0 only — subtasks travel with their parent.
+  const [moveTask, setMoveTask] = useState<Task | null>(null);
 
   const doneValue = useMemo(() => doneValueOf(customColumns), [customColumns]);
   const statusOptions = useMemo(
@@ -453,21 +456,26 @@ export function TaskTable({
           {/* Subtasks are one level deep, so only top-level rows can get one. Kept
               persistently visible (like the trash icon) so the feature is discoverable. */}
           {row.depth === 0 && (
-            <IconButton
-              size="sm"
-              className="text-base"
-              title="Unteraufgabe hinzufügen"
-              onClick={() => {
-                setCollapsed((s) => {
-                  const n = new Set(s);
-                  n.delete(row.original.id);
-                  return n;
-                });
-                setAddingChildFor(row.original.id);
-              }}
-            >
-              ＋
-            </IconButton>
+            <>
+              <IconButton
+                size="sm"
+                className="text-base"
+                title="Unteraufgabe hinzufügen"
+                onClick={() => {
+                  setCollapsed((s) => {
+                    const n = new Set(s);
+                    n.delete(row.original.id);
+                    return n;
+                  });
+                  setAddingChildFor(row.original.id);
+                }}
+              >
+                ＋
+              </IconButton>
+              <IconButton size="sm" title="Verschieben" onClick={() => setMoveTask(row.original)}>
+                <MoveIcon className="h-4 w-4" />
+              </IconButton>
+            </>
           )}
           <ColorSwatchPicker
             value={row.original.color}
@@ -608,6 +616,8 @@ export function TaskTable({
       </table>
 
       {tasks.length === 0 && <div className="p-3"><EmptyState>Keine Aufgaben.</EmptyState></div>}
+
+      {moveTask && <MoveTaskDialog task={moveTask} onClose={() => setMoveTask(null)} />}
 
       {confirmDelete && (
         <Modal
