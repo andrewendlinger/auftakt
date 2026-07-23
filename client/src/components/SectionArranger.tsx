@@ -4,6 +4,7 @@ import type { LayoutEntry } from '../api/types';
 import { arrayMoveTo } from '../lib/arrays';
 import { useDragReorder } from '../lib/dragReorder';
 import { Btn } from './ui';
+import { Modal } from './fields';
 import { TrashIcon } from './icons';
 import type { LabelKey } from '../lib/labels';
 import { useInvalidateAll, useLabel, useSettings } from '../hooks';
@@ -80,6 +81,9 @@ export function SectionArranger({
   const label = useLabel();
   const invalidate = useInvalidateAll();
   const [arranging, setArranging] = useState(false);
+  // 🗑 on a *filled* section opens a dialog first: built-ins get a "must be emptied"
+  // explanation, custom widgets a confirm that their content moves to the trash with them.
+  const [removing, setRemoving] = useState<string | null>(null);
 
   // `sections` (fresh ReactNodes) and an inline `fullWidthKeys` literal change identity
   // every render, but the layout only depends on their string content — key the memo on
@@ -263,18 +267,16 @@ export function SectionArranger({
                     </button>
                     {!mandatoryKeys.includes(key) && (
                       <button
-                        className="rounded px-2 py-1 text-neutral-500 enabled:hover:bg-neutral-200 enabled:hover:text-red-600 disabled:opacity-30"
-                        // A filled section can't be binned — its data would silently vanish
-                        // (built-ins have no trash; the rule covers custom widgets too).
-                        disabled={nonEmptyKeys.includes(key)}
-                        title={
-                          nonEmptyKeys.includes(key)
-                            ? 'Enthält noch Inhalte und kann nicht entfernt werden'
-                            : 'Bereich entfernen'
-                        }
-                        // Built-ins (they have a LabelKey) are hidden and re-addable via the
-                        // picker; custom widgets are soft-deleted by the page (undo toast).
-                        onClick={() => (key in labelKeys ? hide(key) : onRemoveCustom?.(key))}
+                        className="rounded px-2 py-1 text-neutral-500 hover:bg-neutral-200 hover:text-red-600"
+                        title="Bereich entfernen"
+                        // Empty sections go right away: built-ins (they have a LabelKey) are
+                        // hidden and re-addable via the picker; custom widgets are soft-deleted
+                        // by the page (undo toast). Filled ones get an explaining dialog first.
+                        onClick={() => {
+                          if (nonEmptyKeys.includes(key)) setRemoving(key);
+                          else if (key in labelKeys) hide(key);
+                          else onRemoveCustom?.(key);
+                        }}
                       >
                         <TrashIcon className="h-3.5 w-3.5" />
                       </button>
@@ -289,6 +291,49 @@ export function SectionArranger({
           );
         })}
       </div>
+      {removing != null &&
+        (removing in labelKeys ? (
+          // Built-in with rows: hiding it would make real data invisible — explain, no action.
+          <Modal
+            title="Bereich ist nicht leer"
+            onClose={() => setRemoving(null)}
+            footer={
+              <Btn variant="primary" onClick={() => setRemoving(null)}>
+                Verstanden
+              </Btn>
+            }
+          >
+            <p className="text-sm text-neutral-600">
+              „{label(labelKeys[removing]!)}“ enthält noch Einträge und kann erst ausgeblendet
+              werden, wenn er leer ist. Bitte zuerst die Inhalte löschen oder verschieben.
+            </p>
+          </Modal>
+        ) : (
+          // Custom widget: its content belongs to it and moves into the trash along with it.
+          <Modal
+            title="Bereich löschen"
+            onClose={() => setRemoving(null)}
+            footer={
+              <>
+                <Btn onClick={() => setRemoving(null)}>Abbrechen</Btn>
+                <Btn
+                  variant="danger"
+                  onClick={() => {
+                    onRemoveCustom?.(removing);
+                    setRemoving(null);
+                  }}
+                >
+                  In den Papierkorb
+                </Btn>
+              </>
+            }
+          >
+            <p className="text-sm text-neutral-600">
+              „{titles[removing] ?? removing}“ samt Inhalt in den Papierkorb verschieben? Du
+              kannst den Bereich im Archiv wiederherstellen.
+            </p>
+          </Modal>
+        ))}
     </>
   );
 }
