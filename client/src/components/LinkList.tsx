@@ -48,7 +48,6 @@ export function LinkList({
   title,
   links,
   parent,
-  extraActions,
 }: {
   /** Heading id — the text itself lives in `lib/labels.ts` and is user-renameable. */
   titleKey?: LabelKey;
@@ -56,8 +55,6 @@ export function LinkList({
   title?: ReactNode;
   links: LinkItem[];
   parent: LinkParent;
-  /** Rendered next to "+ Link" — a custom widget's delete button. */
-  extraActions?: ReactNode;
 }) {
   const invalidate = useInvalidateAll();
   const undoablePatch = useUndoablePatch();
@@ -135,14 +132,7 @@ export function LinkList({
 
   return (
     <div>
-      <SectionTitle
-        right={
-          <div className="flex items-center gap-1">
-            <Btn onClick={() => setCreating(true)}>+ Link</Btn>
-            {extraActions}
-          </div>
-        }
-      >
+      <SectionTitle right={<Btn onClick={() => setCreating(true)}>+ Link</Btn>}>
         {titleKey ? <EditableLabel k={titleKey} /> : title}
       </SectionTitle>
       {links.length === 0 ? (

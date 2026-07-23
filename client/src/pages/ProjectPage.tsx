@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { doneValueOf } from '../api/types';
 import { contrastText, projectShade, withAlpha } from '../lib/colors';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { SectionArranger } from '../components/SectionArranger';
@@ -17,19 +18,35 @@ import { EditProjectButton } from '../components/EntityButtons';
 import { ProjectStatusPill } from '../components/ProjectStatusPill';
 import { ExcelButton } from '../components/ExcelButton';
 import { InlineNotes } from '../components/InlineNotes';
-import { AddSectionButton, customSectionEntries } from '../components/CustomSections';
-import { useEventTypeOptions, useUndoablePatch } from '../hooks';
+import {
+  AddSectionButton,
+  customSectionEntries,
+  useRemoveCustomSection,
+  type SectionGroup,
+} from '../components/CustomSections';
+import { TaskStatChips } from '../components/TaskStatChips';
+import { AttentionList } from '../components/AttentionList';
+import { useEventTypeOptions, useTaskStatsConfig, useUndoablePatch } from '../hooks';
 
 /**
- * Which heading names each section in the "Bereiche anordnen" strip. `kontakte` holds two
+ * Which heading names each section in the "Bereiche bearbeiten" strip. `kontakte` holds two
  * lists side by side; its contacts heading is the one that names the section.
  */
-const SECTION_LABEL_KEYS = {
+const SECTION_LABEL_KEYS: Record<string, LabelKey> = {
   termine: 'project.termine',
-  fakten: 'project.fakten',
   kontakte: 'project.kontakte',
+  stats: 'project.stats',
+  aufmerksamkeit: 'project.aufmerksamkeit',
   aufgaben: 'project.aufgaben',
-} as const satisfies Record<string, LabelKey>;
+};
+
+/** Picker group of each optional built-in. */
+const SECTION_GROUPS: Record<string, SectionGroup> = {
+  termine: 'eingabe',
+  kontakte: 'eingabe',
+  stats: 'einblicke',
+  aufmerksamkeit: 'einblicke',
+};
 
 export function ProjectPage() {
   const { id } = useParams<{ id: string }>();
@@ -75,11 +92,14 @@ export function ProjectPage() {
     queryKey: ['customSections', 'project', projectId],
     queryFn: () => api.customSections.list({ project_id: projectId }),
   });
+  const removeCustomSection = useRemoveCustomSection(customSections);
+  const { windowDays } = useTaskStatsConfig();
 
   if (isLoading || !project) return <Spinner />;
   const artistColor = artist?.color ?? '#888888';
   const shade = projectShade(artistColor, project.color, project.id);
   const columns = [...globalCols, ...projectCols];
+  const doneValue = doneValueOf(columns);
 
   const sections: Record<string, ReactNode> = {
     termine: (
@@ -90,31 +110,27 @@ export function ProjectPage() {
         eventTypes={eventTypes}
       />
     ),
-    fakten: (
-      <>
-        <SectionTitle>
-          <EditableLabel k="project.fakten" />
-        </SectionTitle>
-        <Card className="p-5">
-          <InlineNotes
-            value={project.description}
-            onSave={async (v) => {
-              await undoablePatch({
-                res: api.projects,
-                row: project,
-                patch: { description: v },
-                label: 'Textänderung',
-              });
-            }}
-          />
-        </Card>
-      </>
-    ),
     kontakte: (
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
         <ContactList contacts={contacts} parent={{ project_id: projectId }} titleKey="project.kontakte" />
         <LinkList links={links} parent={{ project_id: projectId }} titleKey="project.links" />
       </div>
+    ),
+    stats: (
+      <>
+        <SectionTitle>
+          <EditableLabel k="project.stats" />
+        </SectionTitle>
+        <TaskStatChips tasks={tasks} doneValue={doneValue} variant="tiles" />
+      </>
+    ),
+    aufmerksamkeit: (
+      <>
+        <SectionTitle>
+          <EditableLabel k="project.aufmerksamkeit" />
+        </SectionTitle>
+        <AttentionList tasks={tasks} doneValue={doneValue} windowDays={windowDays} />
+      </>
     ),
     aufgaben: (
       <>
@@ -166,6 +182,20 @@ export function ProjectPage() {
               {project.status && <ProjectStatusPill status={project.status} />}
             </div>
             <h1 className="mt-2 text-2xl font-bold text-neutral-800">{project.name}</h1>
+            {/* The one general free-text field lives inside the header, not as a section. */}
+            <div className="mt-1 max-w-2xl text-sm text-neutral-600">
+              <InlineNotes
+                value={project.description}
+                onSave={async (v) => {
+                  await undoablePatch({
+                    res: api.projects,
+                    row: project,
+                    patch: { description: v },
+                    label: 'Textänderung',
+                  });
+                }}
+              />
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <a
@@ -184,8 +214,21 @@ export function ProjectPage() {
         sections={sections}
         labelKeys={SECTION_LABEL_KEYS}
         titles={custom.titles}
-        fullWidthKeys={['aufgaben']}
-        addAction={<AddSectionButton parent={{ project_id: projectId }} />}
+        mandatoryKeys={['aufgaben']}
+        defaultHidden={['stats', 'aufmerksamkeit']}
+        fullWidthKeys={['aufgaben', 'aufmerksamkeit']}
+        onRemoveCustom={removeCustomSection}
+        addAction={({ hiddenKeys, restore }) => (
+          <AddSectionButton
+            parent={{ project_id: projectId }}
+            onRestore={restore}
+            hiddenBuiltins={hiddenKeys.map((k) => ({
+              key: k,
+              labelKey: SECTION_LABEL_KEYS[k]!,
+              group: SECTION_GROUPS[k]!,
+            }))}
+          />
+        )}
       />
 
       {managingColumns && (

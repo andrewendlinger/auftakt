@@ -3,17 +3,18 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { CustomSection } from '../api/types';
 import { Card, SectionTitle, Btn } from './ui';
-import { RecordFormModal, type FieldDef } from './fields';
+import { Label, Modal, TextInput } from './fields';
 import { InlineNotes } from './InlineNotes';
 import { LinkList } from './LinkList';
-import { TrashIcon } from './icons';
-import { useInvalidateAll, useUndoableDelete, useUndoablePatch, resourceUndo } from '../hooks';
+import type { LabelKey } from '../lib/labels';
+import { useInvalidateAll, useLabel, useUndoableDelete, useUndoablePatch, resourceUndo } from '../hooks';
 
 /**
  * User-added widget sections (WP-S): named, typed sections the user adds to the dashboard,
  * an artist page or a project page. Per-entity — a widget added on one artist's page exists
  * only there. Two types: `text` (rich text, edited inline like "Allgemeines / Beschreibung")
- * and `links` (a full LinkList incl. the WP-P category grouping).
+ * and `links` (a full LinkList incl. the WP-P category grouping). Removal lives in the
+ * SectionArranger's edit mode (its strip 🗑 calls the page's `useRemoveCustomSection`).
  */
 
 /** Where a new widget hangs: exactly one id, or neither for the dashboard. */
@@ -24,23 +25,40 @@ export function sectionKey(s: CustomSection): string {
   return `cs${s.id}`;
 }
 
-const ADD_FIELDS: FieldDef[] = [
-  { name: 'name', label: 'Name', required: true, placeholder: 'z. B. Reiseplanung', span2: true },
-  {
-    name: 'type',
-    label: 'Art',
-    type: 'select',
-    required: true,
-    options: [
-      { value: 'text', label: 'Textfeld' },
-      { value: 'links', label: 'Dokumente & Links' },
-    ],
-  },
-];
+/** Which group of the add picker a built-in section belongs to. */
+export type SectionGroup = 'eingabe' | 'einblicke';
 
-/** The "+ Bereich" button next to "Bereiche anordnen", opening a small name+type form. */
-export function AddSectionButton({ parent }: { parent: SectionParent }) {
-  const invalidate = useInvalidateAll();
+/** A hidden built-in section the picker can re-add. */
+export interface HiddenBuiltin {
+  key: string;
+  labelKey: LabelKey;
+  group: SectionGroup;
+}
+
+/** The arranger-strip 🗑 handler for custom widgets: soft-delete the row, undoable. */
+export function useRemoveCustomSection(sections: CustomSection[]): (key: string) => void {
+  const del = useUndoableDelete();
+  return (key) => {
+    const s = sections.find((x) => sectionKey(x) === key);
+    if (s) void del({ label: `Bereich „${s.name}“`, ...resourceUndo(api.customSections, s.id) });
+  };
+}
+
+/**
+ * The "+ Bereich" button (edit mode only), opening a grouped picker: „Eingabe" holds the two
+ * custom widget types (needing a name) plus this page's hidden built-in input sections;
+ * „Einblicke" holds the hidden computed sections. Built-ins are singletons — clicking one
+ * restores it immediately; picking a custom type reveals the name field.
+ */
+export function AddSectionButton({
+  parent,
+  hiddenBuiltins,
+  onRestore,
+}: {
+  parent: SectionParent;
+  hiddenBuiltins: HiddenBuiltin[];
+  onRestore: (key: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -48,23 +66,137 @@ export function AddSectionButton({ parent }: { parent: SectionParent }) {
         + Bereich
       </Btn>
       {open && (
-        <RecordFormModal
-          title="Neuer Bereich"
-          fields={ADD_FIELDS}
-          initial={{ type: 'text' }}
-          onSubmit={async (v) => {
-            await api.customSections.create({
-              name: v.name ?? '',
-              type: (v.type ?? 'text') as CustomSection['type'],
-              artist_id: parent.artist_id ?? null,
-              project_id: parent.project_id ?? null,
-            });
-            await invalidate();
-          }}
+        <AddSectionModal
+          parent={parent}
+          hiddenBuiltins={hiddenBuiltins}
+          onRestore={onRestore}
           onClose={() => setOpen(false)}
         />
       )}
     </>
+  );
+}
+
+const CUSTOM_TYPES: Array<{ type: CustomSection['type']; label: string }> = [
+  { type: 'text', label: 'Textfeld' },
+  { type: 'links', label: 'Dokumente & Links' },
+];
+
+function AddSectionModal({
+  parent,
+  hiddenBuiltins,
+  onRestore,
+  onClose,
+}: {
+  parent: SectionParent;
+  hiddenBuiltins: HiddenBuiltin[];
+  onRestore: (key: string) => void;
+  onClose: () => void;
+}) {
+  const invalidate = useInvalidateAll();
+  const label = useLabel();
+  const [chosen, setChosen] = useState<CustomSection['type'] | null>(null);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const create = async () => {
+    if (!name.trim() || !chosen || busy) return;
+    setBusy(true);
+    try {
+      await api.customSections.create({
+        name: name.trim(),
+        type: chosen,
+        artist_id: parent.artist_id ?? null,
+        project_id: parent.project_id ?? null,
+      });
+      await invalidate();
+      onClose();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const groupHeading = 'mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-400';
+  const row = (selected: boolean) =>
+    `w-full rounded-lg border px-3 py-2 text-left text-sm transition ${
+      selected ? 'border-neutral-500 bg-neutral-50' : 'border-neutral-200 hover:bg-neutral-50'
+    }`;
+  const builtinsOf = (group: SectionGroup) => hiddenBuiltins.filter((b) => b.group === group);
+
+  return (
+    <Modal
+      title="Bereich hinzufügen"
+      onClose={onClose}
+      footer={
+        chosen && (
+          <>
+            <Btn onClick={onClose}>Abbrechen</Btn>
+            <Btn variant="primary" onClick={create} disabled={!name.trim() || busy}>
+              Hinzufügen
+            </Btn>
+          </>
+        )
+      }
+    >
+      <div className="space-y-4">
+        <div>
+          <div className={groupHeading}>Eingabe</div>
+          <div className="space-y-1.5">
+            {CUSTOM_TYPES.map((t) => (
+              <button key={t.type} className={row(chosen === t.type)} onClick={() => setChosen(t.type)}>
+                {t.label}
+                <span className="ml-2 text-xs text-neutral-400">neu, mit eigenem Namen</span>
+              </button>
+            ))}
+            {builtinsOf('eingabe').map((b) => (
+              <button
+                key={b.key}
+                className={row(false)}
+                onClick={() => {
+                  onRestore(b.key);
+                  onClose();
+                }}
+              >
+                {label(b.labelKey)}
+              </button>
+            ))}
+          </div>
+        </div>
+        {builtinsOf('einblicke').length > 0 && (
+          <div>
+            <div className={groupHeading}>Einblicke</div>
+            <div className="space-y-1.5">
+              {builtinsOf('einblicke').map((b) => (
+                <button
+                  key={b.key}
+                  className={row(false)}
+                  onClick={() => {
+                    onRestore(b.key);
+                    onClose();
+                  }}
+                >
+                  {label(b.labelKey)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {chosen && (
+          <div>
+            <Label>Name</Label>
+            <TextInput
+              autoFocus
+              value={name}
+              placeholder="z. B. Reiseplanung"
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void create();
+              }}
+            />
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -115,29 +247,19 @@ function EditableText({ value, onSave }: { value: string; onSave: (v: string) =>
   );
 }
 
-/** One rendered widget: title (renameable) + delete, body per type. */
+/** One rendered widget: renameable title, body per type. Removal lives in the arranger strip. */
 export function CustomSectionCard({ section }: { section: CustomSection }) {
   const undoablePatch = useUndoablePatch();
-  const del = useUndoableDelete();
 
   const rename = (name: string) =>
     undoablePatch({ res: api.customSections, row: section, patch: { name }, label: 'Umbenennung' });
-  const deleteBtn = (
-    <Btn
-      variant="danger"
-      title="Bereich löschen"
-      onClick={() => del({ label: `Bereich „${section.name}“`, ...resourceUndo(api.customSections, section.id) })}
-    >
-      <TrashIcon className="h-4 w-4" />
-    </Btn>
-  );
 
   if (section.type === 'links') {
-    return <SectionLinkList section={section} title={<EditableText value={section.name} onSave={rename} />} extraActions={deleteBtn} />;
+    return <SectionLinkList section={section} title={<EditableText value={section.name} onSave={rename} />} />;
   }
   return (
     <>
-      <SectionTitle right={deleteBtn}>
+      <SectionTitle>
         <EditableText value={section.name} onSave={rename} />
       </SectionTitle>
       <Card className="p-5">
@@ -153,20 +275,12 @@ export function CustomSectionCard({ section }: { section: CustomSection }) {
 }
 
 /** A links widget owns its query — the page can't know which sections exist up front. */
-function SectionLinkList({
-  section,
-  title,
-  extraActions,
-}: {
-  section: CustomSection;
-  title: ReactNode;
-  extraActions: ReactNode;
-}) {
+function SectionLinkList({ section, title }: { section: CustomSection; title: ReactNode }) {
   const { data: links = [] } = useQuery({
     queryKey: ['links', 'section', section.id],
     queryFn: () => api.links.list({ section_id: section.id }),
   });
-  return <LinkList links={links} parent={{ section_id: section.id }} title={title} extraActions={extraActions} />;
+  return <LinkList links={links} parent={{ section_id: section.id }} title={title} />;
 }
 
 /** The widgets as SectionArranger inputs: `cs<id>`-keyed nodes plus their arrange-strip names. */

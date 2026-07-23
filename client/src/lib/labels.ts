@@ -21,13 +21,14 @@ export const LABEL_DEFAULTS = {
   'dash.events': 'Nächste Termine · 14 Tage',
   'dash.tasks': 'Aufgaben',
   'dash.festival': 'Festival-Aufgaben',
+  'dash.stats': 'Aufgaben-Statistiken',
   'dash.aufmerksamkeit': 'Braucht Aufmerksamkeit',
 
   /** The kicker above the artist H1, not the page title (which is the artist's name). */
   'artist.kicker': 'Künstler',
-  'artist.allgemeines': 'Allgemeines / Beschreibung',
   'artist.termine': 'Wichtige Termine',
   'artist.projekte': 'Projekte',
+  'artist.stats': 'Aufgaben-Statistiken',
   'artist.aufmerksamkeit': 'Braucht Aufmerksamkeit',
   'artist.kontakte': 'Künstler-Kontakte',
   'artist.aufgaben': 'Allgemeine Aufgaben',
@@ -38,11 +39,12 @@ export const LABEL_DEFAULTS = {
 
   'project.kicker': 'Projekt',
   'project.termine': 'Wichtige Termine',
-  'project.fakten': 'Allgemeines / Beschreibung',
   // The project page's `kontakte` section renders two lists side by side, so it owns two
   // ids — renaming one leaves the other alone.
   'project.kontakte': 'Projekt-Kontakte',
   'project.links': 'Dokumente & Links',
+  'project.stats': 'Aufgaben-Statistiken',
+  'project.aufmerksamkeit': 'Braucht Aufmerksamkeit',
   'project.aufgaben': 'Aufgaben',
 } as const;
 

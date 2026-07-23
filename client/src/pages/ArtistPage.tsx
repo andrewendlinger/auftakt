@@ -16,7 +16,12 @@ import { Card, DragHandle, SectionTitle, Spinner, EmptyState } from '../componen
 import { EventList } from '../components/EventList';
 import { ContactList } from '../components/ContactList';
 import { InlineNotes } from '../components/InlineNotes';
-import { AddSectionButton, customSectionEntries } from '../components/CustomSections';
+import {
+  AddSectionButton,
+  customSectionEntries,
+  useRemoveCustomSection,
+  type SectionGroup,
+} from '../components/CustomSections';
 import { TaskTable } from '../components/TaskTable';
 import { TaskStatChips } from '../components/TaskStatChips';
 import { AttentionList } from '../components/AttentionList';
@@ -25,15 +30,24 @@ import { ProjectStatusPill } from '../components/ProjectStatusPill';
 import { ExcelButton } from '../components/ExcelButton';
 import { useEventTypeOptions, useInvalidateAll, useTaskStatsConfig, useUndoablePatch } from '../hooks';
 
-/** Which heading names each section in the "Bereiche anordnen" strip. */
-const SECTION_LABEL_KEYS = {
-  allgemeines: 'artist.allgemeines',
+/** Which heading names each section in the "Bereiche bearbeiten" strip. */
+const SECTION_LABEL_KEYS: Record<string, LabelKey> = {
+  projekte: 'artist.projekte',
   termine: 'artist.termine',
   aufmerksamkeit: 'artist.aufmerksamkeit',
-  projekte: 'artist.projekte',
+  stats: 'artist.stats',
   kontakte: 'artist.kontakte',
   aufgaben: 'artist.aufgaben',
-} as const satisfies Record<string, LabelKey>;
+};
+
+/** Picker group of each optional built-in. */
+const SECTION_GROUPS: Record<string, SectionGroup> = {
+  projekte: 'eingabe',
+  termine: 'eingabe',
+  kontakte: 'eingabe',
+  stats: 'einblicke',
+  aufmerksamkeit: 'einblicke',
+};
 
 export function ArtistPage() {
   const { id } = useParams<{ id: string }>();
@@ -70,6 +84,7 @@ export function ArtistPage() {
     queryKey: ['customSections', 'artist', artistId],
     queryFn: () => api.customSections.list({ artist_id: artistId }),
   });
+  const removeCustomSection = useRemoveCustomSection(customSections);
 
   if (isLoading || !artist) return <Spinner />;
   const color = artist.color;
@@ -88,25 +103,24 @@ export function ArtistPage() {
     }
   }
 
+  // Insertion order = default section order for fresh layouts: Projekte first, directly
+  // under the artist header (user decision).
   const sections: Record<string, ReactNode> = {
-    allgemeines: (
+    projekte: (
       <>
-        <SectionTitle>
-          <EditableLabel k="artist.allgemeines" />
+        <SectionTitle right={<NewProjectButton artistId={artistId} artistColor={color} />}>
+          <EditableLabel k="artist.projekte" />
         </SectionTitle>
-        <Card className="p-5">
-          <InlineNotes
-            value={artist.notes}
-            onSave={async (v) => {
-              await undoablePatch({
-                res: api.artists,
-                row: artist,
-                patch: { notes: v },
-                label: 'Textänderung',
-              });
-            }}
+        {projects.length === 0 ? (
+          <EmptyState>Noch keine Projekte.</EmptyState>
+        ) : (
+          <ProjectGrid
+            projects={projects}
+            artistColor={color}
+            tasksByProject={tasksByProject}
+            doneValue={doneValue}
           />
-        </Card>
+        )}
       </>
     ),
     termine: (
@@ -127,21 +141,12 @@ export function ArtistPage() {
         <AttentionList tasks={tasks} doneValue={doneValue} windowDays={windowDays} />
       </>
     ),
-    projekte: (
+    stats: (
       <>
-        <SectionTitle right={<NewProjectButton artistId={artistId} artistColor={color} />}>
-          <EditableLabel k="artist.projekte" />
+        <SectionTitle>
+          <EditableLabel k="artist.stats" />
         </SectionTitle>
-        {projects.length === 0 ? (
-          <EmptyState>Noch keine Projekte.</EmptyState>
-        ) : (
-          <ProjectGrid
-            projects={projects}
-            artistColor={color}
-            tasksByProject={tasksByProject}
-            doneValue={doneValue}
-          />
-        )}
+        <TaskStatChips tasks={tasks} doneValue={doneValue} variant="tiles" />
       </>
     ),
     kontakte: <ContactList contacts={contacts} parent={{ artist_id: artistId }} titleKey="artist.kontakte" />,
@@ -184,6 +189,20 @@ export function ArtistPage() {
                 <EditableLabel k="artist.kicker" />
               </div>
               <h1 className="text-2xl font-bold text-neutral-800">{artist.name}</h1>
+              {/* The one general free-text field lives inside the header, not as a section. */}
+              <div className="mt-1 max-w-2xl text-sm text-neutral-600">
+                <InlineNotes
+                  value={artist.notes}
+                  onSave={async (v) => {
+                    await undoablePatch({
+                      res: api.artists,
+                      row: artist,
+                      patch: { notes: v },
+                      label: 'Textänderung',
+                    });
+                  }}
+                />
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -203,8 +222,21 @@ export function ArtistPage() {
         sections={sections}
         labelKeys={SECTION_LABEL_KEYS}
         titles={custom.titles}
+        mandatoryKeys={['aufgaben']}
+        defaultHidden={['stats']}
         fullWidthKeys={['aufgaben', 'aufmerksamkeit']}
-        addAction={<AddSectionButton parent={{ artist_id: artistId }} />}
+        onRemoveCustom={removeCustomSection}
+        addAction={({ hiddenKeys, restore }) => (
+          <AddSectionButton
+            parent={{ artist_id: artistId }}
+            onRestore={restore}
+            hiddenBuiltins={hiddenKeys.map((k) => ({
+              key: k,
+              labelKey: SECTION_LABEL_KEYS[k]!,
+              group: SECTION_GROUPS[k]!,
+            }))}
+          />
+        )}
       />
     </div>
   );

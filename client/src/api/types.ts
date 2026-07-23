@@ -197,6 +197,8 @@ export interface SeasonList {
 export interface LayoutEntry {
   key: string;
   width: 'full' | 'half';
+  /** Section removed by the user. Built-ins only — custom `cs<id>` widgets are soft-deleted rows, never hidden. */
+  hidden?: boolean;
 }
 
 /**
@@ -231,9 +233,9 @@ export interface Settings {
   project_statuses: Array<string | CustomColumnOption>;
   /** Link categories (WP-P); unset on older seasons. Read via `useLinkCategoryOptions`. */
   link_categories?: Array<string | CustomColumnOption>;
-  /** Layout of the project-page sections (termine/fakten/kontakte/aufgaben) — order + width. */
+  /** Layout of the project-page sections (termine/kontakte/stats/… + custom widgets) — order, width, hidden. */
   project_layout?: LayoutEntry[];
-  /** Layout of the artist-page sections (termine/projekte/kontakte/aufgaben) — order + width. */
+  /** Layout of the artist-page sections (projekte/termine/kontakte/… + custom widgets) — order, width, hidden. */
   artist_layout?: LayoutEntry[];
   /** Layout of the dashboard sections (artists/events/tasks + custom widgets) — order + width. */
   dashboard_layout?: LayoutEntry[];

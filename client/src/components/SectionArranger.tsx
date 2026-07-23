@@ -4,6 +4,7 @@ import type { LayoutEntry } from '../api/types';
 import { arrayMoveTo } from '../lib/arrays';
 import { useDragReorder } from '../lib/dragReorder';
 import { Btn } from './ui';
+import { TrashIcon } from './icons';
 import type { LabelKey } from '../lib/labels';
 import { useInvalidateAll, useLabel, useSettings } from '../hooks';
 
@@ -25,13 +26,21 @@ type LayoutKey = 'artist_layout' | 'project_layout' | 'dashboard_layout';
  * mutations operate on and persist `full`; rendering uses `display`. Persisting the
  * filtered view instead would silently drop the other pages' widget entries on every
  * arrange action.
+ *
+ * Sections are optional unless listed in `mandatoryKeys`: edit mode offers a 🗑 that hides a
+ * built-in (`hidden: true` on its entry) or soft-deletes a custom widget (`onRemoveCustom`).
+ * Hidden sections are simply not rendered — re-adding goes through the "+ Bereich" picker,
+ * which `addAction` receives the hidden keys and a restore callback for.
  */
 export function SectionArranger({
   layoutKey,
   sections,
   labelKeys,
   titles = {},
+  mandatoryKeys,
+  defaultHidden = [],
   fullWidthKeys = [],
+  onRemoveCustom,
   addAction,
 }: {
   layoutKey: LayoutKey;
@@ -40,15 +49,22 @@ export function SectionArranger({
    * Section key → the heading id it is named by, so the strip below shows whatever the user
    * renamed that section's heading to. Stated explicitly rather than derived from
    * `layoutKey`: the project page's `kontakte` section holds two headings, and this picks
-   * which of them names the section.
+   * which of them names the section. Also the built-in/custom discriminator: a key without
+   * a LabelKey is a custom widget.
    */
   labelKeys: Record<string, LabelKey>;
   /** Names for sections without a LabelKey — the custom widgets, titled by their own name. */
   titles?: Record<string, string>;
+  /** Never removable (no 🗑); a stale stored `hidden` on one of these is ignored on read. */
+  mandatoryKeys: string[];
+  /** Built-in keys that start hidden: appended as hidden when absent from the stored layout. */
+  defaultHidden?: string[];
   /** Sections that can't be set to half width (always full, no width toggle) — e.g. the task table. */
   fullWidthKeys?: string[];
-  /** Rendered next to "Bereiche anordnen" — the pages' "+ Bereich" button. */
-  addAction?: ReactNode;
+  /** 🗑 on a custom widget's strip — the page soft-deletes the row (undoable). */
+  onRemoveCustom?: (key: string) => void;
+  /** The "+ Bereich" button, rendered only in edit mode, fed the hidden built-ins to offer. */
+  addAction?: (ctx: { hiddenKeys: string[]; restore: (key: string) => void }) => ReactNode;
 }) {
   const { data: settings } = useSettings();
   const label = useLabel();
@@ -61,18 +77,28 @@ export function SectionArranger({
   const sectionSig = Object.keys(sections).join('\u0000');
   const fullWidthSig = fullWidthKeys.join('\u0000');
 
-  const { full, display } = useMemo(() => {
+  const mandatorySig = mandatoryKeys.join(' ');
+  const defaultHiddenSig = defaultHidden.join(' ');
+
+  const { full, display, hiddenKeys } = useMemo(() => {
     const known = Object.keys(sections);
     const raw = settings?.[layoutKey];
     const stored: LayoutEntry[] = Array.isArray(raw)
-      ? (raw as unknown[]).map((item) =>
-          typeof item === 'string'
-            ? { key: item, width: 'full' }
-            : {
-                key: String((item as LayoutEntry).key),
-                width: (item as LayoutEntry).width === 'half' ? 'half' : 'full',
-              },
-        )
+      ? (raw as unknown[]).map((item) => {
+          if (typeof item === 'string') return { key: item, width: 'full' as const };
+          const e = item as LayoutEntry;
+          const key = String(e.key);
+          return {
+            key,
+            width: e.width === 'half' ? ('half' as const) : ('full' as const),
+            // `hidden` only ever applies to built-ins (keys with a LabelKey): custom widgets
+            // are soft-deleted rows, and a mandatory section must never disappear even if a
+            // stale entry claims so — both self-heal here on read.
+            ...(e.hidden === true && key in labelKeys && !mandatoryKeys.includes(key)
+              ? { hidden: true }
+              : {}),
+          };
+        })
       : [];
     const seen = new Set<string>();
     const full: LayoutEntry[] = [];
@@ -83,14 +109,17 @@ export function SectionArranger({
       }
     }
     for (const k of known) {
-      if (!seen.has(k)) full.push({ key: k, width: 'full' });
+      if (!seen.has(k)) {
+        full.push({ key: k, width: 'full', ...(defaultHidden.includes(k) ? { hidden: true } : {}) });
+      }
     }
     const display = full
-      .filter((e) => known.includes(e.key))
+      .filter((e) => known.includes(e.key) && !e.hidden)
       .map((e) => (fullWidthKeys.includes(e.key) ? { key: e.key, width: 'full' as const } : e));
-    return { full, display };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- sectionSig/fullWidthSig capture the only content used
-  }, [sectionSig, settings, layoutKey, fullWidthSig]);
+    const hiddenKeys = full.filter((e) => known.includes(e.key) && e.hidden).map((e) => e.key);
+    return { full, display, hiddenKeys };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the *Sig strings capture the only content used
+  }, [sectionSig, settings, layoutKey, fullWidthSig, mandatorySig, defaultHiddenSig]);
 
   const persist = async (next: LayoutEntry[]) => {
     await api.patchSettings({ [layoutKey]: next });
@@ -118,6 +147,23 @@ export function SectionArranger({
     void persist(next);
   };
 
+  /** Remove a built-in section: it stays in the layout, flagged hidden, re-addable via the picker. */
+  const hide = (key: string) => {
+    void persist(full.map((e) => (e.key === key ? { ...e, hidden: true } : e)));
+  };
+
+  /** Re-add a hidden built-in at its remembered position and width. */
+  const restore = (key: string) => {
+    void persist(
+      full.map((e) => {
+        if (e.key !== key) return e;
+        const { hidden, ...rest } = e;
+        void hidden;
+        return rest;
+      }),
+    );
+  };
+
   const drag = useDragReorder<string>({
     enabled: arranging,
     onReorder: (fromKey, toKey) => {
@@ -129,9 +175,9 @@ export function SectionArranger({
   return (
     <>
       <div className="flex items-center justify-end gap-2">
-        {addAction}
+        {arranging && addAction?.({ hiddenKeys, restore })}
         <Btn variant="subtle" onClick={() => setArranging((a) => !a)}>
-          {arranging ? '✓ Fertig' : '⇅ Bereiche anordnen'}
+          {arranging ? '✓ Fertig' : '⇅ Bereiche bearbeiten'}
         </Btn>
       </div>
       <div className="grid grid-cols-1 gap-8 sm:grid-cols-2">
@@ -185,6 +231,17 @@ export function SectionArranger({
                     >
                       ▼
                     </button>
+                    {!mandatoryKeys.includes(key) && (
+                      <button
+                        className="rounded px-2 py-1 text-neutral-500 hover:bg-neutral-200 hover:text-red-600"
+                        title="Bereich entfernen"
+                        // Built-ins (they have a LabelKey) are hidden and re-addable via the
+                        // picker; custom widgets are soft-deleted by the page (undo toast).
+                        onClick={() => (key in labelKeys ? hide(key) : onRemoveCustom?.(key))}
+                      >
+                        <TrashIcon className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </span>
                 </div>
               )}

@@ -65,13 +65,11 @@ export function PrintProject() {
             {project.status && <ProjectStatusPill status={project.status} />}
           </>
         }
-      />
-
-      {project.description && (
-        <Section title={label('project.fakten')}>
-          <Markdown className="text-sm text-neutral-700">{project.description}</Markdown>
-        </Section>
-      )}
+      >
+        {project.description && (
+          <Markdown className="mt-1 text-sm text-neutral-600">{project.description}</Markdown>
+        )}
+      </PrintHeader>
 
       <Section title={label('project.kontakte')}>
         {contacts.length === 0 ? (

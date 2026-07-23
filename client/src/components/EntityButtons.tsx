@@ -103,10 +103,13 @@ export function NewProjectButton({ artistId, artistColor }: { artistId: number; 
   const invalidate = useInvalidateAll();
   const statuses = useProjectStatusOptions();
   const [open, setOpen] = useState(false);
+  // Follow the „Projekte" heading rename — this button sits under the artist page's
+  // `artist.projekte` section, so it tracks that key (same fix as „+ Künstler" above).
+  const projekteLabel = useLabel()('artist.projekte');
   return (
     <>
       <Btn variant="primary" onClick={() => setOpen(true)}>
-        + Projekt
+        + {projekteLabel}
       </Btn>
       {open && (
         <RecordFormModal

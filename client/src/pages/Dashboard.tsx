@@ -14,16 +14,30 @@ import { AttentionList } from '../components/AttentionList';
 import { NewArtistButton } from '../components/EntityButtons';
 import { EditableLabel } from '../components/EditableLabel';
 import { SectionArranger } from '../components/SectionArranger';
-import { AddSectionButton, customSectionEntries } from '../components/CustomSections';
+import {
+  AddSectionButton,
+  customSectionEntries,
+  useRemoveCustomSection,
+  type SectionGroup,
+} from '../components/CustomSections';
 import type { LabelKey } from '../lib/labels';
 import { useLabel, useTaskStatsConfig } from '../hooks';
 
-/** Which heading names each section in the "Bereiche anordnen" strip. */
-const SECTION_LABEL_KEYS = {
+/** Which heading names each section in the "Bereiche bearbeiten" strip. */
+const SECTION_LABEL_KEYS: Record<string, LabelKey> = {
   artists: 'dash.artists',
   events: 'dash.events',
+  stats: 'dash.stats',
   tasks: 'dash.tasks',
-} as const satisfies Record<string, LabelKey>;
+  aufmerksamkeit: 'dash.aufmerksamkeit',
+};
+
+/** Picker group of each optional built-in — everything here is computed, hence „Einblicke". */
+const SECTION_GROUPS: Record<string, SectionGroup> = {
+  events: 'einblicke',
+  stats: 'einblicke',
+  aufmerksamkeit: 'einblicke',
+};
 
 export function Dashboard() {
   const { data, isLoading } = useQuery({ queryKey: ['dashboard'], queryFn: api.dashboard });
@@ -37,6 +51,7 @@ export function Dashboard() {
   });
   const { windowDays } = useTaskStatsConfig();
   const artistLabel = useLabel()('dash.artists');
+  const removeCustomSection = useRemoveCustomSection(customSections);
 
   const doneValue = doneValueOf(customColumns);
   // Group every live task under the artist it resolves to, for the enriched artist-card stats.
@@ -99,28 +114,34 @@ export function Dashboard() {
         )}
       </section>
     ),
+    // Festival-wide KPIs at a glance — the scannable overview that replaced the long table.
+    stats: (
+      <section>
+        <SectionTitle>
+          <EditableLabel k="dash.stats" />
+        </SectionTitle>
+        <TaskStatChips tasks={data.tasks} doneValue={doneValue} variant="tiles" />
+      </section>
+    ),
     tasks: (
       <section className="space-y-6">
         <SectionTitle>
           <EditableLabel k="dash.tasks" />
         </SectionTitle>
-
-        {/* Festival-wide KPIs at a glance — the scannable overview that replaced the long table. */}
-        <TaskStatChips tasks={data.tasks} doneValue={doneValue} variant="tiles" />
-
         <div>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
             <EditableLabel k="dash.festival" />
           </h3>
           <TaskTable tasks={festivalTasks} customColumns={customColumns} parent={{ general: true }} />
         </div>
-
-        <div>
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
-            <EditableLabel k="dash.aufmerksamkeit" />
-          </h3>
-          <AttentionList tasks={data.tasks} doneValue={doneValue} windowDays={windowDays} />
-        </div>
+      </section>
+    ),
+    aufmerksamkeit: (
+      <section>
+        <SectionTitle>
+          <EditableLabel k="dash.aufmerksamkeit" />
+        </SectionTitle>
+        <AttentionList tasks={data.tasks} doneValue={doneValue} windowDays={windowDays} />
       </section>
     ),
   };
@@ -134,8 +155,20 @@ export function Dashboard() {
         sections={sections}
         labelKeys={SECTION_LABEL_KEYS}
         titles={custom.titles}
-        fullWidthKeys={['tasks']}
-        addAction={<AddSectionButton parent={{}} />}
+        mandatoryKeys={['artists', 'tasks']}
+        fullWidthKeys={['tasks', 'aufmerksamkeit']}
+        onRemoveCustom={removeCustomSection}
+        addAction={({ hiddenKeys, restore }) => (
+          <AddSectionButton
+            parent={{}}
+            onRestore={restore}
+            hiddenBuiltins={hiddenKeys.map((k) => ({
+              key: k,
+              labelKey: SECTION_LABEL_KEYS[k]!,
+              group: SECTION_GROUPS[k]!,
+            }))}
+          />
+        )}
       />
     </div>
   );
