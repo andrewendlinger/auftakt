@@ -358,7 +358,14 @@ export function patchLanding(patch: {
         name: s.name,
         type: s.type,
         value: s.value,
-        ...(s.documents !== undefined ? { documents: assignDocIds(s.documents, curDocs) } : {}),
+        // Carry the section's stored documents forward when the patch omits the key, so a
+        // links section isn't silently emptied (top-level notes/documents/layout already do
+        // this). The length guard keeps text sections shaped exactly as before (no key).
+        ...(s.documents !== undefined
+          ? { documents: assignDocIds(s.documents, curDocs) }
+          : curDocs.length
+            ? { documents: curDocs }
+            : {}),
       };
     });
   }
