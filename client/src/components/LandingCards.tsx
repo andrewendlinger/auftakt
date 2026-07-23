@@ -1,6 +1,12 @@
 import { useState } from 'react';
 import { api } from '../api/client';
-import type { LandingContent, LandingDoc, LandingDocInput, LandingSection, LandingSectionInput } from '../api/types';
+import type {
+  LandingContent,
+  LandingDoc,
+  LandingDocInput,
+  LandingSection,
+  LandingSectionInput,
+} from '../api/types';
 import { Card, SectionTitle, Btn, EmptyState } from './ui';
 import { Modal, Label, TextInput, RecordFormModal, type FieldDef } from './fields';
 import { EditableLabel } from './EditableLabel';
@@ -13,9 +19,9 @@ import { useInvalidateAll, useUndoableDelete } from '../hooks';
 /**
  * The landing page's content sections below the season grid. Everything here is
  * cross-season — stored in the seasons.json registry, not in any season DB — so it
- * stays put when the active season changes. Custom Textfelder are registry rows
- * (`landing.sections`), not `custom_sections` rows, for the same reason; their layout
- * keys are `lt<id>`.
+ * stays put when the active season changes. Custom sections (Textfelder and extra
+ * Dokumente lists) are registry rows (`landing.sections`), not `custom_sections`
+ * rows, for the same reason; their layout keys are `lt<id>`.
  */
 
 export const landingSectionKey = (s: LandingSection): string => `lt${s.id}`;
@@ -54,25 +60,33 @@ const DOC_FIELDS: FieldDef[] = [
   { name: 'url', label: 'URL (Google Drive etc.)', span2: true, placeholder: 'https://…' },
 ];
 
-export function LandingDocsSection({ landing }: { landing: LandingContent }) {
-  const invalidate = useInvalidateAll();
+/**
+ * A document list plus its add/edit modal and snapshot-undo delete, parameterized by
+ * where the docs live: the builtin Dokumente section patches `landing.documents`, a
+ * custom links section patches its own `documents` inside the sections array.
+ */
+function DocList({
+  docs,
+  creating,
+  onCloseCreate,
+  onPatch,
+}: {
+  docs: LandingDoc[];
+  /** The "+ Dokument" button lives in the section title — the parent owns this state. */
+  creating: boolean;
+  onCloseCreate: () => void;
+  onPatch: (next: LandingDocInput[]) => Promise<void>;
+}) {
   const del = useUndoableDelete();
-  const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<LandingDoc | null>(null);
-  const docs = landing.documents;
-
-  const patchDocs = async (documents: LandingDocInput[]) => {
-    await api.landing.patch({ documents });
-    await invalidate();
-  };
 
   const save = async (values: Record<string, string | null>) => {
     const label = values.label ?? '';
     const url = values.url ?? null;
     if (editing) {
-      await patchDocs(docs.map((d) => (d.id === editing.id ? { ...d, label, url } : d)));
+      await onPatch(docs.map((d) => (d.id === editing.id ? { ...d, label, url } : d)));
     } else {
-      await patchDocs([...docs, { label, url }]); // id-less; the server assigns
+      await onPatch([...docs, { label, url }]); // id-less; the server assigns
     }
   };
 
@@ -81,8 +95,8 @@ export function LandingDocsSection({ landing }: { landing: LandingContent }) {
     const before = docs;
     return del({
       label: `Dokument „${doc.label}“`,
-      remove: () => api.landing.patch({ documents: before.filter((d) => d.id !== doc.id) }),
-      restore: () => api.landing.patch({ documents: before }),
+      remove: () => onPatch(before.filter((d) => d.id !== doc.id)),
+      restore: () => onPatch(before),
     });
   };
 
@@ -118,10 +132,7 @@ export function LandingDocsSection({ landing }: { landing: LandingContent }) {
   );
 
   return (
-    <div>
-      <SectionTitle right={<Btn onClick={() => setCreating(true)}>+ Dokument</Btn>}>
-        <EditableLabel k="landing.dokumente" />
-      </SectionTitle>
+    <>
       {docs.length === 0 ? (
         <EmptyState>Keine Dokumente hinterlegt.</EmptyState>
       ) : (
@@ -134,11 +145,33 @@ export function LandingDocsSection({ landing }: { landing: LandingContent }) {
           initial={editing ?? undefined}
           onSubmit={save}
           onClose={() => {
-            setCreating(false);
+            onCloseCreate();
             setEditing(null);
           }}
         />
       )}
+    </>
+  );
+}
+
+/** The builtin Dokumente section, backed by the top-level `landing.documents`. */
+export function LandingDocsSection({ landing }: { landing: LandingContent }) {
+  const invalidate = useInvalidateAll();
+  const [creating, setCreating] = useState(false);
+  return (
+    <div>
+      <SectionTitle right={<Btn onClick={() => setCreating(true)}>+ Dokument</Btn>}>
+        <EditableLabel k="landing.dokumente" />
+      </SectionTitle>
+      <DocList
+        docs={landing.documents}
+        creating={creating}
+        onCloseCreate={() => setCreating(false)}
+        onPatch={async (documents) => {
+          await api.landing.patch({ documents });
+          await invalidate();
+        }}
+      />
     </div>
   );
 }
@@ -166,7 +199,32 @@ export function LandingTextSection({ section, all }: { section: LandingSection; 
   );
 }
 
-/** The arranger's 🗑 handler for Textfelder: snapshot-undo, like landing documents. */
+/** One custom Dokumente list: renameable title, its own documents inside the section row. */
+export function LandingLinksSection({ section, all }: { section: LandingSection; all: LandingSection[] }) {
+  const patchSections = usePatchSections();
+  const [creating, setCreating] = useState(false);
+  return (
+    <div>
+      <SectionTitle right={<Btn onClick={() => setCreating(true)}>+ Dokument</Btn>}>
+        <EditableText
+          value={section.name}
+          inputClassName="uppercase"
+          onSave={(name) => patchSections(all.map((s) => (s.id === section.id ? { ...s, name } : s)))}
+        />
+      </SectionTitle>
+      <DocList
+        docs={section.documents ?? []}
+        creating={creating}
+        onCloseCreate={() => setCreating(false)}
+        onPatch={(documents) =>
+          patchSections(all.map((s) => (s.id === section.id ? { ...s, documents } : s)))
+        }
+      />
+    </div>
+  );
+}
+
+/** The arranger's 🗑 handler for custom sections: snapshot-undo, like landing documents. */
 export function useRemoveLandingSection(landing: LandingContent | undefined): (key: string) => void {
   const del = useUndoableDelete();
   return (key) => {
@@ -181,10 +239,15 @@ export function useRemoveLandingSection(landing: LandingContent | undefined): (k
   };
 }
 
+const CUSTOM_TYPES: Array<{ type: LandingSection['type']; label: string }> = [
+  { type: 'text', label: 'Textfeld' },
+  { type: 'links', label: 'Dokumente & Links' },
+];
+
 /**
  * The landing's "+ Bereich" picker. Modeled on CustomSections' AddSectionModal but not
  * reusing it — that one creates per-season `custom_sections` rows, while landing
- * Textfelder live in the registry. Offers one custom type (Textfeld) plus the hidden
+ * sections live in the registry. Offers the two custom types plus the hidden
  * built-ins to restore.
  */
 export function AddLandingSectionButton({
@@ -203,22 +266,22 @@ export function AddLandingSectionButton({
 }) {
   const invalidate = useInvalidateAll();
   const [open, setOpen] = useState(false);
-  const [naming, setNaming] = useState(false);
+  const [chosen, setChosen] = useState<LandingSection['type'] | null>(null);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
 
   const close = () => {
     setOpen(false);
-    setNaming(false);
+    setChosen(null);
     setName('');
   };
 
   const create = async () => {
-    if (!name.trim() || busy) return;
+    if (!name.trim() || !chosen || busy) return;
     setBusy(true);
     try {
       const res = await api.landing.patch({
-        sections: [...landing.sections, { name: name.trim(), value: null }],
+        sections: [...landing.sections, { name: name.trim(), type: chosen, value: null }],
       });
       const created = res.sections.reduce((a, b) => (a.id > b.id ? a : b));
       await invalidate();
@@ -244,7 +307,7 @@ export function AddLandingSectionButton({
           title="Bereich hinzufügen"
           onClose={close}
           footer={
-            naming && (
+            chosen && (
               <>
                 <Btn onClick={close}>Abbrechen</Btn>
                 <Btn variant="primary" onClick={create} disabled={!name.trim() || busy}>
@@ -256,10 +319,12 @@ export function AddLandingSectionButton({
         >
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <button className={rowCls(naming)} onClick={() => setNaming(true)}>
-                Textfeld
-                <span className="ml-2 text-xs text-neutral-400">neu, mit eigenem Namen</span>
-              </button>
+              {CUSTOM_TYPES.map((t) => (
+                <button key={t.type} className={rowCls(chosen === t.type)} onClick={() => setChosen(t.type)}>
+                  {t.label}
+                  <span className="ml-2 text-xs text-neutral-400">neu, mit eigenem Namen</span>
+                </button>
+              ))}
               {hiddenKeys.map((k) => (
                 <button
                   key={k}
@@ -273,13 +338,13 @@ export function AddLandingSectionButton({
                 </button>
               ))}
             </div>
-            {naming && (
+            {chosen && (
               <div>
                 <Label>Name</Label>
                 <TextInput
                   autoFocus
                   value={name}
-                  placeholder="z. B. Kontakte & Adressen"
+                  placeholder={chosen === 'links' ? 'z. B. Verträge' : 'z. B. Kontakte & Adressen'}
                   onChange={(e) => setName(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') void create();

@@ -8,6 +8,7 @@ import { EditableText, EditableFallbackText } from '../components/EditableText';
 import {
   AddLandingSectionButton,
   LandingDocsSection,
+  LandingLinksSection,
   LandingNotesSection,
   LandingTextSection,
   landingSectionKey,
@@ -125,7 +126,12 @@ export function LandingPage() {
     sections.notizen = <LandingNotesSection landing={landing} />;
     sections.dokumente = <LandingDocsSection landing={landing} />;
     for (const s of landing.sections) {
-      sections[landingSectionKey(s)] = <LandingTextSection section={s} all={landing.sections} />;
+      sections[landingSectionKey(s)] =
+        s.type === 'links' ? (
+          <LandingLinksSection section={s} all={landing.sections} />
+        ) : (
+          <LandingTextSection section={s} all={landing.sections} />
+        );
       titles[landingSectionKey(s)] = s.name;
     }
   }

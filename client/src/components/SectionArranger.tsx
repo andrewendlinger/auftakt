@@ -231,8 +231,10 @@ export function SectionArranger({
         {display.map((entry, i) => {
           const key = entry.key;
           const canHalf = !fullWidthKeys.includes(key);
+          // `[&_.section-title]:hidden`: the strip already names the section — hiding the
+          // in-card heading (incl. its action buttons) avoids the double title in edit mode.
           const arrangeCls = arranging
-            ? `select-none rounded-2xl p-3 ring-2 ring-dashed ${
+            ? `select-none rounded-2xl p-3 ring-2 ring-dashed [&_.section-title]:hidden ${
                 drag.isDropTarget(key) ? 'ring-neutral-600' : 'ring-neutral-300'
               } ${drag.isDragging(key) ? 'opacity-40' : ''}`
             : '';

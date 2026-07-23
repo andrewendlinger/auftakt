@@ -29,11 +29,13 @@ export interface LandingDoc {
   url: string | null;
 }
 
-/** A user-created Textfeld section on the landing page. */
+/** A user-created section on the landing page: a Textfeld or its own Dokumente list. */
 export interface LandingSection {
   id: number;
   name: string;
-  value: string | null; // Markdown
+  type: 'text' | 'links';
+  value: string | null; // Markdown; text sections only
+  documents?: LandingDoc[]; // links sections only
 }
 
 /** Mirrors the client's LayoutEntry — the landing page's section arrangement. */
@@ -286,7 +288,11 @@ export function getLanding(): LandingContent {
     notes: reg.landing?.notes ?? null,
     documents: reg.landing?.documents ?? [],
     layout: reg.landing?.layout ?? [],
-    sections: reg.landing?.sections ?? [],
+    // Sections written before the `type` field existed are Textfelder.
+    sections: (reg.landing?.sections ?? []).map((s) => ({
+      ...s,
+      type: s.type === 'links' ? 'links' : 'text',
+    })),
   };
 }
 
@@ -297,20 +303,40 @@ export function patchLanding(patch: {
   notes?: string | null;
   documents?: Array<{ id?: number; label: string; url: string | null }>;
   layout?: LandingLayoutEntry[];
-  sections?: Array<{ id?: number; name: string; value: string | null }>;
+  sections?: Array<{
+    id?: number;
+    name: string;
+    type: 'text' | 'links';
+    value: string | null;
+    documents?: Array<{ id?: number; label: string; url: string | null }>;
+  }>;
 }): LandingContent {
   const cur = getLanding();
+  const assignDocIds = (
+    incoming: Array<{ id?: number; label: string; url: string | null }>,
+    current: LandingDoc[],
+  ): LandingDoc[] => {
+    let nextId = Math.max(0, ...incoming.map((d) => d.id ?? 0), ...current.map((d) => d.id)) + 1;
+    return incoming.map((d) => ({ id: d.id ?? nextId++, label: d.label, url: d.url }));
+  };
   let documents = cur.documents;
-  if (patch.documents !== undefined) {
-    let nextId =
-      Math.max(0, ...patch.documents.map((d) => d.id ?? 0), ...cur.documents.map((d) => d.id)) + 1;
-    documents = patch.documents.map((d) => ({ id: d.id ?? nextId++, label: d.label, url: d.url }));
-  }
+  if (patch.documents !== undefined) documents = assignDocIds(patch.documents, cur.documents);
   let sections = cur.sections;
   if (patch.sections !== undefined) {
     let nextId =
       Math.max(0, ...patch.sections.map((s) => s.id ?? 0), ...cur.sections.map((s) => s.id)) + 1;
-    sections = patch.sections.map((s) => ({ id: s.id ?? nextId++, name: s.name, value: s.value }));
+    sections = patch.sections.map((s) => {
+      const id = s.id ?? nextId++;
+      // Per-section document ids, counted against that section's own current docs.
+      const curDocs = cur.sections.find((x) => x.id === id)?.documents ?? [];
+      return {
+        id,
+        name: s.name,
+        type: s.type,
+        value: s.value,
+        ...(s.documents !== undefined ? { documents: assignDocIds(s.documents, curDocs) } : {}),
+      };
+    });
   }
   const reg = readRegistry();
   reg.landing = {

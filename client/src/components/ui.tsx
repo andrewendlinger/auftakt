@@ -21,7 +21,9 @@ export function Card({
 
 export function SectionTitle({ children, right }: { children: ReactNode; right?: ReactNode }) {
   return (
-    <div className="mb-3 flex items-center justify-between gap-3">
+    // `section-title` is a hook for SectionArranger: while a section is being arranged,
+    // its strip already names it, so the in-card heading hides to avoid the double title.
+    <div className="section-title mb-3 flex items-center justify-between gap-3">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">{children}</h2>
       {right}
     </div>

@@ -228,11 +228,13 @@ export interface LandingDoc {
   url: string | null;
 }
 
-/** A user-created Textfeld section on the landing page. */
+/** A user-created section on the landing page: a Textfeld or its own Dokumente list. */
 export interface LandingSection {
   id: ID;
   name: string;
-  value: string | null; // Markdown
+  type: 'text' | 'links';
+  value: string | null; // Markdown; text sections only
+  documents?: LandingDoc[]; // links sections only
 }
 
 export interface LandingContent {
@@ -244,7 +246,10 @@ export interface LandingContent {
 
 /** New documents/sections are sent id-less; the server assigns max+1. */
 export type LandingDocInput = Omit<LandingDoc, 'id'> & { id?: ID };
-export type LandingSectionInput = Omit<LandingSection, 'id'> & { id?: ID };
+export type LandingSectionInput = Omit<LandingSection, 'id' | 'documents'> & {
+  id?: ID;
+  documents?: LandingDocInput[];
+};
 
 /** One section's placement in a page layout: its key and how wide it renders. */
 export interface LayoutEntry {

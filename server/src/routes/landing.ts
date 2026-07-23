@@ -59,7 +59,26 @@ landingRouter.patch('/', (req, res) => {
       const name = String(raw?.name ?? '').trim();
       if (!name) return res.status(400).json({ error: 'section name required' });
       const value = raw?.value == null ? null : String(raw.value);
-      sections.push({ id: typeof raw?.id === 'number' ? raw.id : undefined, name, value });
+      let documents: Array<{ id?: number; label: string; url: string | null }> | undefined;
+      if (raw?.documents !== undefined) {
+        if (!Array.isArray(raw.documents)) {
+          return res.status(400).json({ error: 'section documents must be an array' });
+        }
+        documents = [];
+        for (const doc of raw.documents as Array<Record<string, unknown>>) {
+          const label = String(doc?.label ?? '').trim();
+          if (!label) return res.status(400).json({ error: 'document label required' });
+          const url = doc?.url == null ? null : String(doc.url).trim() || null;
+          documents.push({ id: typeof doc?.id === 'number' ? doc.id : undefined, label, url });
+        }
+      }
+      sections.push({
+        id: typeof raw?.id === 'number' ? raw.id : undefined,
+        name,
+        type: raw?.type === 'links' ? 'links' : 'text',
+        value,
+        ...(documents !== undefined ? { documents } : {}),
+      });
     }
     patch.sections = sections;
   }

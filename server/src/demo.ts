@@ -462,9 +462,19 @@ function main(): void {
       { label: 'Vorlage Künstlervertrag', url: 'https://example.org/vertragsvorlage.docx' },
       { label: 'Altes Sponsoring-Konzept', url: null },
     ],
-    // One custom Textfeld so the landing's custom-section branch is on screen.
+    // One custom section of each type so both landing branches are on screen.
     sections: [
-      { name: 'Ideen für 2027', value: 'Open-Air-Bühne prüfen · zweite Förderschiene recherchieren' },
+      {
+        name: 'Ideen für 2027',
+        type: 'text',
+        value: 'Open-Air-Bühne prüfen · zweite Förderschiene recherchieren',
+      },
+      {
+        name: 'Verträge 2027',
+        type: 'links',
+        value: null,
+        documents: [{ label: 'Bühnenbau-Angebot', url: 'https://example.org/angebot.pdf' }],
+      },
     ],
   });
 

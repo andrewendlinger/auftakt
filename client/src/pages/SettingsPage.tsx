@@ -235,13 +235,7 @@ function SeasonManagementCard() {
                 Aktiv
               </span>
             ) : (
-              <IconButton
-                size="sm"
-                variant="danger"
-                title="Löschen"
-                className="opacity-0 group-hover:opacity-100"
-                onClick={() => setDeleting(s)}
-              >
+              <IconButton size="sm" variant="danger" title="Löschen" onClick={() => setDeleting(s)}>
                 <TrashIcon className="h-4 w-4" />
               </IconButton>
             )}
