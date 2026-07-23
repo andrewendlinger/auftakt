@@ -4,7 +4,7 @@ import { listEvents, listTasks } from '../lib/queries';
 // Coerce a query param to a number. COALESCE()-based filters lose column affinity, so string
 // params never match integer ids — pass real numbers; an invalid value is now a 400, not a
 // silently-dropped filter that returned every row (SRV-09).
-import { numParam as num } from '../lib/query';
+import { HttpError, numParam as num } from '../lib/query';
 
 export const artistsRouter = crudRouter({
   table: 'artists',
@@ -103,6 +103,29 @@ export const tasksRouter = crudRouter({
   required: ['title'],
   jsonColumns: ['custom_values'],
   transform: (body, { mode, existing }) => {
+    // A task may not be its own ancestor. On update, reject setting parent_id to the task
+    // itself or to any descendant of it — either closes a cycle the client tree renderer (and
+    // every recursive walk) can't handle. Create needs no check: the new row has no id yet, so
+    // no cycle can pass through it (SRV-11).
+    if (mode === 'update' && existing && 'parent_id' in body && body.parent_id != null) {
+      const selfId = Number(existing.id);
+      const proposed = Number(body.parent_id);
+      if (proposed === selfId) {
+        throw new HttpError(400, 'Eine Aufgabe kann sich nicht selbst untergeordnet werden.');
+      }
+      const parentOf = getDb().prepare('SELECT parent_id FROM tasks WHERE id = ?');
+      const seen = new Set<number>();
+      let cursor: number | null = proposed;
+      while (cursor != null) {
+        if (cursor === selfId) {
+          throw new HttpError(400, 'Eine Aufgabe kann keiner ihrer Unteraufgaben untergeordnet werden.');
+        }
+        if (seen.has(cursor)) break; // defensive: don't loop on a pre-existing cycle elsewhere
+        seen.add(cursor);
+        const row = parentOf.get(cursor) as { parent_id: number | null } | undefined;
+        cursor = row?.parent_id ?? null;
+      }
+    }
     // An explicit erledigt_am wins over the derivation: that is the undo path restoring a value
     // this transform itself destroyed. Checked first so a status+erledigt_am pair isn't reverted.
     if ('erledigt_am' in body) return body;
