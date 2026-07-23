@@ -13,10 +13,6 @@
  * is dropped on read, so removing one needs no migration.
  */
 export const LABEL_DEFAULTS = {
-  'nav.overview': 'Übersicht',
-  'nav.archive': 'Archiv',
-  'nav.settings': 'Einstellungen',
-
   'dash.artists': 'Künstler',
   'dash.events': 'Nächste Termine · 14 Tage',
   'dash.tasks': 'Aufgaben',

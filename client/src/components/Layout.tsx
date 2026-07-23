@@ -1,7 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { GlobalSearch } from './GlobalSearch';
 import { SeasonSwitcher } from './SeasonSwitcher';
-import { EditableLabel } from './EditableLabel';
 
 function navClass({ isActive }: { isActive: boolean }): string {
   return `rounded-lg px-3 py-1.5 text-sm font-medium transition ${
@@ -18,28 +17,18 @@ export function Layout() {
             <span className="text-lg font-bold tracking-tight">Auftakt</span>
             <SeasonSwitcher />
           </div>
+          {/* Fixed page names, deliberately not `EditableLabel`: renaming the app's own
+              navigation only obscures where a link leads. */}
           <nav className="flex items-center gap-1">
-            <EditableLabel k="nav.overview" tone="dark">
-              {(text) => (
-                <NavLink to="/" end className={navClass}>
-                  {text}
-                </NavLink>
-              )}
-            </EditableLabel>
-            <EditableLabel k="nav.archive" tone="dark">
-              {(text) => (
-                <NavLink to="/archiv" className={navClass}>
-                  {text}
-                </NavLink>
-              )}
-            </EditableLabel>
-            <EditableLabel k="nav.settings" tone="dark">
-              {(text) => (
-                <NavLink to="/einstellungen" className={navClass}>
-                  {text}
-                </NavLink>
-              )}
-            </EditableLabel>
+            <NavLink to="/" end className={navClass}>
+              Übersicht
+            </NavLink>
+            <NavLink to="/archiv" className={navClass}>
+              Archiv
+            </NavLink>
+            <NavLink to="/einstellungen" className={navClass}>
+              Einstellungen
+            </NavLink>
           </nav>
           <div className="ml-auto flex-1 md:min-w-72 md:max-w-md">
             <GlobalSearch />

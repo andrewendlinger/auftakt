@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { useLabel, useRenameLabel } from '../hooks';
 import type { LabelKey } from '../lib/labels';
 import { LABEL_DEFAULTS } from '../lib/labels';
@@ -15,21 +15,7 @@ import { LABEL_DEFAULTS } from '../lib/labels';
  * (Body text is different: `InlineNotes` is click-anywhere, because a text block is its own
  * click target with nothing else competing for the click.)
  */
-export function EditableLabel({
-  k,
-  tone = 'default',
-  children,
-}: {
-  k: LabelKey;
-  /** `dark` for the nav bar, which is white-on-neutral-900. */
-  tone?: 'default' | 'dark';
-  /**
-   * Wraps the resolved text in something else — used by the nav, where the label is a
-   * `NavLink`. The ✎ is always rendered as a *sibling* of whatever this returns: a `<button>`
-   * inside an `<a>` is invalid HTML, and clicking it would navigate instead of editing.
-   */
-  children?: (text: string) => ReactNode;
-}) {
+export function EditableLabel({ k }: { k: LabelKey }) {
   const label = useLabel();
   const rename = useRenameLabel();
   const text = label(k);
@@ -49,9 +35,7 @@ export function EditableLabel({
         <input
           autoFocus
           // Inherits the heading's own size/weight/tracking so the text doesn't jump on click.
-          className={`min-w-32 rounded border bg-white px-1 py-0.5 font-[inherit] text-[inherit] uppercase tracking-[inherit] text-neutral-800 outline-none ${
-            tone === 'dark' ? 'border-white/40' : 'border-neutral-300 focus:border-neutral-500'
-          }`}
+          className="min-w-32 rounded border border-neutral-300 bg-white px-1 py-0.5 font-[inherit] text-[inherit] uppercase tracking-[inherit] text-neutral-800 outline-none focus:border-neutral-500"
           value={value}
           title={`Leer lassen für „${LABEL_DEFAULTS[k]}“`}
           onChange={(e) => setValue(e.target.value)}
@@ -71,14 +55,12 @@ export function EditableLabel({
         />
       ) : (
         <>
-          {children ? children(text) : text}
+          {text}
           <button
             type="button"
             title="Umbenennen"
             aria-label={`„${text}“ umbenennen`}
-            className={`rounded px-0.5 text-[11px] leading-none opacity-0 transition group-hover/label:opacity-100 focus:opacity-100 ${
-              tone === 'dark' ? 'text-white/60 hover:text-white' : 'text-neutral-400 hover:text-neutral-700'
-            }`}
+            className="rounded px-0.5 text-[11px] leading-none text-neutral-400 opacity-0 transition group-hover/label:opacity-100 hover:text-neutral-700 focus:opacity-100"
             onClick={start}
           >
             ✎
