@@ -137,7 +137,12 @@ export const tasksRouter = crudRouter({
     if ('status' in body) {
       const done = doneStatusValue(getDb());
       if (body.status === done) {
-        if (mode === 'create' || !existing?.erledigt_am) body.erledigt_am = new Date().toISOString();
+        // SQLite space format (YYYY-MM-DD HH:MM:SS), matching demo.ts stamp() and deleted_at, so
+        // the string compare in queries.ts (erledigt_am <= datetime('now', '-N days')) is exact
+        // rather than off by the T-vs-space sort of an ISO string (SRV-08).
+        if (mode === 'create' || !existing?.erledigt_am) {
+          body.erledigt_am = new Date().toISOString().slice(0, 19).replace('T', ' ');
+        }
       } else {
         body.erledigt_am = null;
       }
