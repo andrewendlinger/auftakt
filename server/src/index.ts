@@ -1,5 +1,4 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
-import cors from 'cors';
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,7 +34,68 @@ try {
 }
 
 const app = express();
-app.use(cors());
+
+// --- X-01: same-origin + loopback guard (replaces app.use(cors())) ---
+// Single-user loopback app. The browser is ALWAYS same-origin (dev: Vite proxies
+// :5317 -> :4317 server-side; packaged: the renderer IS :4317), so no browser ever
+// needs cross-origin access. We therefore REJECT (403) — not merely hide the
+// response as the `cors` pkg does — any off-allowlist Origin, and any request whose
+// Host is not a loopback name (the DNS-rebinding defense: a rebound page looks
+// same-origin to the browser, so only the Host header exposes it).
+//
+// Threat model: hostile web pages in the user's browser. Local non-browser callers
+// (no Origin: Electron main, check-backup, same-origin GET) are trusted — they can
+// read the .db off disk regardless. This is not a general auth layer.
+const isPackaged = !!process.env.AUFTAKT_CLIENT_DIST;
+const CLIENT_DEV_PORT = 5317; // Vite dev server (client/vite.config.ts)
+
+const ALLOWED_ORIGINS = new Set<string>([
+  `http://localhost:${PORT}`,
+  `http://127.0.0.1:${PORT}`,
+]);
+if (!isPackaged) {
+  ALLOWED_ORIGINS.add(`http://localhost:${CLIENT_DEV_PORT}`);
+  ALLOWED_ORIGINS.add(`http://127.0.0.1:${CLIENT_DEV_PORT}`);
+}
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+
+/** Hostname without port; handles bare host, host:port, and [ipv6]:port. */
+function hostnameOf(hostHeader: string | undefined): string | null {
+  if (!hostHeader) return null;
+  if (hostHeader.startsWith('[')) {
+    const end = hostHeader.indexOf(']');
+    return end === -1 ? null : hostHeader.slice(1, end).toLowerCase();
+  }
+  const colon = hostHeader.indexOf(':');
+  return (colon === -1 ? hostHeader : hostHeader.slice(0, colon)).toLowerCase();
+}
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  // 1) DNS-rebinding guard: Host must resolve to a loopback name.
+  const host = hostnameOf(req.headers.host);
+  if (!host || !LOOPBACK_HOSTS.has(host)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  // 2) Origin allowlist. Absent Origin = trusted local/non-browser caller.
+  //    "null" is present -> rejected.
+  const origin = req.headers.origin;
+  if (origin !== undefined) {
+    if (!ALLOWED_ORIGINS.has(origin)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.vary('Origin');
+  }
+  // 3) Defensive-only: legit clients never preflight (all traffic is same-origin).
+  //    Checks run first, so a hostile preflight gets 403, not 204.
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,POST,PATCH,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    return res.status(204).end();
+  }
+  next();
+});
+
 app.use(express.json({ limit: '4mb' }));
 
 app.get('/api/health', (_req, res) => {
