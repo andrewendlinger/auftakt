@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { collect, DELETE_ORDER, type Collected } from './lib/cascade';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -1237,21 +1238,34 @@ export function setSetting(db: Database.Database, key: string, value: string): v
 
 /** Hard-delete rows whose deleted_at is older than PURGE_AFTER_DAYS. Runs on startup. */
 export function purgeExpired(db: Database.Database): void {
-  // Children before parents (foreign_keys = ON): deleting an expired parent while a row still
-  // references it would throw. e.g. links reference every other table, so they go first.
-  const tables = ['links', 'custom_sections', 'custom_columns', 'tasks', 'events', 'contacts', 'projects', 'artists'];
   const cutoff = `-${PURGE_AFTER_DAYS} days`;
   const tx = db.transaction(() => {
-    // A widget's links are invisible once their section is in the trash, but stay *live* rows —
-    // purge them along with their expired section or the FK would block the section's delete.
-    db.prepare(
-      `DELETE FROM links WHERE section_id IN
-         (SELECT id FROM custom_sections WHERE deleted_at IS NOT NULL AND deleted_at < datetime('now', ?))`,
-    ).run(cutoff);
-    for (const t of tables) {
-      db.prepare(
-        `DELETE FROM ${t} WHERE deleted_at IS NOT NULL AND deleted_at < datetime('now', ?)`,
-      ).run(cutoff);
+    // Root at every expired row, then cascade-collect everything that references it —
+    // INCLUDING still-live children (e.g. a live subtask under a soft-deleted parent, a
+    // live link under a soft-deleted section). Deleting an expired parent while such a
+    // child references it violates the FK and rolls the whole purge back; folding the
+    // child into the same closure is the fix, and matches the manual trash cascade in
+    // routes/deleted.ts. DELETE_ORDER doubles as the root-iteration list — its 8 tables
+    // are exactly the soft-deletable ones and children come before parents on delete.
+    const doomed: Collected = new Map();
+    for (const table of DELETE_ORDER) {
+      const roots = db
+        .prepare(`SELECT id FROM ${table} WHERE deleted_at IS NOT NULL AND deleted_at < datetime('now', ?)`)
+        .all(cutoff) as { id: number }[];
+      for (const { id } of roots) {
+        for (const [t, ids] of collect(db, table, id)) {
+          let set = doomed.get(t);
+          if (!set) doomed.set(t, (set = new Set()));
+          for (const rid of ids) set.add(rid);
+        }
+      }
+    }
+    for (const t of DELETE_ORDER) {
+      const ids = doomed.get(t);
+      if (!ids?.size) continue;
+      const list = [...ids];
+      const placeholders = list.map(() => '?').join(', ');
+      db.prepare(`DELETE FROM ${t} WHERE id IN (${placeholders})`).run(...list);
     }
   });
   tx();

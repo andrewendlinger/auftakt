@@ -191,8 +191,9 @@ const TASKS: DemoTask[] = [
   { id: 10, project_id: 3, title: 'Setlist final freigeben', status: 'active', due_date: days(15) },
 
   // Orphan: parent is soft-deleted, so the child must render flat with no connector.
-  // deleted_at stays recent — purgeExpired() hard-deletes past PURGE_AFTER_DAYS and
-  // tasks.parent_id is a real FK.
+  // deleted_at stays recent to keep this pair visible — once the parent crosses
+  // PURGE_AFTER_DAYS, purgeExpired() cascades the hard-delete down tasks.parent_id and
+  // takes the still-live child with it (same as the manual trash delete).
   { id: 11, project_id: 5, title: 'Gelöschter Elterntask', status: 'active', deleted_at: stamp(-2) },
   { id: 12, project_id: 5, parent_id: 11, title: 'Verwaiste Unteraufgabe', status: 'active' },
 
