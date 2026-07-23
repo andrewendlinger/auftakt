@@ -1,5 +1,6 @@
 import { Router, type RequestHandler } from 'express';
 import { getDb } from '../db';
+import { HttpError } from './query';
 
 type Body = Record<string, unknown>;
 type Row = Record<string, unknown>;
@@ -65,10 +66,12 @@ export function crudRouter(opts: CrudOptions): Router {
     const params: unknown[] = [];
     for (const f of filters) {
       const val = req.query[f];
-      if (val !== undefined) {
-        where.push(`${f} = ?`);
-        params.push(val);
-      }
+      if (val === undefined) continue;
+      // A repeated (?f=1&f=2 → array) or nested (?f[x]= → object) param can't be an equality
+      // filter — bind only a scalar, 400 otherwise (previously threw a 500 in better-sqlite3).
+      if (typeof val !== 'string') throw new HttpError(400, 'Ungültiger Filterparameter');
+      where.push(`${f} = ?`);
+      params.push(val);
     }
     const orderBy = order ? ` ORDER BY ${order}` : '';
     const rows = db

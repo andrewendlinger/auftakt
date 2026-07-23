@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getDb, purgeExpired } from './db';
+import { HttpError } from './lib/query';
 import {
   artistsRouter,
   contactsRouter,
@@ -130,6 +131,10 @@ if (existsSync(clientDist)) {
 
 // Map SQLite constraint violations (e.g. the artist-XOR-project CHECKs) to 400s.
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  // Deliberate client errors thrown by handlers (e.g. numParam validation) carry their status.
+  if (err instanceof HttpError) {
+    return res.status(err.status).json({ error: err.message });
+  }
   const code = (err as { code?: string })?.code;
   const message = (err as { message?: string })?.message ?? 'Internal error';
   if (typeof code === 'string' && code.startsWith('SQLITE_CONSTRAINT')) {

@@ -1,14 +1,10 @@
 import { doneStatusValue, getDb } from '../db';
 import { crudRouter } from '../lib/crud';
 import { listEvents, listTasks } from '../lib/queries';
-
-/** Coerce a query param to a number. COALESCE()-based filters lose column affinity,
- *  so string params never match integer ids — pass real numbers. */
-function num(v: unknown): number | undefined {
-  if (v == null || v === '') return undefined;
-  const n = Number(v);
-  return Number.isNaN(n) ? undefined : n;
-}
+// Coerce a query param to a number. COALESCE()-based filters lose column affinity, so string
+// params never match integer ids — pass real numbers; an invalid value is now a 400, not a
+// silently-dropped filter that returned every row (SRV-09).
+import { numParam as num } from '../lib/query';
 
 export const artistsRouter = crudRouter({
   table: 'artists',

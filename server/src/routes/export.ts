@@ -2,6 +2,7 @@ import { Router } from 'express';
 import ExcelJS from 'exceljs';
 import { getDb } from '../db';
 import { listTasks } from '../lib/queries';
+import { numParam as num } from '../lib/query';
 
 export const exportRouter = Router();
 
@@ -22,12 +23,6 @@ interface Col {
   name: string;
   type: string;
   options: string | null;
-}
-
-function num(v: unknown): number | undefined {
-  if (v == null || v === '') return undefined;
-  const n = Number(v);
-  return Number.isNaN(n) ? undefined : n;
 }
 
 function isoDay(s: string | null): string {
