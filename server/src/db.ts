@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -990,6 +991,16 @@ const REQUIRED_TABLES = ['settings', 'artists', 'tasks', 'custom_columns'];
  */
 export function validateImportCandidate(path: string): string | null {
   if (!existsSync(path)) return 'Die gewählte Datei existiert nicht.';
+  // A non-empty -wal sidecar means committed rows still sit in the WAL. The import copies only
+  // the .db (importIntoActiveSeason), so those rows would be silently lost — and the read-only
+  // open below often rejects such a file first with a misleading "keine gültige SQLite-Datenbank".
+  // Reject it explicitly with an actionable message. App-produced candidates are VACUUM INTO
+  // output (no WAL), so this only bites hand-picked raw .db files. The size > 0 guard tolerates a
+  // cleanly-closed WAL-mode db that left a 0-byte -wal behind (SRV-15).
+  const wal = `${path}-wal`;
+  if (existsSync(wal) && statSync(wal).size > 0) {
+    return 'Die gewählte Datei hat nicht gesicherte Änderungen (WAL-Datei) und kann nicht importiert werden. Bitte exportiere die Datenbank aus Auftakt und importiere die erzeugte Datei.';
+  }
   let db: Database.Database;
   try {
     db = new Database(path, { readonly: true });
