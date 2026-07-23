@@ -45,6 +45,19 @@ export function useRemoveCustomSection(sections: CustomSection[]): (key: string)
 }
 
 /**
+ * The `cs<id>` keys of widgets that still hold content — a filled section can't be binned
+ * (`nonEmptyKeys`). One links list for all widgets: the dataset is tiny and blanket-
+ * invalidated on every write, the same trade the settings page makes for usage counts.
+ */
+export function useNonEmptyCustomSections(sections: CustomSection[]): string[] {
+  const { data: allLinks = [] } = useQuery({ queryKey: ['links', 'all'], queryFn: () => api.links.list() });
+  const linked = new Set(allLinks.map((l) => l.section_id).filter((id) => id != null));
+  return sections
+    .filter((s) => (s.type === 'text' ? !!s.value?.trim() : linked.has(s.id)))
+    .map(sectionKey);
+}
+
+/**
  * The "+ Bereich" button (edit mode only), opening a grouped picker: „Eingabe" holds the two
  * custom widget types (needing a name) plus this page's hidden built-in input sections;
  * „Einblicke" holds the hidden computed sections. Built-ins are singletons — clicking one
@@ -54,10 +67,13 @@ export function AddSectionButton({
   parent,
   hiddenBuiltins,
   onRestore,
+  onPrepend,
 }: {
   parent: SectionParent;
   hiddenBuiltins: HiddenBuiltin[];
   onRestore: (key: string) => void;
+  /** Layout callback placing a just-created widget at the top — new Bereiche always start there. */
+  onPrepend: (key: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -70,6 +86,7 @@ export function AddSectionButton({
           parent={parent}
           hiddenBuiltins={hiddenBuiltins}
           onRestore={onRestore}
+          onPrepend={onPrepend}
           onClose={() => setOpen(false)}
         />
       )}
@@ -86,11 +103,13 @@ function AddSectionModal({
   parent,
   hiddenBuiltins,
   onRestore,
+  onPrepend,
   onClose,
 }: {
   parent: SectionParent;
   hiddenBuiltins: HiddenBuiltin[];
   onRestore: (key: string) => void;
+  onPrepend: (key: string) => void;
   onClose: () => void;
 }) {
   const invalidate = useInvalidateAll();
@@ -103,13 +122,14 @@ function AddSectionModal({
     if (!name.trim() || !chosen || busy) return;
     setBusy(true);
     try {
-      await api.customSections.create({
+      const row = await api.customSections.create({
         name: name.trim(),
         type: chosen,
         artist_id: parent.artist_id ?? null,
         project_id: parent.project_id ?? null,
       });
       await invalidate();
+      onPrepend(sectionKey(row));
       onClose();
     } finally {
       setBusy(false);

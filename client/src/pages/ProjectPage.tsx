@@ -21,6 +21,7 @@ import { InlineNotes } from '../components/InlineNotes';
 import {
   AddSectionButton,
   customSectionEntries,
+  useNonEmptyCustomSections,
   useRemoveCustomSection,
   type SectionGroup,
 } from '../components/CustomSections';
@@ -93,6 +94,7 @@ export function ProjectPage() {
     queryFn: () => api.customSections.list({ project_id: projectId }),
   });
   const removeCustomSection = useRemoveCustomSection(customSections);
+  const nonEmptyCustom = useNonEmptyCustomSections(customSections);
   const { windowDays } = useTaskStatsConfig();
 
   if (isLoading || !project) return <Spinner />;
@@ -100,6 +102,14 @@ export function ProjectPage() {
   const shade = projectShade(artistColor, project.color, project.id);
   const columns = [...globalCols, ...projectCols];
   const doneValue = doneValueOf(columns);
+
+  // A filled section can't be binned (nonEmptyKeys) — `kontakte` holds both lists, so
+  // either contacts or project links count. The computed Einblicke stay freely removable.
+  const nonEmptyKeys = [
+    ...nonEmptyCustom,
+    ...(events.length > 0 ? ['termine'] : []),
+    ...(contacts.length > 0 || links.length > 0 ? ['kontakte'] : []),
+  ];
 
   const sections: Record<string, ReactNode> = {
     termine: (
@@ -217,11 +227,13 @@ export function ProjectPage() {
         mandatoryKeys={['aufgaben']}
         defaultHidden={['stats', 'aufmerksamkeit']}
         fullWidthKeys={['aufgaben', 'aufmerksamkeit']}
+        nonEmptyKeys={nonEmptyKeys}
         onRemoveCustom={removeCustomSection}
-        addAction={({ hiddenKeys, restore }) => (
+        addAction={({ hiddenKeys, restore, prepend }) => (
           <AddSectionButton
             parent={{ project_id: projectId }}
             onRestore={restore}
+            onPrepend={prepend}
             hiddenBuiltins={hiddenKeys.map((k) => ({
               key: k,
               labelKey: SECTION_LABEL_KEYS[k]!,

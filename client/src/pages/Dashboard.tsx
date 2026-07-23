@@ -17,6 +17,7 @@ import { SectionArranger } from '../components/SectionArranger';
 import {
   AddSectionButton,
   customSectionEntries,
+  useNonEmptyCustomSections,
   useRemoveCustomSection,
   type SectionGroup,
 } from '../components/CustomSections';
@@ -52,6 +53,8 @@ export function Dashboard() {
   const { windowDays } = useTaskStatsConfig();
   const artistLabel = useLabel()('dash.artists');
   const removeCustomSection = useRemoveCustomSection(customSections);
+  // All dashboard built-ins are computed views — only filled custom widgets block their 🗑.
+  const nonEmptyKeys = useNonEmptyCustomSections(customSections);
 
   const doneValue = doneValueOf(customColumns);
   // Group every live task under the artist it resolves to, for the enriched artist-card stats.
@@ -157,11 +160,14 @@ export function Dashboard() {
         titles={custom.titles}
         mandatoryKeys={['artists', 'tasks']}
         fullWidthKeys={['tasks', 'aufmerksamkeit']}
+        nonEmptyKeys={nonEmptyKeys}
+        toolbarAfterKey="artists"
         onRemoveCustom={removeCustomSection}
-        addAction={({ hiddenKeys, restore }) => (
+        addAction={({ hiddenKeys, restore, prepend }) => (
           <AddSectionButton
             parent={{}}
             onRestore={restore}
+            onPrepend={prepend}
             hiddenBuiltins={hiddenKeys.map((k) => ({
               key: k,
               labelKey: SECTION_LABEL_KEYS[k]!,

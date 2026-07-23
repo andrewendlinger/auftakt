@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import type { LayoutEntry } from '../api/types';
 import { arrayMoveTo } from '../lib/arrays';
@@ -40,6 +40,8 @@ export function SectionArranger({
   mandatoryKeys,
   defaultHidden = [],
   fullWidthKeys = [],
+  nonEmptyKeys = [],
+  toolbarAfterKey,
   onRemoveCustom,
   addAction,
 }: {
@@ -61,10 +63,18 @@ export function SectionArranger({
   defaultHidden?: string[];
   /** Sections that can't be set to half width (always full, no width toggle) — e.g. the task table. */
   fullWidthKeys?: string[];
+  /** Sections that still hold content — their 🗑 is disabled so filled data can't vanish. */
+  nonEmptyKeys?: string[];
+  /** Render the toolbar row *after* this section instead of above everything (the dashboard's Künstler grid). */
+  toolbarAfterKey?: string;
   /** 🗑 on a custom widget's strip — the page soft-deletes the row (undoable). */
   onRemoveCustom?: (key: string) => void;
   /** The "+ Bereich" button, rendered only in edit mode, fed the hidden built-ins to offer. */
-  addAction?: (ctx: { hiddenKeys: string[]; restore: (key: string) => void }) => ReactNode;
+  addAction?: (ctx: {
+    hiddenKeys: string[];
+    restore: (key: string) => void;
+    prepend: (key: string) => void;
+  }) => ReactNode;
 }) {
   const { data: settings } = useSettings();
   const label = useLabel();
@@ -164,6 +174,19 @@ export function SectionArranger({
     );
   };
 
+  /**
+   * Put a just-created custom widget at the top — new Bereiche always start there. "Top"
+   * means the start of the editable zone: right below `toolbarAfterKey` when the toolbar
+   * sits inside the grid (the dashboard's Künstler grid stays first), else position 0.
+   */
+  const prepend = (key: string) => {
+    const entry: LayoutEntry = { key, width: 'full' };
+    const anchor = toolbarAfterKey != null ? full.findIndex((e) => e.key === toolbarAfterKey) : -1;
+    const next = [...full];
+    next.splice(anchor + 1, 0, entry);
+    void persist(next);
+  };
+
   const drag = useDragReorder<string>({
     enabled: arranging,
     onReorder: (fromKey, toKey) => {
@@ -172,14 +195,21 @@ export function SectionArranger({
     },
   });
 
+  const toolbar = (
+    <div className="flex items-center justify-end gap-2">
+      {arranging && addAction?.({ hiddenKeys, restore, prepend })}
+      <Btn variant="subtle" onClick={() => setArranging((a) => !a)}>
+        {arranging ? '✓ Fertig' : '✎ Bereiche bearbeiten'}
+      </Btn>
+    </div>
+  );
+  // The toolbar can sit inside the grid after a named section (the dashboard puts it below
+  // the Künstler grid — you can't edit that anyway); everywhere else it tops the block.
+  const toolbarInGrid = toolbarAfterKey != null && display.some((e) => e.key === toolbarAfterKey);
+
   return (
     <>
-      <div className="flex items-center justify-end gap-2">
-        {arranging && addAction?.({ hiddenKeys, restore })}
-        <Btn variant="subtle" onClick={() => setArranging((a) => !a)}>
-          {arranging ? '✓ Fertig' : '⇅ Bereiche bearbeiten'}
-        </Btn>
-      </div>
+      {!toolbarInGrid && toolbar}
       <div className="grid grid-cols-1 gap-8 sm:grid-cols-2">
         {display.map((entry, i) => {
           const key = entry.key;
@@ -190,8 +220,8 @@ export function SectionArranger({
               } ${drag.isDragging(key) ? 'opacity-40' : ''}`
             : '';
           return (
+            <Fragment key={key}>
             <div
-              key={key}
               data-section={key}
               data-width={entry.width}
               className={`${entry.width === 'full' ? 'sm:col-span-2' : ''} ${arrangeCls}`}
@@ -233,8 +263,15 @@ export function SectionArranger({
                     </button>
                     {!mandatoryKeys.includes(key) && (
                       <button
-                        className="rounded px-2 py-1 text-neutral-500 hover:bg-neutral-200 hover:text-red-600"
-                        title="Bereich entfernen"
+                        className="rounded px-2 py-1 text-neutral-500 enabled:hover:bg-neutral-200 enabled:hover:text-red-600 disabled:opacity-30"
+                        // A filled section can't be binned — its data would silently vanish
+                        // (built-ins have no trash; the rule covers custom widgets too).
+                        disabled={nonEmptyKeys.includes(key)}
+                        title={
+                          nonEmptyKeys.includes(key)
+                            ? 'Enthält noch Inhalte und kann nicht entfernt werden'
+                            : 'Bereich entfernen'
+                        }
                         // Built-ins (they have a LabelKey) are hidden and re-addable via the
                         // picker; custom widgets are soft-deleted by the page (undo toast).
                         onClick={() => (key in labelKeys ? hide(key) : onRemoveCustom?.(key))}
@@ -247,6 +284,8 @@ export function SectionArranger({
               )}
               {sections[key]}
             </div>
+            {toolbarInGrid && key === toolbarAfterKey && <div className="sm:col-span-2">{toolbar}</div>}
+            </Fragment>
           );
         })}
       </div>

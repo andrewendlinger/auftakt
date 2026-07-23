@@ -19,6 +19,7 @@ import { InlineNotes } from '../components/InlineNotes';
 import {
   AddSectionButton,
   customSectionEntries,
+  useNonEmptyCustomSections,
   useRemoveCustomSection,
   type SectionGroup,
 } from '../components/CustomSections';
@@ -85,8 +86,17 @@ export function ArtistPage() {
     queryFn: () => api.customSections.list({ artist_id: artistId }),
   });
   const removeCustomSection = useRemoveCustomSection(customSections);
+  const nonEmptyCustom = useNonEmptyCustomSections(customSections);
 
   if (isLoading || !artist) return <Spinner />;
+
+  // A filled section can't be binned (nonEmptyKeys) — the computed Einblicke stay free.
+  const nonEmptyKeys = [
+    ...nonEmptyCustom,
+    ...(projects.length > 0 ? ['projekte'] : []),
+    ...(events.length > 0 ? ['termine'] : []),
+    ...(contacts.length > 0 ? ['kontakte'] : []),
+  ];
   const color = artist.color;
 
   // The single resolved-task list splits cleanly on `project_id`: general (artist-level) tasks are
@@ -225,11 +235,13 @@ export function ArtistPage() {
         mandatoryKeys={['aufgaben']}
         defaultHidden={['stats']}
         fullWidthKeys={['aufgaben', 'aufmerksamkeit']}
+        nonEmptyKeys={nonEmptyKeys}
         onRemoveCustom={removeCustomSection}
-        addAction={({ hiddenKeys, restore }) => (
+        addAction={({ hiddenKeys, restore, prepend }) => (
           <AddSectionButton
             parent={{ artist_id: artistId }}
             onRestore={restore}
+            onPrepend={prepend}
             hiddenBuiltins={hiddenKeys.map((k) => ({
               key: k,
               labelKey: SECTION_LABEL_KEYS[k]!,
