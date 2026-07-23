@@ -10,6 +10,16 @@ directories:
 # "damaged". Ad-hoc sign the bundle so it is at least a valid arm64 app (see README).
 afterSign: scripts/afterSign.cjs
 
+# Not for publishing (CI builds with --publish never; the release job uploads the
+# artifacts) — this config makes electron-builder embed app-update.yml into the app
+# and emit latest.yml + *.blockmap, which the in-app Windows updater (electron-updater)
+# resolves against the GitHub Release. macOS cannot auto-update without an Apple
+# Developer ID, so only the Windows build uses it.
+publish:
+  provider: github
+  owner: andrewendlinger
+  repo: auftakt
+
 # Built artifacts + the one native dependency (better-sqlite3 is added
 # automatically as a production dependency and rebuilt for Electron's ABI).
 files:

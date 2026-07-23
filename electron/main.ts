@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { buildMenu } from './menu';
 import { runStartupBackup } from './backup';
+import { checkForUpdates, downloadAndInstallUpdate, startSilentStartupCheck } from './updater';
 
 const isDev = !app.isPackaged;
 const PORT = Number(process.env.AUFTAKT_PORT ?? 4317);
@@ -206,6 +207,9 @@ app.whenReady().then(async () => {
   );
   await createWindow();
 
+  // Silent update check; the result surfaces as a hint in the Settings card.
+  if (!isDev) startSilentStartupCheck();
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();
   });
@@ -220,3 +224,6 @@ ipcMain.handle('open-external', (_e, url: string) => shell.openExternal(url));
 ipcMain.handle('export-db', () => exportDatabase());
 ipcMain.handle('import-db', () => importDatabase());
 ipcMain.handle('choose-backup-dir', () => chooseBackupDir());
+ipcMain.handle('get-version', () => app.getVersion());
+ipcMain.handle('check-updates', (_e, refresh: boolean) => checkForUpdates(refresh));
+ipcMain.handle('install-update', () => downloadAndInstallUpdate());

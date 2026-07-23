@@ -12,6 +12,7 @@ import { TaskSortEditor } from '../components/TaskSortEditor';
 import { TrashIcon } from '../components/icons';
 import { useToast } from '../components/Toast';
 import { ALL_METRICS } from '../lib/taskStats';
+import { openExternal, type UpdateStatus } from '../lib/external';
 import {
   useEventTypeOptions,
   useInvalidateAll,
@@ -307,7 +308,7 @@ function SeasonTermCard() {
   );
 }
 
-/** Tab „Saison & Daten": season management, Bezeichnung, database & backups (later: update card, WP-N). */
+/** Tab „Saison & Daten": season management, Bezeichnung, database & backups, version & updates (WP-N). */
 export function SettingsDataTab() {
   const { data: settings, isLoading } = useSettings();
   const term = useSeasonTerm();
@@ -360,7 +361,146 @@ export function SettingsDataTab() {
           )}
         </div>
       </Card>
+
+      {hasElectron && <UpdateCard />}
     </div>
+  );
+}
+
+/**
+ * Version display + update check (WP-N). The check itself runs in Electron main
+ * (GitHub Releases API on macOS, electron-updater/latest.yml on Windows) — this card
+ * only renders the normalized result. On packaged Windows (`canInstall`) the update
+ * installs in-app; on macOS the download stays manual via the Releases page, so the
+ * card also explains the quarantine step for the unsigned app. Mounting reads the
+ * cached silent startup check, so an available update shows without clicking.
+ */
+type UpdateView =
+  | { kind: 'idle' }
+  | { kind: 'checking' }
+  | { kind: 'upToDate' }
+  | { kind: 'available'; status: UpdateStatus }
+  | { kind: 'downloading'; status: UpdateStatus }
+  | { kind: 'error' };
+
+function UpdateCard() {
+  const [version, setVersion] = useState('');
+  const [view, setView] = useState<UpdateView>({ kind: 'idle' });
+  const isMac = window.auftakt?.platform === 'darwin';
+
+  useEffect(() => {
+    void window.auftakt?.getVersion?.().then(setVersion);
+    // Surface the silent startup check; a cached "up to date" stays quiet.
+    void window.auftakt
+      ?.checkForUpdates?.(false)
+      .then((status) => {
+        if (status?.updateAvailable) setView({ kind: 'available', status });
+      })
+      .catch(() => {});
+  }, []);
+
+  const check = async () => {
+    setView({ kind: 'checking' });
+    try {
+      const status = await window.auftakt?.checkForUpdates?.(true);
+      if (!status) throw new Error('kein Ergebnis');
+      setView(status.updateAvailable ? { kind: 'available', status } : { kind: 'upToDate' });
+    } catch {
+      setView({ kind: 'error' });
+    }
+  };
+
+  const install = async (status: UpdateStatus) => {
+    setView({ kind: 'downloading', status });
+    // Resolves after the native dialog (restart now / later / error) — either way
+    // the hint stays relevant until the app actually restarts.
+    await window.auftakt?.installUpdate?.();
+    setView({ kind: 'available', status });
+  };
+
+  return (
+    <Card className="p-5">
+      <SectionTitle>Version & Updates</SectionTitle>
+      <p className="mt-1 mb-3 text-xs text-neutral-400">
+        Prüft, ob auf GitHub eine neuere Version von Auftakt veröffentlicht wurde.
+      </p>
+      <div className="space-y-3 text-sm">
+        <div className="flex items-center gap-3">
+          <span className="text-neutral-700">
+            Installierte Version: <strong>{version || '…'}</strong>
+          </span>
+          <Btn onClick={check} disabled={view.kind === 'checking' || view.kind === 'downloading'}>
+            Nach Updates suchen
+          </Btn>
+        </div>
+
+        {view.kind === 'checking' && <p className="text-xs text-neutral-400">Suche nach Updates…</p>}
+        {view.kind === 'upToDate' && (
+          <p className="text-xs text-neutral-500">Du hast die neueste Version.</p>
+        )}
+        {view.kind === 'error' && (
+          <p className="text-xs text-amber-600">
+            Konnte nicht nach Updates suchen. Bitte später erneut versuchen oder die{' '}
+            <button
+              type="button"
+              className="underline"
+              onClick={() => openExternal('https://github.com/andrewendlinger/auftakt/releases')}
+            >
+              Releases-Seite
+            </button>{' '}
+            im Browser öffnen.
+          </p>
+        )}
+        {view.kind === 'downloading' && (
+          <p className="text-xs text-neutral-500">Update wird heruntergeladen…</p>
+        )}
+
+        {view.kind === 'available' && (
+          <div className="space-y-2 rounded-lg bg-neutral-50 p-3">
+            <p className="text-neutral-700">
+              Version <strong>{view.status.latest}</strong> ist verfügbar.
+            </p>
+            {view.status.canInstall ? (
+              <Btn variant="primary" onClick={() => install(view.status)}>
+                Herunterladen & installieren
+              </Btn>
+            ) : (
+              <>
+                <Btn variant="primary" onClick={() => openExternal(view.status.url)}>
+                  Zur Releases-Seite
+                </Btn>
+                <details className="text-xs text-neutral-500">
+                  <summary className="cursor-pointer select-none font-medium text-neutral-600">
+                    So installierst du die neue Version
+                  </summary>
+                  {isMac ? (
+                    <ol className="mt-2 list-decimal space-y-1 pl-4">
+                      <li>Die neue .dmg-Datei von der Releases-Seite herunterladen und öffnen.</li>
+                      <li>Auftakt in den Programme-Ordner ziehen und das Ersetzen bestätigen.</li>
+                      <li>
+                        Im Terminal einmal{' '}
+                        <code className="rounded bg-neutral-100 px-1 py-0.5">
+                          xattr -dr com.apple.quarantine /Applications/Auftakt.app
+                        </code>{' '}
+                        ausführen — die App ist nicht Apple-signiert, macOS meldet sie sonst als
+                        „beschädigt". Deine Daten bleiben beim Update erhalten.
+                      </li>
+                    </ol>
+                  ) : (
+                    <p className="mt-2">
+                      Die neue .exe-Datei von der Releases-Seite herunterladen und ausführen. Falls
+                      Windows mit SmartScreen warnt („Der Computer wurde durch Windows geschützt"):
+                      auf „Weitere Informationen" und dann „Trotzdem ausführen" klicken. Deine Daten
+                      bleiben beim Update erhalten.
+                    </p>
+                  )}
+                </details>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }
 

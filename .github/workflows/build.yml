@@ -63,6 +63,10 @@ jobs:
         with:
           subject-path: release/*.${{ matrix.os == 'windows-latest' && 'exe' || 'dmg' }}
 
+      # latest.yml + *.blockmap belong in the release next to the .exe: the in-app
+      # Windows updater (electron-updater) resolves updates via latest.yml, and the
+      # blockmap enables differential downloads. macOS has no auto-update (unsigned),
+      # so no latest-mac.yml is built or shipped.
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -70,6 +74,8 @@ jobs:
           path: |
             release/*.dmg
             release/*.exe
+            release/*.blockmap
+            release/latest.yml
           if-no-files-found: ignore
 
   # On a version tag (v1.2.3), gather both installers and publish a GitHub Release
@@ -92,4 +98,6 @@ jobs:
           files: |
             installers/**/*.dmg
             installers/**/*.exe
+            installers/**/*.blockmap
+            installers/**/latest.yml
           generate_release_notes: true
