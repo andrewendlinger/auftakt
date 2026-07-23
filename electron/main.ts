@@ -11,6 +11,32 @@ const DEV_URL = process.env.AUFTAKT_DEV_URL ?? 'http://localhost:5317';
 
 let mainWindow: BrowserWindow | null = null;
 
+/**
+ * Authoritative scheme allowlist for `shell.openExternal` (X-02). The renderer
+ * guards the same set (`client/src/lib/external.ts`), but the renderer is the
+ * untrusted side, so the check that matters is here — a compromised or bypassed
+ * renderer must not be able to launch `file:`, UNC/`smb:` or custom-protocol
+ * handlers via the bridge or a `window.open`/navigation attempt.
+ */
+const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
+
+function isAllowedExternalUrl(url: string): boolean {
+  try {
+    return ALLOWED_EXTERNAL_PROTOCOLS.has(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+}
+
+/** Open a URL externally only if its scheme is allowlisted; otherwise refuse + log. */
+function openExternalSafely(url: string): void {
+  if (isAllowedExternalUrl(url)) {
+    void shell.openExternal(url);
+  } else {
+    console.warn('Blockierter externer Link (nicht unterstütztes Format):', url);
+  }
+}
+
 /** The data dir holding the season DBs + seasons.json: dev → repo/.data; packaged → userData. */
 function dataDir(): string {
   return isDev ? resolve(app.getAppPath(), '.data') : app.getPath('userData');
@@ -163,6 +189,24 @@ async function createWindow(): Promise<void> {
       nodeIntegration: false,
     },
   });
+  // Never spawn a child BrowserWindow (a child would not inherit the preload,
+  // but denying is the safe default); route allowlisted schemes out to the OS
+  // through the same guard as the bridge (X-02 / Q1).
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalSafely(url);
+    return { action: 'deny' };
+  });
+  // Keep the renderer pinned to the app origin; any in-page navigation to an
+  // off-origin URL is handed to the OS (if allowlisted) instead of loading in
+  // the window.
+  mainWindow.webContents.on('will-navigate', (e, url) => {
+    const appOrigin = isDev ? DEV_URL : `http://localhost:${PORT}`;
+    if (!url.startsWith(appOrigin)) {
+      e.preventDefault();
+      openExternalSafely(url);
+    }
+  });
+
   await mainWindow.loadURL(isDev ? DEV_URL : `http://localhost:${PORT}`);
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -220,7 +264,7 @@ app.on('window-all-closed', () => {
 });
 
 // Preload bridge → main. React never touches Electron APIs directly.
-ipcMain.handle('open-external', (_e, url: string) => shell.openExternal(url));
+ipcMain.handle('open-external', (_e, url: string) => openExternalSafely(url));
 ipcMain.handle('export-db', () => exportDatabase());
 ipcMain.handle('import-db', () => importDatabase());
 ipcMain.handle('choose-backup-dir', () => chooseBackupDir());

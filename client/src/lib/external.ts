@@ -30,7 +30,30 @@ declare global {
   }
 }
 
+/**
+ * Only these schemes may reach `shell.openExternal` / `window.open`. Stored
+ * `links.url` and landing-doc URLs render as buttons that bypass the
+ * markdown/linkify protocol allowlist, so an imported or injected `file:`,
+ * `smb:` (Windows UNC → NTLM leak) or custom-protocol URL would otherwise open
+ * unchecked. The main process re-checks this — the renderer is the untrusted
+ * side — so this arm is UX + the browser-dev fallback (X-02).
+ */
+const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
+
+function isAllowedExternalUrl(url: string): boolean {
+  try {
+    return ALLOWED_EXTERNAL_PROTOCOLS.has(new URL(url).protocol);
+  } catch {
+    return false; // unparseable / relative → not an external link → block
+  }
+}
+
 export function openExternal(url: string): void {
+  if (!isAllowedExternalUrl(url)) {
+    console.warn('Blockierter externer Link (nicht unterstütztes Format):', url);
+    window.alert('Dieser Link kann nicht geöffnet werden (nicht unterstütztes Format).');
+    return;
+  }
   const bridge = window.auftakt?.openExternal;
   if (bridge) {
     bridge(url);
