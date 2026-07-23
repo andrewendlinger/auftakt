@@ -1,5 +1,13 @@
 import Database from 'better-sqlite3';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collect, DELETE_ORDER, type Collected } from './lib/cascade';
@@ -99,6 +107,17 @@ function readRegistry(): Registry {
   } catch {
     /* bootstrap below */
   }
+  // If a file exists but was unreadable/corrupt/misshapen, preserve it before bootstrapping
+  // over it — it may hold recoverable landing content (notes, documents, sections live only
+  // here). Date.now() (no ':') keeps the suffix Windows-safe. Best-effort: a failed rename
+  // must not block startup.
+  if (existsSync(registryPath())) {
+    try {
+      renameSync(registryPath(), `${registryPath()}.corrupt-${Date.now()}`);
+    } catch {
+      /* ignore — proceed to bootstrap */
+    }
+  }
   // First run: register the (possibly pre-existing) legacy DB as the first season.
   const reg: Registry = {
     activeId: 1,
@@ -108,9 +127,13 @@ function readRegistry(): Registry {
   return reg;
 }
 
+// Atomic write: a crash mid-write must never truncate the only copy of the registry.
+// Write to a temp file, then renameSync over the target (atomic on POSIX and Windows).
 function saveRegistry(reg: Registry): void {
   mkdirSync(dataDir(), { recursive: true });
-  writeFileSync(registryPath(), JSON.stringify(reg, null, 2));
+  const tmp = `${registryPath()}.tmp`;
+  writeFileSync(tmp, JSON.stringify(reg, null, 2));
+  renameSync(tmp, registryPath());
 }
 
 function activeSeason(reg: Registry = readRegistry()): Season {
