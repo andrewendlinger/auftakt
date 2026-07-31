@@ -66,7 +66,11 @@ export function crudRouter(opts: CrudOptions): Router {
     const params: unknown[] = [];
     for (const f of filters) {
       const val = req.query[f];
-      if (val === undefined) continue;
+      // An empty value means "no filter", exactly as numParam (lib/query.ts) reads it. Binding
+      // col = '' instead made INTEGER affinity coerce it to 0, so `?artist_id=` matched no rows
+      // and the page rendered empty, while the numParam-based task/event routes returned
+      // everything for the same request (SDL-09).
+      if (val === undefined || val === '') continue;
       // A repeated (?f=1&f=2 → array) or nested (?f[x]= → object) param can't be an equality
       // filter — bind only a scalar, 400 otherwise (previously threw a 500 in better-sqlite3).
       if (typeof val !== 'string') throw new HttpError(400, 'Ungültiger Filterparameter');
