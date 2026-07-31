@@ -152,7 +152,15 @@ export const tasksRouter = crudRouter({
     // A status-less create defaults to 'new' (the first Status option). Stamped here so it
     // holds on every DB: the SQL column DEFAULT is stale ('offen') on databases predating the
     // New/Active/Done model, and is never reached once the transform sets the value (SRV-07).
-    if (mode === 'create') body.status ??= 'new';
+    // Any blank value defaults, not just null/undefined: tasks.status is NOT NULL but carries no
+    // value CHECK, so an explicit '' used to persist — a task with no status badge, counted open
+    // forever and never archiving, because neither the done comparison nor the archive query can
+    // ever match it. A PATCH cannot blank it either (SDL-05). Validating against the configured
+    // Status options is FIX-03's job.
+    if (mode === 'create' && !body.status) body.status = 'new';
+    if (mode === 'update' && 'status' in body && !body.status) {
+      throw new HttpError(400, 'Status darf nicht leer sein.');
+    }
     if ('erledigt_am' in body || 'status' in body) {
       const done = doneStatusValue(getDb());
       // An accepted erledigt_am wins over the derivation: that is the undo path restoring a
