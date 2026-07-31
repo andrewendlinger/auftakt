@@ -331,9 +331,12 @@ function readSeedData(dir: string): SeedData {
   });
 
   const tasks: TaskIns[] = rawTasks.map((r, i) => {
-    // Map the legacy CSV status (offen/erledigt) to the New/Active/Done model.
-    const rawStatus = nn(r.status) ?? 'offen';
-    const status = rawStatus === 'erledigt' ? 'done' : rawStatus === 'offen' ? 'active' : rawStatus;
+    // Map the legacy CSV status (offen/erledigt) to the New/Active/Done model. A missing cell
+    // is not "offen": it means the export never said, so it takes the schema default 'new'
+    // (Not Started) rather than landing in In Progress (SDB-11).
+    const rawStatus = nn(r.status);
+    const status =
+      rawStatus === null ? 'new' : rawStatus === 'erledigt' ? 'done' : rawStatus === 'offen' ? 'active' : rawStatus;
     // Confirmed decision: completed tasks with no completion date get erledigt_am = seed date.
     const erledigt_am = status === 'done' ? nowIso : null;
     return {
