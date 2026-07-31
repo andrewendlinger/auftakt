@@ -9,6 +9,7 @@
  *   npm run check:backup
  */
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -49,12 +50,38 @@ const server = spawn('npm', ['--prefix', 'server', 'run', 'dev'], {
   shell: true,
 });
 
+let cleanedUp = false;
+/** Last-ditch cleanup for the 'exit' handler, where nothing may be awaited. */
 function cleanup() {
+  if (cleanedUp) return;
+  cleanedUp = true;
   server.kill();
   rmSync(dataDir, { recursive: true, force: true });
   rmSync(workDir, { recursive: true, force: true });
 }
 process.on('exit', cleanup);
+
+/**
+ * Stop the server, wait for it to actually be gone, then drop the temp dirs. The order matters
+ * when a request is still in flight: the server re-creates its data dir on the next registry
+ * write (saveRegistry mkdirs it), so removing the dir first leaves it behind.
+ */
+async function shutdown(code) {
+  server.kill();
+  await Promise.race([once(server, 'exit'), new Promise((r) => setTimeout(r, 2000))]);
+  cleanup();
+  process.exit(code);
+}
+
+// The run stays alive for seconds (dozens of awaited round-trips and 250ms polls), so Ctrl-C
+// during it is normal. Without a listener Node terminates via the default signal action and
+// never emits 'exit', so cleanup() never ran: the server kept :4319 and both temp dirs stayed
+// behind, once per interrupted run (DBW-11).
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    void shutdown(130);
+  });
+}
 
 async function waitForServer() {
   for (let i = 0; i < 120; i++) {
@@ -196,4 +223,4 @@ check('pruning keeps the newest', kept.includes(kept.slice().sort().reverse()[0]
 check('legacy flat backups are left alone', existsSync(legacy));
 
 console.log(`\n${failures === 0 ? 'alles ok' : `${failures} fehlgeschlagen`}\n`);
-process.exit(failures === 0 ? 0 : 1);
+await shutdown(failures === 0 ? 0 : 1);
