@@ -475,13 +475,17 @@ function main(): void {
     // children together while the rows replacing them are still validated.
     db.pragma('defer_foreign_keys = ON');
     clearTables(db);
+    // Settings survive clearTables, so re-seeding an existing DB keeps stale defaults. Reset
+    // both option lists to the current defaults before seeding: the project-status list for
+    // the label/default migration, the event-type list because the sample event's 'Auftritt'
+    // has to match a surviving option (SDB-09). insertSeedData() then merges the types found
+    // in the CSVs back into that list.
+    setSetting(db, 'event_types', JSON.stringify(DEFAULT_EVENT_TYPES));
+    setSetting(db, 'project_statuses', JSON.stringify(DEFAULT_PROJECT_STATUSES));
     if (data) insertSeedData(db, data);
     else seedSample(db);
     // clearTables wipes custom_columns, so re-create the built-in task columns.
     ensureBuiltinColumns(db);
-    // Settings survive clearTables, so re-seeding an existing DB keeps stale defaults.
-    // Reset the project-status list to the current default (the label/default migration).
-    setSetting(db, 'project_statuses', JSON.stringify(DEFAULT_PROJECT_STATUSES));
   });
   seed();
 
