@@ -35,4 +35,11 @@ try {
 
 // Hand over to the normal dev setup; -k in its concurrently call handles shutdown.
 const dev = spawn('npm', ['run', 'dev'], { cwd: root, env, stdio: 'inherit', shell: true });
+// A ChildProcess 'error' event with no listener is thrown as an uncaught exception, so a
+// failing spawn here (npm not on PATH, no permission to spawn a shell) would end the run in a
+// raw stack trace instead of the German message path the rest of the script uses.
+dev.on('error', (err) => {
+  console.error(`\nDev-Server konnte nicht gestartet werden: ${err.message}`);
+  process.exit(1);
+});
 dev.on('exit', (code) => process.exit(code ?? 0));
