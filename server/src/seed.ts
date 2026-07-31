@@ -63,9 +63,17 @@ function toIsoLocal(v: string): string {
   return v.trim().replace(' ', 'T');
 }
 
+/**
+ * Wipe every seeded data table (settings deliberately survive). custom_sections was missing,
+ * so a re-seed left stale widget sections on re-used artist/project ids.
+ *
+ * Deliberately NOT its own transaction: it must run inside main()'s, under
+ * `defer_foreign_keys = ON`. Committing the wipe separately from the insert is what used to
+ * leave a real database empty when a single CSV row failed (SDB-01), and the wipe on its own
+ * cannot satisfy the FKs anyway — `DELETE FROM tasks` deletes parents and children in one
+ * statement, in no defined order.
+ */
 function clearTables(db: Database.Database): void {
-  // Every seeded data table (settings deliberately survive). custom_sections was missing,
-  // so a re-seed left stale widget sections on re-used artist/project ids.
   const tables = [
     'links',
     'tasks',
@@ -76,16 +84,10 @@ function clearTables(db: Database.Database): void {
     'custom_columns',
     'custom_sections',
   ];
-  // PRAGMA foreign_keys is a no-op inside a transaction, so toggle it around one.
-  db.pragma('foreign_keys = OFF');
   const placeholders = tables.map(() => '?').join(',');
-  const tx = db.transaction(() => {
-    for (const t of tables) db.prepare(`DELETE FROM ${t}`).run();
-    // Derived from the same list so the AUTOINCREMENT reset can never drift from it.
-    db.prepare(`DELETE FROM sqlite_sequence WHERE name IN (${placeholders})`).run(...tables);
-  });
-  tx();
-  db.pragma('foreign_keys = ON');
+  for (const t of tables) db.prepare(`DELETE FROM ${t}`).run();
+  // Derived from the same list so the AUTOINCREMENT reset can never drift from it.
+  db.prepare(`DELETE FROM sqlite_sequence WHERE name IN (${placeholders})`).run(...tables);
 }
 
 function seedFromCsv(db: Database.Database, dir: string): void {
@@ -257,19 +259,26 @@ function main(): void {
   const dir = importDir();
   const hasCsv = existsSync(dir) && readdirSync(dir).some((f) => f.endsWith('.csv'));
 
-  clearTables(db);
-  if (hasCsv) {
-    console.log(`Seeding from CSVs in ${dir}`);
-    seedFromCsv(db, dir);
-  } else {
-    console.log(`No CSVs found in ${dir} — generating sample data`);
-    seedSample(db);
-  }
-  // clearTables wipes custom_columns, so re-create the built-in task columns.
-  ensureBuiltinColumns(db);
-  // Settings survive clearTables, so re-seeding an existing DB keeps stale defaults.
-  // Reset the project-status list to the current default (the label/default migration).
-  setSetting(db, 'project_statuses', JSON.stringify(DEFAULT_PROJECT_STATUSES));
+  console.log(hasCsv ? `Seeding from CSVs in ${dir}` : `No CSVs found in ${dir} — generating sample data`);
+
+  // One transaction over the wipe AND the insert. Anything that throws — a constraint on a
+  // malformed row, a dangling FK the deferred check catches at COMMIT — takes the wipe with
+  // it, so a failed seed leaves the database exactly as it was instead of empty (SDB-01).
+  const seed = db.transaction(() => {
+    // PRAGMA foreign_keys is a no-op inside a transaction; defer_foreign_keys is not. It
+    // moves every FK check to COMMIT, which is what lets clearTables() drop parents and
+    // children together while the rows replacing them are still validated.
+    db.pragma('defer_foreign_keys = ON');
+    clearTables(db);
+    if (hasCsv) seedFromCsv(db, dir);
+    else seedSample(db);
+    // clearTables wipes custom_columns, so re-create the built-in task columns.
+    ensureBuiltinColumns(db);
+    // Settings survive clearTables, so re-seeding an existing DB keeps stale defaults.
+    // Reset the project-status list to the current default (the label/default migration).
+    setSetting(db, 'project_statuses', JSON.stringify(DEFAULT_PROJECT_STATUSES));
+  });
+  seed();
 
   console.log('\nSeed complete. Row counts:');
   for (const t of ['artists', 'projects', 'contacts', 'events', 'tasks', 'links']) {
@@ -280,4 +289,11 @@ function main(): void {
   console.log(`  project_statuses   ${getSetting(db, 'project_statuses')}`);
 }
 
-main();
+try {
+  main();
+} catch (err) {
+  // The wipe and the insert share one transaction, so a failure here rolled both back —
+  // say so, and print the reason rather than a stack trace.
+  console.error(`\nSeed failed — the database was left unchanged.\n${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
+}
