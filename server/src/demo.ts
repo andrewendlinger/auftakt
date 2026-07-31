@@ -328,18 +328,23 @@ const CUSTOM_COLUMNS = [
   { name: 'Bestätigt', type: 'checkbox', icon: '✓', options: null },
 ];
 
-/** taskId → [Bereich, Bestätigt]. Left sparse on purpose so empty cells show too. */
-const CUSTOM_VALUES: Record<number, [string | null, boolean | null]> = {
-  1: ['logistik', false],
-  3: ['logistik', true],
-  5: ['technik', true],
-  7: ['logistik', false],
-  10: ['kommunikation', null],
-  13: ['technik', false],
-  20: ['kommunikation', true],
-  21: ['kommunikation', false],
-  31: [null, true],
-  36: ['technik', false],
+/**
+ * taskId → value per custom column, keyed by the column *name* in CUSTOM_COLUMNS. Left sparse
+ * on purpose so empty cells show too — an omitted key is an empty cell. Keyed rather than
+ * positional because a fixed [Bereich, Bestätigt] tuple silently wrote the select value into
+ * the checkbox column and vice versa as soon as CUSTOM_COLUMNS was reordered (SDB-12).
+ */
+const CUSTOM_VALUES: Record<number, Partial<Record<'Bereich' | 'Bestätigt', string | boolean>>> = {
+  1: { Bereich: 'logistik', Bestätigt: false },
+  3: { Bereich: 'logistik', Bestätigt: true },
+  5: { Bereich: 'technik', Bestätigt: true },
+  7: { Bereich: 'logistik', Bestätigt: false },
+  10: { Bereich: 'kommunikation' },
+  13: { Bereich: 'technik', Bestätigt: false },
+  20: { Bereich: 'kommunikation', Bestätigt: true },
+  21: { Bereich: 'kommunikation', Bestätigt: false },
+  31: { Bestätigt: true },
+  36: { Bereich: 'technik', Bestätigt: false },
 };
 
 /* ---------- insert ---------- */
@@ -391,15 +396,18 @@ function main(): void {
     EVENTS.forEach((e, i) => insEvent.run({ notes: null, deleted_at: null, ...e, sort_order: i }));
 
     // Custom columns first: their generated ids are the keys inside tasks.custom_values.
-    const colIds = CUSTOM_COLUMNS.map(
-      (c, i) => Number(insColumn.run({ ...c, sort_order: 100 + i }).lastInsertRowid),
+    const colIds = new Map<string, number>();
+    CUSTOM_COLUMNS.forEach((c, i) =>
+      colIds.set(c.name, Number(insColumn.run({ ...c, sort_order: 100 + i }).lastInsertRowid)),
     );
 
     TASKS.forEach((t, i) => {
-      const [bereich, bestaetigt] = CUSTOM_VALUES[t.id] ?? [null, null];
       const cv: Record<string, unknown> = {};
-      if (bereich !== null) cv[String(colIds[0])] = bereich;
-      if (bestaetigt !== null) cv[String(colIds[1])] = bestaetigt;
+      for (const [column, value] of Object.entries(CUSTOM_VALUES[t.id] ?? {})) {
+        const colId = colIds.get(column);
+        if (colId === undefined) throw new Error(`CUSTOM_VALUES references unknown column "${column}"`);
+        cv[String(colId)] = value;
+      }
       insTask.run({
         artist_id: null,
         project_id: null,
