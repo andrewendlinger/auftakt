@@ -55,10 +55,45 @@ function mapProjectStatus(v: string | null): string | null {
   return v === 'aktiv' ? 'In Progress' : v;
 }
 
-/** Integer FK or null. */
-function ni(v: string | undefined): number | null {
+/**
+ * Problems found while reading the CSVs, collected rather than thrown one at a time so a bad
+ * file can be fixed in one pass. They are reported before the transaction opens, so a
+ * malformed cell never reaches the database at all.
+ */
+type Problems = string[];
+
+/** `index` is the 0-based data row; CSV line numbers count the header and start at 1. */
+function problem(p: Problems, file: string, index: number, message: string): void {
+  p.push(`${file} line ${index + 2}: ${message}`);
+}
+
+function throwProblems(p: Problems): void {
+  if (p.length === 0) return;
+  throw new Error(`${p.length} problem(s) in the import CSVs:\n  ${p.join('\n  ')}`);
+}
+
+/**
+ * Optional integer FK: an empty cell is a legitimate NULL, anything non-numeric is not.
+ * Number() used to take both — it turns '' into 0 and a missing column into NaN (SDB-04).
+ */
+function optId(p: Problems, file: string, index: number, field: string, v: string | undefined): number | null {
   const s = nn(v);
-  return s === null ? null : Number(s);
+  if (s === null) return null;
+  const n = Number(s);
+  if (!Number.isInteger(n) || n <= 0) {
+    problem(p, file, index, `${field} "${s}" is not a positive whole number`);
+    return null;
+  }
+  return n;
+}
+
+/** Required integer id or FK — an empty cell is a problem, not a 0. */
+function reqId(p: Problems, file: string, index: number, field: string, v: string | undefined): number {
+  if (nn(v) === null) {
+    problem(p, file, index, `${field} is empty`);
+    return 0; // never inserted: throwProblems() runs before anything is written
+  }
+  return optId(p, file, index, field, v) ?? 0;
 }
 
 /** A value like "2026-08-31" is date-only (all-day); "2026-09-04 22:00" is timed. */
@@ -98,23 +133,200 @@ function clearTables(db: Database.Database): void {
   db.prepare(`DELETE FROM sqlite_sequence WHERE name IN (${placeholders})`).run(...tables);
 }
 
-function seedFromCsv(db: Database.Database, dir: string): void {
-  const nowIso = new Date().toISOString();
+interface ArtistIns {
+  id: number;
+  name: string | undefined;
+  color: string;
+  notes: string | null;
+  sort_order: number;
+}
+interface ProjectIns {
+  id: number;
+  artist_id: number;
+  code: string | undefined;
+  name: string | undefined;
+  status: string | null;
+  description: string | null;
+  color: string | null;
+  sort_order: number;
+}
+interface ContactIns {
+  id: number;
+  artist_id: number | null;
+  project_id: number | null;
+  role: string | null;
+  name: string | undefined;
+  email: string | null;
+  phone: string | null;
+  notes: string | null;
+  sort_order: number;
+}
+interface EventIns {
+  id: number;
+  artist_id: number | null;
+  project_id: number | null;
+  type: string;
+  title: string | undefined;
+  start_at: string | null;
+  end_at: string | null;
+  all_day: number;
+  location: string | null;
+  notes: string | null;
+  sort_order: number;
+}
+interface TaskIns {
+  id: number;
+  artist_id: number | null;
+  project_id: number | null;
+  title: string | undefined;
+  status: string;
+  priority: string;
+  due_date: string | null;
+  comment: string | null;
+  erledigt_am: string | null;
+  sort_order: number;
+}
+interface LinkIns {
+  id: number;
+  artist_id: number | null;
+  project_id: number | null;
+  event_id: number | null;
+  task_id: number | null;
+  label: string | undefined;
+  url: string | null;
+  sort_order: number;
+}
 
-  const artists = readCsv(dir, 'artists.csv');
-  const projects = readCsv(dir, 'projects.csv');
-  const contacts = readCsv(dir, 'contacts.csv');
-  const events = readCsv(dir, 'events.csv');
-  const tasks = readCsv(dir, 'tasks.csv');
-  const links = readCsv(dir, 'links.csv');
+interface SeedData {
+  artists: ArtistIns[];
+  projects: ProjectIns[];
+  contacts: ContactIns[];
+  events: EventIns[];
+  tasks: TaskIns[];
+  links: LinkIns[];
+  /** Event types found in the data, absorbed into the editable list after the insert. */
+  eventTypes: Set<string>;
+}
+
+/**
+ * Parse, validate and map every CSV into rows ready to bind. Deliberately runs BEFORE the
+ * transaction opens: a malformed cell is reported without the database being touched at all,
+ * rather than surfacing as a constraint failure halfway through the insert (SDB-04).
+ */
+function readSeedData(dir: string): SeedData {
+  const nowIso = new Date().toISOString();
+  const p: Problems = [];
+  const eventTypes = new Set<string>();
+
+  const rawArtists = readCsv(dir, 'artists.csv');
+  const rawProjects = readCsv(dir, 'projects.csv');
+  const rawContacts = readCsv(dir, 'contacts.csv');
+  const rawEvents = readCsv(dir, 'events.csv');
+  const rawTasks = readCsv(dir, 'tasks.csv');
+  const rawLinks = readCsv(dir, 'links.csv');
 
   // A CSV set that parses to nothing would replace the database with an empty one and still
   // report "Seed complete" (SDB-03) — an empty import dir is what the sample branch is for.
-  const total = artists.length + projects.length + contacts.length + events.length + tasks.length + links.length;
+  const total =
+    rawArtists.length + rawProjects.length + rawContacts.length + rawEvents.length + rawTasks.length + rawLinks.length;
   if (total === 0) {
     throw new Error(`The CSVs in ${dir} hold no rows — refusing to replace the database with an empty one.`);
   }
 
+  const artists: ArtistIns[] = rawArtists.map((r, i) => ({
+    id: reqId(p, 'artists.csv', i, 'id', r.id),
+    name: r.name,
+    color: nn(r.color) ?? '#888888',
+    notes: nn(r.notes),
+    sort_order: i,
+  }));
+
+  const projects: ProjectIns[] = rawProjects.map((r, i) => {
+    // Legacy CSVs carry description AND notes; the schema keeps one field, so merge.
+    const description = nn(r.description);
+    const notes = nn(r.notes);
+    return {
+      id: reqId(p, 'projects.csv', i, 'id', r.id),
+      artist_id: reqId(p, 'projects.csv', i, 'artist_id', r.artist_id),
+      code: r.code,
+      name: r.name,
+      status: mapProjectStatus(nn(r.status)),
+      description: description && notes ? `${description}\n\n${notes}` : (description ?? notes),
+      color: nn(r.color), // NULL => auto-derived shade at render time
+      sort_order: i,
+    };
+  });
+
+  const contacts: ContactIns[] = rawContacts.map((r, i) => ({
+    id: reqId(p, 'contacts.csv', i, 'id', r.id),
+    artist_id: optId(p, 'contacts.csv', i, 'artist_id', r.artist_id),
+    project_id: optId(p, 'contacts.csv', i, 'project_id', r.project_id),
+    role: nn(r.role),
+    name: r.name,
+    email: nn(r.email),
+    phone: nn(r.phone),
+    notes: nn(r.notes),
+    sort_order: i,
+  }));
+
+  const events: EventIns[] = rawEvents.map((r, i) => {
+    const startRaw = r.start ?? '';
+    const endRaw = nn(r.end);
+    const allDay = isDateOnly(startRaw) ? 1 : 0;
+    const eventType = nn(r.type);
+    if (eventType) eventTypes.add(eventType);
+    return {
+      id: reqId(p, 'events.csv', i, 'id', r.id),
+      artist_id: optId(p, 'events.csv', i, 'artist_id', r.artist_id),
+      project_id: optId(p, 'events.csv', i, 'project_id', r.project_id),
+      type: eventType ?? 'Termin',
+      title: r.title,
+      start_at: startRaw.trim() === '' ? null : allDay ? startRaw.trim() : toIsoLocal(startRaw), // NULL = "Datum offen" (TBD)
+      end_at: endRaw === null ? null : allDay ? endRaw : toIsoLocal(endRaw),
+      all_day: allDay,
+      location: nn(r.location),
+      notes: nn(r.notes),
+      sort_order: i,
+    };
+  });
+
+  const tasks: TaskIns[] = rawTasks.map((r, i) => {
+    // Map the legacy CSV status (offen/erledigt) to the New/Active/Done model.
+    const rawStatus = nn(r.status) ?? 'offen';
+    const status = rawStatus === 'erledigt' ? 'done' : rawStatus === 'offen' ? 'active' : rawStatus;
+    // Confirmed decision: completed tasks with no completion date get erledigt_am = seed date.
+    const erledigt_am = status === 'done' ? nowIso : null;
+    return {
+      id: reqId(p, 'tasks.csv', i, 'id', r.id),
+      artist_id: optId(p, 'tasks.csv', i, 'artist_id', r.artist_id),
+      project_id: optId(p, 'tasks.csv', i, 'project_id', r.project_id),
+      title: r.title,
+      status,
+      priority: nn(r.priority) ?? 'mittel',
+      due_date: nn(r.due_date),
+      comment: nn(r.comment),
+      erledigt_am,
+      sort_order: i,
+    };
+  });
+
+  const links: LinkIns[] = rawLinks.map((r, i) => ({
+    id: reqId(p, 'links.csv', i, 'id', r.id),
+    artist_id: optId(p, 'links.csv', i, 'artist_id', r.artist_id),
+    project_id: optId(p, 'links.csv', i, 'project_id', r.project_id),
+    event_id: optId(p, 'links.csv', i, 'event_id', r.event_id),
+    task_id: optId(p, 'links.csv', i, 'task_id', r.task_id),
+    label: r.label,
+    url: nn(r.url), // label-only placeholders keep url = NULL
+    sort_order: i,
+  }));
+
+  throwProblems(p);
+  return { artists, projects, contacts, events, tasks, links, eventTypes };
+}
+
+/** Insert pre-validated rows. Must run inside main()'s transaction. */
+function insertSeedData(db: Database.Database, data: SeedData): void {
   const insArtist = db.prepare(
     `INSERT INTO artists (id, name, color, notes, sort_order) VALUES (@id, @name, @color, @notes, @sort_order)`,
   );
@@ -139,104 +351,12 @@ function seedFromCsv(db: Database.Database, dir: string): void {
      VALUES (@id, @artist_id, @project_id, @event_id, @task_id, @label, @url, @sort_order)`,
   );
 
-  const foundEventTypes = new Set<string>();
-
-  const tx = db.transaction(() => {
-    artists.forEach((r, i) => {
-      insArtist.run({
-        id: Number(r.id),
-        name: r.name,
-        color: nn(r.color) ?? '#888888',
-        notes: nn(r.notes),
-        sort_order: i,
-      });
-    });
-
-    projects.forEach((r, i) => {
-      // Legacy CSVs carry description AND notes; the schema keeps one field, so merge.
-      const description = nn(r.description);
-      const notes = nn(r.notes);
-      insProject.run({
-        id: Number(r.id),
-        artist_id: Number(r.artist_id),
-        code: r.code,
-        name: r.name,
-        status: mapProjectStatus(nn(r.status)),
-        description: description && notes ? `${description}\n\n${notes}` : (description ?? notes),
-        color: nn(r.color), // NULL => auto-derived shade at render time
-        sort_order: i,
-      });
-    });
-
-    contacts.forEach((r, i) => {
-      insContact.run({
-        id: Number(r.id),
-        artist_id: ni(r.artist_id),
-        project_id: ni(r.project_id),
-        role: nn(r.role),
-        name: r.name,
-        email: nn(r.email),
-        phone: nn(r.phone),
-        notes: nn(r.notes),
-        sort_order: i,
-      });
-    });
-
-    events.forEach((r, i) => {
-      const startRaw = r.start ?? '';
-      const endRaw = nn(r.end);
-      const allDay = isDateOnly(startRaw) ? 1 : 0;
-      const eventType = nn(r.type);
-      if (eventType) foundEventTypes.add(eventType);
-      insEvent.run({
-        id: Number(r.id),
-        artist_id: ni(r.artist_id),
-        project_id: ni(r.project_id),
-        type: eventType ?? 'Termin',
-        title: r.title,
-        start_at: startRaw.trim() === '' ? null : allDay ? startRaw.trim() : toIsoLocal(startRaw), // NULL = "Datum offen" (TBD)
-        end_at: endRaw === null ? null : allDay ? endRaw : toIsoLocal(endRaw),
-        all_day: allDay,
-        location: nn(r.location),
-        notes: nn(r.notes),
-        sort_order: i,
-      });
-    });
-
-    tasks.forEach((r, i) => {
-      // Map the legacy CSV status (offen/erledigt) to the New/Active/Done model.
-      const rawStatus = nn(r.status) ?? 'offen';
-      const status = rawStatus === 'erledigt' ? 'done' : rawStatus === 'offen' ? 'active' : rawStatus;
-      // Confirmed decision: completed tasks with no completion date get erledigt_am = seed date.
-      const erledigt_am = status === 'done' ? nowIso : null;
-      insTask.run({
-        id: Number(r.id),
-        artist_id: ni(r.artist_id),
-        project_id: ni(r.project_id),
-        title: r.title,
-        status,
-        priority: nn(r.priority) ?? 'mittel',
-        due_date: nn(r.due_date),
-        comment: nn(r.comment),
-        erledigt_am,
-        sort_order: i,
-      });
-    });
-
-    links.forEach((r, i) => {
-      insLink.run({
-        id: Number(r.id),
-        artist_id: ni(r.artist_id),
-        project_id: ni(r.project_id),
-        event_id: ni(r.event_id),
-        task_id: ni(r.task_id),
-        label: r.label,
-        url: nn(r.url), // label-only placeholders keep url = NULL
-        sort_order: i,
-      });
-    });
-  });
-  tx();
+  for (const r of data.artists) insArtist.run(r);
+  for (const r of data.projects) insProject.run(r);
+  for (const r of data.contacts) insContact.run(r);
+  for (const r of data.events) insEvent.run(r);
+  for (const r of data.tasks) insTask.run(r);
+  for (const r of data.links) insLink.run(r);
 
   // Absorb any event types found in the data (e.g. "Probe") into the editable list as
   // coloured options (WP-I): defaults first, then any novel imported type, deduped by value.
@@ -246,7 +366,7 @@ function seedFromCsv(db: Database.Database, dir: string): void {
   const FALLBACK_COLORS = ['#fee2e2', '#fef3c7', '#dcfce7', '#e0f2fe', '#ede9fe', '#fce7f3', '#f1f5f9'];
   const byValue = new Map(DEFAULT_EVENT_TYPES.map((o) => [o.value, o]));
   let fi = 0;
-  for (const name of foundEventTypes) {
+  for (const name of data.eventTypes) {
     if (byValue.has(name)) continue;
     byValue.set(name, { value: name, label: name, color: LEGACY_EVENT_COLORS[name] ?? FALLBACK_COLORS[fi++ % FALLBACK_COLORS.length]! });
   }
@@ -295,6 +415,9 @@ function main(): void {
 
   console.log(hasCsv ? `Seeding from CSVs in ${dir}` : `No CSVs found in ${dir} — generating sample data`);
 
+  // Read and validate everything first: a malformed CSV must fail with the database untouched.
+  const data = hasCsv ? readSeedData(dir) : null;
+
   // One transaction over the wipe AND the insert. Anything that throws — a constraint on a
   // malformed row, a dangling FK the deferred check catches at COMMIT — takes the wipe with
   // it, so a failed seed leaves the database exactly as it was instead of empty (SDB-01).
@@ -304,7 +427,7 @@ function main(): void {
     // children together while the rows replacing them are still validated.
     db.pragma('defer_foreign_keys = ON');
     clearTables(db);
-    if (hasCsv) seedFromCsv(db, dir);
+    if (data) insertSeedData(db, data);
     else seedSample(db);
     // clearTables wipes custom_columns, so re-create the built-in task columns.
     ensureBuiltinColumns(db);
