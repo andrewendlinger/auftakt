@@ -90,7 +90,13 @@ export function crudRouter(opts: CrudOptions): Router {
   if (writable.includes('sort_order')) {
     r.post('/reorder', (req, res) => {
       const ids = (req.body as { ids?: unknown } | undefined)?.ids;
-      if (!Array.isArray(ids) || ids.some((id) => !Number.isInteger(Number(id)))) {
+      // Number.isInteger(Number(id)) accepted '', null, false and whitespace-padded strings —
+      // all coerce to 0, so a blank entry from a client bug passed validation, ran
+      // `WHERE id = 0`, matched no row, and the endpoint still reported ok (SDL-08). Require a
+      // real row id; every caller maps over rows it just rendered, so ids are always numbers.
+      const isRowId = (id: unknown): id is number =>
+        typeof id === 'number' && Number.isInteger(id) && id > 0;
+      if (!Array.isArray(ids) || !ids.every(isRowId)) {
         return res.status(400).json({ error: 'ids must be a list of row ids' });
       }
       const db = getDb();
@@ -98,7 +104,16 @@ export function crudRouter(opts: CrudOptions): Router {
         `UPDATE ${table} SET sort_order = ?, updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL`,
       );
       db.transaction(() => {
-        ids.forEach((id, i) => stmt.run(i, Number(id)));
+        let changed = 0;
+        ids.forEach((id, i) => {
+          changed += stmt.run(i, id).changes;
+        });
+        // A stale or since-deleted id matched nothing, so the order the client believes it saved
+        // is not the order on disk. Roll the batch back rather than commit half of it — callers
+        // send one sibling group per drag, so a partial apply leaves two rows sharing an ordinal.
+        if (changed !== ids.length) {
+          throw new HttpError(409, 'Reihenfolge konnte nicht gespeichert werden.');
+        }
       })();
       res.json({ ok: true, count: ids.length });
     });
