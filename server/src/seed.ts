@@ -100,6 +100,25 @@ function reqText(p: Problems, file: string, index: number, field: string, v: str
   return s;
 }
 
+/**
+ * contacts, events and links each carry a CHECK demanding exactly one parent (tasks are the
+ * exception, relaxed to <= 1 for season-wide todos). A legacy festival-wide row with every
+ * parent column blank binds all-null, sums to 0 and fails the CHECK mid-insert (SDB-06).
+ */
+function requireOneParent(p: Problems, file: string, index: number, parents: Record<string, number | null>): void {
+  const columns = Object.keys(parents);
+  const set = columns.filter((c) => parents[c] != null);
+  if (set.length === 1) return;
+  problem(
+    p,
+    file,
+    index,
+    set.length === 0
+      ? `no parent set — exactly one of ${columns.join(', ')} is required`
+      : `${set.join(' and ')} are set — exactly one of ${columns.join(', ')} is allowed`,
+  );
+}
+
 /** Required integer id or FK — an empty cell is a problem, not a 0. */
 function reqId(p: Problems, file: string, index: number, field: string, v: string | undefined): number {
   if (nn(v) === null) {
@@ -270,17 +289,22 @@ function readSeedData(dir: string): SeedData {
     };
   });
 
-  const contacts: ContactIns[] = rawContacts.map((r, i) => ({
-    id: reqId(p, 'contacts.csv', i, 'id', r.id),
-    artist_id: optId(p, 'contacts.csv', i, 'artist_id', r.artist_id),
-    project_id: optId(p, 'contacts.csv', i, 'project_id', r.project_id),
-    role: nn(r.role),
-    name: reqText(p, 'contacts.csv', i, 'name', r.name),
-    email: nn(r.email),
-    phone: nn(r.phone),
-    notes: nn(r.notes),
-    sort_order: i,
-  }));
+  const contacts: ContactIns[] = rawContacts.map((r, i) => {
+    const artist_id = optId(p, 'contacts.csv', i, 'artist_id', r.artist_id);
+    const project_id = optId(p, 'contacts.csv', i, 'project_id', r.project_id);
+    requireOneParent(p, 'contacts.csv', i, { artist_id, project_id });
+    return {
+      id: reqId(p, 'contacts.csv', i, 'id', r.id),
+      artist_id,
+      project_id,
+      role: nn(r.role),
+      name: reqText(p, 'contacts.csv', i, 'name', r.name),
+      email: nn(r.email),
+      phone: nn(r.phone),
+      notes: nn(r.notes),
+      sort_order: i,
+    };
+  });
 
   const events: EventIns[] = rawEvents.map((r, i) => {
     const startRaw = r.start ?? '';
@@ -288,10 +312,13 @@ function readSeedData(dir: string): SeedData {
     const allDay = isDateOnly(startRaw) ? 1 : 0;
     const eventType = nn(r.type);
     if (eventType) eventTypes.add(eventType);
+    const artist_id = optId(p, 'events.csv', i, 'artist_id', r.artist_id);
+    const project_id = optId(p, 'events.csv', i, 'project_id', r.project_id);
+    requireOneParent(p, 'events.csv', i, { artist_id, project_id });
     return {
       id: reqId(p, 'events.csv', i, 'id', r.id),
-      artist_id: optId(p, 'events.csv', i, 'artist_id', r.artist_id),
-      project_id: optId(p, 'events.csv', i, 'project_id', r.project_id),
+      artist_id,
+      project_id,
       type: eventType ?? 'Termin',
       title: reqText(p, 'events.csv', i, 'title', r.title),
       start_at: startRaw.trim() === '' ? null : allDay ? startRaw.trim() : toIsoLocal(startRaw), // NULL = "Datum offen" (TBD)
@@ -323,16 +350,24 @@ function readSeedData(dir: string): SeedData {
     };
   });
 
-  const links: LinkIns[] = rawLinks.map((r, i) => ({
-    id: reqId(p, 'links.csv', i, 'id', r.id),
-    artist_id: optId(p, 'links.csv', i, 'artist_id', r.artist_id),
-    project_id: optId(p, 'links.csv', i, 'project_id', r.project_id),
-    event_id: optId(p, 'links.csv', i, 'event_id', r.event_id),
-    task_id: optId(p, 'links.csv', i, 'task_id', r.task_id),
-    label: reqText(p, 'links.csv', i, 'label', r.label),
-    url: nn(r.url), // label-only placeholders keep url = NULL
-    sort_order: i,
-  }));
+  const links: LinkIns[] = rawLinks.map((r, i) => {
+    const artist_id = optId(p, 'links.csv', i, 'artist_id', r.artist_id);
+    const project_id = optId(p, 'links.csv', i, 'project_id', r.project_id);
+    const event_id = optId(p, 'links.csv', i, 'event_id', r.event_id);
+    const task_id = optId(p, 'links.csv', i, 'task_id', r.task_id);
+    // section_id is the fifth parent in the CHECK, but the importer cannot express widgets.
+    requireOneParent(p, 'links.csv', i, { artist_id, project_id, event_id, task_id });
+    return {
+      id: reqId(p, 'links.csv', i, 'id', r.id),
+      artist_id,
+      project_id,
+      event_id,
+      task_id,
+      label: reqText(p, 'links.csv', i, 'label', r.label),
+      url: nn(r.url), // label-only placeholders keep url = NULL
+      sort_order: i,
+    };
+  });
 
   throwProblems(p);
   return { artists, projects, contacts, events, tasks, links, eventTypes };
