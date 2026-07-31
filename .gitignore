@@ -37,6 +37,12 @@ server/src/notion/
 # notes. Stays local — seed.ts falls back to sample data when absent.
 files/
 
+# code-review findings and the work packages driving the fixing sessions. Stays local: it
+# spells out vulnerabilities that are not fixed yet, and this repo is meant to go public —
+# committing it once would make them world-readable the day visibility flips, permanently.
+# Ignored rather than merely untracked so a stray `git add -A` cannot sweep it in.
+review/
+
 # logs / os
 *.log
 .DS_Store
