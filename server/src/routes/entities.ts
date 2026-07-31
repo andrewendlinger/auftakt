@@ -79,6 +79,28 @@ export const customColumnsRouter = crudRouter({
   order: 'sort_order ASC, id ASC',
 });
 
+/** A completion date the server itself wrote: `YYYY-MM-DD`, optionally with a time. */
+const ERLEDIGT_AM_SHAPE = /^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}:\d{2})?$/;
+
+/**
+ * Whether a body's `erledigt_am` is the undo stack restoring a value this transform destroyed,
+ * as opposed to a client trying to set the completion date directly.
+ *
+ * The undo path (client hooks.ts `useUndoablePatch`, whose `extraKeys` adds `erledigt_am`
+ * whenever the patch touches `status`) always sends the pair, and the pair always agrees:
+ * re-completing a task restores its old date, reopening one restores null. Anything else is
+ * dropped so the derivation below stays the only authority. Without this gate a lone
+ * `PATCH {erledigt_am:'2020-01-01'}` was stored verbatim and the task vanished straight into
+ * the archive, and a `{status:<open>, erledigt_am:<date>}` pair left a reopened task carrying a
+ * completion date (SDL-02).
+ */
+function acceptsErledigtAm(body: Record<string, unknown>, done: string): boolean {
+  if (!('status' in body)) return false;
+  const v = body.erledigt_am;
+  if (v === null) return body.status !== done;
+  return typeof v === 'string' && ERLEDIGT_AM_SHAPE.test(v) && body.status === done;
+}
+
 /** When a task flips to erledigt, stamp erledigt_am; when reopened, clear it. Server-controlled. */
 export const tasksRouter = crudRouter({
   table: 'tasks',
@@ -97,7 +119,8 @@ export const tasksRouter = crudRouter({
     // Deliberate exception to "the allowlist is the single authority on what a client may set":
     // the undo stack has to be able to put the *original* completion date back. Without it,
     // undoing a status flip re-stamps erledigt_am with today, which silently un-archives a task
-    // that had aged past ARCHIVE_AFTER_DAYS. Normal edits never send it — see the guard below.
+    // that had aged past ARCHIVE_AFTER_DAYS. Normal edits never send it, and the transform's
+    // acceptsErledigtAm() gate drops anything that isn't that undo (SDL-02).
     'erledigt_am',
   ],
   required: ['title'],
@@ -130,21 +153,28 @@ export const tasksRouter = crudRouter({
     // holds on every DB: the SQL column DEFAULT is stale ('offen') on databases predating the
     // New/Active/Done model, and is never reached once the transform sets the value (SRV-07).
     if (mode === 'create') body.status ??= 'new';
-    // An explicit erledigt_am wins over the derivation: that is the undo path restoring a value
-    // this transform itself destroyed. Checked first so a status+erledigt_am pair isn't reverted.
-    if ('erledigt_am' in body) return body;
-    // Stamp/clear erledigt_am against the Status column's editable "done" value.
-    if ('status' in body) {
+    if ('erledigt_am' in body || 'status' in body) {
       const done = doneStatusValue(getDb());
-      if (body.status === done) {
-        // SQLite space format (YYYY-MM-DD HH:MM:SS), matching demo.ts stamp() and deleted_at, so
-        // the string compare in queries.ts (erledigt_am <= datetime('now', '-N days')) is exact
-        // rather than off by the T-vs-space sort of an ISO string (SRV-08).
-        if (mode === 'create' || !existing?.erledigt_am) {
-          body.erledigt_am = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      // An accepted erledigt_am wins over the derivation: that is the undo path restoring a
+      // value this transform itself destroyed. Checked first so a legitimate status +
+      // erledigt_am pair isn't reverted; anything else loses the key and falls through to the
+      // derivation, which is then the sole authority (SDL-02).
+      if ('erledigt_am' in body) {
+        if (acceptsErledigtAm(body, done)) return body;
+        delete body.erledigt_am;
+      }
+      // Stamp/clear erledigt_am against the Status column's editable "done" value.
+      if ('status' in body) {
+        if (body.status === done) {
+          // SQLite space format (YYYY-MM-DD HH:MM:SS), matching demo.ts stamp() and deleted_at, so
+          // the string compare in queries.ts (erledigt_am <= datetime('now', '-N days')) is exact
+          // rather than off by the T-vs-space sort of an ISO string (SRV-08).
+          if (mode === 'create' || !existing?.erledigt_am) {
+            body.erledigt_am = new Date().toISOString().slice(0, 19).replace('T', ' ');
+          }
+        } else {
+          body.erledigt_am = null;
         }
-      } else {
-        body.erledigt_am = null;
       }
     }
     return body;
