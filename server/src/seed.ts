@@ -11,6 +11,7 @@ import {
   DEFAULT_EVENT_TYPES,
   DEFAULT_PROJECT_STATUSES,
 } from './db';
+import { DELETE_ORDER } from './lib/cascade';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -139,8 +140,10 @@ function toIsoLocal(v: string): string {
 }
 
 /**
- * Wipe every seeded data table (settings deliberately survive). custom_sections was missing,
- * so a re-seed left stale widget sections on re-used artist/project ids.
+ * Wipe every seeded data table (settings deliberately survive). The table list is DELETE_ORDER
+ * from lib/cascade.ts — the same eight soft-deletable tables the trash and the purge walk — so
+ * a table added there can never be forgotten here, which is how custom_sections once came to
+ * leave stale widget sections behind on re-used artist/project ids.
  *
  * Deliberately NOT its own transaction: it must run inside main()'s, under
  * `defer_foreign_keys = ON`. Committing the wipe separately from the insert is what used to
@@ -149,20 +152,10 @@ function toIsoLocal(v: string): string {
  * statement, in no defined order.
  */
 function clearTables(db: Database.Database): void {
-  const tables = [
-    'links',
-    'tasks',
-    'events',
-    'contacts',
-    'projects',
-    'artists',
-    'custom_columns',
-    'custom_sections',
-  ];
-  const placeholders = tables.map(() => '?').join(',');
-  for (const t of tables) db.prepare(`DELETE FROM ${t}`).run();
+  const placeholders = DELETE_ORDER.map(() => '?').join(',');
+  for (const t of DELETE_ORDER) db.prepare(`DELETE FROM ${t}`).run();
   // Derived from the same list so the AUTOINCREMENT reset can never drift from it.
-  db.prepare(`DELETE FROM sqlite_sequence WHERE name IN (${placeholders})`).run(...tables);
+  db.prepare(`DELETE FROM sqlite_sequence WHERE name IN (${placeholders})`).run(...DELETE_ORDER);
 }
 
 interface ArtistIns {
