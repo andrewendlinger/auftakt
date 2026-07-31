@@ -78,3 +78,30 @@ export function collect(db: Database.Database, rootTable: string, rootId: number
   }
   return found;
 }
+
+/**
+ * True when a row in this closure other than the root is still live, which is exactly when the
+ * startup purge will refuse to take the root (it skips anything a remaining row references).
+ * The archive page uses it to stop promising a purge date it will never honour — see the guard
+ * in `purgeExpired`, and keep the two in step.
+ *
+ * A trashed-but-not-yet-expired descendant is deliberately not counted: it blocks the root only
+ * until it expires itself, after which the same sweep takes both.
+ */
+export function hasLiveDescendant(
+  db: Database.Database,
+  collected: Collected,
+  rootTable: string,
+  rootId: number,
+): boolean {
+  for (const [table, ids] of collected) {
+    // One statement per table, one lookup per id — never an IN-list, which has a bound-parameter
+    // ceiling and the trash is now unbounded (a blocked root stays until deleted by hand).
+    const stmt = db.prepare(`SELECT 1 FROM ${table} WHERE id = ? AND deleted_at IS NULL LIMIT 1`);
+    for (const id of ids) {
+      if (table === rootTable && id === rootId) continue;
+      if (stmt.get(id)) return true;
+    }
+  }
+  return false;
+}

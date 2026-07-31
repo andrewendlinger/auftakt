@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getDb, PURGE_AFTER_DAYS } from '../db';
-import { collect, DELETE_ORDER, type Collected } from '../lib/cascade';
+import { collect, DELETE_ORDER, hasLiveDescendant, type Collected } from '../lib/cascade';
 
 /**
  * The "Gelöschte Items" (trash) endpoints powering the second section of the archive page:
@@ -82,7 +82,8 @@ interface DeletedRow {
   label: string;
   sublabel: string | null;
   deleted_at: string;
-  purge_at: string;
+  /** NULL once a live descendant blocks the sweep — the row then stays until deleted by hand. */
+  purge_at: string | null;
 }
 
 /** Count everything in the closure except the root row itself, grouped by type name. */
@@ -118,7 +119,14 @@ deletedRouter.get('/', (_req, res) => {
     const rows = db.prepare(LIST_SQL[type]).all() as DeletedRow[];
     for (const row of rows) {
       const collected = collect(db, TYPES[type], row.id);
-      items.push({ type, ...row, dependents: dependentCounts(collected, TYPES[type], row.id) });
+      items.push({
+        type,
+        ...row,
+        // The startup purge skips a row anything still references, so a computed purge_at would
+        // be a promise it never keeps — hand the client NULL and let it say so (SDL-01).
+        purge_at: hasLiveDescendant(db, collected, TYPES[type], row.id) ? null : row.purge_at,
+        dependents: dependentCounts(collected, TYPES[type], row.id),
+      });
     }
   }
   // Most-recently deleted first.

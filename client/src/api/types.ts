@@ -161,8 +161,11 @@ export interface DeletedItem {
   /** Owner context (artist name / project code), or null for season-wide/leaf rows. */
   sublabel: string | null;
   deleted_at: string;
-  /** When the automatic purge removes it (deleted_at + PURGE_AFTER_DAYS). */
-  purge_at: string;
+  /**
+   * When the automatic purge removes it (deleted_at + PURGE_AFTER_DAYS), or null when a live
+   * entry still references it — the purge skips those, so only "Endgültig löschen" clears them.
+   */
+  purge_at: string | null;
   /** What a permanent delete cascades to. `column` = a project's custom columns. */
   dependents: { total: number; byType: Partial<Record<DeletedType | 'column', number>> };
 }

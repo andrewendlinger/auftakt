@@ -33,7 +33,10 @@ function cascadeText(dep: DeletedItem['dependents']): string {
   return `${parts.slice(0, -1).join(', ')} und ${parts[parts.length - 1]}`;
 }
 
-function purgeHint(purgeAt: string): string {
+function purgeHint(purgeAt: string | null): string {
+  // No date means the automatic purge will skip this row for as long as something still
+  // references it — say that instead of counting down to a removal that never comes.
+  if (purgeAt === null) return ' · bleibt, bis abhängige Einträge entfernt sind';
   const d = daysUntil(purgeAt);
   if (d == null) return '';
   const n = Math.max(0, d);
