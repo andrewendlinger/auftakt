@@ -26,3 +26,19 @@ export function numParam(v: unknown): number | undefined {
   if (!Number.isFinite(n)) throw new HttpError(400, 'Ungültiger Filterparameter');
   return n;
 }
+
+const TASK_SCOPES = ['live', 'archive', 'all'] as const;
+/** Which slice of the task table a list request wants: the active view, the archive, or both. */
+export type TaskScope = (typeof TASK_SCOPES)[number];
+
+/**
+ * Parse `?scope=`: absent/empty → `'live'`, an unknown value → 400. The route used to cast the
+ * raw param (`as 'live'|'archive'|'all'`), which is compile-time only, so a stale or typo'd
+ * value reached listTasks, matched neither branch, and silently mixed long-archived tasks back
+ * into the live table (SDL-04).
+ */
+export function scopeParam(v: unknown): TaskScope {
+  if (v == null || v === '') return 'live';
+  if (typeof v === 'string' && (TASK_SCOPES as readonly string[]).includes(v)) return v as TaskScope;
+  throw new HttpError(400, 'Ungültiger Scope-Parameter');
+}

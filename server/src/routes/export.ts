@@ -2,7 +2,7 @@ import { Router } from 'express';
 import ExcelJS from 'exceljs';
 import { getDb } from '../db';
 import { listTasks } from '../lib/queries';
-import { numParam as num } from '../lib/query';
+import { numParam as num, scopeParam } from '../lib/query';
 
 export const exportRouter = Router();
 
@@ -37,7 +37,7 @@ exportRouter.get('/tasks.xlsx', async (req, res) => {
     projectId,
     artistId: num(req.query.artist_id),
     resolvedArtistId: num(req.query.resolved_artist_id),
-    scope: (req.query.scope as 'live' | 'archive' | 'all' | undefined) ?? 'live',
+    scope: scopeParam(req.query.scope),
   }) as TaskRow[];
 
   const globalCols = db

@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { ARCHIVE_AFTER_DAYS, doneStatusValue } from '../db';
+import type { TaskScope } from './query';
 
 /**
  * Denormalised task select: each task resolves to its owning artist (direct or via project).
@@ -47,7 +48,7 @@ export interface TaskQuery {
   projectId?: unknown;
   artistId?: unknown;
   resolvedArtistId?: unknown;
-  scope?: 'live' | 'archive' | 'all';
+  scope?: TaskScope;
 }
 
 export function listTasks(db: Database.Database, q: TaskQuery = {}): unknown[] {
@@ -66,7 +67,11 @@ export function listTasks(db: Database.Database, q: TaskQuery = {}): unknown[] {
     where.push('COALESCE(t.artist_id, p.artist_id) = ?');
     params.push(q.resolvedArtistId);
   }
-  const scope = q.scope ?? 'live';
+  // Exhaustive by construction: anything that is not exactly 'archive' or 'all' hides the
+  // archive. scopeParam() already rejects unknown values at the route boundary, but this is the
+  // function every caller reaches, and falling through to "no archive condition" put aged-out
+  // tasks back into the live table (SDL-04).
+  const scope: TaskScope = q.scope === 'archive' || q.scope === 'all' ? q.scope : 'live';
   // The archive condition and the ORDER BY each bind the done value; keep param order aligned with the SQL.
   if (scope === 'live') {
     where.push(`NOT ${archivedCond()}`);

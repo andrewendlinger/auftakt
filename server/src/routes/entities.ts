@@ -4,7 +4,7 @@ import { listEvents, listTasks } from '../lib/queries';
 // Coerce a query param to a number. COALESCE()-based filters lose column affinity, so string
 // params never match integer ids — pass real numbers; an invalid value is now a 400, not a
 // silently-dropped filter that returned every row (SRV-09).
-import { HttpError, numParam as num } from '../lib/query';
+import { HttpError, numParam as num, scopeParam } from '../lib/query';
 
 export const artistsRouter = crudRouter({
   table: 'artists',
@@ -155,7 +155,7 @@ export const tasksRouter = crudRouter({
         projectId: num(req.query.project_id),
         artistId: num(req.query.artist_id),
         resolvedArtistId: num(req.query.resolved_artist_id),
-        scope: (req.query.scope as 'live' | 'archive' | 'all' | undefined) ?? 'live',
+        scope: scopeParam(req.query.scope),
       }),
     );
   },
