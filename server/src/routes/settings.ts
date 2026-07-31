@@ -72,6 +72,18 @@ settingsRouter.patch('/', (req, res) => {
   const body: Record<string, unknown> = {};
   for (const k of Object.keys(raw)) if (WRITABLE_SETTINGS.has(k)) body[k] = raw[k];
 
+  // An ARRAY_KEYS value that isn't an array would fall through to String(v) below and then fail
+  // to JSON.parse on read, so getAllSettings hands the client a raw string where SectionArranger
+  // and the layout code map over an array — a TypeError that blanks the settings page and, since
+  // the corrupt value is persisted, stays broken until the row is hand-edited. 400 instead, the
+  // way landing.ts already rejects its non-array fields (SDL-06). Empty arrays stay legal: an
+  // explicitly empty task_stats or labels is meaningful.
+  for (const [k, v] of Object.entries(body)) {
+    if (ARRAY_KEYS.has(k) && !Array.isArray(v)) {
+      return res.status(400).json({ error: `${k} muss eine Liste sein` });
+    }
+  }
+
   // A browser renderer (incl. an XSS) always sends an Origin it cannot forge away, so
   // refuse privileged filesystem-path keys from any Origin-bearing caller. The real UI
   // never PATCHes backup_dir — it goes through the chooseBackupDir IPC path — so this
