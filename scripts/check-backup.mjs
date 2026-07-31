@@ -8,7 +8,7 @@
  *
  *   npm run check:backup
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -48,14 +48,39 @@ const server = spawn('npm', ['--prefix', 'server', 'run', 'dev'], {
   env: { ...process.env, AUFTAKT_DATA_DIR: dataDir, AUFTAKT_PORT: String(PORT) },
   stdio: 'ignore',
   shell: true,
+  // Own process group, so killServer() can signal the whole tree at once. Windows has no
+  // groups — it gets the taskkill branch instead, and `detached` there opens a console window.
+  detached: process.platform !== 'win32',
 });
+
+/**
+ * Stop the server AND everything it spawned. `shell: true` means the pid we hold belongs to
+ * the shell, with npm and the tsx/node process actually bound to :4319 underneath it, so
+ * server.kill() only ever signalled the top of that chain and left reaping the rest to
+ * whatever the shell and npm happen to forward — nothing on Windows, where kill() cannot
+ * reach a grandchild at all. A survivor makes the next run either talk to a stale server
+ * pointing at this run's deleted temp dir, or wait out 30s of EADDRINUSE and fail with
+ * "Server kam nicht hoch" though nothing is broken (DBW-10).
+ */
+function killServer() {
+  if (!server.pid) return;
+  try {
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/pid', String(server.pid), '/t', '/f'], { stdio: 'ignore' });
+    } else {
+      process.kill(-server.pid, 'SIGTERM'); // negative pid = the whole process group
+    }
+  } catch {
+    /* already gone */
+  }
+}
 
 let cleanedUp = false;
 /** Last-ditch cleanup for the 'exit' handler, where nothing may be awaited. */
 function cleanup() {
   if (cleanedUp) return;
   cleanedUp = true;
-  server.kill();
+  killServer();
   rmSync(dataDir, { recursive: true, force: true });
   rmSync(workDir, { recursive: true, force: true });
 }
@@ -67,7 +92,7 @@ process.on('exit', cleanup);
  * write (saveRegistry mkdirs it), so removing the dir first leaves it behind.
  */
 async function shutdown(code) {
-  server.kill();
+  killServer();
   await Promise.race([once(server, 'exit'), new Promise((r) => setTimeout(r, 2000))]);
   cleanup();
   process.exit(code);
