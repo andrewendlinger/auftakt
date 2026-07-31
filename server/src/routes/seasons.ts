@@ -28,9 +28,21 @@ seasonsRouter.post('/', (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const label = String(body.label ?? '').trim();
   if (!label) return res.status(400).json({ error: 'label required' });
+
+  // Validated before createSeason, so a rejection doesn't leave an orphan season registered in
+  // seasons.json. `Number(body.copyFrom)` alone turned true into 1 and [5] into 5 — both truthy
+  // and non-NaN — so a caller that never meant to copy got the new season populated with another
+  // one's artists, tasks and settings (DBW-08). Absent or empty means "start empty".
+  const raw = body.copyFrom;
+  const wantsCopy = raw != null && raw !== '';
+  const copyFrom =
+    typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw.trim()) : NaN;
+  if (wantsCopy && !(Number.isInteger(copyFrom) && copyFrom > 0)) {
+    return res.status(400).json({ error: 'copyFrom muss eine Saison-ID sein' });
+  }
+
   const season = createSeason(label);
-  const copyFrom = Number(body.copyFrom);
-  if (copyFrom && !Number.isNaN(copyFrom)) {
+  if (wantsCopy) {
     try {
       copySeasonData(season.id, copyFrom, {
         artists: !!body.includeArtists,
