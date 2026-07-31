@@ -87,6 +87,19 @@ function optId(p: Problems, file: string, index: number, field: string, v: strin
   return n;
 }
 
+/**
+ * Required NOT NULL text cell. Binding it straight from the CSV meant a blank name/title/label
+ * bound null and raised "NOT NULL constraint failed" mid-insert (SDB-05).
+ */
+function reqText(p: Problems, file: string, index: number, field: string, v: string | undefined): string {
+  const s = nn(v);
+  if (s === null) {
+    problem(p, file, index, `${field} is empty`);
+    return ''; // never inserted: throwProblems() runs before anything is written
+  }
+  return s;
+}
+
 /** Required integer id or FK — an empty cell is a problem, not a 0. */
 function reqId(p: Problems, file: string, index: number, field: string, v: string | undefined): number {
   if (nn(v) === null) {
@@ -135,7 +148,7 @@ function clearTables(db: Database.Database): void {
 
 interface ArtistIns {
   id: number;
-  name: string | undefined;
+  name: string;
   color: string;
   notes: string | null;
   sort_order: number;
@@ -143,8 +156,8 @@ interface ArtistIns {
 interface ProjectIns {
   id: number;
   artist_id: number;
-  code: string | undefined;
-  name: string | undefined;
+  code: string;
+  name: string;
   status: string | null;
   description: string | null;
   color: string | null;
@@ -155,7 +168,7 @@ interface ContactIns {
   artist_id: number | null;
   project_id: number | null;
   role: string | null;
-  name: string | undefined;
+  name: string;
   email: string | null;
   phone: string | null;
   notes: string | null;
@@ -166,7 +179,7 @@ interface EventIns {
   artist_id: number | null;
   project_id: number | null;
   type: string;
-  title: string | undefined;
+  title: string;
   start_at: string | null;
   end_at: string | null;
   all_day: number;
@@ -178,7 +191,7 @@ interface TaskIns {
   id: number;
   artist_id: number | null;
   project_id: number | null;
-  title: string | undefined;
+  title: string;
   status: string;
   priority: string;
   due_date: string | null;
@@ -192,7 +205,7 @@ interface LinkIns {
   project_id: number | null;
   event_id: number | null;
   task_id: number | null;
-  label: string | undefined;
+  label: string;
   url: string | null;
   sort_order: number;
 }
@@ -235,7 +248,7 @@ function readSeedData(dir: string): SeedData {
 
   const artists: ArtistIns[] = rawArtists.map((r, i) => ({
     id: reqId(p, 'artists.csv', i, 'id', r.id),
-    name: r.name,
+    name: reqText(p, 'artists.csv', i, 'name', r.name),
     color: nn(r.color) ?? '#888888',
     notes: nn(r.notes),
     sort_order: i,
@@ -248,8 +261,8 @@ function readSeedData(dir: string): SeedData {
     return {
       id: reqId(p, 'projects.csv', i, 'id', r.id),
       artist_id: reqId(p, 'projects.csv', i, 'artist_id', r.artist_id),
-      code: r.code,
-      name: r.name,
+      code: reqText(p, 'projects.csv', i, 'code', r.code),
+      name: reqText(p, 'projects.csv', i, 'name', r.name),
       status: mapProjectStatus(nn(r.status)),
       description: description && notes ? `${description}\n\n${notes}` : (description ?? notes),
       color: nn(r.color), // NULL => auto-derived shade at render time
@@ -262,7 +275,7 @@ function readSeedData(dir: string): SeedData {
     artist_id: optId(p, 'contacts.csv', i, 'artist_id', r.artist_id),
     project_id: optId(p, 'contacts.csv', i, 'project_id', r.project_id),
     role: nn(r.role),
-    name: r.name,
+    name: reqText(p, 'contacts.csv', i, 'name', r.name),
     email: nn(r.email),
     phone: nn(r.phone),
     notes: nn(r.notes),
@@ -280,7 +293,7 @@ function readSeedData(dir: string): SeedData {
       artist_id: optId(p, 'events.csv', i, 'artist_id', r.artist_id),
       project_id: optId(p, 'events.csv', i, 'project_id', r.project_id),
       type: eventType ?? 'Termin',
-      title: r.title,
+      title: reqText(p, 'events.csv', i, 'title', r.title),
       start_at: startRaw.trim() === '' ? null : allDay ? startRaw.trim() : toIsoLocal(startRaw), // NULL = "Datum offen" (TBD)
       end_at: endRaw === null ? null : allDay ? endRaw : toIsoLocal(endRaw),
       all_day: allDay,
@@ -300,7 +313,7 @@ function readSeedData(dir: string): SeedData {
       id: reqId(p, 'tasks.csv', i, 'id', r.id),
       artist_id: optId(p, 'tasks.csv', i, 'artist_id', r.artist_id),
       project_id: optId(p, 'tasks.csv', i, 'project_id', r.project_id),
-      title: r.title,
+      title: reqText(p, 'tasks.csv', i, 'title', r.title),
       status,
       priority: nn(r.priority) ?? 'mittel',
       due_date: nn(r.due_date),
@@ -316,7 +329,7 @@ function readSeedData(dir: string): SeedData {
     project_id: optId(p, 'links.csv', i, 'project_id', r.project_id),
     event_id: optId(p, 'links.csv', i, 'event_id', r.event_id),
     task_id: optId(p, 'links.csv', i, 'task_id', r.task_id),
-    label: r.label,
+    label: reqText(p, 'links.csv', i, 'label', r.label),
     url: nn(r.url), // label-only placeholders keep url = NULL
     sort_order: i,
   }));
