@@ -9,8 +9,10 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-// Must match the default in server/src/demo.ts.
-const demoDir = process.env.AUFTAKT_DATA_DIR?.trim() || resolve(root, '.demo');
+// Must match DEMO_DIR in server/src/demo.ts, which hardcodes it for the same reason: that
+// script deletes the directory before rebuilding it, so an inherited AUFTAKT_DATA_DIR pointing
+// at real data must never reach it.
+const demoDir = resolve(root, '.demo');
 const env = { ...process.env, AUFTAKT_DATA_DIR: demoDir };
 
 /** Run an npm script to completion; reject on a non-zero exit so we don't start a broken app. */

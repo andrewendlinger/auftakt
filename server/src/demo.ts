@@ -16,14 +16,19 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 
 /**
- * Pin the data dir before the first getDb() call, which caches its connection. Defaulting it
- * here rather than in the npm script is what makes this script incapable of touching the real
- * database in `.data/` — unlike `npm run seed`, which clears whatever is active.
+ * Pin the data dir before the first getDb() call, which caches its connection. Hardcoding it
+ * here rather than reading the npm script's environment is what makes this script incapable of
+ * touching the real database in `.data/` — unlike `npm run seed`, which clears whatever is
+ * active.
+ *
+ * Deliberately NOT overridable by an inherited AUFTAKT_DATA_DIR: main() starts with
+ * `rmSync(DEMO_DIR, { recursive: true })`, so honouring an exported value would delete whatever
+ * real data directory happened to be in the environment — every season file and seasons.json.
  *
  * Safe as a plain statement despite ESM hoisting: db.ts reads AUFTAKT_DATA_DIR inside
  * dataDir(), never at import time.
  */
-const DEMO_DIR = process.env.AUFTAKT_DATA_DIR?.trim() || resolve(here, '../../.demo');
+const DEMO_DIR = resolve(here, '../../.demo');
 process.env.AUFTAKT_DATA_DIR = DEMO_DIR;
 
 const {
