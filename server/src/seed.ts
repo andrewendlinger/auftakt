@@ -24,6 +24,14 @@ function importDir(): string {
 
 type Row = Record<string, string>;
 
+/**
+ * The only file names the importer reads. Branch selection has to agree with this list rather
+ * than with "anything ending in .csv": an import dir holding only differently-named exports
+ * (singular `artist.csv`, a Notion export, `Aufgaben.csv`) used to take the CSV branch, wipe
+ * the database and insert nothing (SDB-03).
+ */
+const CSV_FILES = ['artists.csv', 'projects.csv', 'contacts.csv', 'events.csv', 'tasks.csv', 'links.csv'];
+
 function readCsv(dir: string, file: string): Row[] {
   const path = join(dir, file);
   if (!existsSync(path)) return [];
@@ -99,6 +107,13 @@ function seedFromCsv(db: Database.Database, dir: string): void {
   const events = readCsv(dir, 'events.csv');
   const tasks = readCsv(dir, 'tasks.csv');
   const links = readCsv(dir, 'links.csv');
+
+  // A CSV set that parses to nothing would replace the database with an empty one and still
+  // report "Seed complete" (SDB-03) — an empty import dir is what the sample branch is for.
+  const total = artists.length + projects.length + contacts.length + events.length + tasks.length + links.length;
+  if (total === 0) {
+    throw new Error(`The CSVs in ${dir} hold no rows — refusing to replace the database with an empty one.`);
+  }
 
   const insArtist = db.prepare(
     `INSERT INTO artists (id, name, color, notes, sort_order) VALUES (@id, @name, @color, @notes, @sort_order)`,
@@ -254,10 +269,29 @@ function count(db: Database.Database, table: string): number {
   return (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
 }
 
+/**
+ * True when `dir` holds at least one of the files the importer actually reads. Throws when it
+ * holds CSVs under other names: falling through to the sample branch there would wipe a real
+ * database and replace it with five rows, and taking the CSV branch would empty it outright.
+ */
+function hasImportCsvs(dir: string): boolean {
+  if (!existsSync(dir)) return false;
+  const present = readdirSync(dir).filter((f) => f.toLowerCase().endsWith('.csv'));
+  if (present.some((f) => CSV_FILES.includes(f))) return true;
+  if (present.length > 0) {
+    throw new Error(
+      `${dir} holds CSV files, but none the importer reads (${CSV_FILES.join(', ')}):\n` +
+        `  ${present.join('\n  ')}\n` +
+        'Rename them or point AUFTAKT_IMPORT_DIR somewhere else — seeding would have replaced the database with nothing.',
+    );
+  }
+  return false;
+}
+
 function main(): void {
   const db = getDb();
   const dir = importDir();
-  const hasCsv = existsSync(dir) && readdirSync(dir).some((f) => f.endsWith('.csv'));
+  const hasCsv = hasImportCsvs(dir);
 
   console.log(hasCsv ? `Seeding from CSVs in ${dir}` : `No CSVs found in ${dir} — generating sample data`);
 
