@@ -11,7 +11,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { collect, DELETE_ORDER, type Collected } from './lib/cascade';
+import { CHILD_EDGES, DELETE_ORDER } from './lib/cascade';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -925,6 +925,13 @@ const DEFAULT_SETTINGS: Record<string, string> = {
 
 /** Number of days a soft-deleted row survives before being purged. */
 export const PURGE_AFTER_DAYS = 30;
+/**
+ * Fixpoint safety stop for purgeExpired. Every pass strictly shrinks the row count and the
+ * sweep never inserts, so the loop terminates on its own; this only caps a pathologically
+ * deep subtask chain (one pass per level). Hitting it defers the rest to the next launch —
+ * the sweep is idempotent and every run makes progress.
+ */
+const MAX_PURGE_PASSES = 100;
 /** Number of days a completed task stays in the live views before archiving. */
 export const ARCHIVE_AFTER_DAYS = 30;
 
@@ -1361,35 +1368,59 @@ export function setSetting(db: Database.Database, key: string, value: string): v
 
 /** Hard-delete rows whose deleted_at is older than PURGE_AFTER_DAYS. Runs on startup. */
 export function purgeExpired(db: Database.Database): void {
-  const cutoff = `-${PURGE_AFTER_DAYS} days`;
+  // Purge ONLY rows whose OWN deleted_at expired (SDL-01/DBW-01). The SRV-01 shape rooted at
+  // every expired row and hard-deleted its whole collect() closure — including still-live
+  // children. Soft-delete marks a single row (crud.ts), so a trashed artist keeps its live
+  // projects/tasks/links, and 30 days later they were destroyed with it at the next launch,
+  // before any window opened. collect() stays as-is for the manual trash delete in
+  // routes/deleted.ts, where the user confirms a counted cascade first.
+  //
+  // The FK deadlock SRV-01 fixed is avoided by a guard instead: skip any expired row that a
+  // remaining row still references. Every FK is NO ACTION with foreign_keys = ON, so deleting
+  // such a parent throws and rolls the whole sweep back. The guards are generated from
+  // CHILD_EDGES, so cascade.ts stays the single source of truth for the FK graph. Consequence,
+  // by design: a parent with live children is never auto-purged — the archive page's
+  // "Endgültig löschen" (which counts and warns) is the only way it leaves.
+  //
+  // Set-based predicates, never `id IN (?,?,…)`: one bound param per row throws "too many SQL
+  // variables" past 32766 and kills the purge forever (DBW-02).
+  //
+  // The child table MUST be aliased. tasks.parent_id points back at tasks, and unaliased
+  // `NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.parent_id = tasks.id)` binds both sides to
+  // the inner table — an uncorrelated "is any task its own parent?" that is always false, so
+  // the guard silently vanishes and the deadlock returns.
+  //
+  // DELETE_ORDER is a reverse-topological order of the FK graph, so when a table's turn comes
+  // every table referencing it has already been swept in this same pass. The lone exception is
+  // tasks -> tasks. SQLite runs this as a two-pass DELETE — matching rowids are collected
+  // first — so the guard reads a pre-statement snapshot and one statement takes only the
+  // current leaves of a subtask chain. Hence the fixpoint loop: an N-deep expired chain needs
+  // N passes, and its project/artist ancestors clear in the same pass as its last task. The
+  // loop is also what makes this independent of that snapshot behaviour, which SQLite does not
+  // contractually guarantee — a release evaluating the guard against live state would simply
+  // converge sooner, never unsafely (the child is gone before the parent).
+  const { cutoff } = db
+    .prepare(`SELECT datetime('now', ?) AS cutoff`)
+    .get(`-${PURGE_AFTER_DAYS} days`) as { cutoff: string };
+
+  // table/child/fk all come from the hardcoded cascade graph, never from the client.
+  const deletes = DELETE_ORDER.map((table) => {
+    const guards = (CHILD_EDGES[table] ?? []).map(
+      ([child, fk]) => ` AND NOT EXISTS (SELECT 1 FROM ${child} ch WHERE ch.${fk} = ${table}.id)`,
+    );
+    return db.prepare(
+      `DELETE FROM ${table} WHERE deleted_at IS NOT NULL AND deleted_at < ?${guards.join('')}`,
+    );
+  });
+
   const tx = db.transaction(() => {
-    // Root at every expired row, then cascade-collect everything that references it —
-    // INCLUDING still-live children (e.g. a live subtask under a soft-deleted parent, a
-    // live link under a soft-deleted section). Deleting an expired parent while such a
-    // child references it violates the FK and rolls the whole purge back; folding the
-    // child into the same closure is the fix, and matches the manual trash cascade in
-    // routes/deleted.ts. DELETE_ORDER doubles as the root-iteration list — its 8 tables
-    // are exactly the soft-deletable ones and children come before parents on delete.
-    const doomed: Collected = new Map();
-    for (const table of DELETE_ORDER) {
-      const roots = db
-        .prepare(`SELECT id FROM ${table} WHERE deleted_at IS NOT NULL AND deleted_at < datetime('now', ?)`)
-        .all(cutoff) as { id: number }[];
-      for (const { id } of roots) {
-        for (const [t, ids] of collect(db, table, id)) {
-          let set = doomed.get(t);
-          if (!set) doomed.set(t, (set = new Set()));
-          for (const rid of ids) set.add(rid);
-        }
-      }
+    for (let pass = 0; pass < MAX_PURGE_PASSES; pass++) {
+      let changed = 0;
+      for (const stmt of deletes) changed += stmt.run(cutoff).changes;
+      if (changed === 0) return; // fixpoint reached
     }
-    for (const t of DELETE_ORDER) {
-      const ids = doomed.get(t);
-      if (!ids?.size) continue;
-      const list = [...ids];
-      const placeholders = list.map(() => '?').join(', ');
-      db.prepare(`DELETE FROM ${t} WHERE id IN (${placeholders})`).run(...list);
-    }
+    // Bound exhausted (an absurdly deep subtask chain): keep what this run removed — the guards
+    // make every intermediate state FK-consistent — and let the next launch continue.
   });
   tx();
 }

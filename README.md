@@ -46,7 +46,8 @@ aus fünf Zeilen an.
 - **Live-DB (App):** Electron `userData`-Verzeichnis
 - **Backups:** beim App-Start eine datierte Kopie in den einmalig gewählten Ordner
   (z. B. Google Drive); die letzten 30 bleiben erhalten
-- Soft-Delete überall (`deleted_at`), Undo per Toast, Purge nach 30 Tagen
+- Soft-Delete überall (`deleted_at`), Undo per Toast, Purge nach 30 Tagen — sobald
+  nichts mehr auf den Eintrag verweist; sonst bleibt er im Papierkorb
 - Erledigte Aufgaben rutschen nach unten (ausgegraut) und wandern 30 Tage nach
   Abschluss ins Archiv
 

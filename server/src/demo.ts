@@ -191,9 +191,9 @@ const TASKS: DemoTask[] = [
   { id: 10, project_id: 3, title: 'Setlist final freigeben', status: 'active', due_date: days(15) },
 
   // Orphan: parent is soft-deleted, so the child must render flat with no connector.
-  // deleted_at stays recent to keep this pair visible — once the parent crosses
-  // PURGE_AFTER_DAYS, purgeExpired() cascades the hard-delete down tasks.parent_id and
-  // takes the still-live child with it (same as the manual trash delete).
+  // The pair survives indefinitely: once the parent crosses PURGE_AFTER_DAYS, purgeExpired()
+  // skips it precisely because this live child still references it (SDL-01). Only the archive
+  // page's "Endgültig löschen" — which counts and warns first — takes both.
   { id: 11, project_id: 5, title: 'Gelöschter Elterntask', status: 'active', deleted_at: stamp(-2) },
   { id: 12, project_id: 5, parent_id: 11, title: 'Verwaiste Unteraufgabe', status: 'active' },
 
@@ -255,7 +255,8 @@ const TASKS: DemoTask[] = [
   { id: 50, project_id: 1, title: 'Pressemitteilung freigeben', status: 'active', due_date: days(1) },
   { id: 51, artist_id: 1, title: 'Rider an Veranstalter schicken', status: 'active', priority: 'hoch', due_date: days(-1) },
 
-  // Live task under a soft-deleted project (id 9) — purging that project cascades this away.
+  // Live task under a soft-deleted project (id 9): the startup purge leaves both alone, and
+  // the live task lists drop it because its owning project is in the trash (SDL-01, SDL-03).
   { id: 52, project_id: 9, title: 'Aufgabe im gestrichenen Projekt', status: 'active' },
 
   // Archived child under a live parent (task 1): absent from the live table, but the move
@@ -266,7 +267,7 @@ const TASKS: DemoTask[] = [
 /**
  * Custom widget sections (WP-S): one text and one links widget per surface — dashboard
  * (both parents NULL), artist 1 and project 1 — plus a soft-deleted one whose live link
- * exercises the trash cascade count and the purge path.
+ * exercises the trash cascade count and the purge guard that skips it.
  */
 const CUSTOM_SECTIONS = [
   { id: 1, artist_id: null, project_id: null, name: 'Saison-Motto', type: 'text', value: 'Diese Saison steht unter dem Motto **„Klang & Raum"** 🎶.' },

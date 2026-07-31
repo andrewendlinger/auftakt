@@ -1,10 +1,18 @@
 import type Database from 'better-sqlite3';
 
 /**
- * The soft-delete cascade graph, shared by the manual trash delete (`routes/deleted.ts`)
- * and the startup purge (`purgeExpired` in `db.ts`). Kept dependency-light — it imports
- * only the better-sqlite3 type and takes `db` as a parameter — so both callers can use it
- * without an import cycle through `db.ts`.
+ * The soft-delete FK graph, shared by the manual trash delete (`routes/deleted.ts`) and the
+ * startup purge (`purgeExpired` in `db.ts`). Kept dependency-light — it imports only the
+ * better-sqlite3 type and takes `db` as a parameter — so both callers can use it without an
+ * import cycle through `db.ts`.
+ *
+ * The two callers use it differently, on purpose. The manual delete walks `collect()` and
+ * hard-deletes the whole closure, live children included — that is a counted, confirmed
+ * choice the user makes in a dialog. The startup purge never expands: it takes only rows
+ * whose own `deleted_at` expired and generates `NOT EXISTS` guards from `CHILD_EDGES` to
+ * skip anything a remaining row still references (SDL-01).
+ *
+ * Exports: `CHILD_EDGES`, `DELETE_ORDER`, `collect`, `hasLiveDescendant`.
  */
 
 /**
