@@ -149,8 +149,20 @@ export interface CustomSection extends SoftDeletable {
   value: string | null;
 }
 
-/** The content entities a user directly deletes and can find again in the archive's trash. */
-export type DeletedType = 'artist' | 'project' | 'contact' | 'event' | 'task' | 'link' | 'section';
+/**
+ * The content entities a user directly deletes and can find again in the archive's trash.
+ * `column` is a user-added task column — built-ins never appear, since ensureBuiltinColumns()
+ * re-creates a missing one on the next launch.
+ */
+export type DeletedType =
+  | 'artist'
+  | 'project'
+  | 'contact'
+  | 'event'
+  | 'task'
+  | 'link'
+  | 'section'
+  | 'column';
 
 /** One soft-deleted row surfaced in the "Gelöschte Items" section. */
 export interface DeletedItem {
@@ -167,7 +179,7 @@ export interface DeletedItem {
    */
   purge_at: string | null;
   /** What a permanent delete cascades to. `column` = a project's custom columns. */
-  dependents: { total: number; byType: Partial<Record<DeletedType | 'column', number>> };
+  dependents: { total: number; byType: Partial<Record<DeletedType, number>> };
 }
 
 export interface Season {

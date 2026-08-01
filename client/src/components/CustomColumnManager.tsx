@@ -16,7 +16,7 @@ import { arrayMove } from '../lib/arrays';
 import { OPTION_PALETTE } from '../lib/selectOptions';
 import { OptionsEditor, normalizeOptions, removedOptions, validateOptions } from './OptionsEditor';
 import { OptionRemovalDialog, type OptionRemoval } from './OptionRemovalDialog';
-import { useInvalidateAll, useOptionUsage } from '../hooks';
+import { useInvalidateAll, useOptionUsage, useUndoableDelete, resourceUndo } from '../hooks';
 
 /** A handful of common symbols; users can also type any emoji into the free field. */
 const ICON_PRESETS = ['👤', '👥', '📞', '📧', '✅', '⭐', '📅', '🎵', '🎸', '🎤', '💶', '📝', '📌', '🏨', '🚗', '✈️'];
@@ -69,6 +69,7 @@ export function CustomColumnManager({
   onClose: () => void;
 }) {
   const invalidate = useInvalidateAll();
+  const del = useUndoableDelete();
   const { usage } = useOptionUsage();
   const [editing, setEditing] = useState<CustomColumn | null>(null);
 
@@ -118,8 +119,10 @@ export function CustomColumnManager({
       ? `Die Spalte „${col.name}“ enthält Werte in ${used} Aufgabe(n). Wirklich löschen? Die Werte gehen verloren.`
       : `Spalte „${col.name}“ löschen?`;
     if (!window.confirm(msg)) return;
-    await api.customColumns.remove(col.id);
-    await invalidate();
+    // On the undo path like every other delete in the app: an undo toast now, and the row in
+    // the Archiv trash for 30 days after that. Previously a mis-click here removed a column
+    // used across the whole season with no recovery short of restoring a backup (TTU-25).
+    await del({ label: `Spalte „${col.name}“`, ...resourceUndo(api.customColumns, col.id) });
   };
 
   return (

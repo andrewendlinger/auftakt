@@ -13,7 +13,7 @@ import { useInvalidateAll } from '../hooks';
 import { useToast } from '../components/Toast';
 
 /** Singular/plural per type — drives the badge and the cascade summary. */
-const TYPE_LABELS: Record<DeletedType | 'column', { one: string; many: string }> = {
+const TYPE_LABELS: Record<DeletedType, { one: string; many: string }> = {
   task: { one: 'Aufgabe', many: 'Aufgaben' },
   event: { one: 'Termin', many: 'Termine' },
   artist: { one: 'Künstler', many: 'Künstler' },
@@ -26,7 +26,7 @@ const TYPE_LABELS: Record<DeletedType | 'column', { one: string; many: string }>
 
 /** "3 Aufgaben, 1 Termin und 2 Dokumente" from the dependents map. */
 function cascadeText(dep: DeletedItem['dependents']): string {
-  const parts = (Object.entries(dep.byType) as Array<[DeletedType | 'column', number]>)
+  const parts = (Object.entries(dep.byType) as Array<[DeletedType, number]>)
     .filter(([, n]) => n > 0)
     .map(([t, n]) => `${n} ${n === 1 ? TYPE_LABELS[t].one : TYPE_LABELS[t].many}`);
   if (parts.length <= 1) return parts[0] ?? '';
