@@ -88,8 +88,9 @@ export function CustomColumnManager({
 
   // One transactional renumber rather than two sequential swaps: if the second PATCH failed,
   // both rows kept the same sort_order and the `a.id` tiebreak above silently froze the ▲/▼
-  // buttons for that column. `managed` is a single scope group, and `visibleCols` orders by
-  // scope before sort_order, so renumbering it from 0 can't interleave the other group.
+  // buttons for that column. `managed` is a single scope group, so renumbering it from 0 leaves
+  // it sharing ordinals with the other group — every consumer orders through `compareColumns`,
+  // which sorts by scope first, so that overlap can't interleave them (TTU-21).
   const move = async (col: CustomColumn, dir: -1 | 1) => {
     const next = arrayMove(managed, managed.findIndex((c) => c.id === col.id), dir);
     if (next === managed) return;

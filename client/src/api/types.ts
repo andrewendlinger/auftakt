@@ -423,6 +423,24 @@ export function customValueOf(task: Task, colId: ID): string {
   return v == null ? '' : String(v);
 }
 
+/**
+ * The display order of the task columns: global (built-ins included) before project-scoped,
+ * then `sort_order`, then id.
+ *
+ * `sort_order` alone is not a total order. CustomColumnManager renumbers one scope group from 0
+ * — `reorder` sets `sort_order = i` over exactly the ids it is sent, and on a project page that
+ * is the project columns only — so a project column and a global column routinely share an
+ * ordinal. Every consumer therefore has to apply the same scope-first key, or the live table and
+ * the print sheet order the same columns differently (TTU-21).
+ */
+export function compareColumns(a: CustomColumn, b: CustomColumn): number {
+  return (
+    (a.scope === 'global' ? 0 : 1) - (b.scope === 'global' ? 0 : 1) ||
+    a.sort_order - b.sort_order ||
+    a.id - b.id
+  );
+}
+
 /** The Status column's option flagged `done` — drives gray-out, sink-to-bottom, archiving. */
 export function doneValueOf(cols: CustomColumn[]): string {
   const status = cols.find((c) => c.kind === 'builtin' && c.key === 'status');

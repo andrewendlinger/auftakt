@@ -2,7 +2,7 @@ import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { CustomColumn, Task } from '../api/types';
-import { customValueOf, parseColumnOptions } from '../api/types';
+import { compareColumns, customValueOf, parseColumnOptions } from '../api/types';
 import { Spinner } from '../components/ui';
 import { Markdown } from '../components/Markdown';
 import { Empty, PrintHeader, PrintPage, Section } from '../components/PrintSheet';
@@ -47,9 +47,9 @@ export function PrintProject() {
 
   const openTasks = tasks.filter((t) => t.status !== doneValue);
   const groups = groupByStatus(openTasks, columns);
-  const customCols = columns
-    .filter((c) => c.kind === 'custom' && c.enabled)
-    .sort((a, b) => a.sort_order - b.sort_order || a.id - b.id);
+  // Same order as the live table — sorting by sort_order alone put a project column ahead of a
+  // global one whenever the project group had been reordered (TTU-21).
+  const customCols = columns.filter((c) => c.kind === 'custom' && c.enabled).sort(compareColumns);
 
   return (
     <PrintPage>

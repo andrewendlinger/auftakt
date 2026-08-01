@@ -10,7 +10,7 @@ import {
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import type { CustomColumn, CustomColumnOption, Task, TaskSortRule } from '../api/types';
-import { customValueOf, doneValueOf, parseColumnOptions, parseCustomValues } from '../api/types';
+import { compareColumns, customValueOf, doneValueOf, parseColumnOptions, parseCustomValues } from '../api/types';
 import { formatDate } from '../lib/dates';
 import { withAlpha } from '../lib/colors';
 import { MANUAL_SORT_ID, SORTABLE_TASK_COLUMNS } from '../lib/taskSort';
@@ -333,16 +333,7 @@ export function TaskTable({
   );
 
   const visibleCols = useMemo(
-    () =>
-      [...customColumns]
-        .filter((c) => c.enabled !== 0)
-        // Global columns (incl. built-ins) first, then project columns; each by sort_order.
-        .sort(
-          (a, b) =>
-            (a.scope === 'global' ? 0 : 1) - (b.scope === 'global' ? 0 : 1) ||
-            a.sort_order - b.sort_order ||
-            a.id - b.id,
-        ),
+    () => [...customColumns].filter((c) => c.enabled !== 0).sort(compareColumns),
     [customColumns],
   );
 
