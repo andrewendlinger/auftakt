@@ -618,26 +618,26 @@ function SelectOptionsSetting({
 }) {
   const [draft, setDraft] = useState<CustomColumnOption[]>(options);
   const [busy, setBusy] = useState(false);
+  const [blocked, setBlocked] = useState<CustomColumnOption[]>([]);
   // Reseed when the server data changes (after a save, or a season switch).
   useEffect(() => setDraft(options), [options]);
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(options);
 
+  const edit = (v: CustomColumnOption[]) => {
+    setBlocked([]); // the message described the previous draft
+    setDraft(v);
+  };
+
   const save = async () => {
     const cleaned = normalizeOptions(draft);
     const removed = options.filter((o) => !cleaned.some((c) => c.value === o.value));
-    const blocked = removed.filter((o) => (usage[o.value] ?? 0) > 0);
-    if (blocked.length) {
-      const lines = blocked.map(
-        (o) => `• „${o.label}“ wird von ${countWithNoun(usage[o.value] ?? 0, usageNoun)} verwendet`,
-      );
-      window.alert(
-        `Diese Kategorie(n) werden noch verwendet und können nicht gelöscht werden:\n\n${lines.join(
-          '\n',
-        )}\n\nBenenne sie um oder weise die betroffenen Einträge zuerst einer anderen Kategorie zu.`,
-      );
+    const stillUsed = removed.filter((o) => (usage[o.value] ?? 0) > 0);
+    if (stillUsed.length) {
+      setBlocked(stillUsed);
       return;
     }
+    setBlocked([]);
     setBusy(true);
     try {
       await onSave(cleaned);
@@ -648,7 +648,25 @@ function SelectOptionsSetting({
 
   return (
     <div>
-      <OptionsEditor value={draft} onChange={setDraft} addLabel={addLabel} />
+      <OptionsEditor value={draft} onChange={edit} addLabel={addLabel} />
+      {/* Inline, not window.alert: a native dialog renders OS chrome with English buttons and
+          blocks the Electron renderer, while every other error path on this page uses the app's
+          own surfaces. It also keeps the list next to the rows it is about (PGS-23). */}
+      {blocked.length > 0 && (
+        <div className="mt-3 space-y-1 text-sm text-amber-700">
+          <p>Diese Kategorien werden noch verwendet und können nicht gelöscht werden:</p>
+          <ul className="list-inside list-disc">
+            {blocked.map((o) => (
+              <li key={o.value}>
+                „{o.label}“ wird von {countWithNoun(usage[o.value] ?? 0, usageNoun)} verwendet
+              </li>
+            ))}
+          </ul>
+          <p className="text-neutral-500">
+            Benenne sie um oder weise die betroffenen Einträge zuerst einer anderen Kategorie zu.
+          </p>
+        </div>
+      )}
       <div className="mt-3 flex justify-end">
         <Btn variant="primary" onClick={save} disabled={busy || !dirty}>
           Speichern
