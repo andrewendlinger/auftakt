@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { ApiError, api } from '../api/client';
 import type { LayoutEntry, Season, SeasonCopyOptions, SeasonPatch, SeasonStats } from '../api/types';
 import { Card, Btn, DragHandle, Spinner, EmptyState } from '../components/ui';
 import { EditableText, EditableFallbackText } from '../components/EditableText';
@@ -53,6 +53,10 @@ export function LandingPage() {
 
   const seasons = data?.seasons ?? []; // registry order — manual and stable
 
+  // `switching` disables every card (and drops it out of the tab order), so it has to be
+  // cleared on failure: without the finally, one rejected activation — a restarting server,
+  // a 400, a dropped fetch — left the whole page dead for good, silently, until the user
+  // reloaded the app by hand (PGS-03).
   const open = async (s: Season) => {
     if (switching) return;
     if (s.id === data?.activeId) {
@@ -60,8 +64,17 @@ export function LandingPage() {
       return;
     }
     setSwitching(true);
-    await api.activateSeason(s.id);
-    reloadToDashboard();
+    try {
+      await api.activateSeason(s.id);
+      reloadToDashboard();
+    } catch (err) {
+      toast.show({
+        message:
+          err instanceof ApiError ? err.message : `${term.singular} konnte nicht geöffnet werden.`,
+      });
+    } finally {
+      setSwitching(false);
+    }
   };
 
   const update = async (id: number, patch: SeasonPatch) => {
@@ -71,15 +84,24 @@ export function LandingPage() {
   };
 
   const create = async (labelText: string, copyFrom: number | undefined, copy: SeasonCopyOptions) => {
-    const season = await api.createSeason(labelText, { copyFrom, ...copy });
-    // A toast would not survive the reload below, so say it in something that blocks.
-    if (season.copyError) {
-      alert(
-        `${term.singular} „${season.label}“ wurde angelegt, aber das Übernehmen ist fehlgeschlagen:\n\n${season.copyError}`,
-      );
+    try {
+      const season = await api.createSeason(labelText, { copyFrom, ...copy });
+      // A toast would not survive the reload below, so say it in something that blocks.
+      if (season.copyError) {
+        alert(
+          `${term.singular} „${season.label}“ wurde angelegt, aber das Übernehmen ist fehlgeschlagen:\n\n${season.copyError}`,
+        );
+      }
+      await api.activateSeason(season.id);
+      reloadToDashboard();
+    } catch (err) {
+      // No reload happens on this path, so a toast survives — and a failed „Anlegen &
+      // wechseln" used to vanish without a word (PGS-03).
+      toast.show({
+        message:
+          err instanceof ApiError ? err.message : `${term.singular} konnte nicht angelegt werden.`,
+      });
     }
-    await api.activateSeason(season.id);
-    reloadToDashboard();
   };
 
   const drag = useDragReorder<number>({
