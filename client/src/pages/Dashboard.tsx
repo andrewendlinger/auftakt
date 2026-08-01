@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { ArtistCard as ArtistCardT, EventItem, Task } from '../api/types';
-import { doneValueOf } from '../api/types';
 import { withAlpha } from '../lib/colors';
 import { formatEventWhen, weekdayShort } from '../lib/dates';
 import { Card, SectionTitle, Spinner, EmptyState } from '../components/ui';
@@ -56,7 +55,6 @@ export function Dashboard() {
   // All dashboard built-ins are computed views — only filled custom widgets block their 🗑.
   const nonEmptyKeys = useNonEmptyCustomSections(customSections);
 
-  const doneValue = doneValueOf(customColumns);
   // Group every live task under the artist it resolves to, for the enriched artist-card stats.
   const tasksByArtist = useMemo(() => {
     const m = new Map<number, Task[]>();
@@ -90,7 +88,6 @@ export function Dashboard() {
                 key={a.id}
                 artist={a}
                 tasks={tasksByArtist.get(a.id) ?? []}
-                doneValue={doneValue}
               />
             ))}
           </div>
@@ -123,7 +120,7 @@ export function Dashboard() {
         <SectionTitle>
           <EditableLabel k="dash.stats" />
         </SectionTitle>
-        <TaskStatChips tasks={data.tasks} doneValue={doneValue} variant="tiles" />
+        <TaskStatChips tasks={data.tasks} variant="tiles" />
       </section>
     ),
     tasks: (
@@ -144,7 +141,7 @@ export function Dashboard() {
         <SectionTitle>
           <EditableLabel k="dash.aufmerksamkeit" />
         </SectionTitle>
-        <AttentionList tasks={data.tasks} doneValue={doneValue} windowDays={windowDays} />
+        <AttentionList tasks={data.tasks} windowDays={windowDays} />
       </section>
     ),
   };
@@ -180,7 +177,7 @@ export function Dashboard() {
   );
 }
 
-function ArtistCard({ artist, tasks, doneValue }: { artist: ArtistCardT; tasks: Task[]; doneValue: string }) {
+function ArtistCard({ artist, tasks }: { artist: ArtistCardT; tasks: Task[] }) {
   return (
     <Link to={`/artist/${artist.id}`}>
       <Card className="overflow-hidden transition hover:shadow-md">
@@ -205,7 +202,7 @@ function ArtistCard({ artist, tasks, doneValue }: { artist: ArtistCardT; tasks: 
             >
               {artist.project_count} {artist.project_count === 1 ? 'Projekt' : 'Projekte'}
             </span>
-            <TaskStatChips tasks={tasks} doneValue={doneValue} />
+            <TaskStatChips tasks={tasks} />
           </div>
         </div>
       </Card>

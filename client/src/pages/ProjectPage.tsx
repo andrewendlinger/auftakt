@@ -2,7 +2,6 @@ import { useState, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import { doneValueOf } from '../api/types';
 import { contrastText, projectShade, withAlpha } from '../lib/colors';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { SectionArranger } from '../components/SectionArranger';
@@ -101,7 +100,6 @@ export function ProjectPage() {
   const artistColor = artist?.color ?? '#888888';
   const shade = projectShade(artistColor, project.color, project.id);
   const columns = [...globalCols, ...projectCols];
-  const doneValue = doneValueOf(columns);
 
   // A filled section can't be binned (nonEmptyKeys) — `kontakte` holds both lists, so
   // either contacts or project links count. The computed Einblicke stay freely removable.
@@ -131,7 +129,7 @@ export function ProjectPage() {
         <SectionTitle>
           <EditableLabel k="project.stats" />
         </SectionTitle>
-        <TaskStatChips tasks={tasks} doneValue={doneValue} variant="tiles" />
+        <TaskStatChips tasks={tasks} variant="tiles" />
       </>
     ),
     aufmerksamkeit: (
@@ -139,7 +137,7 @@ export function ProjectPage() {
         <SectionTitle>
           <EditableLabel k="project.aufmerksamkeit" />
         </SectionTitle>
-        <AttentionList tasks={tasks} doneValue={doneValue} windowDays={windowDays} />
+        <AttentionList tasks={tasks} windowDays={windowDays} />
       </>
     ),
     aufgaben: (

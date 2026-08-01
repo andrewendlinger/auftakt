@@ -3,7 +3,6 @@ import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Project, Task } from '../api/types';
-import { doneValueOf } from '../api/types';
 import { contrastText, projectShade, withAlpha } from '../lib/colors';
 import { arrayMoveTo } from '../lib/arrays';
 import { useDragReorder } from '../lib/dragReorder';
@@ -102,7 +101,6 @@ export function ArtistPage() {
   // The single resolved-task list splits cleanly on `project_id`: general (artist-level) tasks are
   // the only editable table; project tasks feed the per-project card stats. A subtask inherits its
   // parent's project_id, so whole trees stay on the same side of the split.
-  const doneValue = doneValueOf(customColumns);
   const generalTasks = tasks.filter((t) => !t.project_id);
   const tasksByProject = new Map<number, Task[]>();
   for (const t of tasks) {
@@ -128,7 +126,6 @@ export function ArtistPage() {
             projects={projects}
             artistColor={color}
             tasksByProject={tasksByProject}
-            doneValue={doneValue}
           />
         )}
       </>
@@ -148,7 +145,7 @@ export function ArtistPage() {
         <SectionTitle>
           <EditableLabel k="artist.aufmerksamkeit" />
         </SectionTitle>
-        <AttentionList tasks={tasks} doneValue={doneValue} windowDays={windowDays} />
+        <AttentionList tasks={tasks} windowDays={windowDays} />
       </>
     ),
     stats: (
@@ -156,7 +153,7 @@ export function ArtistPage() {
         <SectionTitle>
           <EditableLabel k="artist.stats" />
         </SectionTitle>
-        <TaskStatChips tasks={tasks} doneValue={doneValue} variant="tiles" />
+        <TaskStatChips tasks={tasks} variant="tiles" />
       </>
     ),
     kontakte: <ContactList contacts={contacts} parent={{ artist_id: artistId }} titleKey="artist.kontakte" />,
@@ -273,12 +270,10 @@ function ProjectGrid({
   projects,
   artistColor,
   tasksByProject,
-  doneValue,
 }: {
   projects: Project[];
   artistColor: string;
   tasksByProject: Map<number, Task[]>;
-  doneValue: string;
 }) {
   const invalidate = useInvalidateAll();
   const drag = useDragReorder<number>({
@@ -303,7 +298,6 @@ function ProjectGrid({
           artistColor={artistColor}
           drag={drag}
           tasks={tasksByProject.get(p.id) ?? []}
-          doneValue={doneValue}
         />
       ))}
     </div>
@@ -315,13 +309,11 @@ function ProjectCard({
   artistColor,
   drag,
   tasks,
-  doneValue,
 }: {
   project: Project;
   artistColor: string;
   drag: ReturnType<typeof useDragReorder<number>>;
   tasks: Task[];
-  doneValue: string;
 }) {
   const shade = projectShade(artistColor, project.color, project.id);
   return (
@@ -365,7 +357,7 @@ function ProjectCard({
               card. Empty projects show nothing (no zero-noise on a card with no tasks). */}
           {tasks.length > 0 && (
             <div className="mt-3 border-t border-neutral-100 pt-3">
-              <TaskStatChips tasks={tasks} doneValue={doneValue} />
+              <TaskStatChips tasks={tasks} />
             </div>
           )}
         </div>

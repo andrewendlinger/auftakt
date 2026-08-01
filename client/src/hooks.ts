@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api/client';
 import type { CustomColumnOption, ID, LabelOverride, OptionUsage, Settings } from './api/types';
+import { doneValueOf } from './api/types';
 import { LABEL_DEFAULTS, isLabelKey, type LabelKey } from './lib/labels';
 import { normalizeSelectOptions } from './lib/selectOptions';
 import {
@@ -54,6 +55,24 @@ export function useEventTypeOptions(): CustomColumnOption[] {
 export function useProjectStatusOptions(): CustomColumnOption[] {
   const { data } = useSettings();
   return useMemo(() => normalizeSelectOptions(data?.project_statuses), [data?.project_statuses]);
+}
+
+/**
+ * The Status column's „done" value — what drives gray-out, sink-to-bottom, the open/done split
+ * in the stats and the archive. The single derivation, replacing the copy that sat on five
+ * pages and was then prop-threaded into TaskStatChips, AttentionList, ArtistCard and
+ * ProjectCard: changing how done-ness resolves used to mean touching five pages and every prop
+ * signature, and any site missed silently kept the old semantics (PGS-27).
+ *
+ * Global columns are the whole answer — built-ins are inserted with `scope: 'global'`, so a
+ * project page's merged global+project list can never resolve a different Status column.
+ */
+export function useDoneValue(): string {
+  const { data = [] } = useQuery({
+    queryKey: ['customColumns', 'global'],
+    queryFn: () => api.customColumns.list({ scope: 'global' }),
+  });
+  return useMemo(() => doneValueOf(data), [data]);
 }
 
 /**

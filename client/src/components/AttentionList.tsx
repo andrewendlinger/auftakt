@@ -4,6 +4,7 @@ import { attentionTasks, duePhrase } from '../lib/taskStats';
 import { daysUntil } from '../lib/dates';
 import { ProjectBadge } from './ProjectBadge';
 import { EmptyState } from './ui';
+import { useDoneValue } from '../hooks';
 
 const ROW_CLS =
   'flex items-center gap-3 rounded-xl bg-white px-3 py-2.5 shadow-sm ring-1 ring-black/5 transition';
@@ -14,15 +15,8 @@ const ROW_CLS =
  * artist) where the task is edited, mirroring the dashboard's upcoming-events list. Reused on the
  * dashboard (festival-wide) and the artist page (that artist's tasks).
  */
-export function AttentionList({
-  tasks,
-  doneValue,
-  windowDays,
-}: {
-  tasks: Task[];
-  doneValue: string;
-  windowDays: number;
-}) {
+export function AttentionList({ tasks, windowDays }: { tasks: Task[]; windowDays: number }) {
+  const doneValue = useDoneValue();
   const items = attentionTasks(tasks, doneValue, windowDays);
   if (items.length === 0) return <EmptyState>Nichts Dringendes.</EmptyState>;
   return (

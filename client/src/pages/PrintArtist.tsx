@@ -1,12 +1,12 @@
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import { doneValueOf, type Task } from '../api/types';
+import { type Task } from '../api/types';
 import { Spinner } from '../components/ui';
 import { Markdown } from '../components/Markdown';
 import { Empty, PrintHeader, PrintPage, Section } from '../components/PrintSheet';
 import { formatDate, formatEventWhen, weekdayShort } from '../lib/dates';
-import { useLabel, useSaison } from '../hooks';
+import { useDoneValue, useLabel, useSaison } from '../hooks';
 
 export function PrintArtist() {
   const { id } = useParams<{ id: string }>();
@@ -21,26 +21,26 @@ export function PrintArtist() {
     queryKey: ['print-artist', artistId],
     queryFn: async () => {
       // These four are independent; contacts alone depend on the fetched projects.
-      const [artist, projects, events, tasks, columns] = await Promise.all([
+      const [artist, projects, events, tasks] = await Promise.all([
         api.artists.get(artistId),
         api.projects.list({ artist_id: artistId }),
         api.events.list({ resolved_artist_id: artistId }),
         api.tasks.list({ resolved_artist_id: artistId }),
-        api.customColumns.list({ scope: 'global' }),
       ]);
       const contactLists = await Promise.all([
         api.contacts.list({ artist_id: artistId }),
         ...projects.map((p) => api.contacts.list({ project_id: p.id })),
       ]);
-      return { artist, events, tasks, columns, contacts: contactLists.flat() };
+      return { artist, events, tasks, contacts: contactLists.flat() };
     },
   });
 
-  if (isLoading || !data) return <Spinner />;
-  const { artist, events, tasks, columns, contacts } = data;
   // "Open" = not the Status column's terminal "done" category. The handout mirrors the app's
   // general/project split: general (no project) and project tasks each get their own subsection.
-  const doneValue = doneValueOf(columns);
+  const doneValue = useDoneValue();
+
+  if (isLoading || !data) return <Spinner />;
+  const { artist, events, tasks, contacts } = data;
   const openTasks = tasks.filter((t) => t.status !== doneValue);
   const generalOpen = openTasks.filter((t) => !t.project_id);
   const projectOpen = openTasks.filter((t) => t.project_id);

@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { Task } from '../api/types';
 import { computeStats, type TaskMetric, type TaskStats } from '../lib/taskStats';
-import { useTaskStatsConfig } from '../hooks';
+import { useDoneValue, useTaskStatsConfig } from '../hooks';
 
 /**
  * Renders the configured task metrics for a set of tasks. `variant="chips"` is the compact,
@@ -11,16 +11,15 @@ import { useTaskStatsConfig } from '../hooks';
  */
 export function TaskStatChips({
   tasks,
-  doneValue,
   variant = 'chips',
   metrics: metricsProp,
 }: {
   tasks: Task[];
-  doneValue: string;
   variant?: 'chips' | 'tiles';
   metrics?: TaskMetric[];
 }) {
   const cfg = useTaskStatsConfig();
+  const doneValue = useDoneValue();
   const metrics = metricsProp ?? cfg.metrics;
   const stats = useMemo(
     () => computeStats(tasks, doneValue, cfg.windowDays),
