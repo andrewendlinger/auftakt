@@ -73,6 +73,21 @@ export function OptionsEditor({
   );
 }
 
+/**
+ * The German word for the rows an option list is used by, in both counts — „wird von 1 Termin"
+ * vs „wird von 3 Terminen". Dative, because every message that interpolates it is („von …").
+ * Same `one`/`many` shape as ArchivePage's `TYPE_LABELS`, and for the same reason.
+ */
+export interface UsageNoun {
+  one: string;
+  many: string;
+}
+
+/** „3 Terminen" / „1 Termin" — the count with its correctly-inflected noun. */
+export function countWithNoun(n: number, noun: UsageNoun): string {
+  return `${n} ${n === 1 ? noun.one : noun.many}`;
+}
+
 /** value defaults to the (trimmed) label; keep existing values stable so linked data stays linked. */
 export function normalizeOptions(options: CustomColumnOption[]): CustomColumnOption[] {
   return options

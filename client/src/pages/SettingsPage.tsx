@@ -7,7 +7,7 @@ import { Card, SectionTitle, Spinner, Btn, IconButton } from '../components/ui';
 import { Label, TextInput, Modal } from '../components/fields';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { CustomColumnManager } from '../components/CustomColumnManager';
-import { OptionsEditor, normalizeOptions } from '../components/OptionsEditor';
+import { OptionsEditor, countWithNoun, normalizeOptions, type UsageNoun } from '../components/OptionsEditor';
 import { TaskSortEditor } from '../components/TaskSortEditor';
 import { TrashIcon } from '../components/icons';
 import { useToast } from '../components/Toast';
@@ -159,7 +159,7 @@ export function SettingsCategoriesTab() {
         <SelectOptionsSetting
           options={eventTypeOptions}
           usage={eventTypeUsage}
-          usageNoun="Terminen"
+          usageNoun={{ one: 'Termin', many: 'Terminen' }}
           addLabel="+ Typ"
           onSave={(v) => patch({ event_types: v })}
         />
@@ -174,7 +174,7 @@ export function SettingsCategoriesTab() {
         <SelectOptionsSetting
           options={projectStatusOptions}
           usage={projectStatusUsage}
-          usageNoun="Projekten"
+          usageNoun={{ one: 'Projekt', many: 'Projekten' }}
           addLabel="+ Status"
           onSave={(v) => patch({ project_statuses: v })}
         />
@@ -189,7 +189,7 @@ export function SettingsCategoriesTab() {
         <SelectOptionsSetting
           options={linkCategoryOptions}
           usage={linkCategoryUsage}
-          usageNoun="Links"
+          usageNoun={{ one: 'Link', many: 'Links' }}
           addLabel="+ Kategorie"
           onSave={(v) => patch({ link_categories: v })}
         />
@@ -612,7 +612,7 @@ function SelectOptionsSetting({
 }: {
   options: CustomColumnOption[];
   usage: Record<string, number>;
-  usageNoun: string;
+  usageNoun: UsageNoun;
   addLabel: string;
   onSave: (v: CustomColumnOption[]) => Promise<void>;
 }) {
@@ -628,7 +628,9 @@ function SelectOptionsSetting({
     const removed = options.filter((o) => !cleaned.some((c) => c.value === o.value));
     const blocked = removed.filter((o) => (usage[o.value] ?? 0) > 0);
     if (blocked.length) {
-      const lines = blocked.map((o) => `• „${o.label}“ wird von ${usage[o.value]} ${usageNoun} verwendet`);
+      const lines = blocked.map(
+        (o) => `• „${o.label}“ wird von ${countWithNoun(usage[o.value] ?? 0, usageNoun)} verwendet`,
+      );
       window.alert(
         `Diese Kategorie(n) werden noch verwendet und können nicht gelöscht werden:\n\n${lines.join(
           '\n',
