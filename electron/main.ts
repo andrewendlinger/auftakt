@@ -6,7 +6,10 @@ import { backupDirProblem, runStartupBackup } from './backup';
 import { checkForUpdates, downloadAndInstallUpdate, startSilentStartupCheck } from './updater';
 
 const isDev = !app.isPackaged;
-const PORT = Number(process.env.AUFTAKT_PORT ?? 4317);
+// `??` would only catch null/undefined, and Number('') is 0 — an empty AUFTAKT_PORT
+// then made the server bind an ephemeral port while main polled localhost:0 until the
+// health check timed out and no window ever opened (ELP-07).
+const PORT = Number(process.env.AUFTAKT_PORT) || 4317;
 const DEV_URL = process.env.AUFTAKT_DEV_URL ?? 'http://localhost:5317';
 
 let mainWindow: BrowserWindow | null = null;
