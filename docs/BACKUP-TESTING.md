@@ -42,6 +42,13 @@ npm run dist:mac    # or dist:win
 - [ ] Decline it → relaunch → it does **not** appear again (the amber hint remains in Settings).
 - [ ] Settings → "Wählen…" still works and sets the folder.
 
+### 2b · A folder the backup cannot use is refused when it is picked (Windows)
+
+- [ ] Settings → "Wählen…" → type a UNC path (`\\server\freigabe`) into the folder dialog.
+- [ ] It is refused **immediately** with a German message naming local/cloud folders as the
+      alternative; the configured folder in Settings is unchanged.
+      **Silently accepting it and never backing up again is the old bug.**
+
 ### 3 · Startup backup covers every season
 
 - [ ] With a folder set and **two seasons** both holding data, relaunch.
@@ -49,6 +56,8 @@ npm run dist:mac    # or dist:win
 - [ ] Open each `.db` (DB Browser for SQLite) → rows are present. **An empty file is the old bug.**
 - [ ] Relaunch a few times → one folder per launch, oldest pruned past 30.
 - [ ] Any pre-existing flat `auftakt-<stamp>.db` files from older versions are still there.
+- [ ] Delete the configured backup folder (or make it read-only) and relaunch → an error dialog
+      says no backup was written and points at Settings. **A console-only message is the old bug.**
 
 ### 4 · Import — the reported crash
 

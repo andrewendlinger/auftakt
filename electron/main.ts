@@ -2,7 +2,7 @@ import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { buildMenu } from './menu';
-import { runStartupBackup } from './backup';
+import { backupDirProblem, runStartupBackup } from './backup';
 import { checkForUpdates, downloadAndInstallUpdate, startSilentStartupCheck } from './updater';
 
 const isDev = !app.isPackaged;
@@ -106,12 +106,37 @@ async function patchSettings(patch: Record<string, unknown>): Promise<void> {
   }
 }
 
+/**
+ * Pick a backup folder, rejecting one the startup backup could not use (ELP-03).
+ * Validating here rather than only in runStartupBackup is the point: a Windows user
+ * could pick a NAS share, see it accepted, and never learn that backups had stopped.
+ */
 async function promptForDirectory(): Promise<string | null> {
   const r = await dialog.showOpenDialog({
     title: 'Backup-Ordner wählen (z. B. Google Drive)',
     properties: ['openDirectory', 'createDirectory'],
   });
-  return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
+  const dir = r.canceled ? null : (r.filePaths[0] ?? null);
+  if (!dir) return null;
+  const problem = backupDirProblem(dir);
+  if (problem) {
+    await dialog.showMessageBox({ type: 'error', message: 'Dieser Ordner kann nicht verwendet werden.', detail: problem });
+    return null;
+  }
+  return dir;
+}
+
+/**
+ * A backup that cannot run is the whole failure mode this path exists to prevent, so
+ * say so instead of logging it (ELP-03) — the Settings hint is easy to never open.
+ */
+async function reportBackupProblem(err: unknown): Promise<void> {
+  console.error('Backup übersprungen:', err);
+  await dialog.showMessageBox({
+    type: 'error',
+    message: 'Es wurde keine Sicherung angelegt.',
+    detail: `${(err as Error).message}\n\nEinstellungen → „Saison & Daten" → „Backup-Ordner" prüfen. Ohne funktionierenden Backup-Ordner werden beim Start keine Sicherungen erstellt.`,
+  });
 }
 
 async function chooseBackupDir(): Promise<void> {
@@ -273,7 +298,7 @@ app.whenReady().then(async () => {
       const backupDir = await ensureBackupDir();
       if (backupDir) await runStartupBackup(PORT, backupDir);
     } catch (err) {
-      console.error('Backup übersprungen:', err);
+      await reportBackupProblem(err);
     }
   }
 
