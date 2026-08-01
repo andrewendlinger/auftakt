@@ -224,12 +224,25 @@ export function seasonStats(): Record<number, SeasonStats | null> {
   return out;
 }
 
-/** Create a fully-initialised new season DB and register it (does not activate it). */
+/**
+ * Create a fully-initialised new season DB and register it (does not activate it).
+ *
+ * The id must not name a file that still exists. deleteSeason unlinks best-effort, so a
+ * failed unlink (Windows lock/EPERM) leaves `season-<id>.db` behind while freeing that id —
+ * and every step below is a no-op on an existing database (`CREATE TABLE IF NOT EXISTS`,
+ * ensureDefaultSettings, ensureBuiltinColumns), so the "blank" season would open populated
+ * with the deleted season's artists, contacts, tasks and notes (DBW-03). Skip such ids
+ * instead. A leftover -wal/-shm counts too: it is replayed into a freshly created file.
+ */
 export function createSeason(label: string): Season {
   const reg = readRegistry();
-  const id = Math.max(0, ...reg.seasons.map((s) => s.id)) + 1;
-  const season: Season = { id, label, file: `season-${id}.db`, createdAt: new Date().toISOString() };
   mkdirSync(dataDir(), { recursive: true });
+  const registered = new Set(reg.seasons.map((s) => s.file));
+  const taken = (file: string): boolean =>
+    registered.has(file) || ['', '-wal', '-shm'].some((sfx) => existsSync(join(dataDir(), file + sfx)));
+  let id = Math.max(0, ...reg.seasons.map((s) => s.id)) + 1;
+  while (taken(`season-${id}.db`)) id++;
+  const season: Season = { id, label, file: `season-${id}.db`, createdAt: new Date().toISOString() };
   const fresh = new Database(join(dataDir(), season.file));
   fresh.pragma('journal_mode = WAL');
   fresh.pragma('foreign_keys = ON');
@@ -390,12 +403,15 @@ export function deleteSeason(id: number): void {
   if (!s) throw new Error('unknown season');
   reg.seasons = reg.seasons.filter((x) => x.id !== id);
   saveRegistry(reg);
+  // Best-effort: the season is deregistered either way. A failed unlink (Windows lock) is
+  // logged rather than swallowed — it leaves a file createSeason then has to route around
+  // (DBW-03), so the warning is the only trace of why the next season skipped an id.
   for (const suffix of ['', '-wal', '-shm']) {
+    const p = join(dataDir(), s.file + suffix);
     try {
-      const p = join(dataDir(), s.file + suffix);
       if (existsSync(p)) unlinkSync(p);
-    } catch {
-      /* ignore */
+    } catch (err) {
+      console.warn(`Saison-Datei konnte nicht gelöscht werden: ${p}`, err);
     }
   }
 }
