@@ -1,3 +1,4 @@
+import { localStamp } from '../../../shared/time';
 import { doneStatusValue, getDb } from '../db';
 import { crudRouter } from '../lib/crud';
 import { listEvents, listTasks } from '../lib/queries';
@@ -233,11 +234,14 @@ export const tasksRouter = crudRouter({
       // Stamp/clear erledigt_am against the Status column's editable "done" value.
       if ('status' in body) {
         if (body.status === done) {
-          // SQLite space format (YYYY-MM-DD HH:MM:SS), matching demo.ts stamp() and deleted_at, so
-          // the string compare in queries.ts (erledigt_am <= datetime('now', '-N days')) is exact
-          // rather than off by the T-vs-space sort of an ISO string (SRV-08).
+          // SQLite space format (YYYY-MM-DD HH:MM:SS), matching deleted_at, so the string
+          // compare in queries.ts (erledigt_am <= datetime('now', …)) is exact rather than off
+          // by the T-vs-space sort of an ISO string (SRV-08) — and in *local* time, because
+          // this is the calendar day the archive and the .xlsx export report as "Erledigt am".
+          // A UTC stamp named the previous day for every task ticked off between local midnight
+          // and the offset (SDL-07).
           if (mode === 'create' || !existing?.erledigt_am) {
-            body.erledigt_am = new Date().toISOString().slice(0, 19).replace('T', ' ');
+            body.erledigt_am = localStamp();
           }
         } else {
           body.erledigt_am = null;

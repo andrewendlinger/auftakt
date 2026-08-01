@@ -25,6 +25,11 @@ interface Col {
   options: string | null;
 }
 
+/**
+ * `YYYY-MM-DD…` → `DD.MM.YYYY`. Slicing the day out is only correct because every stored
+ * timestamp is naive local (see shared/time.ts): the same slice over a UTC stamp reported
+ * "Erledigt am" a day early for anything completed after local midnight (SDL-07).
+ */
 function isoDay(s: string | null): string {
   return s ? s.slice(0, 10).split('-').reverse().join('.') : '';
 }
