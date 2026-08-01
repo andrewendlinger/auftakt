@@ -129,14 +129,22 @@ export function listEvents(db: Database.Database, q: EventQuery = {}): unknown[]
   return db.prepare(`${EVENT_SELECT} WHERE ${where.join(' AND ')} ${EVENT_ORDER}`).all(...params);
 }
 
-/** Events overlapping the window [today, today+days] — includes currently-running multi-day events. */
+/**
+ * Events overlapping the window [today, today+days] — includes currently-running multi-day events.
+ *
+ * 'localtime' before the offset: `start_at`/`end_at` are dates the user typed in local terms, so
+ * a bare `date('now')` compared them against the UTC day. East of Greenwich, loading the
+ * dashboard shortly after local midnight shifted the whole window back a day and moved both
+ * edges — an event starting today, or one exactly `days` out, fell out of „Kommende Termine"
+ * (SDL-10). Adding the days after the conversion keeps the arithmetic on the local calendar.
+ */
 export function eventsWithin(db: Database.Database, days: number): unknown[] {
   return db
     .prepare(
       `${EVENT_SELECT}
        WHERE e.deleted_at IS NULL AND ${EVENT_PARENT_LIVE}
-         AND date(e.start_at) <= date('now', ?)
-         AND date(COALESCE(e.end_at, e.start_at)) >= date('now')
+         AND date(e.start_at) <= date('now', 'localtime', ?)
+         AND date(COALESCE(e.end_at, e.start_at)) >= date('now', 'localtime')
        ${EVENT_ORDER}`,
     )
     .all(`+${days} days`);
@@ -147,7 +155,7 @@ export function eventsBeyond(db: Database.Database, days: number, limit: number)
   return db
     .prepare(
       `${EVENT_SELECT}
-       WHERE e.deleted_at IS NULL AND ${EVENT_PARENT_LIVE} AND date(e.start_at) > date('now', ?)
+       WHERE e.deleted_at IS NULL AND ${EVENT_PARENT_LIVE} AND date(e.start_at) > date('now', 'localtime', ?)
        ${EVENT_ORDER} LIMIT ?`,
     )
     .all(`+${days} days`, limit);
