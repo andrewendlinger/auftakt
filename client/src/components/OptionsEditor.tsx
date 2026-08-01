@@ -90,6 +90,14 @@ export interface OptionRules {
  * Returns a German message naming what is wrong, or null when the draft may be saved.
  */
 export function validateOptions(draft: CustomColumnOption[], rules: OptionRules = {}): string | null {
+  // Checked against the *draft*, because normalizeOptions ends in `.filter(o => o.label)` — an
+  // unnamed row is silently discarded rather than saved. Someone who adds a category, picks its
+  // colour and then hits Speichern before typing the name sees the row vanish and assumes the
+  // save failed; clearing an existing option's label to retype it deletes it outright (RTE-12).
+  const blank = draft.findIndex((o) => !o.label.trim());
+  if (blank >= 0) {
+    return `Kategorie ${blank + 1} hat keine Bezeichnung — benenne sie oder entferne die Zeile.`;
+  }
   const cleaned = normalizeOptions(draft);
   // Emptying a built-in's categories is a one-way door: every pill falls back to the „—"
   // placeholder with an empty dropdown, so no task's status can be changed from any table
