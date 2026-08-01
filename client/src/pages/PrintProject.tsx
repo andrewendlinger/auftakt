@@ -183,12 +183,20 @@ interface StatusGroup {
  * Driven off the options rather than hardcoded names, so "In Arbeit" and any user-added
  * status get a block for free. Statuses matching no option land in a trailing catch-all so
  * a stale value can never make a task vanish from the sheet.
+ *
+ * The catch-all is keyed on the *grouped* options, not on every option. Built from all of them
+ * it did not in fact catch everything: `doneValueOf` resolves only the *first* option flagged
+ * done, so with two done-flagged options — reachable through a CSV/Notion import, copySeasonData
+ * or a legacy column, though not through OptionsEditor — a task carrying the second one survived
+ * the `openTasks` filter, was skipped by the `!o.done` grouping, and was skipped by `rest` too
+ * because `known` contained its value. It vanished from the printed Ein-Pager while still being
+ * counted in the „(n offen)" heading (PGS-14).
  */
 function groupByStatus(tasks: Task[], columns: CustomColumn[]): StatusGroup[] {
   const statusCol = columns.find((c) => c.kind === 'builtin' && c.key === 'status');
   const options = parseColumnOptions(statusCol?.options);
-  const groups = options
-    .filter((o) => !o.done)
+  const grouped = options.filter((o) => !o.done);
+  const groups = grouped
     .map((o) => ({
       label: o.label,
       color: o.color,
@@ -196,7 +204,7 @@ function groupByStatus(tasks: Task[], columns: CustomColumn[]): StatusGroup[] {
     }))
     .filter((g) => g.tasks.length > 0);
 
-  const known = new Set(options.map((o) => o.value));
+  const known = new Set(grouped.map((o) => o.value));
   const rest = tasks.filter((t) => !known.has(t.status));
   if (rest.length > 0) groups.push({ label: 'Ohne Status', color: '#d4d4d4', tasks: rest });
   return groups;
