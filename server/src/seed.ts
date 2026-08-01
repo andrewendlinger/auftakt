@@ -11,6 +11,7 @@ import {
   DEFAULT_EVENT_TYPES,
   DEFAULT_PROJECT_STATUSES,
 } from './db';
+import { localStamp } from '../../shared/time';
 import { DELETE_ORDER } from './lib/cascade';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -239,7 +240,11 @@ interface SeedData {
  * rather than surfacing as a constraint failure halfway through the insert (SDB-04).
  */
 function readSeedData(dir: string): SeedData {
-  const nowIso = new Date().toISOString();
+  // Naive local, SQLite space format — the one convention (shared/time.ts). An ISO string was
+  // both UTC and 'T'-separated, and the archive filter string-compares erledigt_am against
+  // datetime(), where 'T' sorts after ' ' — so a seeded done task lingered in the live views up
+  // to a day past its archive point (SDB-07, re-introducing SRV-08).
+  const now = localStamp();
   const p: Problems = [];
   const eventTypes = new Set<string>();
 
@@ -331,7 +336,7 @@ function readSeedData(dir: string): SeedData {
     const status =
       rawStatus === null ? 'new' : rawStatus === 'erledigt' ? 'done' : rawStatus === 'offen' ? 'active' : rawStatus;
     // Confirmed decision: completed tasks with no completion date get erledigt_am = seed date.
-    const erledigt_am = status === 'done' ? nowIso : null;
+    const erledigt_am = status === 'done' ? now : null;
     return {
       id: reqId(p, 'tasks.csv', i, 'id', r.id),
       artist_id: optId(p, 'tasks.csv', i, 'artist_id', r.artist_id),
@@ -369,30 +374,38 @@ function readSeedData(dir: string): SeedData {
   return { artists, projects, contacts, events, tasks, links, eventTypes };
 }
 
-/** Insert pre-validated rows. Must run inside main()'s transaction. */
+/**
+ * Insert pre-validated rows. Must run inside main()'s transaction.
+ *
+ * Every statement stamps created_at/updated_at rather than leaving them to the column DEFAULT:
+ * seeding runs against whatever database is active, and one created before FIX-06 still carries
+ * the old UTC `datetime('now')` default that SQLite cannot alter in place.
+ */
 function insertSeedData(db: Database.Database, data: SeedData): void {
+  const STAMPS = "datetime('now', 'localtime'), datetime('now', 'localtime')";
   const insArtist = db.prepare(
-    `INSERT INTO artists (id, name, color, notes, sort_order) VALUES (@id, @name, @color, @notes, @sort_order)`,
+    `INSERT INTO artists (id, name, color, notes, sort_order, created_at, updated_at)
+     VALUES (@id, @name, @color, @notes, @sort_order, ${STAMPS})`,
   );
   const insProject = db.prepare(
-    `INSERT INTO projects (id, artist_id, code, name, status, description, color, sort_order)
-     VALUES (@id, @artist_id, @code, @name, @status, @description, @color, @sort_order)`,
+    `INSERT INTO projects (id, artist_id, code, name, status, description, color, sort_order, created_at, updated_at)
+     VALUES (@id, @artist_id, @code, @name, @status, @description, @color, @sort_order, ${STAMPS})`,
   );
   const insContact = db.prepare(
-    `INSERT INTO contacts (id, artist_id, project_id, role, name, email, phone, notes, sort_order)
-     VALUES (@id, @artist_id, @project_id, @role, @name, @email, @phone, @notes, @sort_order)`,
+    `INSERT INTO contacts (id, artist_id, project_id, role, name, email, phone, notes, sort_order, created_at, updated_at)
+     VALUES (@id, @artist_id, @project_id, @role, @name, @email, @phone, @notes, @sort_order, ${STAMPS})`,
   );
   const insEvent = db.prepare(
-    `INSERT INTO events (id, artist_id, project_id, type, title, start_at, end_at, all_day, location, notes, sort_order)
-     VALUES (@id, @artist_id, @project_id, @type, @title, @start_at, @end_at, @all_day, @location, @notes, @sort_order)`,
+    `INSERT INTO events (id, artist_id, project_id, type, title, start_at, end_at, all_day, location, notes, sort_order, created_at, updated_at)
+     VALUES (@id, @artist_id, @project_id, @type, @title, @start_at, @end_at, @all_day, @location, @notes, @sort_order, ${STAMPS})`,
   );
   const insTask = db.prepare(
-    `INSERT INTO tasks (id, artist_id, project_id, title, status, priority, due_date, comment, custom_values, erledigt_am, sort_order)
-     VALUES (@id, @artist_id, @project_id, @title, @status, @priority, @due_date, @comment, '{}', @erledigt_am, @sort_order)`,
+    `INSERT INTO tasks (id, artist_id, project_id, title, status, priority, due_date, comment, custom_values, erledigt_am, sort_order, created_at, updated_at)
+     VALUES (@id, @artist_id, @project_id, @title, @status, @priority, @due_date, @comment, '{}', @erledigt_am, @sort_order, ${STAMPS})`,
   );
   const insLink = db.prepare(
-    `INSERT INTO links (id, artist_id, project_id, event_id, task_id, label, url, sort_order)
-     VALUES (@id, @artist_id, @project_id, @event_id, @task_id, @label, @url, @sort_order)`,
+    `INSERT INTO links (id, artist_id, project_id, event_id, task_id, label, url, sort_order, created_at, updated_at)
+     VALUES (@id, @artist_id, @project_id, @event_id, @task_id, @label, @url, @sort_order, ${STAMPS})`,
   );
 
   for (const r of data.artists) insArtist.run(r);
@@ -419,12 +432,14 @@ function insertSeedData(db: Database.Database, data: SeedData): void {
 
 /** Minimal sample data when ./files is empty — keeps a fresh install usable. */
 function seedSample(db: Database.Database): void {
+  // Same reason as insertSeedData: never rely on the created_at/updated_at column DEFAULT.
+  const S = "datetime('now', 'localtime'), datetime('now', 'localtime')";
   const tx = db.transaction(() => {
-    db.prepare(`INSERT INTO artists (id, name, color, notes) VALUES (1, 'Beispiel-Künstlerin', '#4F7CAC', 'Automatisch erzeugte Beispieldaten')`).run();
-    db.prepare(`INSERT INTO projects (id, artist_id, code, name, status, description) VALUES (1, 1, 'B1', 'Beispielprojekt', 'In Progress', 'Beispielbeschreibung')`).run();
-    db.prepare(`INSERT INTO contacts (id, project_id, role, name, email) VALUES (1, 1, 'Management', 'Max Mustermann', 'max@example.com')`).run();
-    db.prepare(`INSERT INTO events (id, project_id, type, title, start_at, end_at, all_day, location) VALUES (1, 1, 'Auftritt', 'Beispielkonzert', '2026-09-01T20:00', '2026-09-01T21:30', 0, 'Konzerthaus')`).run();
-    db.prepare(`INSERT INTO tasks (id, project_id, title, status, priority, comment) VALUES (1, 1, 'Beispielaufgabe', 'active', 'hoch', 'Notiz mit Link https://example.com')`).run();
+    db.prepare(`INSERT INTO artists (id, name, color, notes, created_at, updated_at) VALUES (1, 'Beispiel-Künstlerin', '#4F7CAC', 'Automatisch erzeugte Beispieldaten', ${S})`).run();
+    db.prepare(`INSERT INTO projects (id, artist_id, code, name, status, description, created_at, updated_at) VALUES (1, 1, 'B1', 'Beispielprojekt', 'In Progress', 'Beispielbeschreibung', ${S})`).run();
+    db.prepare(`INSERT INTO contacts (id, project_id, role, name, email, created_at, updated_at) VALUES (1, 1, 'Management', 'Max Mustermann', 'max@example.com', ${S})`).run();
+    db.prepare(`INSERT INTO events (id, project_id, type, title, start_at, end_at, all_day, location, created_at, updated_at) VALUES (1, 1, 'Auftritt', 'Beispielkonzert', '2026-09-01T20:00', '2026-09-01T21:30', 0, 'Konzerthaus', ${S})`).run();
+    db.prepare(`INSERT INTO tasks (id, project_id, title, status, priority, comment, created_at, updated_at) VALUES (1, 1, 'Beispielaufgabe', 'active', 'hoch', 'Notiz mit Link https://example.com', ${S})`).run();
   });
   tx();
 }
