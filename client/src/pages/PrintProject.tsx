@@ -2,14 +2,14 @@ import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { CustomColumn, Task } from '../api/types';
-import { customValueOf, doneValueOf, parseColumnOptions } from '../api/types';
+import { customValueOf, parseColumnOptions } from '../api/types';
 import { Spinner } from '../components/ui';
 import { Markdown } from '../components/Markdown';
 import { Empty, PrintHeader, PrintPage, Section } from '../components/PrintSheet';
 import { ProjectStatusPill } from '../components/ProjectStatusPill';
 import { contrastText, projectShade } from '../lib/colors';
 import { formatDate, formatEventWhen, weekdayShort } from '../lib/dates';
-import { useLabel, useSaison } from '../hooks';
+import { useDoneValue, useLabel, useSaison } from '../hooks';
 
 export function PrintProject() {
   const { id } = useParams<{ id: string }>();
@@ -36,11 +36,16 @@ export function PrintProject() {
     },
   });
 
+  // Hoisted out of the filter predicate below, where it re-scanned the column list and
+  // re-parsed the status column's JSON once per task — 300 tasks meant 300 identical
+  // derivations before the sheet rendered. PrintArtist already reads it this way (PGS-26).
+  const doneValue = useDoneValue();
+
   if (isLoading || !data) return <Spinner />;
   const { project, artist, events, contacts, tasks, columns } = data;
   const shade = projectShade(artist?.color ?? '#888888', project.color, project.id);
 
-  const openTasks = tasks.filter((t) => t.status !== doneValueOf(columns));
+  const openTasks = tasks.filter((t) => t.status !== doneValue);
   const groups = groupByStatus(openTasks, columns);
   const customCols = columns
     .filter((c) => c.kind === 'custom' && c.enabled)
