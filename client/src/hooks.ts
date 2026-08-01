@@ -24,9 +24,20 @@ export function useSettings() {
   return useQuery({ queryKey: ['settings'], queryFn: api.getSettings });
 }
 
+/**
+ * The active season's name, read from the seasons.json registry — the one place a rename
+ * always lands. The per-season `settings.saison` row is *not* it: renaming a season on the
+ * landing page while it is inactive updates the registry only (updateSeason can write the
+ * setting solely for the season it has open), so that row keeps the old name and every
+ * consumer here — the season-scope label in the task table, the kicker on the printed
+ * one-pagers — disagreed with the switcher and the landing card, with no in-app way to
+ * repair it (CCL-06). The setting stays as the file's own self-description (seed/demo).
+ *
+ * Rides on the ['seasons'] query the header switcher already fetches on every page.
+ */
 export function useSaison(): string {
-  const { data } = useSettings();
-  return (data?.saison as string) ?? 'Auftakt';
+  const { data } = useQuery({ queryKey: ['seasons'], queryFn: api.seasons });
+  return data?.seasons.find((s) => s.id === data.activeId)?.label ?? 'Auftakt';
 }
 
 /**
