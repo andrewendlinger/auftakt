@@ -12,6 +12,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fileStamp, localStamp } from '../../shared/time';
 import { CHILD_EDGES, DELETE_ORDER } from './lib/cascade';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -1178,9 +1179,13 @@ function prunePreImportFiles(dbPath: string): void {
   }
 }
 
-/** Filesystem-safe timestamp shared by every backup folder name. */
+/**
+ * Filesystem-safe timestamp shared by every backup folder name — and, through the same
+ * `shared/time.ts` helper, by Electron's export/backup default filenames, which used to carry a
+ * byte-identical copy of this line (ELP-11).
+ */
 export function backupStamp(): string {
-  return new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+  return fileStamp();
 }
 
 /** Add the data-driven-column fields to custom_columns on databases created before they existed. */

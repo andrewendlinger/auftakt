@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { fileStamp } from '../shared/time';
 import { buildMenu } from './menu';
 import { backupDirProblem, runStartupBackup } from './backup';
 import { checkForUpdates, downloadAndInstallUpdate, startSilentStartupCheck } from './updater';
@@ -58,10 +59,6 @@ function openExternalSafely(url: string): void {
 /** The data dir holding the season DBs + seasons.json: dev → repo/.data; packaged → userData. */
 function dataDir(): string {
   return isDev ? resolve(app.getAppPath(), '.data') : app.getPath('userData');
-}
-
-function stamp(): string {
-  return new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
 }
 
 /**
@@ -177,7 +174,9 @@ async function chooseBackupDir(): Promise<void> {
 async function exportDatabase(): Promise<void> {
   const r = await dialog.showSaveDialog({
     title: 'Datenbank exportieren',
-    defaultPath: `auftakt-${stamp()}.db`,
+    // Local wall-clock time, the same helper the server's backup folders use: a UTC stamp
+    // named the export after the previous day for anyone east of Greenwich (ELP-09).
+    defaultPath: `auftakt-${fileStamp()}.db`,
   });
   if (r.canceled || !r.filePath) return;
   try {

@@ -15,10 +15,16 @@ import {
   validateImportCandidate,
 } from '../db';
 
-/** Dated folders this app writes into the backup folder, newest first. */
+/**
+ * Dated folders this app writes into the backup folder, newest first.
+ *
+ * The millisecond group is optional so folders written before backupStamp() gained sub-second
+ * resolution (DBW-09) keep matching — an unmatched folder is never pruned, so tightening this
+ * pattern would quietly let the backup folder grow forever.
+ */
 function datedFolders(dir: string, prefix: string): string[] {
   if (!existsSync(dir)) return [];
-  const pattern = new RegExp(`^${prefix}-\\d{4}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-\\d{2}$`);
+  const pattern = new RegExp(`^${prefix}-\\d{4}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-\\d{2}(?:-\\d{3})?$`);
   return readdirSync(dir)
     .filter((f) => pattern.test(f))
     .filter((f) => statSync(join(dir, f)).isDirectory())
