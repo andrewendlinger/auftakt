@@ -268,6 +268,10 @@ export function createSeason(label: string): Season {
   fresh.pragma('foreign_keys = ON');
   fresh.exec(SCHEMA);
   ensureDefaultSettings(fresh);
+  // This file is created here rather than through getDb(), so it has to mark itself: getDb()
+  // decides "needs converting?" from the file already existing, and would otherwise shift a new
+  // season's stamps — which came from the local defaults above — a second time.
+  migrateStampsToLocal(fresh, true);
   ensureBuiltinColumns(fresh);
   setSetting(fresh, 'saison', label);
   fresh.close();
