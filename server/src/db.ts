@@ -981,7 +981,9 @@ export function snapshotDb(srcPath: string, destPath: string): void {
   if (existsSync(destPath)) unlinkSync(destPath); // VACUUM INTO refuses an existing target
   // Inactive seasons are opened read-write for the same reason copySeasonData does:
   // a read-only handle cannot create the WAL shared-memory file when one is missing.
-  const active = instance && resolveDbPath() === srcPath;
+  // The open connection knows its own file, so ask it rather than re-reading and
+  // re-parsing seasons.json once per season on every backup run (DBW-13).
+  const active = !!instance && resolve(instance.name) === resolve(srcPath);
   const db = active ? instance! : new Database(srcPath);
   try {
     db.prepare('VACUUM INTO ?').run(destPath);
