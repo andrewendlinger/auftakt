@@ -24,18 +24,37 @@ const DEFAULT_COPY: SeasonCopyOptions = {
   settings: true,
 };
 
+type CopyKey = keyof SeasonCopyOptions;
+
+/**
+ * What a group needs in order to arrive at all — the server's dependency closure *and* its
+ * per-row filter, stated in one place. copySeasonData keeps a contact/event/task only when
+ * the artist or project it hangs off was copied too (`kept()`), so ticking „Aufgaben" alone
+ * used to copy nothing but the handful of saisonweite Todos, silently. Season-wide todos
+ * (no parent at all) still come with „Aufgaben"; everything attached needs its parent.
+ */
+const REQUIRES: Partial<Record<CopyKey, CopyKey[]>> = {
+  projects: ['artists'],
+  contacts: ['artists', 'projects'],
+  events: ['artists', 'projects'],
+  // custom_values is keyed by column id, and `status` has to name an option the target's
+  // Status column offers. Settings need the columns for the option order task_sort uses.
+  tasks: ['artists', 'projects', 'columns'],
+  settings: ['columns'],
+};
+
 interface CopyGroup {
-  key: keyof SeasonCopyOptions;
+  key: CopyKey;
   label: string;
   hint?: string;
 }
 
 const DATA_GROUPS: CopyGroup[] = [
   { key: 'artists', label: 'Künstler' },
-  { key: 'contacts', label: 'Kontakte' },
-  { key: 'events', label: 'Termine' },
-  { key: 'projects', label: 'Projekte' },
-  { key: 'tasks', label: 'Aufgaben' },
+  { key: 'contacts', label: 'Kontakte', hint: 'hängen an Künstlern & Projekten' },
+  { key: 'events', label: 'Termine', hint: 'hängen an Künstlern & Projekten' },
+  { key: 'projects', label: 'Projekte', hint: 'gehören zu einem Künstler' },
+  { key: 'tasks', label: 'Aufgaben', hint: 'hängen an Künstlern & Projekten' },
 ];
 
 const CONFIG_GROUPS: CopyGroup[] = [
@@ -43,7 +62,7 @@ const CONFIG_GROUPS: CopyGroup[] = [
   {
     key: 'settings',
     label: 'Einstellungen',
-    hint: 'Termin-Typen, Projekt-Status, Sortierung, Seitenaufbau',
+    hint: 'Termin-Typen, Projekt-Status, Sortierung, Seitenaufbau — braucht die Spalten',
   },
 ];
 
@@ -89,17 +108,24 @@ export function NewSeasonModal({
   const [copy, setCopy] = useState<SeasonCopyOptions>(DEFAULT_COPY);
   const [busy, setBusy] = useState(false);
 
-  // Mirrors the closure the server applies, so the boxes always show what will
-  // actually happen: nothing can come over without the parent it hangs off.
-  const toggle = (key: keyof SeasonCopyOptions, on: boolean) => {
+  const toggle = (key: CopyKey, on: boolean) => {
     setCopy((prev) => {
       const next = { ...prev, [key]: on };
-      if (on) {
-        if (key === 'projects' || key === 'contacts' || key === 'events') next.artists = true;
-        if (key === 'tasks') next.columns = true;
-      } else {
-        if (key === 'artists') next.projects = next.contacts = next.events = false;
-        if (key === 'columns') next.tasks = false;
+      // Restore the invariant "a ticked group has every group it requires ticked too",
+      // without ever undoing the click itself: ticking pulls its requirements in, unticking
+      // drops whatever required it. Looped to a fixpoint so chains resolve in one click
+      // („Aufgaben" → Projekte → Künstler, or un-ticking „Künstler" → Projekte → Aufgaben).
+      for (let changed = true; changed; ) {
+        changed = false;
+        for (const [k, deps] of Object.entries(REQUIRES) as Array<[CopyKey, CopyKey[]]>) {
+          if (!next[k]) continue;
+          for (const d of deps) {
+            if (next[d]) continue;
+            if (on) next[d] = true;
+            else next[k] = false;
+            changed = true;
+          }
+        }
       }
       return next;
     });
