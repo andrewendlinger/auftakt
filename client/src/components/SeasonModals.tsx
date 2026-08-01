@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { Season, SeasonCopyOptions } from '../api/types';
 import { Modal, Label, TextInput, Select } from './fields';
 import { Btn } from './ui';
@@ -131,12 +131,20 @@ export function NewSeasonModal({
     });
   };
 
+  // A ref, not the `busy` state: setBusy is not visible to a second call in the same tick,
+  // and the Enter key auto-repeats at ~30/s, so the button's disabled={busy} guarded nothing
+  // — each repeat created its own season, its own .db file and its own full copy run
+  // (SHL-08). The latch is checked and set synchronously, before the first await.
+  const busyRef = useRef(false);
+
   const submit = async () => {
-    if (!label.trim()) return;
+    if (!label.trim() || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       await onSubmit(label.trim(), copyFrom ? Number(copyFrom) : undefined, copy);
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
