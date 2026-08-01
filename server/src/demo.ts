@@ -12,6 +12,9 @@
 import { rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// Safe as a static import despite the deferred ./db import below: shared/time has no
+// side effects and reads no environment.
+import { localDay, localStamp } from '../../shared/time';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -50,9 +53,16 @@ const SEASON_LABEL = 'Demofest 2026';
 
 const DAY_MS = 86_400_000;
 
-/** Date `n` days from today as `YYYY-MM-DD` (negative = past). */
+/**
+ * Date `n` days from today as `YYYY-MM-DD` (negative = past), on the **local** calendar.
+ *
+ * `toISOString()` would anchor it on the UTC day, and the client's `daysUntil()` anchors
+ * "today" on the local one — so east of Greenwich, rebuilding the demo between local midnight
+ * and the offset shifted every relative date back a day: the "due tomorrow" fixture showed as
+ * due today and the „Überfällig" counts the demo exists to showcase were off by one (SDB-08).
+ */
 function days(n: number): string {
-  return new Date(Date.now() + n * DAY_MS).toISOString().slice(0, 10);
+  return localDay(new Date(Date.now() + n * DAY_MS));
 }
 
 /** `YYYY-MM-DDTHH:MM` — the app's naive-local format for a timed event. */
@@ -61,12 +71,13 @@ function at(n: number, time: string): string {
 }
 
 /**
- * `YYYY-MM-DD HH:MM:SS` — SQLite's `datetime()` format. Used for erledigt_am and deleted_at
- * because both are compared against `datetime('now', ...)` as strings (queries.ts:27,
- * db.ts:639); an ISO string with its `T` separator would sort inconsistently against those.
+ * `YYYY-MM-DD HH:MM:SS` — SQLite's `datetime()` format, local like everything else
+ * (shared/time.ts). Used for erledigt_am and deleted_at because both are compared against
+ * `datetime('now', 'localtime', …)` as strings; an ISO string with its `T` separator would
+ * sort inconsistently against those.
  */
 function stamp(n: number): string {
-  return new Date(Date.now() + n * DAY_MS).toISOString().slice(0, 19).replace('T', ' ');
+  return localStamp(new Date(Date.now() + n * DAY_MS));
 }
 
 /** Comfortably past the archive cutoff, so `#/archiv` is never empty. */
