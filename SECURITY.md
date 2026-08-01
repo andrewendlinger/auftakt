@@ -37,6 +37,27 @@ and the provenance attestation above is what stands in for Apple's notarization
 here: you can read exactly what the app does and confirm the binary was built
 from that source.
 
+## Windows installer and in-app updates
+
+The Windows installer is **not** Authenticode-signed, which has two consequences.
+Windows SmartScreen warns about an unknown publisher on first install, and the
+in-app updater (Settings → "Version & Updates", Windows only) cannot verify a
+signature on the package it downloads — electron-updater skips that step when no
+publisher is configured.
+
+What the update does check is the sha512 hash published in `latest.yml` in the
+GitHub Release, fetched over HTTPS, and every release artifact carries the build
+provenance attestation described above. So an update is only as trustworthy as
+this repository's GitHub Releases: anyone able to replace both the installer and
+its `latest.yml` entry there could have the updater install it.
+
+If you would rather not rely on that, skip the in-app update: download the
+installer from the Releases page yourself and verify it with
+`gh attestation verify` before running it.
+
+Signing needs a paid code-signing certificate, so this stays a known limitation
+for now.
+
 ## Scope
 
 Auftakt has no authentication, no network sync and no multi-user separation —
