@@ -10,7 +10,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
@@ -232,6 +232,45 @@ check(
   (imported.body.backup ?? '').startsWith(backupDir),
   imported.body.backup,
 );
+
+// --- [2b] a failing copy must not destroy the live database (DBW-04) ---
+// The import used to copy the picked file straight over the season file, so a copy that
+// died halfway (ENOSPC/EIO/EACCES) left a truncated database behind while the user was
+// told "die bisherige Datenbank wurde nicht verändert". A read-only data dir is the
+// cheapest way to make the staged copy fail at exactly that point.
+if (process.platform === 'win32' || process.getuid?.() === 0) {
+  console.log('  ..   failing-copy case skipped (needs POSIX permissions as a non-root user)');
+} else {
+  // The imported database brought its own (empty) settings, so restore backup_dir: the
+  // pre-import snapshot must land in the writable backup folder, otherwise the run fails
+  // there and never reaches the copy this case is about. Doubles as the request that
+  // leaves the server holding an open connection before the chmod.
+  await fetch(api('settings'), {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ backup_dir: backupDir }),
+  });
+  const intact = rows(activePath, 'artists');
+  chmodSync(dataDir, 0o500);
+  let failed;
+  try {
+    failed = await post('backup/import', { path: incoming });
+  } finally {
+    chmodSync(dataDir, 0o700);
+  }
+  check('a failing copy reports an error', failed.status === 400, failed.body.error);
+  const after = rows(activePath, 'artists');
+  check('a failing copy leaves the database intact', after === intact, `${after} artists`);
+  check('a failing copy leaves no staged file behind', !existsSync(`${activePath}.import-tmp`));
+  try {
+    const db = new Database(activePath);
+    const integrity = db.pragma('integrity_check')[0].integrity_check;
+    db.close();
+    check('database still reopens after a failing import', integrity === 'ok', integrity);
+  } catch (err) {
+    check('database still reopens after a failing import', false, err.message);
+  }
+}
 
 // --- pruning keeps the newest KEEP restore points and drops the oldest ---
 const points = () =>

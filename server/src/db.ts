@@ -1036,11 +1036,18 @@ export function validateImportCandidate(path: string): string | null {
 /**
  * Replace the active season's database with a user-picked file.
  *
- * Order matters: nothing is destroyed until the candidate has been validated and
- * the current data safely snapshotted. The connection is closed *before* the copy
- * so SQLite checkpoints and removes the -wal/-shm — a stale WAL left next to a
- * freshly copied file gets replayed on the next launch, which either silently
- * discards the import or corrupts it into "database disk image is malformed".
+ * Order matters, and it is the whole fix:
+ *
+ *  1. validate, then snapshot the current data — nothing is destroyed before that;
+ *  2. copy the candidate to a temp file *next to* the target, with the connection
+ *     still open. A copy is the step that can fail halfway (ENOSPC/EIO/EACCES, or a
+ *     killed process); doing it over the live file left it truncated while the caller
+ *     reported "die bisherige Datenbank wurde nicht verändert" (DBW-04);
+ *  3. close the connection so SQLite checkpoints and removes the -wal/-shm — a stale
+ *     WAL beside a freshly written file gets replayed on the next launch, which either
+ *     silently discards the import or corrupts it into "database disk image is malformed";
+ *  4. rename the temp file into place. Same directory, so it is an atomic replace on
+ *     POSIX and Windows alike: the season file is either the old one or the new one.
  */
 export function importIntoActiveSeason(candidatePath: string, backupDir: string): { backup: string } {
   const invalid = validateImportCandidate(candidatePath);
@@ -1056,8 +1063,22 @@ export function importIntoActiveSeason(candidatePath: string, backupDir: string)
     snapshotDb(dest, backup);
   }
 
+  const staged = `${dest}.import-tmp`;
+  try {
+    if (existsSync(staged)) unlinkSync(staged); // leftover from an interrupted run
+    mkdirSync(dirname(dest), { recursive: true }); // never-opened season: the dir may not exist
+    copyFileSync(candidatePath, staged);
+  } catch (err) {
+    try {
+      if (existsSync(staged)) unlinkSync(staged);
+    } catch {
+      /* ignore */
+    }
+    throw err; // dest untouched, connection still open — the app keeps working
+  }
+
   closeDb();
-  copyFileSync(candidatePath, dest);
+  renameSync(staged, dest);
   for (const suffix of ['-wal', '-shm']) {
     try {
       if (existsSync(dest + suffix)) unlinkSync(dest + suffix);
