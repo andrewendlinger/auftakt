@@ -97,10 +97,11 @@ export function ReorderArrows({
     'rounded px-1 text-xs leading-none text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-700 disabled:opacity-30 disabled:hover:bg-transparent';
   return (
     <div className="flex flex-col">
-      <button type="button" className={cls} disabled={first} onClick={onUp} title="Nach oben">
+      {/* data-arrow lets a caller move focus onto the row's new position after a reorder. */}
+      <button type="button" data-arrow="up" className={cls} disabled={first} onClick={onUp} title="Nach oben">
         ▲
       </button>
-      <button type="button" className={cls} disabled={last} onClick={onDown} title="Nach unten">
+      <button type="button" data-arrow="down" className={cls} disabled={last} onClick={onDown} title="Nach unten">
         ▼
       </button>
     </div>

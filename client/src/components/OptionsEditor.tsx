@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { IconButton, ReorderArrows } from './ui';
 import type { CustomColumnOption } from '../api/types';
 import { arrayMove } from '../lib/arrays';
@@ -19,6 +20,7 @@ export function OptionsEditor({
   allowDone?: boolean;
   addLabel?: string;
 }) {
+  const listRef = useRef<HTMLDivElement>(null);
   const update = (i: number, patch: Partial<CustomColumnOption>) => {
     const setDone = patch.done === true;
     onChange(value.map((o, idx) => (idx === i ? { ...o, ...patch } : setDone ? { ...o, done: false } : o)));
@@ -26,9 +28,24 @@ export function OptionsEditor({
   const removeAt = (i: number) => onChange(value.filter((_, idx) => idx !== i));
   // Reorder: the option order here is the order values appear in the pill dropdown
   // and drives status sorting, so ↑ ↓ lets the user set e.g. new → active → done.
+  //
+  // Focus is then moved onto the row's new position. Rows are keyed by index, so React keeps
+  // the same DOM nodes where they are and only rewrites their props — focus stayed on the
+  // button that now belongs to the *other* option, and a second ↑ swapped the two straight
+  // back. The option could never travel more than one place without re-finding it with the
+  // mouse, which made the ordering control unusable from the keyboard (RTE-14). When the row
+  // lands at an end its own arrow is disabled and therefore unfocusable, so focus falls to the
+  // one that still points back into the list.
   const move = (i: number, dir: -1 | 1) => {
     const next = arrayMove(value, i, dir);
-    if (next !== value) onChange(next);
+    if (next === value) return;
+    onChange(next);
+    requestAnimationFrame(() => {
+      const row = listRef.current?.querySelectorAll<HTMLElement>('[data-option-row]')[i + dir];
+      const same = row?.querySelector<HTMLButtonElement>(`[data-arrow="${dir === -1 ? 'up' : 'down'}"]`);
+      const other = row?.querySelector<HTMLButtonElement>(`[data-arrow="${dir === -1 ? 'down' : 'up'}"]`);
+      (same && !same.disabled ? same : other)?.focus();
+    });
   };
   const addOption = () =>
     onChange([
@@ -37,9 +54,9 @@ export function OptionsEditor({
     ]);
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" ref={listRef}>
       {value.map((o, i) => (
-        <div key={i} className="flex items-center gap-2">
+        <div key={i} data-option-row className="flex items-center gap-2">
           <ReorderArrows
             first={i === 0}
             last={i === value.length - 1}
