@@ -281,8 +281,7 @@ function SeasonCard({
             <EditableFallbackText
               className="text-xs text-neutral-400"
               value={season.subtitle}
-              // createdAt is a full ISO string with Z; formatDate expects the naive-local shape.
-              fallback={`Angelegt am ${formatDate(season.createdAt.slice(0, 10))}`}
+              fallback={`Angelegt am ${formatDate(season.createdAt)}`}
               onSave={(subtitle) => onUpdate({ subtitle })}
             />
           </p>

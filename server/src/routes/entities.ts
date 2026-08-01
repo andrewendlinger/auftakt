@@ -298,8 +298,12 @@ eventsRouter.post('/:id/duplicate', (req, res) => {
   if (!src) return res.status(404).json({ error: 'not found' });
   const info = db
     .prepare(
-      `INSERT INTO events (artist_id, project_id, type, title, start_at, end_at, all_day, location, notes, sort_order)
-       VALUES (@artist_id, @project_id, @type, @title, @start_at, @end_at, @all_day, @location, @notes, @sort_order)`,
+      // Stamped explicitly, like every other insert path: a pre-FIX-06 database still carries
+      // the old UTC `datetime('now')` DEFAULT, which SQLite cannot alter in place.
+      `INSERT INTO events (artist_id, project_id, type, title, start_at, end_at, all_day, location, notes, sort_order,
+                           created_at, updated_at)
+       VALUES (@artist_id, @project_id, @type, @title, @start_at, @end_at, @all_day, @location, @notes, @sort_order,
+               datetime('now', 'localtime'), datetime('now', 'localtime'))`,
     )
     .run({
       artist_id: src.artist_id,

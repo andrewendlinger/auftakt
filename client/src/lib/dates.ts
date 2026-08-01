@@ -1,8 +1,12 @@
 /**
- * Dates are stored as naive local ISO strings interpreted in Europe/Berlin:
- *   timed   → "YYYY-MM-DDTHH:mm"
- *   all-day → "YYYY-MM-DD"
- * We parse the components directly (no Date/UTC round-trip) to avoid timezone
+ * Every date the app stores is a naive local string — local meaning this machine's clock:
+ *   timed        → "YYYY-MM-DDTHH:mm"
+ *   all-day      → "YYYY-MM-DD"
+ *   machine stamp→ "YYYY-MM-DD HH:mm:ss"   (created_at, updated_at, deleted_at, erledigt_am)
+ *
+ * That includes the server-generated stamps: they are written through shared/time.ts and
+ * SQLite's `'localtime'` modifier precisely so this module needs one parser rather than two
+ * (FIX-06). We parse the components directly (no Date/UTC round-trip) to avoid timezone
  * shifts, and format German-style DD.MM.YYYY.
  */
 

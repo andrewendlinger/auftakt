@@ -186,6 +186,7 @@ export interface Season {
   id: ID;
   label: string;
   file: string;
+  /** Naive local „YYYY-MM-DD HH:MM:SS" — formatDate takes it as-is. */
   createdAt: string;
   /** User override for the card's „Angelegt am …" line; absent = auto text. */
   subtitle?: string;

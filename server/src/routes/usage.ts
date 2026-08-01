@@ -118,7 +118,7 @@ usageRouter.post('/reassign', (req, res) => {
       custom_values: unknown;
     }>;
     const upd = db.prepare(
-      "UPDATE tasks SET custom_values = ?, updated_at = datetime('now') WHERE id = ?",
+      "UPDATE tasks SET custom_values = ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
     );
     let changed = 0;
     db.transaction(() => {
@@ -148,7 +148,7 @@ usageRouter.post('/reassign', (req, res) => {
                 erledigt_am = CASE WHEN @to = @done
                                    THEN COALESCE(erledigt_am, strftime('%Y-%m-%d %H:%M:%S', 'now'))
                                    ELSE NULL END,
-                updated_at = datetime('now')
+                updated_at = datetime('now', 'localtime')
           WHERE status = @from`,
       )
       .run({ to, from, done });
@@ -156,7 +156,7 @@ usageRouter.post('/reassign', (req, res) => {
   }
 
   const info = db
-    .prepare(`UPDATE ${table} SET ${column} = ?, updated_at = datetime('now') WHERE ${column} = ?`)
+    .prepare(`UPDATE ${table} SET ${column} = ?, updated_at = datetime('now', 'localtime') WHERE ${column} = ?`)
     .run(to, from);
   res.json({ ok: true, changed: info.changes });
 });

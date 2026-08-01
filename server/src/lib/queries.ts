@@ -41,8 +41,9 @@ ORDER BY (t.status = ?) ASC,
   (t.due_date IS NULL) ASC, t.due_date ASC, t.sort_order ASC, t.id ASC
 `;
 
+/** 'localtime' because erledigt_am is a naive local stamp — a UTC cutoff compares two clocks. */
 const archivedCond = (): string =>
-  `(t.status = ? AND t.erledigt_am IS NOT NULL AND t.erledigt_am <= datetime('now', '-${ARCHIVE_AFTER_DAYS} days'))`;
+  `(t.status = ? AND t.erledigt_am IS NOT NULL AND t.erledigt_am <= datetime('now', 'localtime', '-${ARCHIVE_AFTER_DAYS} days'))`;
 
 export interface TaskQuery {
   projectId?: unknown;

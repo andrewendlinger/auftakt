@@ -101,7 +101,7 @@ export function crudRouter(opts: CrudOptions): Router {
       }
       const db = getDb();
       const stmt = db.prepare(
-        `UPDATE ${table} SET sort_order = ?, updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL`,
+        `UPDATE ${table} SET sort_order = ?, updated_at = datetime('now', 'localtime') WHERE id = ? AND deleted_at IS NULL`,
       );
       db.transaction(() => {
         let changed = 0;
@@ -139,7 +139,13 @@ export function crudRouter(opts: CrudOptions): Router {
     }
     const cols = Object.keys(body);
     if (cols.length === 0) return res.status(400).json({ error: 'no fields to insert' });
-    const sql = `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`;
+    // Stamp created_at/updated_at here rather than leaving them to the column DEFAULT: SQLite
+    // cannot alter a DEFAULT in place, so a database created before FIX-06 still carries
+    // `datetime('now')` (UTC) on every table and would keep writing UTC forever. Neither column
+    // is in `writable`, so this stays server-controlled the way derived fields must be.
+    const stamped = [...cols, 'created_at', 'updated_at'];
+    const values = [...cols.map(() => '?'), "datetime('now', 'localtime')", "datetime('now', 'localtime')"];
+    const sql = `INSERT INTO ${table} (${stamped.join(', ')}) VALUES (${values.join(', ')})`;
     const info = db.prepare(sql).run(...cols.map((c) => coerce(body[c])));
     res.status(201).json(one(table, info.lastInsertRowid));
   });
@@ -161,7 +167,7 @@ export function crudRouter(opts: CrudOptions): Router {
     const cols = Object.keys(body);
     if (cols.length > 0) {
       const setClause = cols.map((c) => `${c} = ?`).join(', ');
-      db.prepare(`UPDATE ${table} SET ${setClause}, updated_at = datetime('now') WHERE id = ?`).run(
+      db.prepare(`UPDATE ${table} SET ${setClause}, updated_at = datetime('now', 'localtime') WHERE id = ?`).run(
         ...cols.map((c) => coerce(body[c])),
         req.params.id,
       );
@@ -172,7 +178,7 @@ export function crudRouter(opts: CrudOptions): Router {
   r.delete('/:id', (req, res) => {
     const info = getDb()
       .prepare(
-        `UPDATE ${table} SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL`,
+        `UPDATE ${table} SET deleted_at = datetime('now', 'localtime'), updated_at = datetime('now', 'localtime') WHERE id = ? AND deleted_at IS NULL`,
       )
       .run(req.params.id);
     res.json({ id: Number(req.params.id), deleted: info.changes > 0 });
@@ -182,7 +188,7 @@ export function crudRouter(opts: CrudOptions): Router {
     // changes === 0 means the id doesn't exist (e.g. hard-purged since deletion) — 404
     // instead of a misleading 200 with a null body.
     const info = getDb()
-      .prepare(`UPDATE ${table} SET deleted_at = NULL, updated_at = datetime('now') WHERE id = ?`)
+      .prepare(`UPDATE ${table} SET deleted_at = NULL, updated_at = datetime('now', 'localtime') WHERE id = ?`)
       .run(req.params.id);
     if (info.changes === 0) return res.status(404).json({ error: 'not found' });
     res.json(one(table, req.params.id));

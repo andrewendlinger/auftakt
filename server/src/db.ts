@@ -28,7 +28,7 @@ export interface Season {
   id: number;
   label: string;
   file: string; // basename inside the data dir
-  createdAt: string;
+  createdAt: string; // naive local "YYYY-MM-DD HH:MM:SS" (shared/time.ts), like every other stamp
   /** User override for the card's „Angelegt am …" line; absent = auto text. */
   subtitle?: string;
   /** User override for the card's auto Zeitraum line; absent = auto text. */
@@ -103,10 +103,29 @@ export function registryPath(): string {
   return join(dataDir(), 'seasons.json');
 }
 
+/**
+ * Rewrite any `createdAt` still stored as a UTC ISO string into the naive-local space format
+ * every other timestamp uses (see shared/time.ts). The landing page renders it as a plain
+ * calendar day, so a UTC value showed "Angelegt am" a day early for a season created after
+ * local midnight (PGS-12). Runs once — a converted registry no longer matches.
+ */
+function normalizeRegistryStamps(reg: Registry): Registry {
+  let changed = false;
+  for (const s of reg.seasons) {
+    if (typeof s.createdAt !== 'string' || !s.createdAt.includes('T')) continue;
+    const d = new Date(s.createdAt);
+    if (Number.isNaN(d.getTime())) continue;
+    s.createdAt = localStamp(d);
+    changed = true;
+  }
+  if (changed) saveRegistry(reg);
+  return reg;
+}
+
 function readRegistry(): Registry {
   try {
     const reg = JSON.parse(readFileSync(registryPath(), 'utf8')) as Registry;
-    if (reg && Array.isArray(reg.seasons) && reg.seasons.length) return reg;
+    if (reg && Array.isArray(reg.seasons) && reg.seasons.length) return normalizeRegistryStamps(reg);
   } catch {
     /* bootstrap below */
   }
@@ -124,7 +143,7 @@ function readRegistry(): Registry {
   // First run: register the (possibly pre-existing) legacy DB as the first season.
   const reg: Registry = {
     activeId: 1,
-    seasons: [{ id: 1, label: DEFAULT_SEASON_LABEL, file: legacyFileName(), createdAt: new Date().toISOString() }],
+    seasons: [{ id: 1, label: DEFAULT_SEASON_LABEL, file: legacyFileName(), createdAt: localStamp() }],
   };
   saveRegistry(reg);
   return reg;
@@ -243,7 +262,7 @@ export function createSeason(label: string): Season {
     registered.has(file) || ['', '-wal', '-shm'].some((sfx) => existsSync(join(dataDir(), file + sfx)));
   let id = Math.max(0, ...reg.seasons.map((s) => s.id)) + 1;
   while (taken(`season-${id}.db`)) id++;
-  const season: Season = { id, label, file: `season-${id}.db`, createdAt: new Date().toISOString() };
+  const season: Season = { id, label, file: `season-${id}.db`, createdAt: localStamp() };
   const fresh = new Database(join(dataDir(), season.file));
   fresh.pragma('journal_mode = WAL');
   fresh.pragma('foreign_keys = ON');
@@ -746,8 +765,8 @@ CREATE TABLE IF NOT EXISTS artists (
   notes      TEXT,
   image      TEXT,
   sort_order INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   deleted_at TEXT
 );
 
@@ -760,8 +779,8 @@ CREATE TABLE IF NOT EXISTS projects (
   description TEXT,
   color       TEXT,
   sort_order  INTEGER NOT NULL DEFAULT 0,
-  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   deleted_at  TEXT
 );
 
@@ -776,8 +795,8 @@ CREATE TABLE IF NOT EXISTS contacts (
   notes      TEXT,
   color      TEXT,
   sort_order INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   deleted_at TEXT,
   CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) = 1)
 );
@@ -794,8 +813,8 @@ CREATE TABLE IF NOT EXISTS events (
   location   TEXT,
   notes      TEXT,
   sort_order INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   deleted_at TEXT,
   CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) = 1)
 );
@@ -814,8 +833,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   erledigt_am   TEXT,
   parent_id     INTEGER REFERENCES tasks(id),
   sort_order    INTEGER NOT NULL DEFAULT 0,
-  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at    TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   deleted_at    TEXT,
   -- 0 parents = a season-wide ("Festival") todo, 1 = artist-level or project todo.
   CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) <= 1)
@@ -834,8 +853,8 @@ CREATE TABLE IF NOT EXISTS custom_columns (
   enabled    INTEGER NOT NULL DEFAULT 1,
   deletable  INTEGER NOT NULL DEFAULT 1,
   sort_order INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   deleted_at TEXT
 );
 
@@ -850,8 +869,8 @@ CREATE TABLE IF NOT EXISTS custom_sections (
   type       TEXT NOT NULL CHECK (type IN ('text', 'links')),
   value      TEXT,
   sort_order INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   deleted_at TEXT,
   -- 0 parents = a dashboard (Übersicht) widget, 1 = artist- or project-page widget.
   CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) <= 1)
@@ -869,8 +888,8 @@ CREATE TABLE IF NOT EXISTS links (
   color      TEXT,
   category   TEXT,
   sort_order INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   deleted_at TEXT,
   CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) + (event_id IS NOT NULL) + (task_id IS NOT NULL) + (section_id IS NOT NULL) = 1)
 );
@@ -994,11 +1013,15 @@ export function getDb(): Database.Database {
   if (instance) return instance;
   const path = resolveDbPath();
   mkdirSync(dirname(path), { recursive: true });
+  // Decided before the file is opened: `new Database()` creates it, after which nothing can
+  // tell a brand-new database from one whose stamps still need converting (migrateStampsToLocal).
+  const isFresh = !existsSync(path);
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA);
   ensureDefaultSettings(db);
+  migrateStampsToLocal(db, isFresh);
   migrateColumns(db);
   ensureBuiltinColumns(db);
   migrateTaskStatus(db);
@@ -1188,6 +1211,56 @@ export function backupStamp(): string {
   return fileStamp();
 }
 
+/** The timestamp columns the naive-local convention applies to (shared/time.ts). */
+const STAMP_COLUMNS = new Set(['created_at', 'updated_at', 'deleted_at', 'erledigt_am']);
+
+/**
+ * Marker for migrateStampsToLocal. Deliberately NOT in DEFAULT_SETTINGS: ensureDefaultSettings
+ * inserts those into every database it opens, including the legacy ones this migration exists
+ * for, which would mark them converted before they were. Not in WRITABLE_SETTINGS either, so no
+ * client can flip it.
+ */
+const STAMPS_LOCAL_KEY = 'stamps_localtime';
+
+/**
+ * One-shot conversion of the UTC timestamps written before FIX-06 into local time.
+ *
+ * Without it the convention would only hold for rows written from now on: a database would mix
+ * UTC and local stamps in the same column with nothing to tell them apart, and every row
+ * predating the change would keep rendering a day early near midnight. `datetime(x, 'localtime')`
+ * applies the offset that was in force at that instant, so historical DST is handled.
+ *
+ * Guarded by a settings marker rather than by inspecting the data — a second pass would shift
+ * everything again. A freshly created file is marked without converting (its rows come from the
+ * new `datetime('now', 'localtime')` defaults), which is why getDb() has to decide *before*
+ * `db.exec(SCHEMA)` whether the file existed. Imports and restored backups arrive through the
+ * same getDb() path, so a pre-FIX-06 file dropped in later still gets converted exactly once.
+ */
+function migrateStampsToLocal(db: Database.Database, isFresh: boolean): void {
+  if (getSetting(db, STAMPS_LOCAL_KEY) === '1') return;
+  if (!isFresh) {
+    const tables = (
+      db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+        .all() as Array<{ name: string }>
+    ).map((t) => t.name);
+    const tx = db.transaction(() => {
+      for (const table of tables) {
+        const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>)
+          .map((c) => c.name)
+          .filter((c) => STAMP_COLUMNS.has(c));
+        if (cols.length === 0) continue;
+        // COALESCE back to the stored value: datetime() returns NULL for anything it cannot
+        // parse, so a malformed stamp would otherwise be erased instead of left alone.
+        const set = cols.map((c) => `${c} = COALESCE(datetime(${c}, 'localtime'), ${c})`).join(', ');
+        db.prepare(`UPDATE ${table} SET ${set}`).run();
+      }
+    });
+    tx();
+  }
+  setSetting(db, STAMPS_LOCAL_KEY, '1');
+}
+
 /** Add the data-driven-column fields to custom_columns on databases created before they existed. */
 function migrateColumns(db: Database.Database): void {
   const have = new Set(
@@ -1262,11 +1335,16 @@ export function ensureBuiltinColumns(db: Database.Database): void {
     'SELECT id, options FROM custom_columns WHERE key = ? AND deleted_at IS NULL LIMIT 1',
   );
   const ins = db.prepare(
-    `INSERT INTO custom_columns (name, type, scope, project_id, options, key, kind, enabled, deletable, sort_order)
-     VALUES (@name, @type, 'global', NULL, @options, @key, 'builtin', @enabled, @deletable, @sort_order)`,
+    // created_at/updated_at are written out rather than left to the column DEFAULT: SQLite
+    // cannot alter a DEFAULT in place, so a database created before FIX-06 still carries
+    // `datetime('now')` there and would keep stamping UTC (see STAMP_TABLES).
+    `INSERT INTO custom_columns (name, type, scope, project_id, options, key, kind, enabled, deletable, sort_order,
+                                 created_at, updated_at)
+     VALUES (@name, @type, 'global', NULL, @options, @key, 'builtin', @enabled, @deletable, @sort_order,
+             datetime('now', 'localtime'), datetime('now', 'localtime'))`,
   );
   const repair = db.prepare(
-    "UPDATE custom_columns SET options = ?, updated_at = datetime('now') WHERE id = ?",
+    "UPDATE custom_columns SET options = ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
   );
   const tx = db.transaction(() => {
     for (const b of BUILTIN_COLUMNS) {
@@ -1322,8 +1400,8 @@ function migrateTasksAllowGeneral(db: Database.Database): void {
         custom_values TEXT NOT NULL DEFAULT '{}',
         erledigt_am   TEXT,
         sort_order    INTEGER NOT NULL DEFAULT 0,
-        created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        created_at    TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+        updated_at    TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
         deleted_at    TEXT,
         CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) <= 1)
       );
@@ -1370,8 +1448,8 @@ function migrateEventsOptionalStart(db: Database.Database): void {
         location   TEXT,
         notes      TEXT,
         sort_order INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
         deleted_at TEXT,
         CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) = 1)
       );
@@ -1445,8 +1523,8 @@ function migrateLinksSectionParent(db: Database.Database): void {
         color      TEXT,
         category   TEXT,
         sort_order INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
         deleted_at TEXT,
         CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) + (event_id IS NOT NULL) + (task_id IS NOT NULL) + (section_id IS NOT NULL) = 1)
       );
@@ -1536,8 +1614,10 @@ export function purgeExpired(db: Database.Database): void {
   // loop is also what makes this independent of that snapshot behaviour, which SQLite does not
   // contractually guarantee — a release evaluating the guard against live state would simply
   // converge sooner, never unsafely (the child is gone before the parent).
+  // 'localtime' before the offset: deleted_at is naive local, so the cutoff has to be too, and
+  // the arithmetic then runs on the local calendar (shared/time.ts).
   const { cutoff } = db
-    .prepare(`SELECT datetime('now', ?) AS cutoff`)
+    .prepare(`SELECT datetime('now', 'localtime', ?) AS cutoff`)
     .get(`-${PURGE_AFTER_DAYS} days`) as { cutoff: string };
 
   // table/child/fk all come from the hardcoded cascade graph, never from the client.
