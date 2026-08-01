@@ -93,6 +93,8 @@ export function SettingsTasksTab() {
 
   if (isLoading || !settings) return <Spinner />;
 
+  const userCols = globalCols.filter((c) => c.kind === 'custom');
+
   return (
     <div className="space-y-8">
       <Card className="p-5">
@@ -104,10 +106,15 @@ export function SettingsTasksTab() {
           Aufgaben-Tabellen erscheinen. Projektspezifische Spalten legst du auf der jeweiligen
           Projektseite an.
         </p>
+        {/* Only the user's own columns: the query has no `kind` filter and ensureBuiltinColumns()
+            inserts every built-in with scope 'global', so this list used to name Status, Aufgabe,
+            Priorität, Fällig, Kommentar, Zuletzt bearbeitet and Erstellt am under copy calling
+            them extra columns the user added — and the empty state below could never render
+            (PGS-18). CustomColumnManager still gets the full list; it manages built-ins too. */}
         <p className="mt-2 text-sm text-neutral-500">
-          {globalCols.length === 0
+          {userCols.length === 0
             ? 'Noch keine globalen Spalten angelegt.'
-            : globalCols.map((c) => c.name).join(', ')}
+            : userCols.map((c) => c.name).join(', ')}
         </p>
       </Card>
 
