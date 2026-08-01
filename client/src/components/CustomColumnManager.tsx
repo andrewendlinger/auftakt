@@ -14,7 +14,13 @@ import type {
 import { parseColumnOptions } from '../api/types';
 import { arrayMove } from '../lib/arrays';
 import { OPTION_PALETTE } from '../lib/selectOptions';
-import { OptionsEditor, normalizeOptions, removedOptions, validateOptions } from './OptionsEditor';
+import {
+  OptionsEditor,
+  countWithNoun,
+  normalizeOptions,
+  removedOptions,
+  validateOptions,
+} from './OptionsEditor';
 import { OptionRemovalDialog, type OptionRemoval } from './OptionRemovalDialog';
 import { useInvalidateAll, useOptionUsage, useUndoableDelete, resourceUndo } from '../hooks';
 
@@ -59,6 +65,13 @@ function countsFor(
 /** Every option-carrying column here lives on tasks, so the count is always Aufgaben. */
 const TASK_NOUN = { one: 'Aufgabe', many: 'Aufgaben' };
 
+/** A pending destructive column action, awaiting its dialog. `used` matters for `delete` only. */
+interface ColumnConfirm {
+  kind: 'hide' | 'delete';
+  col: CustomColumn;
+  used: number;
+}
+
 export function CustomColumnManager({
   columns,
   projectId,
@@ -72,6 +85,7 @@ export function CustomColumnManager({
   const del = useUndoableDelete();
   const { usage } = useOptionUsage();
   const [editing, setEditing] = useState<CustomColumn | null>(null);
+  const [confirming, setConfirming] = useState<ColumnConfirm | null>(null);
 
   // On a project page, global columns are shown read-only; only project columns are managed here.
   const managed = useMemo(
@@ -98,28 +112,30 @@ export function CustomColumnManager({
     await invalidate();
   };
 
-  const toggleEnabled = async (col: CustomColumn) => {
-    if (col.enabled) {
-      const ok = window.confirm(
-        `Spalte „${col.name}“ ausblenden? Die vorhandenen Werte bleiben erhalten und die Spalte kann jederzeit wieder eingeblendet werden.`,
-      );
-      if (!ok) return;
-    }
-    await api.customColumns.update(col.id, { enabled: col.enabled ? 0 : 1 });
+  const setEnabled = async (col: CustomColumn, enabled: 0 | 1) => {
+    setConfirming(null);
+    await api.customColumns.update(col.id, { enabled });
     await invalidate();
   };
 
-  const remove = async (col: CustomColumn) => {
+  const toggleEnabled = (col: CustomColumn) => {
+    // Showing a column again is harmless; hiding one asks first.
+    if (!col.enabled) return setEnabled(col, 1);
+    setConfirming({ kind: 'hide', col, used: 0 });
+  };
+
+  const remove = (col: CustomColumn) => {
     // Counted across ALL tasks with no project filter, because that is exactly the set the
     // delete destroys. The old count filtered a project column's tasks by `project_id`, but
     // MoveTaskDialog deliberately keeps those values on a task moved elsewhere („bleiben
     // gespeichert, sind am neuen Ort aber nicht sichtbar"), so it reported 0 uses and showed
     // the harmless prompt while the retained values became permanently unreachable (TTU-10).
     const used = Object.values(usage?.custom_columns[String(col.id)] ?? {}).reduce((a, b) => a + b, 0);
-    const msg = used
-      ? `Die Spalte „${col.name}“ enthält Werte in ${used} Aufgabe(n). Wirklich löschen? Die Werte gehen verloren.`
-      : `Spalte „${col.name}“ löschen?`;
-    if (!window.confirm(msg)) return;
+    setConfirming({ kind: 'delete', col, used });
+  };
+
+  const confirmDelete = async (col: CustomColumn) => {
+    setConfirming(null);
     // On the undo path like every other delete in the app: an undo toast now, and the row in
     // the Archiv trash for 30 days after that. Previously a mis-click here removed a column
     // used across the whole season with no recovery short of restoring a backup (TTU-25).
@@ -180,6 +196,56 @@ export function CustomColumnManager({
       </div>
 
       {editing && <ColumnEditModal col={editing} onClose={() => setEditing(null)} onSaved={invalidate} />}
+      {/* The app's own Modal, not window.confirm: in Electron that renders OS chrome with
+          English „OK/Cancel" buttons and blocks the renderer thread, and TaskTable already
+          confirms its *less* destructive task delete through a styled German dialog. A real
+          dialog can also offer „Nur ausblenden", which a confirm string never could (TTU-28). */}
+      {confirming?.kind === 'hide' && (
+        <Modal
+          title={`Spalte „${confirming.col.name}“ ausblenden`}
+          onClose={() => setConfirming(null)}
+          footer={
+            <>
+              <Btn onClick={() => setConfirming(null)}>Abbrechen</Btn>
+              <Btn variant="primary" onClick={() => void setEnabled(confirming.col, 0)}>
+                Ausblenden
+              </Btn>
+            </>
+          }
+        >
+          <p className="text-sm text-neutral-600">
+            Die vorhandenen Werte bleiben erhalten und die Spalte kann jederzeit wieder
+            eingeblendet werden.
+          </p>
+        </Modal>
+      )}
+      {confirming?.kind === 'delete' && (
+        <Modal
+          title={`Spalte „${confirming.col.name}“ löschen`}
+          onClose={() => setConfirming(null)}
+          footer={
+            <>
+              <Btn onClick={() => setConfirming(null)}>Abbrechen</Btn>
+              {confirming.col.enabled ? (
+                <Btn onClick={() => void setEnabled(confirming.col, 0)}>Nur ausblenden</Btn>
+              ) : null}
+              <Btn variant="danger" onClick={() => void confirmDelete(confirming.col)}>
+                Löschen
+              </Btn>
+            </>
+          }
+        >
+          <p className="text-sm text-neutral-600">
+            {confirming.used > 0
+              ? `Die Spalte enthält Werte in ${countWithNoun(confirming.used, TASK_NOUN)}. Beim Löschen gehen diese Werte verloren.`
+              : 'Die Spalte enthält noch keine Werte.'}
+          </p>
+          <p className="mt-2 text-sm text-neutral-500">
+            Gelöschte Spalten liegen 30 Tage im Papierkorb und lassen sich im Archiv
+            wiederherstellen.
+          </p>
+        </Modal>
+      )}
     </Modal>
   );
 }
