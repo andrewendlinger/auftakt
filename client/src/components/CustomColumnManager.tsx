@@ -11,7 +11,7 @@ import type {
   OptionUsage,
   ReassignField,
 } from '../api/types';
-import { parseColumnOptions, parseCustomValues } from '../api/types';
+import { parseColumnOptions } from '../api/types';
 import { arrayMove } from '../lib/arrays';
 import { OPTION_PALETTE } from '../lib/selectOptions';
 import { OptionsEditor, normalizeOptions, removedOptions, validateOptions } from './OptionsEditor';
@@ -69,6 +69,7 @@ export function CustomColumnManager({
   onClose: () => void;
 }) {
   const invalidate = useInvalidateAll();
+  const { usage } = useOptionUsage();
   const [editing, setEditing] = useState<CustomColumn | null>(null);
 
   // On a project page, global columns are shown read-only; only project columns are managed here.
@@ -107,12 +108,12 @@ export function CustomColumnManager({
   };
 
   const remove = async (col: CustomColumn) => {
-    const params = col.scope === 'project' && col.project_id ? { project_id: col.project_id, scope: 'all' } : { scope: 'all' };
-    const tasks = await api.tasks.list(params);
-    const used = tasks.filter((t) => {
-      const v = parseCustomValues(t.custom_values)[String(col.id)];
-      return v !== undefined && v !== null && v !== '' && v !== false;
-    }).length;
+    // Counted across ALL tasks with no project filter, because that is exactly the set the
+    // delete destroys. The old count filtered a project column's tasks by `project_id`, but
+    // MoveTaskDialog deliberately keeps those values on a task moved elsewhere („bleiben
+    // gespeichert, sind am neuen Ort aber nicht sichtbar"), so it reported 0 uses and showed
+    // the harmless prompt while the retained values became permanently unreachable (TTU-10).
+    const used = Object.values(usage?.custom_columns[String(col.id)] ?? {}).reduce((a, b) => a + b, 0);
     const msg = used
       ? `Die Spalte „${col.name}“ enthält Werte in ${used} Aufgabe(n). Wirklich löschen? Die Werte gehen verloren.`
       : `Spalte „${col.name}“ löschen?`;
