@@ -315,12 +315,6 @@ app.whenReady().then(async () => {
       app.exit(1);
       return;
     }
-    try {
-      const backupDir = await ensureBackupDir();
-      if (backupDir) await runStartupBackup(PORT, backupDir);
-    } catch (err) {
-      await reportBackupProblem(err);
-    }
   }
 
   Menu.setApplicationMenu(
@@ -328,8 +322,20 @@ app.whenReady().then(async () => {
   );
   await createWindow();
 
-  // Silent update check; the result surfaces as a hint in the Settings card.
-  if (!isDev) startSilentStartupCheck();
+  // Deliberately not awaited (ELP-08): the startup backup VACUUMs every season and
+  // prunes the restore points — real disk I/O the window does not depend on, which on
+  // a large festival database left the user staring at a blank dock icon. Running it
+  // after the window is up also means the first-run folder prompt appears over the app
+  // instead of over an empty desktop.
+  if (!isDev) {
+    void (async () => {
+      const backupDir = await ensureBackupDir();
+      if (backupDir) await runStartupBackup(PORT, backupDir);
+    })().catch(reportBackupProblem);
+
+    // Silent update check; the result surfaces as a hint in the Settings card.
+    startSilentStartupCheck();
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();
