@@ -1127,16 +1127,44 @@ function migrateTaskParentId(db: Database.Database): void {
   db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id)');
 }
 
-/** Insert the built-in task columns (Status, Aufgabe, Priorität, Fällig, Kommentar) if missing. Idempotent. */
+/** Whether a stored `options` blob still holds at least one usable category. */
+function hasStoredOptions(json: unknown): boolean {
+  if (typeof json !== 'string' || !json) return false;
+  try {
+    const v: unknown = JSON.parse(json);
+    return Array.isArray(v) && v.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Insert the built-in task columns (Status, Aufgabe, Priorität, Fällig, Kommentar) if missing,
+ * and restore the categories of one whose options were wiped. Idempotent.
+ *
+ * The repair exists because emptying a built-in's option list used to be reachable from the
+ * editor and left no way back: every pill falls back to the „—" placeholder with an empty
+ * dropdown, and the editor only takes a *label*, so the machine values can't be re-typed. New
+ * writes are refused on both sides now (TTU-02), but a database already in that state would
+ * stay there forever, because the insert below only covers *missing* built-ins. Restoring the
+ * defaults does not re-link tasks holding a season's own former values — those still need
+ * re-tagging — but it makes the column usable again.
+ */
 export function ensureBuiltinColumns(db: Database.Database): void {
-  const has = db.prepare('SELECT 1 FROM custom_columns WHERE key = ? AND deleted_at IS NULL LIMIT 1');
+  const find = db.prepare(
+    'SELECT id, options FROM custom_columns WHERE key = ? AND deleted_at IS NULL LIMIT 1',
+  );
   const ins = db.prepare(
     `INSERT INTO custom_columns (name, type, scope, project_id, options, key, kind, enabled, deletable, sort_order)
      VALUES (@name, @type, 'global', NULL, @options, @key, 'builtin', @enabled, @deletable, @sort_order)`,
   );
+  const repair = db.prepare(
+    "UPDATE custom_columns SET options = ?, updated_at = datetime('now') WHERE id = ?",
+  );
   const tx = db.transaction(() => {
     for (const b of BUILTIN_COLUMNS) {
-      if (!has.get(b.key)) {
+      const row = find.get(b.key) as { id: number; options: unknown } | undefined;
+      if (!row) {
         ins.run({
           name: b.name,
           type: b.type,
@@ -1146,6 +1174,8 @@ export function ensureBuiltinColumns(db: Database.Database): void {
           deletable: b.deletable,
           sort_order: b.sort_order,
         });
+      } else if (b.options && !hasStoredOptions(row.options)) {
+        repair.run(JSON.stringify(b.options), row.id);
       }
     }
   });

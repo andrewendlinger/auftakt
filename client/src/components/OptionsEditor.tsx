@@ -77,6 +77,8 @@ export function OptionsEditor({
 export interface OptionRules {
   /** Status column: one option must carry `done`, or done-ness silently moves to another. */
   requireDone?: boolean;
+  /** Built-in option columns (Status, Priorität): an empty list can't be undone from the UI. */
+  requireNonEmpty?: boolean;
 }
 
 /**
@@ -89,6 +91,13 @@ export interface OptionRules {
  */
 export function validateOptions(draft: CustomColumnOption[], rules: OptionRules = {}): string | null {
   const cleaned = normalizeOptions(draft);
+  // Emptying a built-in's categories is a one-way door: every pill falls back to the „—"
+  // placeholder with an empty dropdown, so no task's status can be changed from any table
+  // again — and the editor only takes a *label*, so the original machine values ('active',
+  // 'Fertig', …) can never be re-typed. Mirrored server-side (TTU-02).
+  if (rules.requireNonEmpty && cleaned.length === 0) {
+    return 'Mindestens eine Kategorie ist erforderlich.';
+  }
   // Never infer the done flag. Promoting whatever option happens to be last made deleting the
   // „Erledigt" category silently mark e.g. „Blockiert" as done: every blocked task struck
   // through, sunk to the bottom, stamped erledigt_am and archived 30 days later (TTU-01).

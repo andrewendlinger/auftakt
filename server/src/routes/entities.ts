@@ -70,6 +70,32 @@ export const customSectionsRouter = crudRouter({
   },
 });
 
+/** Column types whose `options` hold editable coloured categories. */
+const OPTION_TYPES = new Set(['select', 'status', 'priority']);
+
+interface ColumnOption {
+  label?: unknown;
+  value?: unknown;
+}
+
+/**
+ * Read a request's `options` as an array. The crud factory stringifies JSON columns *after*
+ * the transform, so the value here is still whatever the client sent — normally an array,
+ * but a hand-rolled request may send the JSON text.
+ */
+function readOptions(raw: unknown): ColumnOption[] {
+  if (Array.isArray(raw)) return raw as ColumnOption[];
+  if (typeof raw === 'string') {
+    try {
+      const v: unknown = JSON.parse(raw);
+      if (Array.isArray(v)) return v as ColumnOption[];
+    } catch {
+      /* fall through to the 400 below */
+    }
+  }
+  throw new HttpError(400, 'Ungültige Kategorien.');
+}
+
 export const customColumnsRouter = crudRouter({
   table: 'custom_columns',
   writable: ['name', 'type', 'scope', 'project_id', 'options', 'icon', 'enabled', 'deletable', 'sort_order'],
@@ -77,6 +103,30 @@ export const customColumnsRouter = crudRouter({
   filters: ['scope', 'project_id'],
   jsonColumns: ['options'],
   order: 'sort_order ASC, id ASC',
+  /**
+   * The server-side half of the option invariants the editor enforces (FIX-03). `options` is a
+   * plain writable column, so the client guard alone is not enough — a stale tab, a script or a
+   * future importer can PATCH a set that leaves the column unusable.
+   *
+   * Deliberately *not* checked here: that a Status column carries a `done` flag. Legacy seasons
+   * store option sets that predate the flag entirely, and copySeasonData/importers write those
+   * rows directly with SQL; rejecting them at the route would 400 an edit to data the app itself
+   * produced. Requiring the flag is the editor's job (TTU-01), where the user can supply it.
+   */
+  transform: (body, { mode, existing }) => {
+    if (!('options' in body) || body.options == null) return body;
+    const type = String(body.type ?? existing?.type ?? '');
+    if (!OPTION_TYPES.has(type)) return body;
+    const options = readOptions(body.options);
+    // Built-in option columns (Status, Priorität) with no categories are unrecoverable from the
+    // UI, and ensureBuiltinColumns() only inserts *missing* built-ins, so nothing restores them
+    // on the next launch. `kind` is not client-writable, so a create is always custom (TTU-02).
+    const kind = mode === 'update' ? String(existing?.kind ?? 'custom') : 'custom';
+    if (kind === 'builtin' && options.length === 0) {
+      throw new HttpError(400, 'Diese Spalte braucht mindestens eine Kategorie.');
+    }
+    return body;
+  },
 });
 
 /** A completion date the server itself wrote: `YYYY-MM-DD`, optionally with a time. */

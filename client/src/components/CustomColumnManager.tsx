@@ -242,7 +242,10 @@ function ColumnEditModal({
   // Validated live rather than on click, so the disabled „Speichern" always comes with the
   // reason next to the rows causing it — including when the column was already in a bad state
   // (a legacy Status column whose options predate the `done` flag).
-  const problem = editableOptions ? validateOptions(options, { requireDone: allowDone }) : null;
+  // A user-added „Auswahl" column may legitimately still be empty; a built-in one may not.
+  const problem = editableOptions
+    ? validateOptions(options, { requireDone: allowDone, requireNonEmpty: col.kind === 'builtin' })
+    : null;
 
   const save = async () => {
     if (!name.trim() || problem) return;
