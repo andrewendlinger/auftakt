@@ -39,7 +39,9 @@ npm run dist:mac    # or dist:win
 ### 2 · The prompt arrives once there is data
 
 - [ ] Add an artist, quit, relaunch → the backup-folder prompt appears now.
-- [ ] Decline it → relaunch → it does **not** appear again (the amber hint remains in Settings).
+- [ ] Decline it → relaunch → it appears **again**, and keeps appearing until a folder is set
+      (the amber hint remains in Settings meanwhile). **Never asking again is the old bug.**
+- [ ] Choose a folder → relaunch → the prompt is gone for good.
 - [ ] Settings → "Wählen…" still works and sets the folder.
 
 ### 2b · A folder the backup cannot use is refused when it is picked (Windows)

@@ -259,8 +259,11 @@ async function createWindow(): Promise<void> {
 /**
  * Ask for a backup folder only once there is data worth protecting — on a first
  * launch the database is empty, and prompting then just produced an empty backup.
- * The prompt is marked as shown either way, so a declined dialog does not reappear
- * every launch; Settings keeps a "Wählen…" button (and warns while none is set).
+ *
+ * The prompt is marked as shown only once a folder was actually saved (ELP-05).
+ * Marking it before the cancel guard meant one stray click on „Abbrechen" — or a
+ * failed save — permanently disabled the prompt, and the app then ran for months
+ * with no backup and nothing but a hint in a Settings tab to say so.
  */
 async function ensureBackupDir(): Promise<string> {
   const status = (await (await fetch(`http://localhost:${PORT}/api/backup/status`)).json()) as {
@@ -272,9 +275,9 @@ async function ensureBackupDir(): Promise<string> {
   if (!status.hasData || status.prompted) return '';
 
   const chosen = await promptForDirectory();
-  await post('backup/prompted', {});
   if (!chosen) return '';
   await patchSettings({ backup_dir: chosen });
+  await post('backup/prompted', {});
   return chosen;
 }
 

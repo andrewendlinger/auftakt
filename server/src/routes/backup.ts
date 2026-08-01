@@ -79,7 +79,9 @@ export const backupRouter = Router();
 
 /**
  * What Electron needs to decide whether to prompt for a backup folder on startup.
- * `prompted` keeps the first-launch dialog from reappearing every single launch.
+ * `prompted` keeps the first-launch dialog from reappearing once a folder has been
+ * chosen; Electron sets it only after the choice was saved, so a cancelled prompt
+ * comes back on the next launch instead of disabling backups for good (ELP-05).
  */
 backupRouter.get('/status', (_req, res) => {
   const db = getDb();
