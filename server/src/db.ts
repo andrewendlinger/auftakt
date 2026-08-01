@@ -3,6 +3,7 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   statSync,
@@ -1061,6 +1062,9 @@ export function importIntoActiveSeason(candidatePath: string, backupDir: string)
     backup = preImportBackupPath(dest, backupDir);
     mkdirSync(dirname(backup), { recursive: true });
     snapshotDb(dest, backup);
+    // The backup folder's own pre-import-* snapshots are pruned by the backup run; these
+    // sit in the data dir, which nothing else sweeps.
+    if (!backupDir) prunePreImportFiles(dest);
   }
 
   const staged = `${dest}.import-tmp`;
@@ -1089,12 +1093,36 @@ export function importIntoActiveSeason(candidatePath: string, backupDir: string)
   return { backup };
 }
 
+/** How many dated restore points and pre-import snapshots are kept. */
+export const BACKUP_KEEP = 30;
+
 /** Pre-import safety copy: into the backup folder when there is one, else next to the DB. */
 function preImportBackupPath(dbPath: string, backupDir: string): string {
   const name = `${basename(dbPath, '.db')}.db`;
   return backupDir
     ? join(backupDir, `pre-import-${backupStamp()}`, name)
     : `${dbPath}.pre-import-${backupStamp()}.bak`;
+}
+
+/**
+ * Without a backup folder the snapshot lands next to the live database, where the backup
+ * run's pruning never looks — so every import used to leave another .bak behind for good
+ * (DBW-12). The stamp sorts lexicographically, so the newest BACKUP_KEEP are the tail.
+ */
+function prunePreImportFiles(dbPath: string): void {
+  const dir = dirname(dbPath);
+  const prefix = `${basename(dbPath)}.pre-import-`;
+  for (const stale of readdirSync(dir)
+    .filter((f) => f.startsWith(prefix) && f.endsWith('.bak'))
+    .sort()
+    .reverse()
+    .slice(BACKUP_KEEP)) {
+    try {
+      unlinkSync(join(dir, stale));
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 /** Filesystem-safe timestamp shared by every backup folder name. */

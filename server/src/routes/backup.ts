@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import {
+  BACKUP_KEEP,
   backupStamp,
   getDb,
   getSetting,
@@ -14,17 +15,26 @@ import {
   validateImportCandidate,
 } from '../db';
 
-/** Number of dated restore points kept in the backup folder. */
-const KEEP = 30;
-
-/** Restore-point folders written by runBackup(), newest first. */
-function restorePoints(dir: string): string[] {
+/** Dated folders this app writes into the backup folder, newest first. */
+function datedFolders(dir: string, prefix: string): string[] {
   if (!existsSync(dir)) return [];
+  const pattern = new RegExp(`^${prefix}-\\d{4}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-\\d{2}$`);
   return readdirSync(dir)
-    .filter((f) => /^auftakt-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$/.test(f))
+    .filter((f) => pattern.test(f))
     .filter((f) => statSync(join(dir, f)).isDirectory())
     .sort()
     .reverse();
+}
+
+/** Drop everything past the newest BACKUP_KEEP folders with this prefix. */
+function pruneDatedFolders(dir: string, prefix: string): void {
+  for (const stale of datedFolders(dir, prefix).slice(BACKUP_KEEP)) {
+    try {
+      rmSync(join(dir, stale), { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 /**
@@ -55,13 +65,11 @@ export function runBackup(backupDir: string): { dir: string; files: string[] } {
     files.push(basename(registry));
   }
 
-  for (const stale of restorePoints(backupDir).slice(KEEP)) {
-    try {
-      rmSync(join(backupDir, stale), { recursive: true, force: true });
-    } catch {
-      /* ignore */
-    }
-  }
+  pruneDatedFolders(backupDir, 'auftakt');
+  // Pre-import snapshots live in the same folder but under their own prefix, so nothing
+  // ever cleaned them up and the backup folder grew with every import (DBW-12). Pruned
+  // on their own count, so heavy importing cannot evict the dated restore points.
+  pruneDatedFolders(backupDir, 'pre-import');
   return { dir: target, files };
 }
 

@@ -273,13 +273,21 @@ if (process.platform === 'win32' || process.getuid?.() === 0) {
 }
 
 // --- pruning keeps the newest KEEP restore points and drops the oldest ---
-const points = () =>
-  readdirSync(backupDir).filter((f) => /^auftakt-/.test(f) && statSync(join(backupDir, f)).isDirectory());
+const folders = (prefix) =>
+  readdirSync(backupDir).filter(
+    (f) => f.startsWith(`${prefix}-`) && statSync(join(backupDir, f)).isDirectory(),
+  );
+const points = () => folders('auftakt');
 for (let d = 1; d <= 33; d++) mkdirSync(join(backupDir, `auftakt-2020-01-${String(d).padStart(2, '0')}-00-00-00`));
+// Pre-import snapshots were never pruned at all, so the folder grew with every import (DBW-12).
+for (let d = 1; d <= 33; d++) mkdirSync(join(backupDir, `pre-import-2020-01-${String(d).padStart(2, '0')}-00-00-00`));
 const legacy = join(backupDir, 'auftakt-2019-01-01-00-00-00.db');
 await import('node:fs').then((fs) => fs.writeFileSync(legacy, 'legacy flat backup'));
 
 await post('backup', { dir: backupDir });
+const preImport = folders('pre-import');
+check('pruning caps pre-import snapshots at 30', preImport.length === 30, `${preImport.length} übrig`);
+check('pruning drops the oldest pre-import snapshot first', !preImport.includes('pre-import-2020-01-01-00-00-00'));
 const kept = points();
 check('pruning caps restore points at 30', kept.length === 30, `${kept.length} übrig`);
 check('pruning drops the oldest first', !kept.includes('auftakt-2020-01-01-00-00-00'));
