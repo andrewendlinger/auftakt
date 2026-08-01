@@ -509,7 +509,12 @@ export function TaskTable({
     setSort((s) => (s?.id === id ? { id, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { id, dir: 'asc' }));
   };
 
-  const defaultStatus = statusOptions[0]?.value ?? 'new';
+  // Display order and default status are separate concerns. OptionsEditor's ↑ ↓ exist so users
+  // can order the pill dropdown (and with it `status asc` sorting), so taking whatever sits
+  // first meant that moving „Erledigt" to the top made every new task be born done: greyed out
+  // and struck through, stamped erledigt_am by the server transform, sunk to the bottom of the
+  // table and on its way to the archive in 30 days (TTU-36).
+  const defaultStatus = (statusOptions.find((o) => !o.done) ?? statusOptions[0])?.value ?? 'new';
 
   return (
     <div className="overflow-x-auto rounded-2xl bg-white shadow-sm ring-1 ring-black/5">
