@@ -89,12 +89,21 @@ function waitForServer(timeoutMs = 10000): Promise<void> {
   });
 }
 
+/**
+ * PATCH a setting and treat a non-OK response as the failure it is (ELP-04): a
+ * silently dropped `backup_dir` save leaves the user believing backups are set up
+ * while no startup backup ever runs again.
+ */
 async function patchSettings(patch: Record<string, unknown>): Promise<void> {
-  await fetch(`http://localhost:${PORT}/api/settings`, {
+  const r = await fetch(`http://localhost:${PORT}/api/settings`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(patch),
   });
+  if (!r.ok) {
+    const { error } = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(error ?? r.statusText);
+  }
 }
 
 async function promptForDirectory(): Promise<string | null> {
@@ -107,10 +116,19 @@ async function promptForDirectory(): Promise<string | null> {
 
 async function chooseBackupDir(): Promise<void> {
   const dir = await promptForDirectory();
-  if (dir) {
+  if (!dir) return;
+  try {
     await patchSettings({ backup_dir: dir });
-    mainWindow?.webContents.reload();
+  } catch (err) {
+    // Reloading here would show the old (or empty) folder as if nothing had happened.
+    await dialog.showMessageBox({
+      type: 'error',
+      message: 'Der Backup-Ordner konnte nicht gespeichert werden.',
+      detail: `${(err as Error).message}\n\nEs werden weiterhin keine automatischen Sicherungen angelegt. Bitte erneut versuchen.`,
+    });
+    return;
   }
+  mainWindow?.webContents.reload();
 }
 
 async function exportDatabase(): Promise<void> {
