@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api/client';
-import type { CustomColumnOption, ID, LabelOverride, Settings } from './api/types';
+import type { CustomColumnOption, ID, LabelOverride, OptionUsage, Settings } from './api/types';
 import { LABEL_DEFAULTS, isLabelKey, type LabelKey } from './lib/labels';
 import { normalizeSelectOptions } from './lib/selectOptions';
 import {
@@ -54,6 +54,18 @@ export function useEventTypeOptions(): CustomColumnOption[] {
 export function useProjectStatusOptions(): CustomColumnOption[] {
   const { data } = useSettings();
   return useMemo(() => normalizeSelectOptions(data?.project_statuses), [data?.project_statuses]);
+}
+
+/**
+ * How many rows still hold each option value. The single boundary for the "still in use" delete
+ * guards, replacing the per-page tallies built from live-only lists — those could not see
+ * soft-deleted rows (PGS-02) or tasks moved out of a project (TTU-10), which is exactly the data
+ * a delete would orphan. `ready` is false while the query is in flight so callers can gate the
+ * save rather than let an empty map read as "unused".
+ */
+export function useOptionUsage(): { usage: OptionUsage | undefined; ready: boolean } {
+  const { data, isSuccess } = useQuery({ queryKey: ['usage'], queryFn: api.usage });
+  return { usage: data, ready: isSuccess };
 }
 
 /** Link categories (WP-P). Unset parses to `[]` — the LinkList then renders flat, no groups. */

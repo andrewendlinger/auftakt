@@ -129,6 +129,19 @@ export function validateOptions(draft: CustomColumnOption[], rules: OptionRules 
 }
 
 /**
+ * The options that were there before the edit and are gone from the saved list. Renames are not
+ * removals — `normalizeOptions` keeps each option's stored `value` stable and edits only its
+ * label — so this is exactly the set whose rows would be left holding a value nothing resolves.
+ */
+export function removedOptions(
+  before: CustomColumnOption[],
+  cleaned: CustomColumnOption[],
+): CustomColumnOption[] {
+  const kept = new Set(cleaned.map((o) => o.value));
+  return before.filter((o) => !kept.has(o.value));
+}
+
+/**
  * The German word for the rows an option list is used by, in both counts — „wird von 1 Termin"
  * vs „wird von 3 Terminen". Dative, because every message that interpolates it is („von …").
  * Same `one`/`many` shape as ArchivePage's `TYPE_LABELS`, and for the same reason.

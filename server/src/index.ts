@@ -22,6 +22,7 @@ import { exportRouter } from './routes/export';
 import { seasonsRouter } from './routes/seasons';
 import { landingRouter } from './routes/landing';
 import { backupRouter } from './routes/backup';
+import { usageRouter } from './routes/usage';
 
 const PORT = Number(process.env.AUFTAKT_PORT ?? 4317);
 
@@ -112,6 +113,7 @@ app.use('/api/links', linksRouter);
 app.use('/api/custom-columns', customColumnsRouter);
 app.use('/api/custom-sections', customSectionsRouter);
 app.use('/api/deleted', deletedRouter);
+app.use('/api/usage', usageRouter);
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/settings', settingsRouter);

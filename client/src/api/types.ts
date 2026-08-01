@@ -372,6 +372,39 @@ export function parseColumnOptions(json: string | null | undefined): CustomColum
   }
 }
 
+/**
+ * How many rows still hold each option value, counted server-side over *every* row — trashed
+ * and archived ones included, because those come back and a guard that can't see them lets a
+ * category be deleted out from under them. Read through `useOptionUsage()`.
+ */
+export interface OptionUsage {
+  event_types: Record<string, number>;
+  project_statuses: Record<string, number>;
+  link_categories: Record<string, number>;
+  task_status: Record<string, number>;
+  task_priority: Record<string, number>;
+  /** Column id → value → count, scanned out of the `tasks.custom_values` blobs. */
+  custom_columns: Record<string, Record<string, number>>;
+}
+
+/** Which store a bulk option rewrite targets. Matches the server's allowlist. */
+export type ReassignField =
+  | 'event_type'
+  | 'project_status'
+  | 'link_category'
+  | 'task_status'
+  | 'task_priority'
+  | 'custom_column';
+
+/** One „move everything on this value over to that one" step. */
+export interface OptionReassign {
+  field: ReassignField;
+  /** Required for `field: 'custom_column'`. */
+  columnId?: ID;
+  from: string;
+  to: string;
+}
+
 /** A custom column's value on one task, stringified. Custom values are keyed by column id. */
 export function customValueOf(task: Task, colId: ID): string {
   const v = parseCustomValues(task.custom_values)[String(colId)];

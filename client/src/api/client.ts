@@ -13,6 +13,8 @@ import type {
   LandingSectionInput,
   LayoutEntry,
   LinkItem,
+  OptionReassign,
+  OptionUsage,
   Project,
   SearchResults,
   Season,
@@ -90,6 +92,10 @@ export const api = {
   customSections: resource<CustomSection>('/custom-sections'),
 
   duplicateEvent: (id: ID) => http<EventItem>('POST', `/events/${id}/duplicate`),
+
+  /** How many rows hold each option value, and the bulk rewrite that lets one be retired. */
+  usage: () => http<OptionUsage>('GET', '/usage'),
+  reassignOption: (r: OptionReassign) => http<{ ok: true; changed: number }>('POST', '/usage/reassign', r),
 
   /** The archive's trash: list soft-deleted rows, restore one, or permanently (cascade) purge one. */
   deleted: {

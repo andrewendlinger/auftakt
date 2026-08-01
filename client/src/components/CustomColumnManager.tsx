@@ -3,12 +3,20 @@ import { Modal, Label, TextInput, Select } from './fields';
 import { Btn, IconButton, ReorderArrows } from './ui';
 import { TrashIcon } from './icons';
 import { api } from '../api/client';
-import type { CustomColumn, CustomColumnOption, CustomColumnType } from '../api/types';
+import type {
+  CustomColumn,
+  CustomColumnOption,
+  CustomColumnType,
+  ID,
+  OptionUsage,
+  ReassignField,
+} from '../api/types';
 import { parseColumnOptions, parseCustomValues } from '../api/types';
 import { arrayMove } from '../lib/arrays';
 import { OPTION_PALETTE } from '../lib/selectOptions';
-import { OptionsEditor, normalizeOptions, validateOptions } from './OptionsEditor';
-import { useInvalidateAll } from '../hooks';
+import { OptionsEditor, normalizeOptions, removedOptions, validateOptions } from './OptionsEditor';
+import { OptionRemovalDialog, type OptionRemoval } from './OptionRemovalDialog';
+import { useInvalidateAll, useOptionUsage } from '../hooks';
 
 /** A handful of common symbols; users can also type any emoji into the free field. */
 const ICON_PRESETS = ['👤', '👥', '📞', '📧', '✅', '⭐', '📅', '🎵', '🎸', '🎤', '💶', '📝', '📌', '🏨', '🚗', '✈️'];
@@ -23,6 +31,33 @@ const TYPE_LABEL: Record<string, string> = {
 function hasOptions(col: CustomColumn): boolean {
   return col.type === 'select' || col.type === 'status' || col.type === 'priority';
 }
+
+/**
+ * Where a column's option values are actually stored on the task rows — the built-ins bind to
+ * real `tasks` fields through `key`, custom „Auswahl" columns to the `custom_values` blob. This
+ * is what the usage count is read from and what a reassignment rewrites.
+ */
+function optionStore(col: CustomColumn): { field: ReassignField; columnId?: ID } | null {
+  if (col.kind === 'builtin') {
+    if (col.key === 'status') return { field: 'task_status' };
+    if (col.key === 'priority') return { field: 'task_priority' };
+    return null;
+  }
+  return col.type === 'select' ? { field: 'custom_column', columnId: col.id } : null;
+}
+
+function countsFor(
+  usage: OptionUsage | undefined,
+  store: { field: ReassignField; columnId?: ID } | null,
+): Record<string, number> {
+  if (!usage || !store) return {};
+  if (store.field === 'task_status') return usage.task_status;
+  if (store.field === 'task_priority') return usage.task_priority;
+  return usage.custom_columns[String(store.columnId)] ?? {};
+}
+
+/** Every option-carrying column here lives on tasks, so the count is always Aufgaben. */
+const TASK_NOUN = { one: 'Aufgabe', many: 'Aufgaben' };
 
 export function CustomColumnManager({
   columns,
@@ -236,8 +271,14 @@ function ColumnEditModal({
   const [icon, setIcon] = useState(col.icon ?? '');
   const [options, setOptions] = useState<CustomColumnOption[]>(parseColumnOptions(col.options));
   const [busy, setBusy] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [pending, setPending] = useState<OptionRemoval[] | null>(null);
+  const { usage, ready } = useOptionUsage();
   const editableOptions = hasOptions(col);
   const allowDone = col.type === 'status';
+  const before = useMemo(() => parseColumnOptions(col.options), [col.options]);
+  const store = optionStore(col);
+  const counts = countsFor(usage, store);
 
   // Validated live rather than on click, so the disabled „Speichern" always comes with the
   // reason next to the rows causing it — including when the column was already in a bad state
@@ -247,13 +288,20 @@ function ColumnEditModal({
     ? validateOptions(options, { requireDone: allowDone, requireNonEmpty: col.kind === 'builtin' })
     : null;
 
-  const save = async () => {
-    if (!name.trim() || problem) return;
+  /**
+   * Save, then move the rows of every deleted category over. Reassigning *after* the PATCH is
+   * deliberate: the server derives `erledigt_am` from whichever Status option carries `done`,
+   * so a category that is only becoming „erledigt" with this very save has to be on disk first.
+   */
+  const persist = async (mapping: Array<{ from: string; to: string }>) => {
     setBusy(true);
     try {
       const patch: Record<string, unknown> = { name: name.trim(), icon: icon.trim() || null };
       if (editableOptions) patch.options = normalizeOptions(options);
       await api.customColumns.update(col.id, patch as Partial<CustomColumn>);
+      for (const m of mapping) {
+        if (store) await api.reassignOption({ ...store, ...m });
+      }
       await onSaved();
       onClose();
     } finally {
@@ -261,6 +309,26 @@ function ColumnEditModal({
     }
   };
 
+  const save = async () => {
+    if (!name.trim() || problem || !ready) return;
+    setSaveError(null);
+    if (!editableOptions || !store) return persist([]);
+    const cleaned = normalizeOptions(options);
+    // Deleting a category leaves every task still holding it pointing at a value nothing
+    // resolves — a grey „—" pill, no place in the status sort, and for Status no recognition by
+    // doneValueOf, so the task un-archives. Count them and ask where they go (TTU-34, RTE-06).
+    const removals = removedOptions(before, cleaned)
+      .map((option) => ({ option, count: counts[option.value] ?? 0 }))
+      .filter((r) => r.count > 0);
+    if (removals.length === 0) return persist([]);
+    if (cleaned.length === 0) {
+      setSaveError('Es muss eine Kategorie übrig bleiben, in die die Aufgaben verschoben werden können.');
+      return;
+    }
+    setPending(removals);
+  };
+
+  const message = problem ?? saveError;
   return (
     <Modal
       title={`„${col.name}“ bearbeiten`}
@@ -268,7 +336,8 @@ function ColumnEditModal({
       footer={
         <>
           <Btn onClick={onClose}>Abbrechen</Btn>
-          <Btn variant="primary" onClick={save} disabled={busy || !!problem}>Speichern</Btn>
+          {/* Gated on `ready`: an empty usage map would read as „nichts benutzt diese Kategorie". */}
+          <Btn variant="primary" onClick={save} disabled={busy || !!problem || !ready}>Speichern</Btn>
         </>
       }
     >
@@ -285,10 +354,20 @@ function ColumnEditModal({
           <div>
             <Label>Kategorien</Label>
             <OptionsEditor value={options} onChange={setOptions} allowDone={allowDone} />
-            {problem && <p className="mt-2 text-sm text-amber-700">{problem}</p>}
+            {message && <p className="mt-2 text-sm text-amber-700">{message}</p>}
           </div>
         )}
       </div>
+      {pending && (
+        <OptionRemovalDialog
+          removals={pending}
+          targets={normalizeOptions(options)}
+          noun={TASK_NOUN}
+          busy={busy}
+          onCancel={() => setPending(null)}
+          onConfirm={(mapping) => void persist(mapping)}
+        />
+      )}
     </Modal>
   );
 }
