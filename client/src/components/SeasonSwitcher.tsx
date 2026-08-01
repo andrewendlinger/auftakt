@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { ApiError, api } from '../api/client';
 import type { ID } from '../api/types';
 import { reloadToDashboard } from './SeasonModals';
+import { useToast } from './Toast';
 import { useSeasonTerm } from '../hooks';
 
 /**
@@ -16,15 +17,35 @@ export function SeasonSwitcher() {
   const { data } = useQuery({ queryKey: ['seasons'], queryFn: api.seasons });
   const navigate = useNavigate();
   const term = useSeasonTerm();
+  const toast = useToast();
   const [open, setOpen] = useState(false);
+  const [switching, setSwitching] = useState(false);
 
   const active = data?.seasons.find((s) => s.id === data.activeId);
 
+  // The dropdown stays open across the await: closing it first meant a rejected activation
+  // (server restarting, an unknown id after a restart, a dropped fetch) left the menu gone,
+  // the app still on the old season and nothing said — the rejection surfaced only in a
+  // console the packaged app has no way to show, and the user carried on entering data into
+  // the wrong season (SHL-13). On success the reload takes the menu with it.
   const switchTo = async (id: ID) => {
-    setOpen(false);
-    if (!data || id === data.activeId) return;
-    await api.activateSeason(id);
-    reloadToDashboard();
+    if (!data || id === data.activeId) {
+      setOpen(false);
+      return;
+    }
+    if (switching) return;
+    setSwitching(true);
+    try {
+      await api.activateSeason(id);
+      reloadToDashboard();
+    } catch (err) {
+      toast.show({
+        message:
+          err instanceof ApiError ? err.message : `${term.singular} konnte nicht gewechselt werden.`,
+      });
+    } finally {
+      setSwitching(false);
+    }
   };
 
   return (
@@ -47,7 +68,8 @@ export function SeasonSwitcher() {
             {data?.seasons.map((s) => (
               <button
                 key={s.id}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-neutral-100"
+                disabled={switching}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-neutral-100 disabled:opacity-50"
                 onClick={() => switchTo(s.id)}
               >
                 <span className="w-4 text-neutral-500">{s.id === data.activeId ? '✓' : ''}</span>
