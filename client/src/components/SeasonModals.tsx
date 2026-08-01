@@ -7,9 +7,16 @@ import { useSeasonTerm } from '../hooks';
 /**
  * The whole database changed — reload the app at the dashboard so every view
  * refetches against the newly active season. The server keeps running (no restart).
+ *
+ * `replace`, not an assignment to `location.hash`: assigning *pushes* a history entry, so the
+ * route the user was on before the switch survived the reload and one Back re-resolved that
+ * deep link against the new season's database — a different artist under the same id, or (the
+ * common case, since a new season copies no artists by default) a spinner that never resolves,
+ * with the header still naming the new season (SHL-09). Both calls are needed: replacing a
+ * hash-only URL does not reload the document.
  */
 export function reloadToDashboard(): void {
-  window.location.hash = '#/dashboard';
+  window.location.replace('#/dashboard');
   window.location.reload();
 }
 
