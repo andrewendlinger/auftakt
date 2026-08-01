@@ -515,11 +515,26 @@ export function TaskTable({
   // and struck through, stamped erledigt_am by the server transform, sunk to the bottom of the
   // table and on its way to the archive in 30 days (TTU-36).
   const defaultStatus = (statusOptions.find((o) => !o.done) ?? statusOptions[0])?.value ?? 'new';
+  // Derived the same way, because the Priorität column's options are just as user-editable:
+  // a hardcoded 'mittel' stopped matching any option the moment that category was deleted or
+  // renamed (replacing hoch/mittel/niedrig with A/B/C is enough, since normalizeOptions derives
+  // the value from the label). PillSelect then rendered the grey placeholder instead of a pill
+  // and makeSortValue ranked the task at priorityRank.size, sorting every new task to the
+  // bottom of the priority key with no indication why (TTU-11). No `done` notion here, so the
+  // first option is the right default.
+  const defaultPriority = priorityOptions[0]?.value ?? 'mittel';
 
   return (
     <div className="overflow-x-auto rounded-2xl bg-white shadow-sm ring-1 ring-black/5">
       {/* Add row at the top so new tasks don't require scrolling past the done items. */}
-      {parent && <AddTaskRow parent={parent} defaultStatus={defaultStatus} onAdded={invalidate} />}
+      {parent && (
+        <AddTaskRow
+          parent={parent}
+          defaultStatus={defaultStatus}
+          defaultPriority={defaultPriority}
+          onAdded={invalidate}
+        />
+      )}
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="border-b border-neutral-100 text-left text-xs uppercase tracking-wide text-neutral-400">
@@ -611,6 +626,7 @@ export function TaskTable({
                   colSpan={head.getVisibleCells().length}
                   spineColor={spineColor}
                   defaultStatus={defaultStatus}
+                  defaultPriority={defaultPriority}
                   onAdded={invalidate}
                   onClose={() => setAddingChildFor(null)}
                 />
@@ -968,10 +984,12 @@ function EditableDateCell({ value, onCommit }: { value: string; onCommit: (v: st
 function AddTaskRow({
   parent,
   defaultStatus,
+  defaultPriority,
   onAdded,
 }: {
   parent: TaskTableParent;
   defaultStatus: string;
+  defaultPriority: string;
   onAdded: () => Promise<void>;
 }) {
   const saison = useSaison();
@@ -981,7 +999,7 @@ function AddTaskRow({
         title,
         artist_id: parent.artist_id ?? null,
         project_id: parent.project_id ?? null,
-        priority: 'mittel',
+        priority: defaultPriority,
         status: defaultStatus,
       }),
     onAdded,
@@ -1021,6 +1039,7 @@ function SubtaskAddRow({
   colSpan,
   spineColor,
   defaultStatus,
+  defaultPriority,
   onAdded,
   onClose,
 }: {
@@ -1028,6 +1047,7 @@ function SubtaskAddRow({
   colSpan: number;
   spineColor: string;
   defaultStatus: string;
+  defaultPriority: string;
   onAdded: () => Promise<void>;
   onClose: () => void;
 }) {
@@ -1039,7 +1059,7 @@ function SubtaskAddRow({
         parent_id: parentTask.id,
         artist_id: parentTask.artist_id ?? null,
         project_id: parentTask.project_id ?? null,
-        priority: 'mittel',
+        priority: defaultPriority,
         status: defaultStatus,
       }),
     onAdded,
