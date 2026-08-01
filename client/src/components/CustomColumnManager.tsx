@@ -7,7 +7,7 @@ import type { CustomColumn, CustomColumnOption, CustomColumnType } from '../api/
 import { parseColumnOptions, parseCustomValues } from '../api/types';
 import { arrayMove } from '../lib/arrays';
 import { OPTION_PALETTE } from '../lib/selectOptions';
-import { OptionsEditor, normalizeOptions } from './OptionsEditor';
+import { OptionsEditor, normalizeOptions, validateOptions } from './OptionsEditor';
 import { useInvalidateAll } from '../hooks';
 
 /** A handful of common symbols; users can also type any emoji into the free field. */
@@ -239,18 +239,17 @@ function ColumnEditModal({
   const editableOptions = hasOptions(col);
   const allowDone = col.type === 'status';
 
+  // Validated live rather than on click, so the disabled „Speichern" always comes with the
+  // reason next to the rows causing it — including when the column was already in a bad state
+  // (a legacy Status column whose options predate the `done` flag).
+  const problem = editableOptions ? validateOptions(options, { requireDone: allowDone }) : null;
+
   const save = async () => {
-    if (!name.trim()) return;
+    if (!name.trim() || problem) return;
     setBusy(true);
     try {
       const patch: Record<string, unknown> = { name: name.trim(), icon: icon.trim() || null };
-      if (editableOptions) {
-        let cleaned = normalizeOptions(options);
-        if (allowDone && !cleaned.some((o) => o.done) && cleaned.length) {
-          cleaned = cleaned.map((o, i) => (i === cleaned.length - 1 ? { ...o, done: true } : o));
-        }
-        patch.options = cleaned;
-      }
+      if (editableOptions) patch.options = normalizeOptions(options);
       await api.customColumns.update(col.id, patch as Partial<CustomColumn>);
       await onSaved();
       onClose();
@@ -266,7 +265,7 @@ function ColumnEditModal({
       footer={
         <>
           <Btn onClick={onClose}>Abbrechen</Btn>
-          <Btn variant="primary" onClick={save} disabled={busy}>Speichern</Btn>
+          <Btn variant="primary" onClick={save} disabled={busy || !!problem}>Speichern</Btn>
         </>
       }
     >
@@ -283,6 +282,7 @@ function ColumnEditModal({
           <div>
             <Label>Kategorien</Label>
             <OptionsEditor value={options} onChange={setOptions} allowDone={allowDone} />
+            {problem && <p className="mt-2 text-sm text-amber-700">{problem}</p>}
           </div>
         )}
       </div>

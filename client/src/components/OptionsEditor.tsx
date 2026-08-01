@@ -73,6 +73,31 @@ export function OptionsEditor({
   );
 }
 
+/** What a save of an option list has to satisfy before it may be persisted. */
+export interface OptionRules {
+  /** Status column: one option must carry `done`, or done-ness silently moves to another. */
+  requireDone?: boolean;
+}
+
+/**
+ * The single save guard for both `OptionsEditor` call sites — the task-column manager and the
+ * Kategorien settings tab. It lives beside `normalizeOptions` rather than in either caller
+ * because the invariants are properties of the *option list*, not of the screen editing it:
+ * bolted onto one call site, the other one silently corrupts data (TTU-01, RTE-06).
+ *
+ * Returns a German message naming what is wrong, or null when the draft may be saved.
+ */
+export function validateOptions(draft: CustomColumnOption[], rules: OptionRules = {}): string | null {
+  const cleaned = normalizeOptions(draft);
+  // Never infer the done flag. Promoting whatever option happens to be last made deleting the
+  // „Erledigt" category silently mark e.g. „Blockiert" as done: every blocked task struck
+  // through, sunk to the bottom, stamped erledigt_am and archived 30 days later (TTU-01).
+  if (rules.requireDone && !cleaned.some((o) => o.done)) {
+    return 'Markiere eine Kategorie als „erledigt“ — sie steuert Durchstreichen, Sortierung und Archiv.';
+  }
+  return null;
+}
+
 /**
  * The German word for the rows an option list is used by, in both counts — „wird von 1 Termin"
  * vs „wird von 3 Terminen". Dative, because every message that interpolates it is („von …").
