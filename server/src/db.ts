@@ -596,7 +596,17 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
   // Open read-write (we only SELECT): a read-only handle can't create the WAL
   // shared-memory file for an inactive season, which would fail the copy.
   const source = new Database(join(dataDir(), src.file));
-  const target = new Database(join(dataDir(), tgt.file));
+  // The target open needs its own guard: the try/finally that closes both starts below, so a
+  // throw here (a freshly created season file momentarily unavailable) would leave the source
+  // handle open forever — on Windows that keeps the source season's .db locked, and a later
+  // delete, rename or backup of it fails with EBUSY until the process restarts (DBW-07).
+  let target: Database.Database;
+  try {
+    target = new Database(join(dataDir(), tgt.file));
+  } catch (err) {
+    source.close();
+    throw err;
+  }
   const q = (sql: string): Array<Record<string, unknown>> =>
     source.prepare(sql).all() as Array<Record<string, unknown>>;
   const live = (table: string, extra = ''): Array<Record<string, unknown>> =>
