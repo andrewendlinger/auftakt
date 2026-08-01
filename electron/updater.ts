@@ -76,8 +76,12 @@ export function startSilentStartupCheck(): void {
  */
 export async function downloadAndInstallUpdate(): Promise<void> {
   if (!canInstall()) return;
-  const updater = configuredAutoUpdater();
+  // configuredAutoUpdater() inside the try as well: anything that throws before the
+  // download must land in the dialog below rather than rejecting the IPC call, which
+  // the renderer could only show as a stuck update card (PGS-16).
+  let updater: typeof autoUpdater;
   try {
+    updater = configuredAutoUpdater();
     await updater.checkForUpdates(); // downloadUpdate needs a fresh check result
     await updater.downloadUpdate();
   } catch (err) {

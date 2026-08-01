@@ -407,6 +407,7 @@ function UpdateCard() {
   const [version, setVersion] = useState('');
   const [view, setView] = useState<UpdateView>({ kind: 'idle' });
   const isMac = window.auftakt?.platform === 'darwin';
+  const toast = useToast();
 
   useEffect(() => {
     void window.auftakt?.getVersion?.().then(setVersion);
@@ -432,9 +433,15 @@ function UpdateCard() {
 
   const install = async (status: UpdateStatus) => {
     setView({ kind: 'downloading', status });
-    // Resolves after the native dialog (restart now / later / error) — either way
-    // the hint stays relevant until the app actually restarts.
-    await window.auftakt?.installUpdate?.();
+    try {
+      // Resolves after the native dialog (restart now / later / error) — either way
+      // the hint stays relevant until the app actually restarts.
+      await window.auftakt?.installUpdate?.();
+    } catch {
+      // A rejected IPC call used to leave the card on „wird heruntergeladen…" forever,
+      // with the install button gone and „Nach Updates suchen" disabled (PGS-16).
+      toast.show({ message: 'Update konnte nicht installiert werden.' });
+    }
     setView({ kind: 'available', status });
   };
 
