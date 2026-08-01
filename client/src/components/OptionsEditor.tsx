@@ -98,6 +98,19 @@ export function validateOptions(draft: CustomColumnOption[], rules: OptionRules 
   if (rules.requireNonEmpty && cleaned.length === 0) {
     return 'Mindestens eine Kategorie ist erforderlich.';
   }
+  // `value` is the identity key every consumer resolves an option by, and it is *derived* from
+  // the label — so two rows sharing a label collapse onto one stored value. Nothing downstream
+  // tolerates that: PillSelect renders `options.find(o => o.value === value)` (first wins) and
+  // keys its menu buttons by value (duplicate React keys), rankMap keeps the last, and on the
+  // Status column doneValueOf can resolve done-ness to the wrong one of the pair — so tasks in
+  // the *other*, still-open category are treated as completed (TTU-09, RTE-07).
+  const seen = new Set<string>();
+  for (const o of cleaned) {
+    if (seen.has(o.value)) {
+      return `Die Bezeichnung „${o.label}“ ist doppelt vergeben — jede Kategorie braucht eine eigene.`;
+    }
+    seen.add(o.value);
+  }
   // Never infer the done flag. Promoting whatever option happens to be last made deleting the
   // „Erledigt" category silently mark e.g. „Blockiert" as done: every blocked task struck
   // through, sunk to the bottom, stamped erledigt_am and archived 30 days later (TTU-01).

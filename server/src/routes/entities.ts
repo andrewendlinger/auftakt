@@ -125,6 +125,15 @@ export const customColumnsRouter = crudRouter({
     if (kind === 'builtin' && options.length === 0) {
       throw new HttpError(400, 'Diese Spalte braucht mindestens eine Kategorie.');
     }
+    // `value` is the identity key every consumer resolves an option by, so duplicates make two
+    // categories indistinguishable and let doneValueOf pick the wrong one of a pair (TTU-09).
+    const seen = new Set<string>();
+    for (const o of options) {
+      const value = typeof o.value === 'string' ? o.value.trim() : '';
+      if (!value) throw new HttpError(400, 'Jede Kategorie braucht einen Wert.');
+      if (seen.has(value)) throw new HttpError(400, 'Kategorie-Werte müssen eindeutig sein.');
+      seen.add(value);
+    }
     return body;
   },
 });
