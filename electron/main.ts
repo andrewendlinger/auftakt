@@ -31,6 +31,21 @@ function isAllowedExternalUrl(url: string): boolean {
   }
 }
 
+/**
+ * True only when `url` really is the app's own origin. A prefix match is not enough
+ * (ELP-02): `http://localhost:4317@evil.com` starts with the app origin but its host
+ * is evil.com, so a link like that used to load attacker content inside the trusted
+ * window instead of being pushed out to the browser. Compare parsed origins, the way
+ * isAllowedExternalUrl already parses its input.
+ */
+function isAppOrigin(url: string, appOrigin: string): boolean {
+  try {
+    return new URL(url).origin === new URL(appOrigin).origin;
+  } catch {
+    return false;
+  }
+}
+
 /** Open a URL externally only if its scheme is allowlisted; otherwise refuse + log. */
 function openExternalSafely(url: string): void {
   if (isAllowedExternalUrl(url)) {
@@ -247,7 +262,7 @@ async function createWindow(): Promise<void> {
   // the window.
   mainWindow.webContents.on('will-navigate', (e, url) => {
     const appOrigin = isDev ? DEV_URL : `http://localhost:${PORT}`;
-    if (!url.startsWith(appOrigin)) {
+    if (!isAppOrigin(url, appOrigin)) {
       e.preventDefault();
       openExternalSafely(url);
     }
