@@ -646,22 +646,38 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
       for (const [k, v] of m) columnIdMap.set(k, v);
     };
 
-    if (o.artists) copyRows(target, 'artists', live('artists'));
+    const artists = o.artists ? live('artists') : [];
+    copyRows(target, 'artists', artists);
+    // Source seasons are opened raw (migrations only run on the active DB), so an old
+    // file may still carry the dropped projects.notes column — merge, don't discard.
+    const projects = o.projects ? live('projects') : [];
+    for (const p of projects) {
+      if (p.notes) p.description = p.description ? `${p.description}\n\n${p.notes}` : p.notes;
+    }
+    copyRows(target, 'projects', projects);
+
+    // Every child row is gated on the parent that *actually arrived*, not on the group flag:
+    // live() filters `deleted_at IS NULL` per row, and a soft-deleted parent keeps its
+    // children live until the purge cascades (up to 30 days), so a flag-only test copies rows
+    // whose artist_id/project_id names nothing in the new season. foreign_keys is OFF during
+    // the copy and turning it back on never re-validates, so those dangling rows surface only
+    // later, in a foreign_key_check or an export (DBW-06).
+    const artistIds = new Set(artists.map((a) => a.id));
+    const projectIds = new Set(projects.map((p) => p.id));
     if (o.projects) {
-      // Source seasons are opened raw (migrations only run on the active DB), so an old
-      // file may still carry the dropped projects.notes column — merge, don't discard.
-      const projects = live('projects');
-      for (const p of projects) {
-        if (p.notes) p.description = p.description ? `${p.description}\n\n${p.notes}` : p.notes;
-      }
-      copyRows(target, 'projects', projects);
       mergeInto(
-        copyCustomColumns(target, live('custom_columns', " AND kind = 'custom' AND scope = 'project'")),
+        copyCustomColumns(
+          target,
+          live('custom_columns', " AND kind = 'custom' AND scope = 'project'").filter(
+            (c) => c.project_id != null && projectIds.has(c.project_id),
+          ),
+        ),
       );
     }
 
     const kept = (r: Record<string, unknown>): boolean =>
-      (r.artist_id != null && o.artists) || (r.project_id != null && o.projects);
+      (r.artist_id != null && artistIds.has(r.artist_id)) ||
+      (r.project_id != null && projectIds.has(r.project_id));
 
     if (o.contacts) copyRows(target, 'contacts', live('contacts').filter(kept));
     const events = o.events ? live('events').filter(kept) : [];
@@ -699,8 +715,8 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
 
     const links = live('links').filter(
       (l) =>
-        (l.artist_id != null && o.artists) ||
-        (l.project_id != null && o.projects) ||
+        (l.artist_id != null && artistIds.has(l.artist_id)) ||
+        (l.project_id != null && projectIds.has(l.project_id)) ||
         (l.event_id != null && eventIds.has(l.event_id)) ||
         (l.task_id != null && taskIds.has(l.task_id)) ||
         (l.section_id != null && sectionIds.has(l.section_id)),
