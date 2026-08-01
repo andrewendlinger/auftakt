@@ -1,13 +1,21 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { NavLink, Outlet } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
-import type { CustomColumnOption, Season } from '../api/types';
+import type { CustomColumnOption, ReassignField, Season } from '../api/types';
 import { Card, SectionTitle, Spinner, Btn, IconButton } from '../components/ui';
 import { Label, TextInput, Modal } from '../components/fields';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { CustomColumnManager } from '../components/CustomColumnManager';
-import { OptionsEditor, countWithNoun, normalizeOptions, type UsageNoun } from '../components/OptionsEditor';
+import {
+  OptionsEditor,
+  countWithNoun,
+  normalizeOptions,
+  removedOptions,
+  validateOptions,
+  type UsageNoun,
+} from '../components/OptionsEditor';
+import { OptionRemovalDialog, type OptionRemoval } from '../components/OptionRemovalDialog';
 import { TaskSortEditor } from '../components/TaskSortEditor';
 import { TrashIcon } from '../components/icons';
 import { useToast } from '../components/Toast';
@@ -17,6 +25,7 @@ import {
   useEventTypeOptions,
   useInvalidateAll,
   useLinkCategoryOptions,
+  useOptionUsage,
   useProjectStatusOptions,
   useSeasonTerm,
   useSettings,
@@ -139,14 +148,12 @@ export function SettingsCategoriesTab() {
   const projectStatusOptions = useProjectStatusOptions();
   const linkCategoryOptions = useLinkCategoryOptions();
 
-  // Usage counts drive the "in use → can't delete" guard. The dataset is tiny and blanket-
-  // invalidated on every write, so listing all events/projects here is cheap and needs no endpoint.
-  const { data: allEvents = [] } = useQuery({ queryKey: ['events', 'all'], queryFn: () => api.events.list() });
-  const { data: allProjects = [] } = useQuery({ queryKey: ['projects', 'all'], queryFn: () => api.projects.list() });
-  const { data: allLinks = [] } = useQuery({ queryKey: ['links', 'all'], queryFn: () => api.links.list() });
-  const eventTypeUsage = useMemo(() => countBy(allEvents.map((e) => e.type)), [allEvents]);
-  const projectStatusUsage = useMemo(() => countBy(allProjects.map((p) => p.status)), [allProjects]);
-  const linkCategoryUsage = useMemo(() => countBy(allLinks.map((l) => l.category)), [allLinks]);
+  // Counted server-side over *every* row. The previous tally listed live events/projects/links,
+  // and crudRouter's default list hard-filters `deleted_at IS NULL` — so a category used only by
+  // a soft-deleted row read as unused, was deletable, and orphaned that row the moment it was
+  // restored from the Papierkorb 30 days later. The same hole existed during the initial-load
+  // window, where the `= []` default also read as „unused" (PGS-02).
+  const { usage, ready } = useOptionUsage();
 
   return (
     <div className="space-y-8">
@@ -158,7 +165,9 @@ export function SettingsCategoriesTab() {
         </p>
         <SelectOptionsSetting
           options={eventTypeOptions}
-          usage={eventTypeUsage}
+          usage={usage?.event_types ?? {}}
+          ready={ready}
+          field="event_type"
           usageNoun={{ one: 'Termin', many: 'Terminen' }}
           addLabel="+ Typ"
           onSave={(v) => patch({ event_types: v })}
@@ -173,7 +182,9 @@ export function SettingsCategoriesTab() {
         </p>
         <SelectOptionsSetting
           options={projectStatusOptions}
-          usage={projectStatusUsage}
+          usage={usage?.project_statuses ?? {}}
+          ready={ready}
+          field="project_status"
           usageNoun={{ one: 'Projekt', many: 'Projekten' }}
           addLabel="+ Status"
           onSave={(v) => patch({ project_statuses: v })}
@@ -188,7 +199,9 @@ export function SettingsCategoriesTab() {
         </p>
         <SelectOptionsSetting
           options={linkCategoryOptions}
-          usage={linkCategoryUsage}
+          usage={usage?.link_categories ?? {}}
+          ready={ready}
+          field="link_category"
           usageNoun={{ one: 'Link', many: 'Links' }}
           addLabel="+ Kategorie"
           onSave={(v) => patch({ link_categories: v })}
@@ -586,32 +599,32 @@ function TaskStatsSetting({
   );
 }
 
-/** Tally non-empty values into a `{ value: count }` map for the delete-in-use guard. */
-function countBy(values: Array<string | null | undefined>): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const v of values) {
-    if (!v) continue;
-    out[v] = (out[v] ?? 0) + 1;
-  }
-  return out;
-}
-
 /**
  * The coloured-options editor for `event_types` / `project_statuses` (WP-I). Local draft state so
  * label/colour edits don't hit the server per keystroke — one PATCH on „Speichern", exactly like
- * the task-column editor. Removing a value still used by an event/project is blocked on save so a
- * rename can never orphan data (the whole point of this WP); renaming is free because
- * `normalizeOptions` keeps each option's stored `value` stable and edits only its label.
+ * the task-column editor. Removing a value still used by an event/project can never orphan data
+ * (the whole point of this WP): the rows are counted first and moved to a replacement category.
+ * Renaming is free because `normalizeOptions` keeps each option's stored `value` stable and edits
+ * only its label.
+ *
+ * Shares `validateOptions` and `OptionRemovalDialog` with the task-column editor, so the one
+ * `OptionsEditor` component behaves identically wherever it appears — the guard used to be
+ * bolted onto this call site only, and the other one deleted referenced categories silently.
  */
 function SelectOptionsSetting({
   options,
   usage,
+  ready,
+  field,
   usageNoun,
   addLabel,
   onSave,
 }: {
   options: CustomColumnOption[];
   usage: Record<string, number>;
+  /** False while the usage query is in flight — an empty map must not read as „unused". */
+  ready: boolean;
+  field: ReassignField;
   usageNoun: UsageNoun;
   addLabel: string;
   onSave: (v: CustomColumnOption[]) => Promise<void>;
@@ -619,42 +632,57 @@ function SelectOptionsSetting({
   const [draft, setDraft] = useState<CustomColumnOption[]>(options);
   const [busy, setBusy] = useState(false);
   const [blocked, setBlocked] = useState<CustomColumnOption[]>([]);
+  const [pending, setPending] = useState<OptionRemoval[] | null>(null);
+  const invalidate = useInvalidateAll();
   // Reseed when the server data changes (after a save, or a season switch).
   useEffect(() => setDraft(options), [options]);
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(options);
+  const problem = validateOptions(draft);
 
   const edit = (v: CustomColumnOption[]) => {
     setBlocked([]); // the message described the previous draft
     setDraft(v);
   };
 
-  const save = async () => {
-    const cleaned = normalizeOptions(draft);
-    const removed = options.filter((o) => !cleaned.some((c) => c.value === o.value));
-    const stillUsed = removed.filter((o) => (usage[o.value] ?? 0) > 0);
-    if (stillUsed.length) {
-      setBlocked(stillUsed);
-      return;
-    }
-    setBlocked([]);
+  const persist = async (mapping: Array<{ from: string; to: string }>) => {
     setBusy(true);
     try {
-      await onSave(cleaned);
+      await onSave(normalizeOptions(draft));
+      for (const m of mapping) await api.reassignOption({ field, ...m });
+      await invalidate();
+      setPending(null);
     } finally {
       setBusy(false);
     }
   };
 
+  const save = async () => {
+    if (problem || !ready) return;
+    setBlocked([]);
+    const cleaned = normalizeOptions(draft);
+    const removals = removedOptions(options, cleaned)
+      .map((option) => ({ option, count: usage[option.value] ?? 0 }))
+      .filter((r) => r.count > 0);
+    if (removals.length === 0) return persist([]);
+    // Nothing left to move them to, so this one really is a dead end.
+    if (cleaned.length === 0) {
+      setBlocked(removals.map((r) => r.option));
+      return;
+    }
+    setPending(removals);
+  };
+
   return (
     <div>
       <OptionsEditor value={draft} onChange={edit} addLabel={addLabel} />
+      {problem && <p className="mt-3 text-sm text-amber-700">{problem}</p>}
       {/* Inline, not window.alert: a native dialog renders OS chrome with English buttons and
           blocks the Electron renderer, while every other error path on this page uses the app's
           own surfaces. It also keeps the list next to the rows it is about (PGS-23). */}
       {blocked.length > 0 && (
         <div className="mt-3 space-y-1 text-sm text-amber-700">
-          <p>Diese Kategorien werden noch verwendet und können nicht gelöscht werden:</p>
+          <p>Diese Kategorien werden noch verwendet:</p>
           <ul className="list-inside list-disc">
             {blocked.map((o) => (
               <li key={o.value}>
@@ -663,15 +691,25 @@ function SelectOptionsSetting({
             ))}
           </ul>
           <p className="text-neutral-500">
-            Benenne sie um oder weise die betroffenen Einträge zuerst einer anderen Kategorie zu.
+            Es muss eine Kategorie übrig bleiben, in die die Einträge verschoben werden können.
           </p>
         </div>
       )}
       <div className="mt-3 flex justify-end">
-        <Btn variant="primary" onClick={save} disabled={busy || !dirty}>
+        <Btn variant="primary" onClick={save} disabled={busy || !dirty || !ready || !!problem}>
           Speichern
         </Btn>
       </div>
+      {pending && (
+        <OptionRemovalDialog
+          removals={pending}
+          targets={normalizeOptions(draft)}
+          noun={usageNoun}
+          busy={busy}
+          onCancel={() => setPending(null)}
+          onConfirm={(mapping) => void persist(mapping)}
+        />
+      )}
     </div>
   );
 }
