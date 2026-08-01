@@ -605,9 +605,18 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
   // hang off exactly one artist or project. Tasks need their columns because
   // custom_values is keyed by column id and `status` has to name an option the
   // target's Status column actually offers.
+  //
+  // Settings pull the column config along for the same reason: `task_sort` names built-in
+  // columns by key, and „Status aufsteigend" means *that column's* option order, which lives
+  // in custom_columns.options. Copied without the columns, the sort hierarchy the user
+  // configured silently reorders by the target's default options (DBW-05). The layout
+  // settings need nothing forced — their `cs<id>` entries point at per-entity widgets, which
+  // cannot exist without the artist/project they hang off, and the dashboard's widgets
+  // already travel with the settings group below.
   const o = { ...opts };
   if (o.projects || o.contacts || o.events) o.artists = true;
   if (o.tasks) o.columns = true;
+  if (o.settings) o.columns = true;
 
   // Open read-write (we only SELECT): a read-only handle can't create the WAL
   // shared-memory file for an inactive season, which would fail the copy.
