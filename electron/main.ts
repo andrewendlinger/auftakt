@@ -237,7 +237,20 @@ async function ensureBackupDir(): Promise<string> {
 
 app.whenReady().then(async () => {
   if (!isDev) {
-    await startServer();
+    try {
+      await startServer();
+    } catch (err) {
+      // Nothing works without the bundled server, and every failure here is silent by
+      // nature (a health-check timeout, an unresolvable ESM import). Unhandled, the
+      // whole handler rejects: no window, no message, just a dock icon (ELP-06).
+      await dialog.showMessageBox({
+        type: 'error',
+        message: 'Auftakt konnte nicht gestartet werden.',
+        detail: `${(err as Error).message}\n\nBitte die App erneut öffnen. Bleibt der Fehler bestehen, hilft eine Neuinstallation.`,
+      });
+      app.exit(1);
+      return;
+    }
     try {
       const backupDir = await ensureBackupDir();
       if (backupDir) await runStartupBackup(PORT, backupDir);
