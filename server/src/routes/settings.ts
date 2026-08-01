@@ -23,7 +23,6 @@ const ARRAY_KEYS = new Set([
 const WRITABLE_SETTINGS = new Set<string>([
   ...ARRAY_KEYS,
   'saison',
-  'timezone',
   'backup_dir',
   'first_run_done',
   'attention_window_days',

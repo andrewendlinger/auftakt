@@ -295,7 +295,6 @@ export interface TaskSortRule {
 
 export interface Settings {
   saison: string;
-  timezone: string;
   backup_dir: string | null;
   first_run_done: string;
   /**

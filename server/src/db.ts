@@ -991,7 +991,6 @@ export const DEFAULT_TASK_SORT = [
 
 const DEFAULT_SETTINGS: Record<string, string> = {
   saison: 'Festival 2026',
-  timezone: 'Europe/Berlin',
   backup_dir: '',
   first_run_done: '0',
   event_types: JSON.stringify(DEFAULT_EVENT_TYPES),
@@ -1025,6 +1024,7 @@ export function getDb(): Database.Database {
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA);
   ensureDefaultSettings(db);
+  dropUnusedSettings(db);
   migrateStampsToLocal(db, isFresh);
   migrateColumns(db);
   ensureBuiltinColumns(db);
@@ -1213,6 +1213,22 @@ function prunePreImportFiles(dbPath: string): void {
  */
 export function backupStamp(): string {
   return fileStamp();
+}
+
+/**
+ * Settings that existed once and are no longer read by anything. Dropped on every open rather
+ * than once, so a value carried in by a season copy or an old import cannot come back: the row
+ * would otherwise keep appearing in GET /api/settings with nothing on either side using it.
+ *
+ * `timezone` held 'Europe/Berlin' and was never consulted — dates are anchored to this machine's
+ * clock, which is also what the server stamps with, so a second, app-level timezone could only
+ * ever disagree with the data (CCL-17).
+ */
+const DROPPED_SETTINGS = ['timezone'];
+
+function dropUnusedSettings(db: Database.Database): void {
+  const stmt = db.prepare('DELETE FROM settings WHERE key = ?');
+  for (const key of DROPPED_SETTINGS) stmt.run(key);
 }
 
 /** The timestamp columns the naive-local convention applies to (shared/time.ts). */
