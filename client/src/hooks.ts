@@ -293,28 +293,44 @@ export interface UndoableDeleteArgs {
   restore: () => Promise<unknown>;
 }
 
-/** Soft-delete something and surface an undo toast that restores it. */
+/**
+ * Soft-delete something, record it on the shared undo stack and surface an undo toast — both
+ * wired to the same entry, so Cmd+Z and the toast's „Rückgängig" revert the same operation.
+ *
+ * The stack half is what makes a delete behave like every other edit (CCL-02): before, a
+ * deletion left `undoStack` untouched, so the reflex Cmd+Z after a mis-click silently reverted
+ * whatever the user had edited *before* — the deleted row stayed gone and an edit they meant to
+ * keep was rolled back. The failure arm of the restore lives in `UndoProvider` now, next to the
+ * one the keyboard path already had.
+ */
 export function useUndoableDelete(): (args: UndoableDeleteArgs) => Promise<void> {
-  const toast = useToast();
+  const { pushWithToast } = useUndo();
   const invalidate = useInvalidateAll();
   return async ({ label, remove, restore }) => {
     await remove();
     await invalidate();
-    toast.show({
-      message: `${label} gelöscht`,
-      actionLabel: 'Rückgängig',
-      onAction: async () => {
-        try {
-          await restore();
-        } catch {
-          // The row was hard-purged (or the season swapped) since the delete, so the restore
-          // 404s. Surface it softly instead of leaving an unhandled rejection.
-          toast.show({ message: `${label} konnte nicht wiederhergestellt werden` });
-        } finally {
-          await invalidate();
-        }
+    pushWithToast(
+      {
+        label: `Löschen von ${label}`,
+        // Redo re-deletes; both halves refresh even when the call fails, so a list can never
+        // keep showing a row the server no longer has.
+        apply: async () => {
+          try {
+            await remove();
+          } finally {
+            await invalidate();
+          }
+        },
+        revert: async () => {
+          try {
+            await restore();
+          } finally {
+            await invalidate();
+          }
+        },
       },
-    });
+      `${label} gelöscht`,
+    );
   };
 }
 

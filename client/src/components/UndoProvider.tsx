@@ -14,9 +14,16 @@ export interface UndoEntry {
 
 interface UndoApi {
   push: (entry: UndoEntry) => void;
+  /**
+   * Push an entry and offer the same revert as a toast — one registration, two triggers.
+   * Wiring the two separately (`push` plus a toast `onAction` of one's own) leaves a stale
+   * stack entry behind once the toast has run, which then swallows the user's next Cmd+Z
+   * (TTU-13). Every destructive action that wants both takes this path.
+   */
+  pushWithToast: (entry: UndoEntry, message: string) => void;
 }
 
-const UndoCtx = createContext<UndoApi>({ push: () => {} });
+const UndoCtx = createContext<UndoApi>({ push: () => {}, pushWithToast: () => {} });
 
 export function useUndo(): UndoApi {
   return useContext(UndoCtx);
@@ -72,17 +79,17 @@ export function UndoProvider({ children }: { children: ReactNode }) {
   // let them pop the same stack concurrently.
   const busy = useRef(false);
 
-  const run = useCallback(
-    async (from: 'undo' | 'redo') => {
-      if (busy.current) return;
-      const src = from === 'undo' ? undoStack : redoStack;
-      const dst = from === 'undo' ? redoStack : undoStack;
-      const entry = src.current.pop();
-      if (!entry) return;
+  /**
+   * Run one entry in one direction, hand it to the opposite stack and say so. The single
+   * place both triggers — the keyboard and a toast's „Rückgängig" — go through, so the
+   * failure handling and the wording can't drift apart between them.
+   */
+  const perform = useCallback(
+    async (entry: UndoEntry, from: 'undo' | 'redo') => {
       busy.current = true;
       try {
         await (from === 'undo' ? entry.revert() : entry.apply());
-        dst.current.push(entry);
+        (from === 'undo' ? redoStack : undoStack).current.push(entry);
         toast.show({
           message: `${entry.label} ${from === 'undo' ? 'rückgängig gemacht' : 'wiederhergestellt'}`,
         });
@@ -102,6 +109,42 @@ export function UndoProvider({ children }: { children: ReactNode }) {
     [toast],
   );
 
+  const run = useCallback(
+    async (from: 'undo' | 'redo') => {
+      if (busy.current) return;
+      const entry = (from === 'undo' ? undoStack : redoStack).current.pop();
+      if (!entry) return;
+      await perform(entry, from);
+    },
+    [perform],
+  );
+
+  /**
+   * Revert one specific entry — what a toast's „Rückgängig" does. It takes the entry out of
+   * the stack wherever it sits rather than popping the top, because the user may well have
+   * edited something else in the six seconds the toast was up.
+   */
+  const undoEntry = useCallback(
+    async (entry: UndoEntry) => {
+      if (busy.current) return;
+      const at = undoStack.current.indexOf(entry);
+      // Gone means already reverted by keyboard (or aged out at MAX_DEPTH) — a second run
+      // would write the same values again and toast a step the user never took.
+      if (at < 0) return;
+      undoStack.current.splice(at, 1);
+      await perform(entry, 'undo');
+    },
+    [perform],
+  );
+
+  const pushWithToast = useCallback(
+    (entry: UndoEntry, message: string) => {
+      push(entry);
+      toast.show({ message, actionLabel: 'Rückgängig', onAction: () => undoEntry(entry) });
+    },
+    [push, toast, undoEntry],
+  );
+
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
@@ -113,5 +156,5 @@ export function UndoProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('keydown', h);
   }, [run]);
 
-  return <UndoCtx.Provider value={{ push }}>{children}</UndoCtx.Provider>;
+  return <UndoCtx.Provider value={{ push, pushWithToast }}>{children}</UndoCtx.Provider>;
 }
