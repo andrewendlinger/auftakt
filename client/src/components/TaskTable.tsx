@@ -11,7 +11,7 @@ import {
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import type { CustomColumn, CustomColumnOption, Task, TaskSortRule } from '../api/types';
-import { compareColumns, customValueOf, doneValueOf, parseColumnOptions, parseCustomValues } from '../api/types';
+import { compareColumns, customValueOf, doneValueOf, parseColumnOptions } from '../api/types';
 import { formatDate } from '../lib/dates';
 import { withAlpha } from '../lib/colors';
 import { MANUAL_SORT_ID, SORTABLE_TASK_COLUMNS } from '../lib/taskSort';
@@ -310,11 +310,18 @@ export function TaskTable({
     [undoablePatch],
   );
 
+  /**
+   * Write one custom column's value. Only the changed key travels — the server merges it into
+   * the row's own blob (`tasks` transform in server/src/routes/entities.ts).
+   *
+   * Sending the whole blob is what made two quick edits lose one of them: the object was rebuilt
+   * from the `task` captured at render time, so ticking „Vertrag" and then „Bezahlt" before the
+   * first refetch had landed sent a pre-„Vertrag" snapshot and silently un-ticked it, with no
+   * error and no undo affordance for the value that vanished (TTU-23).
+   */
   const commitCustom = useCallback(
     async (task: Task, colId: number, value: unknown) => {
-      const cv = parseCustomValues(task.custom_values);
-      cv[String(colId)] = value;
-      await commit(task, { custom_values: cv }, 'Änderung');
+      await commit(task, { custom_values: { [String(colId)]: value } }, 'Änderung');
     },
     [commit],
   );

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { doneStatusValue, getDb } from '../db';
+import { parseCustomValues } from '../lib/customValues';
 import { HttpError } from '../lib/query';
 
 /**
@@ -37,16 +38,6 @@ function countColumn(table: string, column: string): Record<string, number> {
   return out;
 }
 
-function parseValues(json: unknown): Record<string, unknown> {
-  if (typeof json !== 'string' || !json) return {};
-  try {
-    const v: unknown = JSON.parse(json);
-    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
-}
-
 /** column id → value → count, scanned out of the tasks.custom_values blobs. */
 function countCustomValues(): Record<string, Record<string, number>> {
   const rows = getDb().prepare('SELECT custom_values FROM tasks').all() as Array<{
@@ -54,7 +45,7 @@ function countCustomValues(): Record<string, Record<string, number>> {
   }>;
   const out: Record<string, Record<string, number>> = {};
   for (const row of rows) {
-    for (const [key, raw] of Object.entries(parseValues(row.custom_values))) {
+    for (const [key, raw] of Object.entries(parseCustomValues(row.custom_values))) {
       if (raw === null || raw === undefined || raw === '' || raw === false) continue;
       const value = String(raw);
       const bucket = (out[key] ??= {});
@@ -123,7 +114,7 @@ usageRouter.post('/reassign', (req, res) => {
     let changed = 0;
     db.transaction(() => {
       for (const row of rows) {
-        const values = parseValues(row.custom_values);
+        const values = parseCustomValues(row.custom_values);
         const current = values[key];
         if (current === null || current === undefined || String(current) !== from) continue;
         values[key] = to;

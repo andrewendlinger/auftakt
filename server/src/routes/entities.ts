@@ -1,6 +1,7 @@
 import { localStamp } from '../../../shared/time';
 import { doneStatusValue, getDb } from '../db';
 import { crudRouter } from '../lib/crud';
+import { parseCustomValues } from '../lib/customValues';
 import { listEvents, listTasks } from '../lib/queries';
 // Coerce a query param to a number. COALESCE()-based filters lose column affinity, so string
 // params never match integer ids — pass real numbers; an invalid value is now a 400, not a
@@ -142,6 +143,10 @@ export const customColumnsRouter = crudRouter({
 /** A completion date the server itself wrote: `YYYY-MM-DD`, optionally with a time. */
 const ERLEDIGT_AM_SHAPE = /^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}:\d{2})?$/;
 
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
 /**
  * Whether a body's `erledigt_am` is the undo stack restoring a value this transform destroyed,
  * as opposed to a client trying to set the completion date directly.
@@ -208,6 +213,19 @@ export const tasksRouter = crudRouter({
         const row = parentOf.get(cursor) as { parent_id: number | null } | undefined;
         cursor = row?.parent_id ?? null;
       }
+    }
+    // `custom_values` as an **object** is a patch of the named keys; as a **string** it replaces
+    // the blob verbatim. The distinction is what makes concurrent cell edits safe: the client
+    // used to read-modify-write the whole blob from the task it had rendered, so ticking
+    // „Vertrag" and then „Bezahlt" before the first refetch landed sent a pre-„Vertrag" snapshot
+    // and silently un-ticked it again (TTU-23). The freshest blob is the row's own, so the merge
+    // belongs here.
+    //
+    // The string arm is not a leftover: `useUndoablePatch` builds its inverse by picking keys off
+    // the pre-edit row, where `custom_values` is the raw JSON *string*, and undo has to put the
+    // whole blob back rather than merge into whatever the row holds now.
+    if (mode === 'update' && existing && isPlainObject(body.custom_values)) {
+      body.custom_values = { ...parseCustomValues(existing.custom_values), ...body.custom_values };
     }
     // A status-less create defaults to 'new' (the first Status option). Stamped here so it
     // holds on every DB: the SQL column DEFAULT is stale ('offen') on databases predating the
