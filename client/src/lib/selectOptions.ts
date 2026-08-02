@@ -37,6 +37,10 @@ function colorForName(name: string): string {
  * store a plain `string[]`; new ones store `{ value, label, color }[]`. Read tolerantly so either
  * form parses — a bare string `s` becomes `{ value: s, label: s, color }`, and a malformed entry
  * is skipped rather than blanking the list.
+ *
+ * Also the normalisation behind `parseColumnOptions`, which is why `done` is carried through:
+ * a task column's Status options add that one field over an event type's, and losing it would
+ * silently break `doneValueOf` (CCL-07).
  */
 export function normalizeSelectOptions(raw: unknown): CustomColumnOption[] {
   if (!Array.isArray(raw)) return [];
@@ -51,7 +55,7 @@ export function normalizeSelectOptions(raw: unknown): CustomColumnOption[] {
       if (!value) continue;
       const label = (typeof o.label === 'string' && o.label) || value;
       const color = (typeof o.color === 'string' && o.color) || colorForName(value);
-      out.push({ value, label, color });
+      out.push({ value, label, color, ...(o.done === true ? { done: true } : {}) });
     }
   }
   return out;

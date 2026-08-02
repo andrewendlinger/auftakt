@@ -1,3 +1,7 @@
+// The only import here, and deliberately one-way: selectOptions.ts imports from this file
+// type-only, so the edge is erased at build and no runtime cycle exists.
+import { normalizeSelectOptions } from '../lib/selectOptions';
+
 export type ID = number;
 
 interface SoftDeletable {
@@ -365,20 +369,37 @@ export interface SearchResults {
   }>;
 }
 
+/**
+ * A task's `custom_values` blob. The syntax-error guard was not enough: `JSON.parse('null')`
+ * parses fine and returns `null`, the cast hid it, and the very next property access in
+ * `customValueOf` threw — blanking the whole task table for that season. Reachable through the
+ * Electron DB-import path (`validateImportCandidate` never inspects cell contents) and through
+ * a non-UI `PATCH /api/tasks/:id {"custom_values":"null"}`, which stores the four characters
+ * verbatim because `applyJson` only stringifies objects (CCL-07).
+ */
 export function parseCustomValues(json: string | null | undefined): Record<string, unknown> {
   if (!json) return {};
   try {
-    return JSON.parse(json) as Record<string, unknown>;
+    const v: unknown = JSON.parse(json);
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
   } catch {
     return {};
   }
 }
 
+/**
+ * A column's `options` blob. Routed through the same normalisation as the event-type and
+ * project-status settings: it casts nothing, coerces the legacy plain-string form, skips
+ * entries without a usable value and supplies the fallback colour.
+ *
+ * The cast this replaces was the problem — an option missing `color` (a legacy season, a
+ * hand-edited or imported database) reached `contrastText(opt.color)` in PillSelect, where
+ * `hexToRgb(undefined)` calls `undefined.replace()` and throws *during render* (CCL-07).
+ */
 export function parseColumnOptions(json: string | null | undefined): CustomColumnOption[] {
   if (!json) return [];
   try {
-    const v = JSON.parse(json);
-    return Array.isArray(v) ? (v as CustomColumnOption[]) : [];
+    return normalizeSelectOptions(JSON.parse(json));
   } catch {
     return [];
   }
