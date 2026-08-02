@@ -5,7 +5,12 @@
  */
 export function arrayMove<T>(list: T[], i: number, dir: -1 | 1): T[] {
   const j = i + dir;
-  if (i < 0 || j < 0 || j >= list.length) return list;
+  // Both indices, not just the destination: `arrayMove(list, list.length, -1)` passed a
+  // destination-only guard, then wrote index `length` — growing the array by one and leaving a
+  // hole at `length - 1`, which the caller's `next !== list` check reported as a successful move.
+  // No current caller can supply it (all three derive `i` from the same list), but the doc
+  // contract above and `arrayMoveTo` below both promise the symmetric check (CCL-32).
+  if (i < 0 || i >= list.length || j < 0 || j >= list.length) return list;
   const next = [...list];
   [next[i], next[j]] = [next[j]!, next[i]!];
   return next;
