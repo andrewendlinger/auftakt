@@ -4,7 +4,6 @@ import { api } from '../api/client';
 import type { Project, Task } from '../api/types';
 import { Label, Modal, Select } from './fields';
 import { Btn } from './ui';
-import { useToast } from './Toast';
 import { useUndo } from './UndoProvider';
 import { useInvalidateAll, useSaison } from '../hooks';
 
@@ -28,8 +27,7 @@ function projectLabel(p: Project): string {
 export function MoveTaskDialog({ task, onClose }: { task: Task; onClose: () => void }) {
   const saison = useSaison();
   const invalidate = useInvalidateAll();
-  const { push } = useUndo();
-  const toast = useToast();
+  const { pushWithToast } = useUndo();
   const [target, setTarget] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -125,14 +123,14 @@ export function MoveTaskDialog({ task, onClose }: { task: Task; onClose: () => v
       setBusy(false);
     }
     // One stack entry for the whole tree — per-row useUndoablePatch would fragment Cmd+Z
-    // into one child at a time. The toast's Rückgängig shares the same revert; using both
-    // just writes identical values twice, which is harmless.
-    push({ label: 'Verschieben', apply, revert });
-    toast.show({
-      message: `„${task.title}“ verschoben nach ${targetLabel(target)}`,
-      actionLabel: 'Rückgängig',
-      onAction: revert,
-    });
+    // into one child at a time. Stack and toast share the one registration: wiring the
+    // toast's Rückgängig to `revert` directly left the entry on the stack afterwards, so the
+    // next Cmd+Z re-wrote the already-restored values and swallowed the step the user
+    // actually meant to undo (TTU-13).
+    pushWithToast(
+      { label: 'Verschieben', apply, revert },
+      `„${task.title}“ verschoben nach ${targetLabel(target)}`,
+    );
     onClose();
   };
 
