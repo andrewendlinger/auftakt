@@ -21,20 +21,34 @@ export function useToast(): ToastApi {
   return useContext(ToastCtx);
 }
 
+/**
+ * How many toasts may share the screen. The column grows upward from `bottom-4`, so an
+ * uncapped burst — a held-down Cmd+Z emits one per step — pushes the oldest cards above the
+ * fold, and those are precisely the ones whose „Rückgängig" is about to expire. Dropping the
+ * oldest is therefore the right end to drop. Mirrors `UndoProvider`'s `MAX_DEPTH`.
+ */
+const MAX_TOASTS = 5;
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
   const counter = useRef(0);
+  const timers = useRef<Map<number, number>>(new Map());
 
   const dismiss = useCallback((id: number) => {
+    const timer = timers.current.get(id);
+    if (timer !== undefined) window.clearTimeout(timer);
+    timers.current.delete(id);
     setItems((s) => s.filter((t) => t.id !== id));
   }, []);
 
   const show = useCallback(
     (t: ToastInput) => {
       const id = ++counter.current;
-      setItems((s) => [...s, { ...t, id }]);
+      setItems((s) => [...s, { ...t, id }].slice(-MAX_TOASTS));
       const ms = t.duration ?? 6000;
-      window.setTimeout(() => dismiss(id), ms);
+      // A toast the slice dropped keeps its timer; it fires within the duration, finds nothing
+      // to filter and clears its own entry, so the map stays as short as the burst is long.
+      timers.current.set(id, window.setTimeout(() => dismiss(id), ms));
     },
     [dismiss],
   );
