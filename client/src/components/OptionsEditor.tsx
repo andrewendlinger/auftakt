@@ -26,8 +26,9 @@ export function OptionsEditor({
     onChange(value.map((o, idx) => (idx === i ? { ...o, ...patch } : setDone ? { ...o, done: false } : o)));
   };
   const removeAt = (i: number) => onChange(value.filter((_, idx) => idx !== i));
-  // Reorder: the option order here is the order values appear in the pill dropdown
-  // and drives status sorting, so ↑ ↓ lets the user set e.g. new → active → done.
+  // Reorder: the option order here is the order values appear in the pill dropdown and the rank
+  // the column sorts by — for the built-in Status and Priorität columns and for every custom
+  // Auswahl column alike — so ↑ ↓ lets the user set e.g. new → active → done.
   //
   // Focus is then moved onto the row's new position. Rows are keyed by index, so React keeps
   // the same DOM nodes where they are and only rewrites their props — focus stayed on the

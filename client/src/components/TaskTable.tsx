@@ -73,8 +73,9 @@ function rankMap(options: CustomColumnOption[]): Map<string, number> {
 
 /**
  * Build the per-column value accessor used for sorting, once per (columns, options) change.
- * Status/priority ranks and the column lookup are precomputed here so the comparator does only
- * O(1) map reads instead of re-parsing options and re-scanning columns on every comparison.
+ * Every option rank (status, priority, each custom Auswahl column) and the column lookup are
+ * precomputed here so the comparator does only O(1) map reads instead of re-parsing options and
+ * re-scanning columns on every comparison.
  */
 function makeSortValue(
   cols: CustomColumn[],
@@ -84,6 +85,12 @@ function makeSortValue(
   const statusRank = rankMap(statusOptions);
   const priorityRank = rankMap(priorityOptions);
   const colById = new Map(cols.map((c) => [c.id, c]));
+  // …and the same for every custom Auswahl column, from its own options array.
+  const selectRanks = new Map(
+    cols
+      .filter((c) => c.type === 'select')
+      .map((c) => [c.id, rankMap(parseColumnOptions(c.options))]),
+  );
   return (task, id) => {
     if (id === 'manual') return task.sort_order;
     if (id === 'title') return task.title.toLowerCase();
@@ -96,6 +103,17 @@ function makeSortValue(
       const cid = Number(id.slice(1));
       const raw = customValueOf(task, cid);
       if (colById.get(cid)?.type === 'checkbox') return raw === 'true' ? 0 : 1;
+      // An Auswahl column ranks by its *configured* category order, exactly as status and
+      // priority do above — the same OptionsEditor whose ↑ ↓ the user just used to put
+      // offen → in Arbeit → fertig in workflow order. Falling through to a string compare
+      // returned that column alphabetically, i.e. the reverse of what was configured, with no
+      // way to get the intended order out of the column at all (TTU-19). Numbers throughout
+      // this branch: compareByRules uses < / >, and a number-vs-string mix reads as "equal".
+      const ranks = selectRanks.get(cid);
+      if (ranks) {
+        if (!raw) return ranks.size + 1; // empty sorts last, past a value no longer in the list
+        return ranks.get(raw) ?? ranks.size;
+      }
       return raw.toLowerCase() || '￿';
     }
     return 0;
