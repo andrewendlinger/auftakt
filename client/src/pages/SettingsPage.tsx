@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { NavLink, Outlet } from 'react-router-dom';
-import { api, ApiError } from '../api/client';
+import { api } from '../api/client';
 import type { CustomColumnOption, ReassignField, Season } from '../api/types';
 import { Card, SectionTitle, Spinner, Btn, IconButton, ErrorState } from '../components/ui';
 import { Label, TextInput, Modal } from '../components/fields';
@@ -241,23 +241,19 @@ export function SettingsCategoriesTab() {
 function SeasonManagementCard() {
   const { data } = useQuery({ queryKey: ['seasons'], queryFn: api.seasons });
   const invalidate = useInvalidateAll();
+  const guard = useGuardedAction();
   const toast = useToast();
   const term = useSeasonTerm();
   const [deleting, setDeleting] = useState<Season | null>(null);
 
   const confirmDelete = async () => {
     if (!deleting) return;
-    try {
+    const ok = await guard(`${term.singular} konnte nicht gelöscht werden.`, async () => {
       await api.deleteSeason(deleting.id);
       await invalidate();
-      toast.show({ message: `${term.singular} „${deleting.label}“ gelöscht.` });
-    } catch (err) {
-      toast.show({
-        message: err instanceof ApiError ? err.message : `${term.singular} konnte nicht gelöscht werden.`,
-      });
-    } finally {
-      setDeleting(null);
-    }
+    });
+    if (ok) toast.show({ message: `${term.singular} „${deleting.label}“ gelöscht.` });
+    setDeleting(null);
   };
 
   return (

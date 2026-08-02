@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { api, ApiError } from '../api/client';
+import { api } from '../api/client';
 import type { DeletedItem, DeletedType } from '../api/types';
 import { SectionTitle, Spinner, EmptyState, ErrorState, Btn, Pill } from '../components/ui';
 import { ProjectBadge } from '../components/ProjectBadge';
@@ -97,13 +97,11 @@ export function ArchivePage() {
 
   const purge = async (item: DeletedItem) => {
     setConfirmPurge(null);
-    try {
-      await api.deleted.purge(item.type, item.id);
-      await invalidate();
-      toast.show({ message: `„${item.label}“ endgültig gelöscht` });
-    } catch (e) {
-      toast.show({ message: e instanceof ApiError ? e.message : 'Löschen fehlgeschlagen.' });
-    }
+    const ok = await guard(`„${item.label}“ konnte nicht gelöscht werden.`, () =>
+      api.deleted.purge(item.type, item.id),
+    );
+    await invalidate();
+    if (ok) toast.show({ message: `„${item.label}“ endgültig gelöscht` });
   };
 
   if (isLoading) return <Spinner />;

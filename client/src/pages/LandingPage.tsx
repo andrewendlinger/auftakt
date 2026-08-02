@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ApiError, api } from '../api/client';
+import { api } from '../api/client';
 import type { LayoutEntry, Season, SeasonCopyOptions, SeasonPatch, SeasonStats } from '../api/types';
 import { Card, Btn, DragHandle, Spinner, EmptyState, ErrorState } from '../components/ui';
 import { EditableText, EditableFallbackText } from '../components/EditableText';
@@ -17,7 +17,7 @@ import {
 import { NewSeasonModal, reloadToDashboard } from '../components/SeasonModals';
 import { SectionArranger } from '../components/SectionArranger';
 import { useToast } from '../components/Toast';
-import { useInvalidateAll, useLabel, useSeasonTerm } from '../hooks';
+import { useErrorToast, useInvalidateAll, useLabel, useSeasonTerm } from '../hooks';
 import { arrayMoveTo } from '../lib/arrays';
 import { useDragReorder } from '../lib/dragReorder';
 import { formatDate } from '../lib/dates';
@@ -46,6 +46,7 @@ export function LandingPage() {
   const { data: landing } = useQuery({ queryKey: ['landing'], queryFn: api.landing.get });
   const navigate = useNavigate();
   const toast = useToast();
+  const report = useErrorToast();
   const invalidate = useInvalidateAll();
   const label = useLabel();
   const term = useSeasonTerm();
@@ -71,10 +72,7 @@ export function LandingPage() {
       await api.activateSeason(s.id);
       reloadToDashboard();
     } catch (err) {
-      toast.show({
-        message:
-          err instanceof ApiError ? err.message : `${term.singular} konnte nicht geöffnet werden.`,
-      });
+      report(err, `${term.singular} konnte nicht geöffnet werden.`);
     } finally {
       setSwitching(false);
     }
@@ -100,10 +98,7 @@ export function LandingPage() {
     } catch (err) {
       // No reload happens on this path, so a toast survives — and a failed „Anlegen &
       // wechseln" used to vanish without a word (PGS-03).
-      toast.show({
-        message:
-          err instanceof ApiError ? err.message : `${term.singular} konnte nicht angelegt werden.`,
-      });
+      report(err, `${term.singular} konnte nicht angelegt werden.`);
     }
   };
 

@@ -1,11 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ApiError, api } from '../api/client';
+import { api } from '../api/client';
 import type { ID } from '../api/types';
 import { reloadToDashboard } from './SeasonModals';
-import { useToast } from './Toast';
-import { useSeasonTerm } from '../hooks';
+import { useErrorToast, useSeasonTerm } from '../hooks';
 
 /**
  * Quick season switch in the header. Each season is its own SQLite file; switching
@@ -17,7 +16,7 @@ export function SeasonSwitcher() {
   const { data } = useQuery({ queryKey: ['seasons'], queryFn: api.seasons });
   const navigate = useNavigate();
   const term = useSeasonTerm();
-  const toast = useToast();
+  const report = useErrorToast();
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
 
@@ -39,10 +38,7 @@ export function SeasonSwitcher() {
       await api.activateSeason(id);
       reloadToDashboard();
     } catch (err) {
-      toast.show({
-        message:
-          err instanceof ApiError ? err.message : `${term.singular} konnte nicht gewechselt werden.`,
-      });
+      report(err, `${term.singular} konnte nicht gewechselt werden.`);
     } finally {
       setSwitching(false);
     }
