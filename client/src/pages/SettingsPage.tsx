@@ -22,7 +22,9 @@ import { useToast } from '../components/Toast';
 import { ALL_METRICS } from '../lib/taskStats';
 import { openExternal, type UpdateStatus } from '../lib/external';
 import {
+  useErrorToast,
   useEventTypeOptions,
+  useGuardedAction,
   useInvalidateAll,
   useLinkCategoryOptions,
   useOptionUsage,
@@ -71,13 +73,25 @@ export function SettingsPage() {
   );
 }
 
-/** Patch one or more settings keys and blanket-invalidate — shared by all three tabs. */
-function usePatchSettings() {
+/**
+ * Patch one or more settings keys and blanket-invalidate — shared by all three tabs.
+ *
+ * Guarded, because every editor here is fully controlled off the server value: TaskSortEditor
+ * writes on each interaction, and if the PATCH rejects, the promise never reaches invalidate(),
+ * the cache keeps the old rules and the editor re-renders them. The user watched their
+ * reordered hierarchy snap back with no toast and no hint that nothing had been saved (PGS-09).
+ *
+ * Returns whether the write landed, so a caller that has follow-up work — reassigning options,
+ * closing a dialog — does not treat a reported failure as success.
+ */
+function usePatchSettings(): (p: Record<string, unknown>) => Promise<boolean> {
   const invalidate = useInvalidateAll();
-  return async (p: Record<string, unknown>) => {
-    await api.patchSettings(p);
-    await invalidate();
-  };
+  const guard = useGuardedAction();
+  return (p) =>
+    guard('Einstellung konnte nicht gespeichert werden.', async () => {
+      await api.patchSettings(p);
+      await invalidate();
+    });
 }
 
 /** Tab „Aufgaben": global columns, automatic sort rules, overview metrics. */
@@ -294,6 +308,7 @@ function SeasonManagementCard() {
 function SeasonTermCard() {
   const { data } = useQuery({ queryKey: ['seasons'], queryFn: api.seasons });
   const invalidate = useInvalidateAll();
+  const guard = useGuardedAction();
   const [singular, setSingular] = useState('');
   const [plural, setPlural] = useState('');
 
@@ -302,13 +317,16 @@ function SeasonTermCard() {
     setPlural(data?.terms?.seasonPlural ?? '');
   }, [data?.terms]);
 
-  const save = async () => {
-    await api.updateSeasonTerms({
-      season: singular.trim() || null,
-      seasonPlural: plural.trim() || null,
+  // Same shape as the settings writes: the fields are reseeded from the server value, so an
+  // unreported failure just puts the old wording back as if nothing had been typed.
+  const save = () =>
+    guard('Bezeichnung konnte nicht gespeichert werden.', async () => {
+      await api.updateSeasonTerms({
+        season: singular.trim() || null,
+        seasonPlural: plural.trim() || null,
+      });
+      await invalidate();
     });
-    await invalidate();
-  };
 
   return (
     <Card className="p-5">
@@ -551,7 +569,7 @@ function UpdateCard() {
 function TaskStatsSetting({
   onSave,
 }: {
-  onSave: (metrics: string[], windowDays: number) => Promise<void>;
+  onSave: (metrics: string[], windowDays: number) => Promise<unknown>;
 }) {
   const cfg = useTaskStatsConfig();
   const [metrics, setMetrics] = useState<Set<string>>(() => new Set(cfg.metrics));
@@ -652,13 +670,15 @@ function SelectOptionsSetting({
   field: ReassignField;
   usageNoun: UsageNoun;
   addLabel: string;
-  onSave: (v: CustomColumnOption[]) => Promise<void>;
+  /** Resolves false when the settings write failed — the reassignment must not follow it. */
+  onSave: (v: CustomColumnOption[]) => Promise<boolean>;
 }) {
   const [draft, setDraft] = useState<CustomColumnOption[]>(options);
   const [busy, setBusy] = useState(false);
   const [blocked, setBlocked] = useState<CustomColumnOption[]>([]);
   const [pending, setPending] = useState<OptionRemoval[] | null>(null);
   const invalidate = useInvalidateAll();
+  const report = useErrorToast();
   // Reseed when the server data changes (after a save, or a season switch).
   useEffect(() => setDraft(options), [options]);
 
@@ -673,10 +693,16 @@ function SelectOptionsSetting({
   const persist = async (mapping: Array<{ from: string; to: string }>) => {
     setBusy(true);
     try {
-      await onSave(normalizeOptions(draft));
+      // The option list has to land before the rows are moved onto it: a reassignment that ran
+      // after a failed save would point rows at a category the settings row never got.
+      if (!(await onSave(normalizeOptions(draft)))) return;
       for (const m of mapping) await api.reassignOption({ field, ...m });
       await invalidate();
       setPending(null);
+    } catch (err) {
+      // The reassignment; it is invoked via `void` from the dialog, so an uncaught rejection
+      // here left the dialog open, busy and silent.
+      report(err, 'Einträge konnten nicht verschoben werden.');
     } finally {
       setBusy(false);
     }
