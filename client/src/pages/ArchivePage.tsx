@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../api/client';
 import type { DeletedItem, DeletedType } from '../api/types';
-import { SectionTitle, Spinner, EmptyState, Btn, Pill } from '../components/ui';
+import { SectionTitle, Spinner, EmptyState, ErrorState, Btn, Pill } from '../components/ui';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { TextInput, Modal } from '../components/fields';
@@ -44,11 +44,23 @@ function purgeHint(purgeAt: string | null): string {
 }
 
 export function ArchivePage() {
-  const { data: tasks = [], isLoading } = useQuery({
+  const {
+    data: tasks = [],
+    isLoading,
+    isError: tasksFailed,
+    refetch: refetchTasks,
+  } = useQuery({
     queryKey: ['archive'],
     queryFn: () => api.tasks.list({ scope: 'archive' }),
   });
-  const { data: deleted = [] } = useQuery({
+  // Own loading/error state, not the tasks query's. The two lists are independent requests, and
+  // borrowing the other one's gate made this one lie in both directions (PGS-11).
+  const {
+    data: deleted = [],
+    isLoading: deletedLoading,
+    isError: deletedFailed,
+    refetch: refetchDeleted,
+  } = useQuery({
     queryKey: ['deleted'],
     queryFn: () => api.deleted.list(),
   });
@@ -114,7 +126,13 @@ export function ArchivePage() {
           Erledigte Aufgaben (älter als 30 Tage)
         </SectionTitle>
 
-        {filtered.length === 0 ? (
+        {tasksFailed ? (
+          // Same class as the trash list below: a failed request must not read as „noch nichts".
+          <ErrorState
+            title="Archiv konnte nicht geladen werden."
+            onRetry={() => void refetchTasks()}
+          />
+        ) : filtered.length === 0 ? (
           <EmptyState>
             {tasks.length === 0
               ? 'Noch nichts archiviert. Erledigte Aufgaben wandern 30 Tage nach Abschluss hierher.'
@@ -165,7 +183,15 @@ export function ArchivePage() {
 
       <div className="space-y-3">
         <SectionTitle>Gelöschte Items</SectionTitle>
-        {deleted.length === 0 ? (
+        {deletedLoading ? (
+          <Spinner />
+        ) : deletedFailed ? (
+          <ErrorState
+            title="Papierkorb konnte nicht geladen werden."
+            hint="Gelöschte Einträge sind weiterhin da — nur die Liste konnte nicht abgerufen werden."
+            onRetry={() => void refetchDeleted()}
+          />
+        ) : deleted.length === 0 ? (
           <EmptyState>
             Papierkorb ist leer. Gelöschte Einträge erscheinen hier und werden nach 30 Tagen automatisch
             entfernt.
