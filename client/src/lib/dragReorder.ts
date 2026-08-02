@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent, type PointerEvent } from 'react';
+import { useErrorToast, useInvalidateAll } from '../hooks';
+import { arrayMoveTo } from './arrays';
 
 /** Whatever identifies one draggable item — a section key, or a row id. */
 type Key = string | number;
@@ -15,8 +17,11 @@ type Key = string | number;
 const DRAG_MIME = 'application/x-auftakt-row';
 
 export interface DragReorderOptions<K extends Key> {
-  /** Commit a move: the item `from` was dropped onto `to`. */
-  onReorder: (from: K, to: K) => void;
+  /**
+   * Commit a move: the item `from` was dropped onto `to`. May be async — the hook awaits it and
+   * reports a rejection, so a caller does not need its own catch arm.
+   */
+  onReorder: (from: K, to: K) => void | Promise<void>;
   /**
    * Reject a pairing before it becomes a drop target. Used by the task table, where a row may
    * only be dropped on a sibling of equal rank. A `false` here both hides the drop highlight
@@ -48,6 +53,7 @@ export function useDragReorder<K extends Key>({
   enabled = true,
   mode = 'always',
 }: DragReorderOptions<K>) {
+  const report = useErrorToast();
   const [dragKey, setDragKey] = useState<K | null>(null);
   const [overKey, setOverKey] = useState<K | null>(null);
   const [armedKey, setArmedKey] = useState<K | null>(null);
@@ -155,7 +161,14 @@ export function useDragReorder<K extends Key>({
           if (dragKey !== null && allowed(dragKey, key)) {
             e.preventDefault();
             e.stopPropagation();
-            onReorder(dragKey, key);
+            // Every call site is async (a reorder request plus an invalidate). Dropping the
+            // promise here turned a rejected reorder — a restarted server, a season swapped
+            // mid-drag, a row purged since the list was fetched — into an unhandled rejection:
+            // the invalidate never ran, the row snapped back on the next refetch, and nothing
+            // told the user, so a refused reorder looked exactly like a mis-drop (CCL-13).
+            void Promise.resolve(onReorder(dragKey, key)).catch((err: unknown) =>
+              report(err, 'Die neue Reihenfolge konnte nicht gespeichert werden.'),
+            );
           }
           reset();
         },
@@ -166,4 +179,42 @@ export function useDragReorder<K extends Key>({
       };
     },
   };
+}
+
+/** The props bundle `useDragReorder`/`useListReorder` hand back, for components that take it. */
+export type DragReorder<K extends string | number = number> = ReturnType<typeof useDragReorder<K>>;
+
+/**
+ * The whole-list case of `useDragReorder`: every item is a sibling of every other, so a drop is
+ * „lift `from` out and re-insert it where `to` sits", and the new order is persisted by sending
+ * the ids in display order to a batch `reorder` endpoint.
+ *
+ * That closure sat verbatim in two places — the landing page's season cards and the artist page's
+ * project cards, differing only in the array and the `api.*.reorder` call — so every change to the
+ * drag semantics had to be made twice and whichever copy was missed kept the old behaviour
+ * (PGS-29). The out-of-range case the finding worried about is already handled: `arrayMoveTo`
+ * returns the list unchanged when a `findIndex` came back `-1`, and the identity check below then
+ * skips the request.
+ *
+ * Not for the task table, whose rows are *not* one flat list — it reorders within one sibling
+ * group of a tree and has its own `canDrop`.
+ */
+export function useListReorder<T extends { id: number }>(
+  items: T[],
+  reorder: (ids: number[]) => Promise<unknown>,
+) {
+  const invalidate = useInvalidateAll();
+  return useDragReorder<number>({
+    mode: 'armed',
+    onReorder: async (fromId, toId) => {
+      const next = arrayMoveTo(
+        items,
+        items.findIndex((i) => i.id === fromId),
+        items.findIndex((i) => i.id === toId),
+      );
+      if (next === items) return;
+      await reorder(next.map((i) => i.id));
+      await invalidate();
+    },
+  });
 }

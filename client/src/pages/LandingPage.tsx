@@ -18,8 +18,7 @@ import { NewSeasonModal, reloadToDashboard } from '../components/SeasonModals';
 import { SectionArranger } from '../components/SectionArranger';
 import { useToast } from '../components/Toast';
 import { useErrorToast, useInvalidateAll, useLabel, useSeasonTerm } from '../hooks';
-import { arrayMoveTo } from '../lib/arrays';
-import { useDragReorder } from '../lib/dragReorder';
+import { useListReorder, type DragReorder } from '../lib/dragReorder';
 import { formatDate } from '../lib/dates';
 
 /**
@@ -102,19 +101,7 @@ export function LandingPage() {
     }
   };
 
-  const drag = useDragReorder<number>({
-    mode: 'armed',
-    onReorder: async (fromId, toId) => {
-      const next = arrayMoveTo(
-        seasons,
-        seasons.findIndex((s) => s.id === fromId),
-        seasons.findIndex((s) => s.id === toId),
-      );
-      if (next === seasons) return;
-      await api.reorderSeasons(next.map((s) => s.id));
-      await invalidate();
-    },
-  });
+  const drag = useListReorder(seasons, api.reorderSeasons);
 
   const seasonGrid =
     isLoading ? (
@@ -245,7 +232,7 @@ function SeasonCard({
   /** undefined = still loading, null = file unreadable. */
   stats: SeasonStats | null | undefined;
   disabled: boolean;
-  drag: ReturnType<typeof useDragReorder<number>>;
+  drag: DragReorder;
   term: string;
   onOpen: () => void;
   onUpdate: (patch: SeasonPatch) => void | Promise<void>;

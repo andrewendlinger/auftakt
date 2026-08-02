@@ -208,7 +208,9 @@ export function SectionArranger({
     enabled: arranging,
     onReorder: (fromKey, toKey) => {
       const next = arrayMoveTo(full, idxInFull(fromKey), idxInFull(toKey));
-      if (next !== full) void persist(next);
+      // Hand the promise back rather than `void`-ing it: the hook awaits it and toasts a
+      // rejection, so a layout that failed to save no longer just snaps back silently (CCL-13).
+      if (next !== full) return persist(next);
     },
   });
 

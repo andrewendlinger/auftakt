@@ -4,8 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Project, Task } from '../api/types';
 import { contrastText, projectShade, withAlpha } from '../lib/colors';
-import { arrayMoveTo } from '../lib/arrays';
-import { useDragReorder } from '../lib/dragReorder';
+import { useListReorder, type DragReorder } from '../lib/dragReorder';
 import { Markdown } from '../components/Markdown';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { SectionArranger } from '../components/SectionArranger';
@@ -29,7 +28,7 @@ import { AttentionList } from '../components/AttentionList';
 import { EditArtistButton, NewProjectButton } from '../components/EntityButtons';
 import { ProjectStatusPill } from '../components/ProjectStatusPill';
 import { ExcelButton } from '../components/ExcelButton';
-import { useEventTypeOptions, useInvalidateAll, useTaskStatsConfig, useUndoablePatch } from '../hooks';
+import { useEventTypeOptions, useTaskStatsConfig, useUndoablePatch } from '../hooks';
 
 /** Which heading names each section in the "Bereiche bearbeiten" strip. */
 const SECTION_LABEL_KEYS: Record<string, LabelKey> = {
@@ -300,20 +299,7 @@ function ProjectGrid({
   artistColor: string;
   tasksByProject: Map<number, Task[]>;
 }) {
-  const invalidate = useInvalidateAll();
-  const drag = useDragReorder<number>({
-    mode: 'armed',
-    onReorder: async (fromId, toId) => {
-      const next = arrayMoveTo(
-        projects,
-        projects.findIndex((p) => p.id === fromId),
-        projects.findIndex((p) => p.id === toId),
-      );
-      if (next === projects) return;
-      await api.projects.reorder(next.map((p) => p.id));
-      await invalidate();
-    },
-  });
+  const drag = useListReorder(projects, api.projects.reorder);
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {projects.map((p) => (
@@ -337,7 +323,7 @@ function ProjectCard({
 }: {
   project: Project;
   artistColor: string;
-  drag: ReturnType<typeof useDragReorder<number>>;
+  drag: DragReorder;
   tasks: Task[];
 }) {
   const shade = projectShade(artistColor, project.color, project.id);
