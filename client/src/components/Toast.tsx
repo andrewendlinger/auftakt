@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 
 export interface ToastInput {
   message: string;
@@ -53,8 +61,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     [dismiss],
   );
 
+  // Memoised: `items` changes on every appearance and dismissal, and a fresh `{ show }` there
+  // would re-render every consumer in the app — including UndoProvider, which would then hand
+  // out a fresh value of its own and take the rest of the tree with it (SHL-25).
+  const value = useMemo(() => ({ show }), [show]);
+
   return (
-    <ToastCtx.Provider value={{ show }}>
+    <ToastCtx.Provider value={value}>
       {children}
       {/* no-print: the layer is always mounted and outside `Layout`, so a live toast — the
           undo pill after a delete, say — was painted onto the first page of a print or PDF.

@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useRef, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from 'react';
 import { useToast } from './Toast';
 
 /**
@@ -166,5 +174,9 @@ export function UndoProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('keydown', h);
   }, [run]);
 
-  return <UndoCtx.Provider value={{ push, pushWithToast }}>{children}</UndoCtx.Provider>;
+  // Memoised for the same reason as the toast's: a fresh object here re-renders every
+  // component that calls useUndoablePatch/useUndoableDelete (SHL-25).
+  const value = useMemo(() => ({ push, pushWithToast }), [push, pushWithToast]);
+
+  return <UndoCtx.Provider value={value}>{children}</UndoCtx.Provider>;
 }
