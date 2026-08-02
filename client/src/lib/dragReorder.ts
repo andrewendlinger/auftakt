@@ -70,6 +70,13 @@ export function useDragReorder<K extends Key>({
       return {
         draggable: mode === 'always' || armedKey === key,
         onDragStart: (e: DragEvent) => {
+          // Same condition that gates `draggable` above. The row itself is not draggable until
+          // its handle arms it, but a drag started *inside* it — a text selection in a Titel or
+          // Kommentar cell, an image — is native and bubbles up to this handler anyway. Without
+          // the guard that stray gesture set `dragKey` and a release on a sibling row reordered
+          // and persisted the list: the user tried to copy a word and reshuffled the table,
+          // with no undo affordance (CCL-01).
+          if (mode === 'armed' && armedKey !== key) return;
           // Nested reorderers (a project card inside an arrangeable section) must not both
           // claim the same gesture.
           e.stopPropagation();
