@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import './index.css';
+import { ApiError } from './api/client';
 import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastProvider } from './components/Toast';
@@ -24,7 +25,20 @@ import { PrintProject } from './pages/PrintProject';
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { refetchOnWindowFocus: false, staleTime: 5_000 },
+    queries: {
+      refetchOnWindowFocus: false,
+      staleTime: 5_000,
+      /**
+       * The server is the local Express process, so a 4xx is a definitive answer — retrying it
+       * buys nothing and costs the user the wait. React Query's default of three retries at 1s,
+       * 2s and 4s turned one stale link (`#/artist/7` for a deleted artist) into four identical
+       * failing requests and roughly seven seconds of spinner before the page could react at
+       * all (CCL-25). Anything else — a dropped connection, a restarting server — is still
+       * worth one retry.
+       */
+      retry: (count, err) =>
+        !(err instanceof ApiError && err.status >= 400 && err.status < 500) && count < 2,
+    },
   },
 });
 
