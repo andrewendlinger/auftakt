@@ -57,9 +57,27 @@ function ScopeChip({ label, tone }: { label: string; tone: 'neutral' | 'festival
 /** null = follow the configured automatic hierarchy; a rule = a temporary header-click override. */
 type SortState = TaskSortRule | null;
 
-/** Stable column id: built-ins use their key, custom columns use `c<id>`. */
+/**
+ * Stable column id: built-ins use their `key`, custom columns `custom:<id>`.
+ *
+ * The delimiter is the point. With customs encoded as `c<id>` the two namespaces overlapped —
+ * `BUILTIN_COLUMNS` holds `comment` and `created` — so the built-in Kommentar key decoded as
+ * "custom column number `omment`": `Number('omment')` is NaN, `customValueOf` returns '', and
+ * that level of the sort hierarchy silently compared every task equal. Only `comment`'s absence
+ * from SORTABLE_TASK_COLUMNS kept it unreachable, and a hand-edited or imported `task_sort` does
+ * not respect that list (TTU-31). `:` cannot appear in a built-in key.
+ */
+const CUSTOM_PREFIX = 'custom:';
+
 function colId(col: CustomColumn): string {
-  return col.kind === 'builtin' && col.key ? col.key : `c${col.id}`;
+  return col.kind === 'builtin' && col.key ? col.key : `${CUSTOM_PREFIX}${col.id}`;
+}
+
+/** The inverse of `colId` — the custom column's id, or null for a built-in key. */
+function customColId(id: string): number | null {
+  if (!id.startsWith(CUSTOM_PREFIX)) return null;
+  const n = Number(id.slice(CUSTOM_PREFIX.length));
+  return Number.isInteger(n) ? n : null;
 }
 
 function findBuiltin(cols: CustomColumn[], key: string): CustomColumn | undefined {
@@ -99,8 +117,8 @@ function makeSortValue(
     if (id === 'due') return task.due_date ?? '￿';
     if (id === 'created') return task.created_at ?? '￿';
     if (id === 'updated') return task.updated_at ?? '￿';
-    if (id.startsWith('c')) {
-      const cid = Number(id.slice(1));
+    const cid = customColId(id);
+    if (cid !== null) {
       const raw = customValueOf(task, cid);
       if (colById.get(cid)?.type === 'checkbox') return raw === 'true' ? 0 : 1;
       // An Auswahl column ranks by its *configured* category order, exactly as status and
@@ -548,7 +566,7 @@ export function TaskTable({
 
   const sortableIds = new Set([
     ...SORTABLE_TASK_COLUMNS.map((c) => c.id),
-    ...visibleCols.filter((c) => c.kind === 'custom').map((c) => `c${c.id}`),
+    ...visibleCols.filter((c) => c.kind === 'custom').map(colId),
   ]);
   /**
    * asc → desc → off. Without the third state a single header click made the configured
