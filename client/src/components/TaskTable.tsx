@@ -28,6 +28,7 @@ import { PillSelect } from './PillSelect';
 import { EmptyState, Btn, DragHandle, IconButton } from './ui';
 import { Modal } from './fields';
 import {
+  useGuardedAction,
   useInvalidateAll,
   useSaison,
   useTaskSortRules,
@@ -1261,16 +1262,38 @@ function AddTaskRow({
   );
 }
 
-/** Controlled title input that creates a task and clears on success — shared by the
- *  top add-row and the indented subtask composer. `create` receives the trimmed title. */
+/**
+ * Controlled title input that creates a task — shared by the top add-row and the indented
+ * subtask composer. `create` receives the trimmed title.
+ *
+ * Two things it has to get right, both of which it used to get wrong (TTU-24):
+ *
+ * - **One task per Enter.** The old order was read `title` → `await create` → *then* clear, and
+ *   `title` is controlled state, so every keydown before the POST resolved saw the same non-empty
+ *   string. Holding Enter for a second created ~15 identical tasks. The title is cleared before
+ *   the await now, and `busy` is a ref rather than state so a burst inside one tick cannot slip
+ *   past it — the sibling forms in this codebase (`AddColumnForm.add`, `ColumnEditModal.save`,
+ *   `RecordFormModal.submit`) all gate the same way.
+ * - **A failure is visible.** Both call sites `void submit()`, so a rejected POST — the 400 from
+ *   the `parent_id` guard, a server restarting mid-season-switch — surfaced as nothing at all:
+ *   the row simply never appeared. It goes through `useGuardedAction` now, and the typed title is
+ *   put back so the user can retry rather than retype.
+ */
 function useTaskComposer(create: (title: string) => Promise<unknown>, onAdded: () => Promise<void>) {
   const [title, setTitle] = useState('');
+  const busy = useRef(false);
+  const guard = useGuardedAction();
   const submit = async () => {
     const t = title.trim();
-    if (!t) return;
-    await create(t);
+    if (!t || busy.current) return;
+    busy.current = true;
     setTitle('');
-    await onAdded();
+    try {
+      if (await guard('Die Aufgabe konnte nicht angelegt werden.', () => create(t))) await onAdded();
+      else setTitle(t);
+    } finally {
+      busy.current = false;
+    }
   };
   return { title, setTitle, submit };
 }
