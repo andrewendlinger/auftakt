@@ -1,4 +1,4 @@
-import { useState, type DragEvent } from 'react';
+import { useEffect, useRef, useState, type DragEvent, type PointerEvent } from 'react';
 
 /** Whatever identifies one draggable item — a section key, or a row id. */
 type Key = string | number;
@@ -40,14 +40,44 @@ export function useDragReorder<K extends Key>({
   const [dragKey, setDragKey] = useState<K | null>(null);
   const [overKey, setOverKey] = useState<K | null>(null);
   const [armedKey, setArmedKey] = useState<K | null>(null);
+  // Whether a native drag is actually running, as a ref: the window listener below has to read
+  // the live value, not the one its render closed over.
+  const dragging = useRef(false);
 
   const allowed = (from: K, to: K) => from !== to && (!canDrop || canDrop(from, to));
 
   const reset = () => {
+    dragging.current = false;
     setDragKey(null);
     setOverKey(null);
     setArmedKey(null);
   };
+
+  /**
+   * Disarm from the window, not from the handle. A grab released anywhere but on the ⠿ — outside
+   * the browser window, after a sub-threshold slip, a right-click, a cancelled touch — never
+   * fired the handle's own `pointerup` and never started a drag, so no `dragend` followed either:
+   * the row stayed `draggable` for good, which swallows text selection and misfires the inline
+   * click-to-edit cells until some other row happens to be armed (CCL-19).
+   *
+   * `dragging` is the exception that has to survive: Chromium fires `pointercancel` at the very
+   * moment a native drag begins, and disarming there would flip `draggable` off underneath the
+   * drag it just started. `onDragEnd` owns that path.
+   */
+  useEffect(() => {
+    if (armedKey === null) return;
+    const disarm = () => {
+      if (!dragging.current) setArmedKey(null);
+    };
+    window.addEventListener('pointerup', disarm);
+    window.addEventListener('pointercancel', disarm);
+    window.addEventListener('blur', disarm);
+    return () => {
+      window.removeEventListener('pointerup', disarm);
+      window.removeEventListener('pointercancel', disarm);
+      window.removeEventListener('blur', disarm);
+    };
+  }, [armedKey]);
 
   return {
     isDragging: (key: K) => dragKey === key,
@@ -55,13 +85,22 @@ export function useDragReorder<K extends Key>({
     isDropTarget: (key: K) => overKey === key && dragKey !== null && allowed(dragKey, key),
 
     /**
-     * Spread onto the grab handle in `'armed'` mode. Pointer-down arms the item, and either
-     * `onDragEnd` or a pointer-up that never became a drag disarms it again — leaving a row
-     * armed would keep it `draggable`, which swallows text selection inside it.
+     * Spread onto the grab handle in `'armed'` mode. A primary-button pointer-down arms the item;
+     * `onDragEnd` or the window listener above disarms it again — leaving a row armed would keep
+     * it `draggable`, which swallows text selection inside it.
+     *
+     * Secondary buttons are ignored outright: a right-click on the handle used to arm the row
+     * while opening the context menu, and the release that follows is a `contextmenu`, not a
+     * gesture that could ever disarm it.
      */
     handleProps: (key: K) =>
       mode === 'armed' && enabled
-        ? { onPointerDown: () => setArmedKey(key), onPointerUp: () => setArmedKey(null) }
+        ? {
+            onPointerDown: (e: PointerEvent) => {
+              if (e.button !== 0 || !e.isPrimary) return;
+              setArmedKey(key);
+            },
+          }
         : {},
 
     /** Spread onto the draggable item itself. */
@@ -80,6 +119,7 @@ export function useDragReorder<K extends Key>({
           // Nested reorderers (a project card inside an arrangeable section) must not both
           // claim the same gesture.
           e.stopPropagation();
+          dragging.current = true;
           setDragKey(key);
           e.dataTransfer.effectAllowed = 'move';
           e.dataTransfer.setData('text/plain', String(key));
