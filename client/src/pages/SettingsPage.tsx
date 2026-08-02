@@ -31,7 +31,7 @@ import {
   useProjectStatusOptions,
   useSeasonTerm,
   useSettings,
-  useTaskSortRules,
+  useTaskSort,
   useTaskStatsConfig,
 } from '../hooks';
 
@@ -99,7 +99,11 @@ function usePatchSettings(): (p: Record<string, unknown>) => Promise<boolean> {
 export function SettingsTasksTab() {
   const { data: settings, isLoading, isError, refetch } = useSettings();
   const patch = usePatchSettings();
-  const taskSort = useTaskSortRules();
+  // Not `usePatchSettings` like its neighbours: TaskSortEditor saves on every interaction, so it
+  // is the one editor on this page that can be clicked again before the previous write's refetch
+  // lands. `useTaskSort`'s write publishes the new array to the query cache first, so the second
+  // click computes from it instead of from the array this render was built with (PGS-10).
+  const taskSort = useTaskSort();
   const [managingColumns, setManagingColumns] = useState(false);
 
   const { data: globalCols = [] } = useQuery({
@@ -147,7 +151,7 @@ export function SettingsTasksTab() {
           rutscht immer nach unten. Die Reihenfolge der Status-Werte selbst legst du bei den
           Status-Spaltenoptionen fest.
         </p>
-        <TaskSortEditor value={taskSort} onChange={(v) => patch({ task_sort: v })} />
+        <TaskSortEditor value={taskSort.value} onChange={(v) => void taskSort.write(v)} />
       </Card>
 
       <Card className="p-5">
