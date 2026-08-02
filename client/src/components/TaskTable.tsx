@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   flexRender,
   getCoreRowModel,
@@ -918,6 +918,35 @@ function ColumnCell({
 
 /* ---------- editable cells ---------- */
 
+/**
+ * Commit an open inline editor when it is unmounted.
+ *
+ * `onBlur` cannot carry this on its own. React delegates focus events at the root container, and
+ * a node that is already detached never reaches the component's handler — the native `blur` does
+ * fire on the removed element, but `onBlur` does not run, so anything that unmounts a cell
+ * mid-edit discarded whatever had been typed, silently and with no way back (TTU-38). Verified
+ * both ways on the demo season: with the editor open and text typed, a history-back navigation
+ * lost it before this hook and persists it after.
+ *
+ * Stabilising the column defs (TTU-12) removed the everyday cause — a re-render no longer
+ * remounts the cell — but a column being disabled, the row leaving the list or a navigation still
+ * unmount it, and those are exactly the moments a user has text in flight.
+ *
+ * `active` is the editor's own „am I open" flag, and blur closes the editor before this can run,
+ * so the two paths can never both write. Under StrictMode the mount-time cleanup finds
+ * `active === false` and does nothing.
+ */
+function useCommitOnUnmount(active: boolean, commit: () => void): void {
+  const latest = useRef({ active, commit });
+  latest.current = { active, commit };
+  useEffect(
+    () => () => {
+      if (latest.current.active) latest.current.commit();
+    },
+    [],
+  );
+}
+
 function TitleCell({
   task,
   isChild,
@@ -931,6 +960,10 @@ function TitleCell({
 }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(task.title);
+  const dirty = () => value.trim() !== '' && value !== task.title;
+  useCommitOnUnmount(editing, () => {
+    if (dirty()) onCommit(value.trim());
+  });
   if (editing) {
     return (
       <input
@@ -940,7 +973,7 @@ function TitleCell({
         onChange={(e) => setValue(e.target.value)}
         onBlur={() => {
           setEditing(false);
-          if (value.trim() && value !== task.title) onCommit(value.trim());
+          if (dirty()) onCommit(value.trim());
           else setValue(task.title);
         }}
         onKeyDown={(e) => {
@@ -980,6 +1013,12 @@ function TimestampCell({ value }: { value: string | null }) {
 
 function DueCell({ task, onCommit }: { task: Task; onCommit: (v: string | null) => void }) {
   const [editing, setEditing] = useState(false);
+  // The input is uncontrolled, so the picked-but-not-yet-blurred date lives only in the DOM —
+  // mirror it here so the unmount path has something to commit.
+  const picked = useRef<string | null>(task.due_date);
+  useCommitOnUnmount(editing, () => {
+    if (picked.current !== task.due_date) onCommit(picked.current);
+  });
   if (editing) {
     return (
       <input
@@ -987,6 +1026,9 @@ function DueCell({ task, onCommit }: { task: Task; onCommit: (v: string | null) 
         autoFocus
         defaultValue={task.due_date ?? ''}
         className={INLINE_INPUT}
+        onChange={(e) => {
+          picked.current = e.target.value || null;
+        }}
         onBlur={(e) => {
           setEditing(false);
           const v = e.target.value || null;
@@ -996,7 +1038,13 @@ function DueCell({ task, onCommit }: { task: Task; onCommit: (v: string | null) 
     );
   }
   return (
-    <button className="whitespace-nowrap text-sm" onClick={() => setEditing(true)}>
+    <button
+      className="whitespace-nowrap text-sm"
+      onClick={() => {
+        picked.current = task.due_date;
+        setEditing(true);
+      }}
+    >
       {task.due_date ? formatDate(task.due_date) : <span className="text-neutral-300">—</span>}
     </button>
   );
@@ -1006,6 +1054,10 @@ function CommentCell({ task, onCommit }: { task: Task; onCommit: (v: string | nu
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [value, setValue] = useState(task.comment ?? '');
+  const next = () => (value.trim() === '' ? null : value);
+  useCommitOnUnmount(editing, () => {
+    if (next() !== (task.comment ?? null)) onCommit(next());
+  });
 
   if (editing) {
     return (
@@ -1017,8 +1069,7 @@ function CommentCell({ task, onCommit }: { task: Task; onCommit: (v: string | nu
         className={`min-h-24 w-full min-w-64 ${INLINE_INPUT}`}
         onBlur={() => {
           setEditing(false);
-          const v = value.trim() === '' ? null : value;
-          if (v !== (task.comment ?? null)) onCommit(v);
+          if (next() !== (task.comment ?? null)) onCommit(next());
         }}
       />
     );
@@ -1092,6 +1143,9 @@ function CustomCell({
 function EditableTextCell({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
   const [editing, setEditing] = useState(false);
   const [v, setV] = useState(value);
+  useCommitOnUnmount(editing, () => {
+    if (v !== value) onCommit(v);
+  });
   if (editing) {
     return (
       <input
@@ -1128,6 +1182,11 @@ function EditableTextCell({ value, onCommit }: { value: string; onCommit: (v: st
 
 function EditableDateCell({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
   const [editing, setEditing] = useState(false);
+  // Uncontrolled like DueCell, and mirrored for the same reason.
+  const picked = useRef(value);
+  useCommitOnUnmount(editing, () => {
+    if (picked.current !== value) onCommit(picked.current);
+  });
   if (editing) {
     return (
       <input
@@ -1135,6 +1194,9 @@ function EditableDateCell({ value, onCommit }: { value: string; onCommit: (v: st
         autoFocus
         defaultValue={value}
         className={INLINE_INPUT}
+        onChange={(e) => {
+          picked.current = e.target.value;
+        }}
         onBlur={(e) => {
           setEditing(false);
           if (e.target.value !== value) onCommit(e.target.value);
@@ -1143,7 +1205,13 @@ function EditableDateCell({ value, onCommit }: { value: string; onCommit: (v: st
     );
   }
   return (
-    <button className="whitespace-nowrap text-sm" onClick={() => setEditing(true)}>
+    <button
+      className="whitespace-nowrap text-sm"
+      onClick={() => {
+        picked.current = value;
+        setEditing(true);
+      }}
+    >
       {value ? formatDate(value) : <span className="text-neutral-300">—</span>}
     </button>
   );
