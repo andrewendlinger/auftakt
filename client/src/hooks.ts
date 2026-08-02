@@ -193,51 +193,107 @@ export function useTaskStatsConfig(): { metrics: TaskMetric[]; windowDays: numbe
 }
 
 /**
- * The configured automatic sort hierarchy. The single boundary where `task_sort` is read —
- * consumers never touch the raw setting.
+ * An array-valued setting plus the write that replaces it — for the editors that save on every
+ * interaction rather than behind a „Speichern" button.
  *
- * It was the one array-valued setting read with a bare `?? []`, while `useTaskStatsConfig`,
- * `useLabel` and `SectionArranger` all test `Array.isArray` first. A non-array value —
- * settings.ts stores any non-array as `String(v)` and `safeParse` hands the raw string back —
- * therefore survived the guard (`"status" ?? []` is `"status"`) and reached `value.some(…)`,
- * throwing a TypeError mid-render. That blanked the Aufgaben tab *and* every task table, with
- * no way left to repair the setting from the UI (PGS-15).
+ * Those editors all shared one defect: the next value is computed from the array the component
+ * was rendered with, and that array is only refreshed by the invalidate → refetch round trip the
+ * previous write started. A second edit issued inside that window is therefore built on the
+ * pre-first-edit snapshot and silently overwrites it — rename two headings quickly and the first
+ * reverts to its default (CCL-21); delete two sort rules quickly and the first one comes back
+ * while the second disappears, leaving every task table ordered by something the user did not
+ * choose (PGS-10). Neither reports anything: the write succeeded, it just wrote the wrong array.
+ *
+ * The fix is to publish the new value to the `['settings']` cache *before* awaiting the request,
+ * so every reader — including a second editor the user clicks 200 ms later, in a different
+ * component — computes from it. The response then replaces it with the server's own answer, and
+ * a failure falls back to `invalidate()`, which refetches the truth under the toast
+ * `useGuardedAction` has already shown (PGS-09).
+ *
+ * `parse` must be module-level (it is a dep), and must read defensively: any settings value can
+ * be a hand-edited or legacy shape, and a throw here blanks the page (PGS-15).
  */
-export function useTaskSortRules(): TaskSortRule[] {
+export function useSettingsArray<T>(
+  key: string,
+  parse: (raw: unknown) => T[],
+): { value: T[]; write: (next: T[]) => Promise<boolean> } {
+  const qc = useQueryClient();
   const { data } = useSettings();
-  const raw = data?.task_sort;
-  return useMemo(() => {
-    if (!Array.isArray(raw)) return [];
-    const out: TaskSortRule[] = [];
-    for (const row of raw as unknown[]) {
-      if (!row || typeof row !== 'object') continue;
-      const { id, dir } = row as TaskSortRule;
-      if (typeof id === 'string' && id) out.push({ id, dir: dir === 'desc' ? 'desc' : 'asc' });
-    }
-    return out;
-  }, [raw]);
+  const guard = useGuardedAction();
+  const invalidate = useInvalidateAll();
+  const raw = data?.[key];
+  const value = useMemo(() => parse(raw), [raw, parse]);
+  const write = useCallback(
+    async (next: T[]) => {
+      qc.setQueryData<Settings>(['settings'], (old) => (old ? { ...old, [key]: next } : old));
+      const ok = await guard('Einstellung konnte nicht gespeichert werden.', async () => {
+        qc.setQueryData<Settings>(['settings'], await api.patchSettings({ [key]: next }));
+      });
+      await invalidate();
+      return ok;
+    },
+    [qc, key, guard, invalidate],
+  );
+  return { value, write };
+}
+
+/**
+ * Read defensively — settings.ts stores any non-array as `String(v)` and `safeParse` hands the
+ * raw string back, so `?? []` is not a guard (`"status" ?? []` is `"status"`), and the value then
+ * reached `value.some(…)` and threw a TypeError mid-render. That blanked the Aufgaben tab *and*
+ * every task table, with no way left to repair the setting from the UI (PGS-15).
+ */
+function parseSortRules(raw: unknown): TaskSortRule[] {
+  if (!Array.isArray(raw)) return [];
+  const out: TaskSortRule[] = [];
+  for (const row of raw as unknown[]) {
+    if (!row || typeof row !== 'object') continue;
+    const { id, dir } = row as TaskSortRule;
+    if (typeof id === 'string' && id) out.push({ id, dir: dir === 'desc' ? 'desc' : 'asc' });
+  }
+  return out;
+}
+
+/**
+ * Every well-formed override row, *including* keys this build does not know: an override written
+ * by a newer version must survive a rename here rather than being dropped on the next write.
+ * `useLabel` is where unknown keys stop mattering.
+ */
+function parseLabelOverrides(raw: unknown): LabelOverride[] {
+  if (!Array.isArray(raw)) return [];
+  const out: LabelOverride[] = [];
+  for (const row of raw as unknown[]) {
+    if (!row || typeof row !== 'object') continue;
+    const { key, label } = row as LabelOverride;
+    if (typeof key === 'string' && key && typeof label === 'string' && label) out.push({ key, label });
+  }
+  return out;
+}
+
+/**
+ * The configured automatic sort hierarchy, and the write behind Settings → Automatische
+ * Sortierung. The single boundary where `task_sort` is read — consumers never touch the raw
+ * setting.
+ */
+export function useTaskSort(): { value: TaskSortRule[]; write: (next: TaskSortRule[]) => Promise<boolean> } {
+  return useSettingsArray('task_sort', parseSortRules);
+}
+
+/** Read-only view of the same hierarchy, for the tables that only apply it. */
+export function useTaskSortRules(): TaskSortRule[] {
+  return useTaskSort().value;
 }
 
 /**
  * Resolves a heading id to its text: the user's override if there is one, else the default
- * from `LABEL_DEFAULTS`. Read defensively — a hand-edited or legacy setting must never blank
- * out a heading, so anything that isn't a well-formed override row is skipped.
+ * from `LABEL_DEFAULTS`. A key this build does not know is ignored rather than rendered.
  */
 export function useLabel(): (key: LabelKey) => string {
-  const { data } = useSettings();
-  const raw = data?.labels;
-  const overrides = useMemo(() => {
-    const map = new Map<string, string>();
-    if (!Array.isArray(raw)) return map;
-    for (const row of raw as unknown[]) {
-      if (!row || typeof row !== 'object') continue;
-      const { key, label } = row as LabelOverride;
-      if (typeof key === 'string' && typeof label === 'string' && label && isLabelKey(key)) {
-        map.set(key, label);
-      }
-    }
-    return map;
-  }, [raw]);
+  const { value } = useSettingsArray('labels', parseLabelOverrides);
+  const overrides = useMemo(
+    () => new Map(value.filter((r) => isLabelKey(r.key)).map((r) => [r.key, r.label])),
+    [value],
+  );
   return useCallback((key: LabelKey) => overrides.get(key) ?? LABEL_DEFAULTS[key], [overrides]);
 }
 
@@ -246,20 +302,14 @@ export function useLabel(): (key: LabelKey) => string {
  * instead of storing a redundant one, which is what makes clearing the field a reset.
  */
 export function useRenameLabel(): (key: LabelKey, label: string) => Promise<void> {
-  const { data } = useSettings();
-  const invalidate = useInvalidateAll();
-  const raw = data?.labels;
+  const { value, write } = useSettingsArray('labels', parseLabelOverrides);
   return useCallback(
     async (key: LabelKey, label: string) => {
       const trimmed = label.trim();
-      const stored = Array.isArray(raw) ? (raw as LabelOverride[]) : [];
-      const rest = stored.filter((r) => r && typeof r === 'object' && r.key !== key);
-      const next =
-        !trimmed || trimmed === LABEL_DEFAULTS[key] ? rest : [...rest, { key, label: trimmed }];
-      await api.patchSettings({ labels: next });
-      await invalidate();
+      const rest = value.filter((r) => r.key !== key);
+      await write(!trimmed || trimmed === LABEL_DEFAULTS[key] ? rest : [...rest, { key, label: trimmed }]);
     },
-    [raw, invalidate],
+    [value, write],
   );
 }
 
