@@ -239,22 +239,33 @@ export function TaskTable({
 
   // --- subtask grouping (one level) ---
   const idSet = useMemo(() => new Set(tasks.map((t) => t.id)), [tasks]);
+  /**
+   * The parent a task is actually *rendered* under: its own, unless that parent isn't in this
+   * list (soft-deleted — including via the delete dialog's „Nur diese Aufgabe" — or archived), in
+   * which case the task is promoted to top level rather than hidden. Never hide a task just
+   * because its parent is gone.
+   *
+   * The single definition of that promotion, because every consumer has to agree on it: the row
+   * grouping, `siblingsOf` and `canDrop` each spelled it out separately — and `canDrop` did not.
+   */
+  const effectiveParent = useCallback(
+    (t: Task): number | null => (t.parent_id != null && idSet.has(t.parent_id) ? t.parent_id : null),
+    [idSet],
+  );
   const childrenByParent = useMemo(() => {
     const m = new Map<number, Task[]>();
     for (const t of tasks) {
-      if (t.parent_id != null && idSet.has(t.parent_id)) {
-        const arr = m.get(t.parent_id);
-        if (arr) arr.push(t);
-        else m.set(t.parent_id, [t]);
-      }
+      const pid = effectiveParent(t);
+      if (pid === null) continue;
+      const arr = m.get(pid);
+      if (arr) arr.push(t);
+      else m.set(pid, [t]);
     }
     return m;
-  }, [tasks, idSet]);
-  // Top level = no parent, or an orphan whose parent isn't in this list (archived/deleted):
-  // never hide a task just because its parent is gone.
+  }, [tasks, effectiveParent]);
   const topLevel = useMemo(
-    () => tasks.filter((t) => t.parent_id == null || !idSet.has(t.parent_id)),
-    [tasks, idSet],
+    () => tasks.filter((t) => effectiveParent(t) === null),
+    [tasks, effectiveParent],
   );
   const sortedTop = useMemo(
     () => sortTasks(topLevel, activeRules, getSortValue, doneValue),
@@ -289,11 +300,11 @@ export function TaskTable({
   }, [activeRules]);
   const byId = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
   const siblingsOf = useCallback(
-    (task: Task) =>
-      task.parent_id != null && idSet.has(task.parent_id)
-        ? sortedChildren.get(task.parent_id) ?? []
-        : sortedTop,
-    [idSet, sortedChildren, sortedTop],
+    (task: Task) => {
+      const pid = effectiveParent(task);
+      return pid === null ? sortedTop : sortedChildren.get(pid) ?? [];
+    },
+    [effectiveParent, sortedChildren, sortedTop],
   );
   const drag = useDragReorder<number>({
     mode: 'armed',
@@ -307,7 +318,11 @@ export function TaskTable({
       const from = byId.get(fromId);
       const to = byId.get(toId);
       if (!from || !to) return false;
-      if ((from.parent_id ?? null) !== (to.parent_id ?? null)) return false;
+      // *Effective* parents, the same promotion the rows are grouped by. Comparing raw parent_id
+      // made an orphan a sibling of nobody: it renders among the top-level rows and `siblingsOf`
+      // counts it as one, but no drop target ever highlighted, so it snapped back at opacity-40
+      // and stayed stuck wherever sort_order had left it, with no explanation (TTU-14).
+      if (effectiveParent(from) !== effectiveParent(to)) return false;
       return compareByRules(from, to, rankRules, getSortValue, doneValue) === 0;
     },
     onReorder: async (fromId, toId) => {
