@@ -269,6 +269,12 @@ export function TaskTable({
   );
   const drag = useDragReorder<number>({
     mode: 'armed',
+    // `sort_order` may only ever be renumbered against an ordering the user actually configured.
+    // A header click is a temporary *view*: dragging under it renumbered every top-level task to
+    // match the peeked-at order, so clicking „Titel" to eyeball the list alphabetically and then
+    // nudging one row permanently replaced a hand-curated order with the alphabetical one — no
+    // undo entry, unrecoverable (TTU-04). The third header click (TTU-18) is the way back.
+    enabled: sort === null,
     canDrop: (fromId, toId) => {
       const from = byId.get(fromId);
       const to = byId.get(toId);
@@ -597,7 +603,16 @@ export function TaskTable({
                       spineColor={spineColor}
                       accentColor={colored ? color : null}
                       onToggle={() => toggleExpand(row.original.id)}
-                      dragHandle={<DragHandle {...drag.handleProps(row.original.id)} />}
+                      dragHandle={
+                        sort ? (
+                          <DragHandle
+                            disabled
+                            title="Spaltensortierung aktiv — zum Verschieben die Sortierung zurücksetzen (Spaltenkopf erneut klicken)"
+                          />
+                        ) : (
+                          <DragHandle {...drag.handleProps(row.original.id)} />
+                        )
+                      }
                     />
                     {row.getVisibleCells().map((cell) => (
                       <td key={cell.id} className="px-3 py-2">

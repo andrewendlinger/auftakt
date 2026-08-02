@@ -113,16 +113,25 @@ export function ReorderArrows({
  * The ⠿ grab handle that arms a drag. Spread `useDragReorder().handleProps(key)` onto it.
  * Hidden until the enclosing `group` is hovered, so it never competes with the row's own
  * content — pass `className="opacity-100"` to pin it visible.
+ *
+ * `disabled` is for a list that is temporarily not reorderable (the task table under a
+ * header-click sort): the handle stays where the user expects it, dimmed and inert, so the row
+ * can say *why* it won't move. Pass the reason as `title`.
  */
 export function DragHandle({
   className = '',
+  disabled = false,
   ...rest
-}: HTMLAttributes<HTMLSpanElement>) {
+}: HTMLAttributes<HTMLSpanElement> & { disabled?: boolean }) {
   return (
     <span
       aria-hidden
       title="Zum Verschieben ziehen"
-      className={`cursor-grab select-none leading-none text-neutral-400 opacity-0 transition-opacity group-hover:opacity-100 active:cursor-grabbing ${className}`}
+      className={`select-none leading-none text-neutral-400 transition-opacity ${
+        disabled
+          ? 'cursor-not-allowed opacity-0 group-hover:opacity-30'
+          : 'cursor-grab opacity-0 group-hover:opacity-100 active:cursor-grabbing'
+      } ${className}`}
       // A handle is only ever grabbed, never clicked. Swallowing the click keeps a press that
       // didn't turn into a drag from activating whatever encloses it — on a project card that
       // would otherwise navigate into the project.
