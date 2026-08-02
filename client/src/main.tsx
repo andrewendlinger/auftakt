@@ -4,9 +4,11 @@ import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import './index.css';
 import { Layout } from './components/Layout';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastProvider } from './components/Toast';
 import { UndoProvider } from './components/UndoProvider';
 import { LandingPage } from './pages/LandingPage';
+import { NotFound } from './pages/NotFound';
 import { Dashboard } from './pages/Dashboard';
 import { ArtistPage } from './pages/ArtistPage';
 import { ProjectPage } from './pages/ProjectPage';
@@ -32,23 +34,30 @@ createRoot(document.getElementById('root')!).render(
       <ToastProvider>
         <UndoProvider>
           <HashRouter>
-            <Routes>
-              <Route element={<Layout />}>
-                <Route index element={<LandingPage />} />
-                <Route path="dashboard" element={<Dashboard />} />
-                <Route path="artist/:id" element={<ArtistPage />} />
-                <Route path="project/:id" element={<ProjectPage />} />
-                <Route path="archiv" element={<ArchivePage />} />
-                <Route path="einstellungen" element={<SettingsPage />}>
-                  <Route index element={<Navigate to="/einstellungen/aufgaben" replace />} />
-                  <Route path="aufgaben" element={<SettingsTasksTab />} />
-                  <Route path="kategorien" element={<SettingsCategoriesTab />} />
-                  <Route path="daten" element={<SettingsDataTab />} />
+            {/* Inside the router (so the fallback's links resolve) and inside ToastProvider
+                (so it can still toast), but around the whole tree — a throw anywhere below
+                would otherwise unmount everything to a blank window (CCL-08). */}
+            <ErrorBoundary>
+              <Routes>
+                <Route element={<Layout />}>
+                  <Route index element={<LandingPage />} />
+                  <Route path="dashboard" element={<Dashboard />} />
+                  <Route path="artist/:id" element={<ArtistPage />} />
+                  <Route path="project/:id" element={<ProjectPage />} />
+                  <Route path="archiv" element={<ArchivePage />} />
+                  <Route path="einstellungen" element={<SettingsPage />}>
+                    <Route index element={<Navigate to="/einstellungen/aufgaben" replace />} />
+                    <Route path="aufgaben" element={<SettingsTasksTab />} />
+                    <Route path="kategorien" element={<SettingsCategoriesTab />} />
+                    <Route path="daten" element={<SettingsDataTab />} />
+                  </Route>
+                  {/* Under Layout so the header navigation stays reachable from a dead link. */}
+                  <Route path="*" element={<NotFound />} />
                 </Route>
-              </Route>
-              <Route path="print/artist/:id" element={<PrintArtist />} />
-              <Route path="print/project/:id" element={<PrintProject />} />
-            </Routes>
+                <Route path="print/artist/:id" element={<PrintArtist />} />
+                <Route path="print/project/:id" element={<PrintProject />} />
+              </Routes>
+            </ErrorBoundary>
           </HashRouter>
         </UndoProvider>
       </ToastProvider>
