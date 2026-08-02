@@ -483,9 +483,17 @@ export function TaskTable({
     ...SORTABLE_TASK_COLUMNS.map((c) => c.id),
     ...visibleCols.filter((c) => c.kind === 'custom').map((c) => `c${c.id}`),
   ]);
+  /**
+   * asc → desc → off. Without the third state a single header click made the configured
+   * automatic hierarchy unreachable for the rest of the table's life — nothing else ever set
+   * `sort` back to null, so the only way out was to navigate away and come back (TTU-18).
+   */
   const toggleSort = (id: string) => {
     if (!sortableIds.has(id)) return;
-    setSort((s) => (s?.id === id ? { id, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { id, dir: 'asc' }));
+    setSort((s) => {
+      if (s?.id !== id) return { id, dir: 'asc' };
+      return s.dir === 'asc' ? { id, dir: 'desc' } : null;
+    });
   };
 
   // Display order and default status are separate concerns. OptionsEditor's ↑ ↓ exist so users
@@ -526,6 +534,7 @@ export function TaskTable({
                 <th
                   key={h.id}
                   className={`px-3 py-2 font-semibold ${sortableIds.has(id) ? 'cursor-pointer select-none hover:text-neutral-600' : ''}`}
+                  title={sortableIds.has(id) ? 'Sortieren: aufsteigend → absteigend → Standard' : undefined}
                   onClick={() => toggleSort(id)}
                 >
                   <span className="inline-flex items-center gap-1">
