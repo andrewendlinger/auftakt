@@ -1,4 +1,5 @@
 import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from 'react';
+import { isNotFound } from '../lib/errors';
 
 export function Card({
   children,
@@ -157,6 +158,61 @@ export function Pill({
 
 export function EmptyState({ children }: { children: ReactNode }) {
   return <div className="rounded-xl bg-neutral-50 px-4 py-6 text-sm text-neutral-400">{children}</div>;
+}
+
+/**
+ * The counterpart to `EmptyState`: something went wrong, as opposed to there being nothing.
+ * Keeping the two visually distinct is the whole point — a failed fetch rendered as an empty
+ * list tells the user their data is gone, which is the opposite of the truth.
+ */
+export function ErrorState({
+  title,
+  hint,
+  onRetry,
+}: {
+  title: string;
+  hint?: ReactNode;
+  onRetry?: () => void;
+}) {
+  return (
+    <div className="rounded-xl bg-neutral-50 px-4 py-8 text-center">
+      <p className="text-sm font-medium text-neutral-700">{title}</p>
+      {hint && <p className="mx-auto mt-1 max-w-md text-sm text-neutral-400">{hint}</p>}
+      {onRetry && (
+        <div className="mt-3">
+          <Btn onClick={onRetry}>Erneut versuchen</Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The three-way gate every detail page needs once it stops conflating "loading" with "failed":
+ * a 404 means the row is gone (retrying will not help), anything else is a request that failed
+ * and is worth another go. One line per page instead of the same six copied eight times.
+ */
+export function LoadError({
+  error,
+  notFound,
+  failed,
+  onRetry,
+}: {
+  error: unknown;
+  /** „Künstler nicht gefunden" — the row does not exist (any more). */
+  notFound: string;
+  /** „Künstler konnte nicht geladen werden." — the request failed. */
+  failed: string;
+  onRetry?: () => void;
+}) {
+  return isNotFound(error) ? (
+    <ErrorState
+      title={notFound}
+      hint="Der Eintrag wurde vielleicht gelöscht oder gehört zu einer anderen Saison."
+    />
+  ) : (
+    <ErrorState title={failed} onRetry={onRetry} />
+  );
 }
 
 export function Spinner() {

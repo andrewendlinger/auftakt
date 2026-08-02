@@ -7,7 +7,8 @@ import { Breadcrumbs } from '../components/Breadcrumbs';
 import { SectionArranger } from '../components/SectionArranger';
 import { EditableLabel } from '../components/EditableLabel';
 import type { LabelKey } from '../lib/labels';
-import { Card, SectionTitle, Spinner, Btn } from '../components/ui';
+import { Card, SectionTitle, Spinner, Btn, ErrorState, LoadError } from '../components/ui';
+import { isValidId } from '../lib/routeParams';
 import { EventList } from '../components/EventList';
 import { ContactList } from '../components/ContactList';
 import { LinkList } from '../components/LinkList';
@@ -51,13 +52,16 @@ const SECTION_GROUPS: Record<string, SectionGroup> = {
 export function ProjectPage() {
   const { id } = useParams<{ id: string }>();
   const projectId = Number(id);
+  // `#/project/abc` parses to NaN. Answer it here rather than asking the server for /projects/NaN.
+  const validId = isValidId(projectId);
   const eventTypes = useEventTypeOptions();
   const undoablePatch = useUndoablePatch();
   const [managingColumns, setManagingColumns] = useState(false);
 
-  const { data: project, isLoading } = useQuery({
+  const { data: project, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['project', projectId],
     queryFn: () => api.projects.get(projectId),
+    enabled: validId,
   });
   const { data: artist } = useQuery({
     queryKey: ['artist', project?.artist_id],
@@ -67,18 +71,22 @@ export function ProjectPage() {
   const { data: events = [] } = useQuery({
     queryKey: ['project', projectId, 'events'],
     queryFn: () => api.events.list({ project_id: projectId }),
+    enabled: validId,
   });
   const { data: contacts = [] } = useQuery({
     queryKey: ['project', projectId, 'contacts'],
     queryFn: () => api.contacts.list({ project_id: projectId }),
+    enabled: validId,
   });
   const { data: links = [] } = useQuery({
     queryKey: ['project', projectId, 'links'],
     queryFn: () => api.links.list({ project_id: projectId }),
+    enabled: validId,
   });
   const { data: tasks = [] } = useQuery({
     queryKey: ['project', projectId, 'tasks'],
     queryFn: () => api.tasks.list({ project_id: projectId }),
+    enabled: validId,
   });
   const { data: globalCols = [] } = useQuery({
     queryKey: ['customColumns', 'global'],
@@ -87,16 +95,33 @@ export function ProjectPage() {
   const { data: projectCols = [] } = useQuery({
     queryKey: ['customColumns', 'project', projectId],
     queryFn: () => api.customColumns.list({ scope: 'project', project_id: projectId }),
+    enabled: validId,
   });
   const { data: customSections = [] } = useQuery({
     queryKey: ['customSections', 'project', projectId],
     queryFn: () => api.customSections.list({ project_id: projectId }),
+    enabled: validId,
   });
   const removeCustomSection = useRemoveCustomSection(customSections);
   const nonEmptyCustom = useNonEmptyCustomSections(customSections);
   const { windowDays } = useTaskStatsConfig();
 
-  if (isLoading || !project) return <Spinner />;
+  // See ArtistPage: a settled error has isLoading === false and data === undefined, so the old
+  // guard spun for ever on a stale link to a deleted project (PGS-05).
+  if (!validId) {
+    return <ErrorState title="Projekt nicht gefunden" hint="Diese Adresse enthält keine gültige Projekt-Nummer." />;
+  }
+  if (isLoading) return <Spinner />;
+  if (isError || !project) {
+    return (
+      <LoadError
+        error={error}
+        notFound="Projekt nicht gefunden"
+        failed="Projekt konnte nicht geladen werden."
+        onRetry={() => void refetch()}
+      />
+    );
+  }
   const artistColor = artist?.color ?? '#888888';
   const shade = projectShade(artistColor, project.color, project.id);
   const columns = [...globalCols, ...projectCols];

@@ -3,9 +3,10 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { CustomColumn, Task } from '../api/types';
 import { compareColumns, customValueOf, parseColumnOptions } from '../api/types';
-import { Spinner } from '../components/ui';
+import { Spinner, ErrorState, LoadError } from '../components/ui';
+import { isValidId } from '../lib/routeParams';
 import { Markdown } from '../components/Markdown';
-import { Empty, PrintHeader, PrintPage, Section } from '../components/PrintSheet';
+import { Empty, PrintFallback, PrintHeader, PrintPage, Section } from '../components/PrintSheet';
 import { ProjectStatusPill } from '../components/ProjectStatusPill';
 import { contrastText, projectShade } from '../lib/colors';
 import { formatDate, formatEventWhen, weekdayShort } from '../lib/dates';
@@ -14,12 +15,14 @@ import { useDoneValue, useLabel, useSaison } from '../hooks';
 export function PrintProject() {
   const { id } = useParams<{ id: string }>();
   const projectId = Number(id);
+  const validId = isValidId(projectId);
   const saison = useSaison();
   // Same sections as the project page, so the sheet prints the user's names for them.
   const label = useLabel();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['print-project', projectId],
+    enabled: validId,
     queryFn: async () => {
       // The artist alone depends on the fetched project (for the name and the accent colour).
       const [project, events, contacts, tasks, globalCols, projectCols] = await Promise.all([
@@ -41,7 +44,26 @@ export function PrintProject() {
   // derivations before the sheet rendered. PrintArtist already reads it this way (PGS-26).
   const doneValue = useDoneValue();
 
-  if (isLoading || !data) return <Spinner />;
+  if (!validId) {
+    return (
+      <PrintFallback>
+        <ErrorState title="Projekt nicht gefunden" hint="Diese Adresse enthält keine gültige Projekt-Nummer." />
+      </PrintFallback>
+    );
+  }
+  if (isLoading) return <Spinner />;
+  if (isError || !data) {
+    return (
+      <PrintFallback>
+        <LoadError
+          error={error}
+          notFound="Projekt nicht gefunden"
+          failed="Der Ein-Pager konnte nicht geladen werden."
+          onRetry={() => void refetch()}
+        />
+      </PrintFallback>
+    );
+  }
   const { project, artist, events, contacts, tasks, columns } = data;
   const shade = projectShade(artist?.color ?? '#888888', project.color, project.id);
 

@@ -2,23 +2,26 @@ import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { type Task } from '../api/types';
-import { Spinner } from '../components/ui';
+import { Spinner, ErrorState, LoadError } from '../components/ui';
+import { isValidId } from '../lib/routeParams';
 import { Markdown } from '../components/Markdown';
-import { Empty, PrintHeader, PrintPage, Section } from '../components/PrintSheet';
+import { Empty, PrintFallback, PrintHeader, PrintPage, Section } from '../components/PrintSheet';
 import { formatDate, formatEventWhen, weekdayShort } from '../lib/dates';
 import { useDoneValue, useLabel, useSaison } from '../hooks';
 
 export function PrintArtist() {
   const { id } = useParams<{ id: string }>();
   const artistId = Number(id);
+  const validId = isValidId(artistId);
   const saison = useSaison();
   // The sheet prints whatever the user renamed each section to on the artist page — the
   // headings are the same sections, so a PDF that disagreed with the screen would be the
   // drift this registry exists to prevent.
   const label = useLabel();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['print-artist', artistId],
+    enabled: validId,
     queryFn: async () => {
       // These four are independent; contacts alone depend on the fetched projects.
       const [artist, projects, events, tasks] = await Promise.all([
@@ -39,7 +42,27 @@ export function PrintArtist() {
   // general/project split: general (no project) and project tasks each get their own subsection.
   const doneValue = useDoneValue();
 
-  if (isLoading || !data) return <Spinner />;
+  if (!validId) {
+    return (
+      <PrintFallback>
+        <ErrorState title="Künstler nicht gefunden" hint="Diese Adresse enthält keine gültige Künstler-Nummer." />
+      </PrintFallback>
+    );
+  }
+  if (isLoading) return <Spinner />;
+  // The sheet is the artist, so this one stays fatal — but it now says so instead of spinning.
+  if (isError || !data) {
+    return (
+      <PrintFallback>
+        <LoadError
+          error={error}
+          notFound="Künstler nicht gefunden"
+          failed="Der Ein-Pager konnte nicht geladen werden."
+          onRetry={() => void refetch()}
+        />
+      </PrintFallback>
+    );
+  }
   const { artist, events, tasks, contacts } = data;
   const openTasks = tasks.filter((t) => t.status !== doneValue);
   const generalOpen = openTasks.filter((t) => !t.project_id);

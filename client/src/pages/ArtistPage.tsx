@@ -11,7 +11,8 @@ import { Breadcrumbs } from '../components/Breadcrumbs';
 import { SectionArranger } from '../components/SectionArranger';
 import { EditableLabel } from '../components/EditableLabel';
 import type { LabelKey } from '../lib/labels';
-import { Card, DragHandle, SectionTitle, Spinner, EmptyState } from '../components/ui';
+import { Card, DragHandle, SectionTitle, Spinner, EmptyState, ErrorState, LoadError } from '../components/ui';
+import { isValidId } from '../lib/routeParams';
 import { EventList } from '../components/EventList';
 import { ContactList } from '../components/ContactList';
 import { InlineNotes } from '../components/InlineNotes';
@@ -52,29 +53,36 @@ const SECTION_GROUPS: Record<string, SectionGroup> = {
 export function ArtistPage() {
   const { id } = useParams<{ id: string }>();
   const artistId = Number(id);
+  // `#/artist/abc` parses to NaN. Answer it here rather than asking the server for /artists/NaN.
+  const validId = isValidId(artistId);
   const eventTypes = useEventTypeOptions();
   const { windowDays } = useTaskStatsConfig();
   const undoablePatch = useUndoablePatch();
 
-  const { data: artist, isLoading } = useQuery({
+  const { data: artist, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['artist', artistId],
     queryFn: () => api.artists.get(artistId),
+    enabled: validId,
   });
   const { data: projects = [] } = useQuery({
     queryKey: ['artist', artistId, 'projects'],
     queryFn: () => api.projects.list({ artist_id: artistId }),
+    enabled: validId,
   });
   const { data: events = [] } = useQuery({
     queryKey: ['artist', artistId, 'events'],
     queryFn: () => api.events.list({ resolved_artist_id: artistId }),
+    enabled: validId,
   });
   const { data: contacts = [] } = useQuery({
     queryKey: ['artist', artistId, 'contacts'],
     queryFn: () => api.contacts.list({ artist_id: artistId }),
+    enabled: validId,
   });
   const { data: tasks = [] } = useQuery({
     queryKey: ['artist', artistId, 'tasks'],
     queryFn: () => api.tasks.list({ resolved_artist_id: artistId }),
+    enabled: validId,
   });
   const { data: customColumns = [] } = useQuery({
     queryKey: ['customColumns', 'global'],
@@ -83,11 +91,28 @@ export function ArtistPage() {
   const { data: customSections = [] } = useQuery({
     queryKey: ['customSections', 'artist', artistId],
     queryFn: () => api.customSections.list({ artist_id: artistId }),
+    enabled: validId,
   });
   const removeCustomSection = useRemoveCustomSection(customSections);
   const nonEmptyCustom = useNonEmptyCustomSections(customSections);
 
-  if (isLoading || !artist) return <Spinner />;
+  // Not `isLoading || !artist`: once the query settles in error, isLoading is false and data is
+  // undefined, so that guard rendered the spinner for ever — a stale bookmark to a deleted
+  // artist spun with no message and no way to retry (PGS-05).
+  if (!validId) {
+    return <ErrorState title="Künstler nicht gefunden" hint="Diese Adresse enthält keine gültige Künstler-Nummer." />;
+  }
+  if (isLoading) return <Spinner />;
+  if (isError || !artist) {
+    return (
+      <LoadError
+        error={error}
+        notFound="Künstler nicht gefunden"
+        failed="Künstler konnte nicht geladen werden."
+        onRetry={() => void refetch()}
+      />
+    );
+  }
 
   // A filled section can't be binned (nonEmptyKeys) — the computed Einblicke stay free.
   const nonEmptyKeys = [

@@ -5,7 +5,7 @@ import { api } from '../api/client';
 import type { ArtistCard as ArtistCardT, EventItem, Task } from '../api/types';
 import { withAlpha } from '../lib/colors';
 import { formatEventWhen, weekdayShort } from '../lib/dates';
-import { Card, SectionTitle, Spinner, EmptyState } from '../components/ui';
+import { Card, SectionTitle, Spinner, EmptyState, ErrorState } from '../components/ui';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { TaskTable } from '../components/TaskTable';
 import { TaskStatChips } from '../components/TaskStatChips';
@@ -40,7 +40,10 @@ const SECTION_GROUPS: Record<string, SectionGroup> = {
 };
 
 export function Dashboard() {
-  const { data, isLoading } = useQuery({ queryKey: ['dashboard'], queryFn: api.dashboard });
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ['dashboard'],
+    queryFn: api.dashboard,
+  });
   const { data: customColumns = [] } = useQuery({
     queryKey: ['customColumns', 'global'],
     queryFn: () => api.customColumns.list({ scope: 'global' }),
@@ -67,7 +70,10 @@ export function Dashboard() {
     return m;
   }, [data]);
 
-  if (isLoading || !data) return <Spinner />;
+  if (isLoading) return <Spinner />;
+  if (isError || !data) {
+    return <ErrorState title="Übersicht konnte nicht geladen werden." onRetry={() => void refetch()} />;
+  }
 
   // Season-wide todos (no artist, no project): the editable „Festival-Aufgaben" list, which also
   // carries the only create surface for this scope.

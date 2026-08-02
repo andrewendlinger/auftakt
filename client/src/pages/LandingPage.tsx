@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ApiError, api } from '../api/client';
 import type { LayoutEntry, Season, SeasonCopyOptions, SeasonPatch, SeasonStats } from '../api/types';
-import { Card, Btn, DragHandle, Spinner, EmptyState } from '../components/ui';
+import { Card, Btn, DragHandle, Spinner, EmptyState, ErrorState } from '../components/ui';
 import { EditableText, EditableFallbackText } from '../components/EditableText';
 import {
   AddLandingSectionButton,
@@ -38,7 +38,10 @@ const DEFAULT_LANDING_LAYOUT: LayoutEntry[] = [
 ];
 
 export function LandingPage() {
-  const { data, isLoading } = useQuery({ queryKey: ['seasons'], queryFn: api.seasons });
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ['seasons'],
+    queryFn: api.seasons,
+  });
   const { data: stats } = useQuery({ queryKey: ['seasonStats'], queryFn: api.seasonStats });
   const { data: landing } = useQuery({ queryKey: ['landing'], queryFn: api.landing.get });
   const navigate = useNavigate();
@@ -119,8 +122,15 @@ export function LandingPage() {
   });
 
   const seasonGrid =
-    isLoading || !data ? (
+    isLoading ? (
       <Spinner />
+    ) : isError || !data ? (
+      // The registry is the whole page — an unreadable seasons.json used to spin for ever
+      // instead of saying so (PGS-05).
+      <ErrorState
+        title={`${term.plural} konnten nicht geladen werden.`}
+        onRetry={() => void refetch()}
+      />
     ) : seasons.length === 0 ? (
       // Defensive — the registry always bootstraps one season.
       <EmptyState>{`Noch keine ${term.plural} angelegt.`}</EmptyState>

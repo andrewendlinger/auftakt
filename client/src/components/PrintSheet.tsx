@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 
 /**
  * Shared chrome for the print sheets (`#/print/artist/:id`, `#/print/project/:id`).
@@ -17,6 +18,27 @@ export function PrintPage({ children }: { children: ReactNode }) {
         </button>
       </div>
       {children}
+    </div>
+  );
+}
+
+/**
+ * Wrapper for a sheet that could not be built. These routes sit outside `Layout`, so unlike
+ * every other page there is no header to navigate away from — an error state on its own really
+ * would strand the user. The „Drucken" button is deliberately absent: there is nothing to print.
+ */
+export function PrintFallback({ children }: { children: ReactNode }) {
+  return (
+    <div className="mx-auto max-w-3xl p-10">
+      {children}
+      <p className="mt-4 text-center">
+        <Link
+          to="/"
+          className="inline-flex items-center rounded-lg bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200"
+        >
+          Zur Startseite
+        </Link>
+      </p>
     </div>
   );
 }

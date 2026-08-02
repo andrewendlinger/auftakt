@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { NavLink, Outlet } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import type { CustomColumnOption, ReassignField, Season } from '../api/types';
-import { Card, SectionTitle, Spinner, Btn, IconButton } from '../components/ui';
+import { Card, SectionTitle, Spinner, Btn, IconButton, ErrorState } from '../components/ui';
 import { Label, TextInput, Modal } from '../components/fields';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { CustomColumnManager } from '../components/CustomColumnManager';
@@ -82,7 +82,7 @@ function usePatchSettings() {
 
 /** Tab „Aufgaben": global columns, automatic sort rules, overview metrics. */
 export function SettingsTasksTab() {
-  const { data: settings, isLoading } = useSettings();
+  const { data: settings, isLoading, isError, refetch } = useSettings();
   const patch = usePatchSettings();
   const [managingColumns, setManagingColumns] = useState(false);
 
@@ -91,7 +91,13 @@ export function SettingsTasksTab() {
     queryFn: () => api.customColumns.list({ scope: 'global' }),
   });
 
-  if (isLoading || !settings) return <Spinner />;
+  if (isLoading) return <Spinner />;
+  // Settings have no "not found" case — they either load or they don't (PGS-05).
+  if (isError || !settings) {
+    return (
+      <ErrorState title="Einstellungen konnten nicht geladen werden." onRetry={() => void refetch()} />
+    );
+  }
 
   const userCols = globalCols.filter((c) => c.kind === 'custom');
 
@@ -330,10 +336,15 @@ function SeasonTermCard() {
 
 /** Tab „Saison & Daten": season management, Bezeichnung, database & backups, version & updates (WP-N). */
 export function SettingsDataTab() {
-  const { data: settings, isLoading } = useSettings();
+  const { data: settings, isLoading, isError, refetch } = useSettings();
   const term = useSeasonTerm();
 
-  if (isLoading || !settings) return <Spinner />;
+  if (isLoading) return <Spinner />;
+  if (isError || !settings) {
+    return (
+      <ErrorState title="Einstellungen konnten nicht geladen werden." onRetry={() => void refetch()} />
+    );
+  }
 
   const hasElectron = typeof window.auftakt?.exportDatabase === 'function';
 
