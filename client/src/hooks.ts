@@ -237,6 +237,18 @@ export function useRenameLabel(): (key: LabelKey, label: string) => Promise<void
   };
 }
 
+/**
+ * Columns the server derives, so the inverse has to carry them even though the forward patch
+ * never named them — keyed by the resource they belong to.
+ *
+ * Only `tasks` has one: `erledigt_am` is stamped from `status`, and the server cannot
+ * reconstruct the old value, so undoing a status flip without it re-stamps today's date and
+ * silently un-archives a task that had aged past ARCHIVE_AFTER_DAYS. That knowledge used to sit
+ * in an `extraKeys` argument every caller had to remember; nothing in the types warned a new
+ * „als erledigt markieren" button that it was missing it (CCL-30).
+ */
+const DERIVED_INVERSE_KEYS = new Map<unknown, string[]>([[api.tasks, ['erledigt_am']]]);
+
 export interface UndoablePatchArgs<T extends { id: ID }> {
   /** Any `resource()` from api/client.ts. */
   res: { update: (id: ID, data: Partial<T>) => Promise<unknown> };
@@ -245,11 +257,6 @@ export interface UndoablePatchArgs<T extends { id: ID }> {
   patch: Partial<T>;
   /** German, names the change: „Statusänderung". */
   label: string;
-  /**
-   * Extra columns to carry in the inverse that the forward patch didn't touch, because the
-   * server derives them. Only `tasks` needs it, for `erledigt_am` alongside `status`.
-   */
-  extraKeys?: (keyof T & string)[];
 }
 
 /**
@@ -266,11 +273,14 @@ export function useUndoablePatch(): <T extends { id: ID }>(
 ) => Promise<void> {
   const { push } = useUndo();
   const invalidate = useInvalidateAll();
-  return async ({ res, row, patch, label, extraKeys = [] }) => {
+  return async ({ res, row, patch, label }) => {
     type T = typeof row;
     const patchKeys = Object.keys(patch) as (keyof T & string)[];
+    const derived = (DERIVED_INVERSE_KEYS.get(res) ?? []).filter(
+      (k) => k in row,
+    ) as (keyof T & string)[];
     const inverse: Partial<T> = {};
-    for (const k of [...new Set([...patchKeys, ...extraKeys])]) inverse[k] = row[k];
+    for (const k of [...new Set([...patchKeys, ...derived])]) inverse[k] = row[k];
 
     const apply = async () => {
       await res.update(row.id, patch);

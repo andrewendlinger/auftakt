@@ -146,8 +146,8 @@ const ERLEDIGT_AM_SHAPE = /^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}:\d{2})?$/;
  * Whether a body's `erledigt_am` is the undo stack restoring a value this transform destroyed,
  * as opposed to a client trying to set the completion date directly.
  *
- * The undo path (client hooks.ts `useUndoablePatch`, whose `extraKeys` adds `erledigt_am`
- * whenever the patch touches `status`) always sends the pair, and the pair always agrees:
+ * The undo path (client hooks.ts `useUndoablePatch`, whose `DERIVED_INVERSE_KEYS` carries
+ * `erledigt_am` in every tasks inverse) always sends the pair, and the pair always agrees:
  * re-completing a task restores its old date, reopening one restores null. Anything else is
  * dropped so the derivation below stays the only authority. Without this gate a lone
  * `PATCH {erledigt_am:'2020-01-01'}` was stored verbatim and the task vanished straight into

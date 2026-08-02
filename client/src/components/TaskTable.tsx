@@ -206,16 +206,7 @@ export function TaskTable({
       patch: Partial<Task> | { custom_values: Record<string, unknown> },
       label: string,
     ) => {
-      await undoablePatch({
-        res: api.tasks,
-        row: task,
-        patch: patch as Partial<Task>,
-        label,
-        // The server derives erledigt_am from status and can't reconstruct the old value, so the
-        // inverse has to carry it — otherwise undoing a status flip re-stamps it with today and
-        // silently un-archives a task that had aged out.
-        extraKeys: 'status' in patch ? ['erledigt_am'] : [],
-      });
+      await undoablePatch({ res: api.tasks, row: task, patch: patch as Partial<Task>, label });
     },
     [undoablePatch],
   );
