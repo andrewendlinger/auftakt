@@ -9,7 +9,7 @@ import { Breadcrumbs } from '../components/Breadcrumbs';
 import { TextInput, Modal } from '../components/fields';
 import { formatDate, daysUntil } from '../lib/dates';
 import { Markdown } from '../components/Markdown';
-import { useInvalidateAll } from '../hooks';
+import { useGuardedAction, useInvalidateAll } from '../hooks';
 import { useToast } from '../components/Toast';
 
 /** Singular/plural per type — drives the badge and the cascade summary. */
@@ -55,6 +55,7 @@ export function ArchivePage() {
   const [q, setQ] = useState('');
   const [confirmPurge, setConfirmPurge] = useState<DeletedItem | null>(null);
   const invalidate = useInvalidateAll();
+  const guard = useGuardedAction();
   const toast = useToast();
 
   const filtered = useMemo(() => {
@@ -69,10 +70,17 @@ export function ArchivePage() {
     );
   }, [tasks, q]);
 
+  // Guarded like `purge()` below: POST /restore 404s when the row is no longer there, which
+  // happens whenever the cached list is stale — purgeExpired() hard-deletes 30-day-old rows on
+  // server start, so a list rendered before a restart still offers them. The un-caught version
+  // threw past invalidate() and the toast, leaving the row in place with no signal at all, so
+  // the user just clicked again (PGS-07).
   const restore = async (item: DeletedItem) => {
-    await api.deleted.restore(item.type, item.id);
+    const ok = await guard(`„${item.label}“ konnte nicht wiederhergestellt werden.`, () =>
+      api.deleted.restore(item.type, item.id),
+    );
     await invalidate();
-    toast.show({ message: `„${item.label}“ wiederhergestellt` });
+    if (ok) toast.show({ message: `„${item.label}“ wiederhergestellt` });
   };
 
   const purge = async (item: DeletedItem) => {
