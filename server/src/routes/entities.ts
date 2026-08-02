@@ -313,11 +313,23 @@ function nullableId(v: unknown): number | null {
   throw new HttpError(400, 'Ungültiges Ziel.');
 }
 
-function requireLive(table: 'artists' | 'projects' | 'tasks', id: number): void {
+function requireLive(table: 'artists' | 'projects', id: number): void {
   const row = getDb()
     .prepare(`SELECT 1 FROM ${table} WHERE id = ? AND deleted_at IS NULL`)
     .get(id);
   if (!row) throw new HttpError(400, 'Das Ziel gibt es nicht mehr.');
+}
+
+/**
+ * A `parent_id` target only has to *exist*, not be live — which is the difference between this
+ * and `requireLive`. An orphan is a subtask whose parent is soft-deleted, and undoing its move
+ * has to put that exact `parent_id` back; refusing it would make the undo fail with „Das Ziel
+ * gibt es nicht mehr." and strand the row in the scope the user had just reverted.
+ */
+function requireParentExists(id: number): void {
+  if (!getDb().prepare('SELECT 1 FROM tasks WHERE id = ?').get(id)) {
+    throw new HttpError(400, 'Die übergeordnete Aufgabe gibt es nicht mehr.');
+  }
 }
 
 /**
@@ -354,7 +366,7 @@ tasksRouter.post('/:id/move', (req, res) => {
 
   const ids = liveSubtreeIds(db, rootId);
   if (parentId !== null) {
-    requireLive('tasks', parentId);
+    requireParentExists(parentId);
     // Same invariant as the crud transform's cycle guard, expressed against the closure we
     // already walked: a task may not be moved under itself or under one of its own descendants.
     if (ids.includes(parentId)) {

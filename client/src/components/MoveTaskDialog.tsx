@@ -113,7 +113,16 @@ export function MoveTaskDialog({ task, onClose }: { task: Task; onClose: () => v
    * in the app could put the tree back together (TTU-03).
    */
   const submit = async () => {
-    const to = { ...parseTarget(target), parent_id: task.parent_id };
+    // `parent_id: null` — a move makes the task top-level wherever it lands.
+    //
+    // The Verschieben button is gated on `row.depth === 0`, and `topLevel` promotes orphans (a
+    // subtask whose parent is soft-deleted or archived) to depth 0, so orphans are *exactly* the
+    // subtasks a user can move. Leaving `parent_id` pointing at the old parent meant that
+    // restoring that parent re-nested the child under it — and a subtask is rendered without its
+    // own project badge, on the assumption that it shares its parent's project, so the project
+    // the user had just moved it to became invisible in the UI (TTU-30). The revert restores the
+    // captured value, so undo still puts an orphan back where it was.
+    const to = { ...parseTarget(target), parent_id: null };
     setBusy(true);
     let before: TaskPlacement[] = [];
     const moved = await guard('Die Aufgabe konnte nicht verschoben werden.', async () => {
@@ -201,6 +210,12 @@ export function MoveTaskDialog({ task, onClose }: { task: Task; onClose: () => v
             )}
           </Select>
         </div>
+        {task.parent_id != null && (
+          <p className="text-sm text-amber-700">
+            Diese Aufgabe war eine Unteraufgabe. Sie wird beim Verschieben zu einer eigenständigen
+            Aufgabe.
+          </p>
+        )}
         {task.project_id != null && (
           <p className="text-sm text-amber-700">
             Die Zuordnung zum Projekt „{currentLabel}“ geht dabei verloren.{' '}
