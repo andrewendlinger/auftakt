@@ -3,6 +3,17 @@ import { useEffect, useRef, useState, type DragEvent, type PointerEvent } from '
 /** Whatever identifies one draggable item — a section key, or a row id. */
 type Key = string | number;
 
+/**
+ * Payload type for a reorder gesture. Private on purpose: `text/plain` made every drag a native
+ * *text* drag, which any editable element accepts without a line of JS — releasing a row over the
+ * global search field, an inline Titel/Kommentar editor or the RichTextEditor inserted the raw row
+ * id („17") into it, and an inline editor that commits on blur then saved it (CCL-15).
+ *
+ * The payload is never read back — the hook tracks the dragged item in `dragKey` — but something
+ * has to be set: Firefox refuses to start a drag with an empty dataTransfer.
+ */
+const DRAG_MIME = 'application/x-auftakt-row';
+
 export interface DragReorderOptions<K extends Key> {
   /** Commit a move: the item `from` was dropped onto `to`. */
   onReorder: (from: K, to: K) => void;
@@ -122,7 +133,7 @@ export function useDragReorder<K extends Key>({
           dragging.current = true;
           setDragKey(key);
           e.dataTransfer.effectAllowed = 'move';
-          e.dataTransfer.setData('text/plain', String(key));
+          e.dataTransfer.setData(DRAG_MIME, String(key));
         },
         onDragOver: (e: DragEvent) => {
           // No dragKey means the drag started outside this list — leave it to someone else.
