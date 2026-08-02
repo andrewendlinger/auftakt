@@ -87,6 +87,18 @@ export interface Task extends SoftDeletable, Partial<Resolved> {
   parent_id: ID | null;
 }
 
+/**
+ * Where a task sits in the tree and the scope hierarchy — everything a subtree move rewrites,
+ * and therefore everything its undo has to put back. Returned by `POST /tasks/:id/move` as the
+ * placement each affected row had *before* the move.
+ */
+export interface TaskPlacement {
+  id: ID;
+  artist_id: ID | null;
+  project_id: ID | null;
+  parent_id: ID | null;
+}
+
 /** Custom column widgets, plus the built-in bindings (status/title/priority/due/comment). */
 export type CustomColumnType =
   | 'text'

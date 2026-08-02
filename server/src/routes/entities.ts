@@ -280,6 +280,108 @@ export const tasksRouter = crudRouter({
   },
 });
 
+/* ---------- subtree operations ---------- */
+
+/**
+ * A task plus its live descendants, breadth-first over `parent_id`.
+ *
+ * Soft-deleted rows are neither included nor descended through, matching what the UI shows: a
+ * trashed task is invisible everywhere but the Papierkorb, its children render as top-level rows,
+ * and a later restore behaves like any other restore-after-edit. Archived rows *are* included —
+ * they are live data that merely left the default view, and leaving them behind is how a subtree
+ * operation strands them (TTU-05).
+ */
+function liveSubtreeIds(db: ReturnType<typeof getDb>, rootId: number): number[] {
+  const children = db.prepare('SELECT id FROM tasks WHERE parent_id = ? AND deleted_at IS NULL');
+  const ids = [rootId];
+  const seen = new Set([rootId]);
+  // Defensive against a pre-existing cycle in imported data: `seen` bounds the walk.
+  for (let i = 0; i < ids.length; i++) {
+    for (const row of children.all(ids[i]) as Array<{ id: number }>) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      ids.push(row.id);
+    }
+  }
+  return ids;
+}
+
+/** A body field that names a row or is explicitly absent. Anything else is a 400, never a NULL. */
+function nullableId(v: unknown): number | null {
+  if (v === undefined || v === null) return null;
+  if (typeof v === 'number' && Number.isInteger(v) && v > 0) return v;
+  throw new HttpError(400, 'Ungültiges Ziel.');
+}
+
+function requireLive(table: 'artists' | 'projects' | 'tasks', id: number): void {
+  const row = getDb()
+    .prepare(`SELECT 1 FROM ${table} WHERE id = ? AND deleted_at IS NULL`)
+    .get(id);
+  if (!row) throw new HttpError(400, 'Das Ziel gibt es nicht mehr.');
+}
+
+/**
+ * Move a task and its whole live subtree to another scope, in one transaction.
+ *
+ * It replaces a `Promise.all` of independent PATCHes that had no `catch`: a single failed request
+ * left the tree split across two scopes, showed no error, and never reached the `pushWithToast`
+ * that would have made it revertible — so some rows sat in the new project, the rest in the old
+ * one, and nothing could put them back (TTU-03).
+ *
+ * All three placement fields are explicit and always written, so the *same* endpoint is the
+ * revert: the client posts the prior placement it got back in `before`. Descendants follow the
+ * root's scope and keep their own `parent_id`. A legacy tree whose children sat in a different
+ * scope than their parent is therefore normalised to the root's — which the forward move already
+ * did, and which is the consistent state anyway.
+ */
+tasksRouter.post('/:id/move', (req, res) => {
+  const db = getDb();
+  const rootId = Number(req.params.id);
+  const root = db.prepare('SELECT id FROM tasks WHERE id = ? AND deleted_at IS NULL').get(rootId);
+  if (!root) return res.status(404).json({ error: 'not found' });
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const artistId = nullableId(body.artist_id);
+  const projectId = nullableId(body.project_id);
+  const parentId = nullableId(body.parent_id);
+  // The tasks CHECK allows at most one of the two, which is why the client sends the pair in one
+  // request rather than splitting them.
+  if (artistId !== null && projectId !== null) {
+    throw new HttpError(400, 'Eine Aufgabe gehört entweder zu einem Künstler oder zu einem Projekt.');
+  }
+  if (artistId !== null) requireLive('artists', artistId);
+  if (projectId !== null) requireLive('projects', projectId);
+
+  const ids = liveSubtreeIds(db, rootId);
+  if (parentId !== null) {
+    requireLive('tasks', parentId);
+    // Same invariant as the crud transform's cycle guard, expressed against the closure we
+    // already walked: a task may not be moved under itself or under one of its own descendants.
+    if (ids.includes(parentId)) {
+      throw new HttpError(400, 'Eine Aufgabe kann keiner ihrer Unteraufgaben untergeordnet werden.');
+    }
+  }
+
+  const select = db.prepare('SELECT id, artist_id, project_id, parent_id FROM tasks WHERE id = ?');
+  const moveRoot = db.prepare(
+    `UPDATE tasks SET artist_id = ?, project_id = ?, parent_id = ?, updated_at = datetime('now', 'localtime')
+     WHERE id = ?`,
+  );
+  const moveChild = db.prepare(
+    `UPDATE tasks SET artist_id = ?, project_id = ?, updated_at = datetime('now', 'localtime')
+     WHERE id = ?`,
+  );
+  const before = db.transaction(() => {
+    // One statement per id rather than an IN-list: a subtree is small, but the bound-parameter
+    // ceiling is the kind of limit this codebase has been bitten by before (DBW-02).
+    const prior = ids.map((id) => select.get(id));
+    moveRoot.run(artistId, projectId, parentId, rootId);
+    for (const id of ids.slice(1)) moveChild.run(artistId, projectId, id);
+    return prior;
+  })();
+  res.json({ ids, before });
+});
+
 export const eventsRouter = crudRouter({
   table: 'events',
   writable: [

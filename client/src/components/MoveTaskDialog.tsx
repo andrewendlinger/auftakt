@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { Project, Task } from '../api/types';
+import type { Project, Task, TaskPlacement } from '../api/types';
 import { Label, Modal, Select } from './fields';
 import { Btn } from './ui';
 import { useUndo } from './UndoProvider';
-import { useInvalidateAll, useSaison } from '../hooks';
+import { useGuardedAction, useInvalidateAll, useSaison } from '../hooks';
 
 /** Select value encoding a move target: the overview, an artist's „Allgemein", or a project. */
 function parseTarget(value: string): { artist_id: number | null; project_id: number | null } {
@@ -27,6 +27,7 @@ function projectLabel(p: Project): string {
 export function MoveTaskDialog({ task, onClose }: { task: Task; onClose: () => void }) {
   const saison = useSaison();
   const invalidate = useInvalidateAll();
+  const guard = useGuardedAction();
   const { pushWithToast } = useUndo();
   const [target, setTarget] = useState('');
   const [busy, setBusy] = useState(false);
@@ -102,35 +103,54 @@ export function MoveTaskDialog({ task, onClose }: { task: Task; onClose: () => v
 
   const n = descendants.length;
 
+  /**
+   * One request, one transaction, one failure arm.
+   *
+   * This used to be `Promise.all` of independent PATCHes with no `catch`, and the caller
+   * discards the promise (`void submit()`): a single failed request left part of the tree in
+   * the new project and the rest in the old one, showed no error, and never reached the
+   * `pushWithToast` below — so there was no „Rückgängig" and no undo entry either, and nothing
+   * in the app could put the tree back together (TTU-03).
+   */
   const submit = async () => {
-    const rows = [task, ...descendants];
-    const to = parseTarget(target);
-    // Prior scope captured per row: revert must restore each row exactly, even if legacy
-    // children sat in a different scope than their parent.
-    const prior = new Map(rows.map((r) => [r.id, { artist_id: r.artist_id, project_id: r.project_id }]));
-    const apply = async () => {
-      await Promise.all(rows.map((r) => api.tasks.update(r.id, to)));
-      await invalidate();
-    };
-    const revert = async () => {
-      await Promise.all(rows.map((r) => api.tasks.update(r.id, prior.get(r.id)!)));
-      await invalidate();
-    };
+    const to = { ...parseTarget(target), parent_id: task.parent_id };
     setBusy(true);
-    try {
-      await apply();
-    } finally {
-      setBusy(false);
-    }
+    let before: TaskPlacement[] = [];
+    const moved = await guard('Die Aufgabe konnte nicht verschoben werden.', async () => {
+      before = (await api.tasks.move(task.id, to)).before;
+      await invalidate();
+    });
+    setBusy(false);
+    if (!moved) return;
+
+    // The root's prior placement is the whole revert: descendants follow the root's scope, so
+    // moving it back takes them with it.
+    const prior = before.find((r) => r.id === task.id);
     // One stack entry for the whole tree — per-row useUndoablePatch would fragment Cmd+Z
     // into one child at a time. Stack and toast share the one registration: wiring the
     // toast's Rückgängig to `revert` directly left the entry on the stack afterwards, so the
     // next Cmd+Z re-wrote the already-restored values and swallowed the step the user
     // actually meant to undo (TTU-13).
-    pushWithToast(
-      { label: 'Verschieben', apply, revert },
-      `„${task.title}“ verschoben nach ${targetLabel(target)}`,
-    );
+    if (prior) {
+      pushWithToast(
+        {
+          label: 'Verschieben',
+          apply: async () => {
+            await api.tasks.move(task.id, to);
+            await invalidate();
+          },
+          revert: async () => {
+            await api.tasks.move(task.id, {
+              artist_id: prior.artist_id,
+              project_id: prior.project_id,
+              parent_id: prior.parent_id,
+            });
+            await invalidate();
+          },
+        },
+        `„${task.title}“ verschoben nach ${targetLabel(target)}`,
+      );
+    }
     onClose();
   };
 
@@ -141,7 +161,8 @@ export function MoveTaskDialog({ task, onClose }: { task: Task; onClose: () => v
       footer={
         <>
           <Btn onClick={onClose}>Abbrechen</Btn>
-          {/* Disabled until the scope-all list is in, so a move can never run on a partial tree. */}
+          {/* Disabled until the scope-all list is in — the server resolves the subtree itself, so
+              this is about the count below being honest before the user commits. */}
           <Btn variant="primary" disabled={!target || !treeLoaded || busy} onClick={() => void submit()}>
             Verschieben
           </Btn>

@@ -24,6 +24,7 @@ import type {
   SeasonStatsMap,
   Settings,
   Task,
+  TaskPlacement,
 } from './types';
 
 const BASE = '/api';
@@ -86,7 +87,16 @@ export const api = {
   projects: resource<Project>('/projects'),
   contacts: resource<Contact>('/contacts'),
   events: resource<EventItem>('/events'),
-  tasks: resource<Task>('/tasks'),
+  tasks: {
+    ...resource<Task>('/tasks'),
+    /**
+     * Move a task and its whole live subtree to another scope, in one server-side transaction.
+     * All three placement fields are explicit and always written, so this same call is also the
+     * undo: post back the placement the row had in the response's `before` (TTU-03).
+     */
+    move: (id: ID, to: Omit<TaskPlacement, 'id'>) =>
+      http<{ ids: ID[]; before: TaskPlacement[] }>('POST', `/tasks/${id}/move`, to),
+  },
   links: resource<LinkItem>('/links'),
   customColumns: resource<CustomColumn>('/custom-columns'),
   customSections: resource<CustomSection>('/custom-sections'),
