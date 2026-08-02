@@ -36,6 +36,11 @@ const MAX_DEPTH = 50;
  * Input types that hold no typed text, so there is no native undo to defer to. Clicking a
  * checkbox leaves it focused; treating that as "in a text field" would swallow the very next
  * Cmd+Z, which is exactly when the user wants it.
+ *
+ * The date-time family belongs here for the same reason and was missing (SHL-12): after
+ * picking a date in EventEditor's Beginn/Ende — or in the task table's due-date cells, which
+ * focus themselves — the caret sits in a control the browser keeps no undo stack for, so the
+ * keypress did nothing whatsoever.
  */
 const NON_TEXT_INPUTS = new Set([
   'checkbox',
@@ -46,6 +51,11 @@ const NON_TEXT_INPUTS = new Set([
   'color',
   'range',
   'file',
+  'date',
+  'datetime-local',
+  'time',
+  'month',
+  'week',
 ]);
 
 /**
