@@ -100,8 +100,13 @@ export function crudRouter(opts: CrudOptions): Router {
         return res.status(400).json({ error: 'ids must be a list of row ids' });
       }
       const db = getDb();
+      // The one write in this file that deliberately leaves `updated_at` alone: a sort position
+      // is not a content edit. Callers renumber a whole sibling group per drag, so stamping it
+      // rewrote „Zuletzt bearbeitet" on every row the user did *not* touch — drag the last of 20
+      // tasks up one slot and all 20 read today's date, a `{id:'updated'}` sort rule collapses to
+      // one equal-rank block, and the real edit history is gone and not undoable (TTU-06).
       const stmt = db.prepare(
-        `UPDATE ${table} SET sort_order = ?, updated_at = datetime('now', 'localtime') WHERE id = ? AND deleted_at IS NULL`,
+        `UPDATE ${table} SET sort_order = ? WHERE id = ? AND deleted_at IS NULL`,
       );
       db.transaction(() => {
         let changed = 0;
