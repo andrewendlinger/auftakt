@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Btn, IconButton } from './ui';
 import { RichTextEditor } from './RichTextEditor';
 import { resizeToDataUrl } from '../lib/image';
+import { useErrorToast } from '../hooks';
 
 // Viewport-relative, not a fixed rem cap: on a large window the old max-w-2xl left every
 // entity dialog at 42rem no matter how much room there was. The upper bounds stop form
@@ -103,11 +104,17 @@ export type FieldType =
 function ImageField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const report = useErrorToast();
   const pick = async (file: File | undefined) => {
     if (!file) return;
     setBusy(true);
     try {
       onChange(await resizeToDataUrl(file));
+    } catch (err) {
+      // `accept="image/*"` matches plenty the browser cannot decode — an iPhone .heic above
+      // all. Without this the promise rejected, the avatar stayed the 🎭 placeholder, and the
+      // only trace was the dev console: to the user the picker just did nothing (CCL-14).
+      report(err, 'Bild konnte nicht gelesen werden.');
     } finally {
       setBusy(false);
       if (inputRef.current) inputRef.current.value = '';
