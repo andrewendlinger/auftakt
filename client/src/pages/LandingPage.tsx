@@ -219,9 +219,17 @@ export function LandingPage() {
   );
 }
 
-/** The card's auto Zeitraum text when the user has not overridden it. */
+/**
+ * The card's auto Zeitraum text when the user has not overridden it. Three states, not two:
+ * `undefined` is still loading and `null` is a season whose file seasonStats() could not read.
+ * Collapsing either into „Noch keine Termine" asserted something about a season that may hold a
+ * full festival calendar — and directly contradicted the „Kennzahlen nicht verfügbar" line the
+ * same value renders two elements up (PGS-17).
+ */
 function periodFallback(stats: SeasonStats | null | undefined): string {
-  if (!stats?.firstEvent) return 'Noch keine Termine';
+  if (stats === undefined) return '…'; // loading; an empty string would collapse the edit target
+  if (stats === null) return 'Zeitraum nicht verfügbar';
+  if (!stats.firstEvent) return 'Noch keine Termine';
   return stats.firstEvent === stats.lastEvent
     ? formatDate(stats.firstEvent)
     : `${formatDate(stats.firstEvent)} – ${formatDate(stats.lastEvent)}`;
