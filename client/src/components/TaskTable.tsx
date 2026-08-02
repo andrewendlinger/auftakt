@@ -253,12 +253,19 @@ export function TaskTable({
 
   // --- manual reordering ---
   // A row may only be dropped on a sibling of equal rank: same list (both top-level, or the same
-  // parent's children) and indistinguishable under the active rules. `manual` is stripped from
-  // the rank test — as the tiebreaker it differs for every pair, which would forbid every drop.
-  const rankRules = useMemo(
-    () => activeRules.filter((r) => r.id !== MANUAL_SORT_ID),
-    [activeRules],
-  );
+  // parent's children) and indistinguishable under the active rules.
+  //
+  // The rules are *truncated* at `manual`, not filtered of it. `manual` is near-unique, so once
+  // it decides an ordering nothing after it can ever fire — with [Manuelle Reihenfolge, Status]
+  // the table is fully hand-ordered, yet filtering left rankRules = [Status] and refused every
+  // drop between two visibly adjacent rows of different status: the user dragged a row one slot
+  // onto its neighbour and the drop landed on the floor with no highlight and no explanation
+  // (TTU-33). Truncating also drops `manual` itself, which as the tiebreaker differs for every
+  // pair and would forbid every drop.
+  const rankRules = useMemo(() => {
+    const manualAt = activeRules.findIndex((r) => r.id === MANUAL_SORT_ID);
+    return manualAt === -1 ? activeRules : activeRules.slice(0, manualAt);
+  }, [activeRules]);
   const byId = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
   const siblingsOf = useCallback(
     (task: Task) =>
