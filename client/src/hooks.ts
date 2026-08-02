@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api/client';
 import type {
@@ -22,10 +22,26 @@ import {
 import { useToast } from './components/Toast';
 import { useUndo } from './components/UndoProvider';
 
+/**
+ * Every hook in this file that hands back a *function* wraps it in `useCallback`.
+ *
+ * That is a correctness requirement, not a micro-optimisation. A fresh arrow per render
+ * propagates: `TaskTable`'s `commit`/`commitCustom`/`requestDelete` are `useCallback`s that
+ * depend on these, so an unstable value here invalidates them, which invalidates the `columns`
+ * memo, which hands TanStack's `flexRender` a new component *type* — and React answers that by
+ * unmounting and remounting every cell subtree in the table. Measured on the demo season: one
+ * „＋ Unteraufgabe" click, which changes no data at all, remounted all 60 data cells, and a
+ * background refetch destroyed an open Titel editor together with the text being typed into it
+ * (removing a focused node fires no blur, so nothing committed it) — TTU-12, TTU-38.
+ *
+ * The consumers do their half (`useCallback`/`useMemo` with honest dep lists); this file has to
+ * do the other half or theirs is inert.
+ */
+
 /** The dataset is tiny and local, so invalidating everything on write is simplest and instant. */
 export function useInvalidateAll(): () => Promise<void> {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries();
+  return useCallback(() => qc.invalidateQueries(), [qc]);
 }
 
 /**
@@ -34,7 +50,10 @@ export function useInvalidateAll(): () => Promise<void> {
  */
 export function useErrorToast(): (err: unknown, fallback: string) => void {
   const toast = useToast();
-  return (err, fallback) => toast.show({ message: errorMessage(err, fallback) });
+  return useCallback(
+    (err: unknown, fallback: string) => toast.show({ message: errorMessage(err, fallback) }),
+    [toast],
+  );
 }
 
 /**
@@ -55,15 +74,18 @@ export function useGuardedAction(): (
   run: () => Promise<unknown>,
 ) => Promise<boolean> {
   const report = useErrorToast();
-  return async (fallback, run) => {
-    try {
-      await run();
-      return true;
-    } catch (err) {
-      report(err, fallback);
-      return false;
-    }
-  };
+  return useCallback(
+    async (fallback: string, run: () => Promise<unknown>) => {
+      try {
+        await run();
+        return true;
+      } catch (err) {
+        report(err, fallback);
+        return false;
+      }
+    },
+    [report],
+  );
 }
 
 export function useSettings() {
@@ -216,7 +238,7 @@ export function useLabel(): (key: LabelKey) => string {
     }
     return map;
   }, [raw]);
-  return (key) => overrides.get(key) ?? LABEL_DEFAULTS[key];
+  return useCallback((key: LabelKey) => overrides.get(key) ?? LABEL_DEFAULTS[key], [overrides]);
 }
 
 /**
@@ -226,15 +248,19 @@ export function useLabel(): (key: LabelKey) => string {
 export function useRenameLabel(): (key: LabelKey, label: string) => Promise<void> {
   const { data } = useSettings();
   const invalidate = useInvalidateAll();
-  return async (key, label) => {
-    const trimmed = label.trim();
-    const stored = Array.isArray(data?.labels) ? (data.labels as LabelOverride[]) : [];
-    const rest = stored.filter((r) => r && typeof r === 'object' && r.key !== key);
-    const next =
-      !trimmed || trimmed === LABEL_DEFAULTS[key] ? rest : [...rest, { key, label: trimmed }];
-    await api.patchSettings({ labels: next });
-    await invalidate();
-  };
+  const raw = data?.labels;
+  return useCallback(
+    async (key: LabelKey, label: string) => {
+      const trimmed = label.trim();
+      const stored = Array.isArray(raw) ? (raw as LabelOverride[]) : [];
+      const rest = stored.filter((r) => r && typeof r === 'object' && r.key !== key);
+      const next =
+        !trimmed || trimmed === LABEL_DEFAULTS[key] ? rest : [...rest, { key, label: trimmed }];
+      await api.patchSettings({ labels: next });
+      await invalidate();
+    },
+    [raw, invalidate],
+  );
 }
 
 /**
@@ -273,28 +299,30 @@ export function useUndoablePatch(): <T extends { id: ID }>(
 ) => Promise<void> {
   const { push } = useUndo();
   const invalidate = useInvalidateAll();
-  return async ({ res, row, patch, label }) => {
-    type T = typeof row;
-    const patchKeys = Object.keys(patch) as (keyof T & string)[];
-    const derived = (DERIVED_INVERSE_KEYS.get(res) ?? []).filter(
-      (k) => k in row,
-    ) as (keyof T & string)[];
-    const inverse: Partial<T> = {};
-    for (const k of [...new Set([...patchKeys, ...derived])]) inverse[k] = row[k];
+  return useCallback(
+    async <T extends { id: ID }>({ res, row, patch, label }: UndoablePatchArgs<T>) => {
+      const patchKeys = Object.keys(patch) as (keyof T & string)[];
+      const derived = (DERIVED_INVERSE_KEYS.get(res) ?? []).filter(
+        (k) => k in row,
+      ) as (keyof T & string)[];
+      const inverse: Partial<T> = {};
+      for (const k of [...new Set([...patchKeys, ...derived])]) inverse[k] = row[k];
 
-    const apply = async () => {
-      await res.update(row.id, patch);
-      await invalidate();
-    };
-    const revert = async () => {
-      await res.update(row.id, inverse);
-      await invalidate();
-    };
+      const apply = async () => {
+        await res.update(row.id, patch);
+        await invalidate();
+      };
+      const revert = async () => {
+        await res.update(row.id, inverse);
+        await invalidate();
+      };
 
-    await apply();
-    // Saving a dialog without touching anything shouldn't consume an undo step.
-    if (patchKeys.some((k) => !Object.is(row[k], patch[k]))) push({ label, apply, revert });
-  };
+      await apply();
+      // Saving a dialog without touching anything shouldn't consume an undo step.
+      if (patchKeys.some((k) => !Object.is(row[k], patch[k]))) push({ label, apply, revert });
+    },
+    [push, invalidate],
+  );
 }
 
 export interface UndoableDeleteArgs {
@@ -321,47 +349,50 @@ export function useUndoableDelete(): (args: UndoableDeleteArgs) => Promise<boole
   const toast = useToast();
   const report = useErrorToast();
   const invalidate = useInvalidateAll();
-  return async ({ label, remove, restore }) => {
-    let result: unknown;
-    try {
-      result = await remove();
-    } catch (err) {
-      // Every call site floats this promise, so without the catch a failed DELETE — a
-      // restarting server, a 500 mid-backup — surfaced as nothing at all: the row stayed on
-      // screen, no toast appeared, and the click read as missed (CCL-03).
-      report(err, `${label} konnte nicht gelöscht werden.`);
+  return useCallback(
+    async ({ label, remove, restore }: UndoableDeleteArgs) => {
+      let result: unknown;
+      try {
+        result = await remove();
+      } catch (err) {
+        // Every call site floats this promise, so without the catch a failed DELETE — a
+        // restarting server, a 500 mid-backup — surfaced as nothing at all: the row stayed on
+        // screen, no toast appeared, and the click read as missed (CCL-03).
+        report(err, `${label} konnte nicht gelöscht werden.`);
+        await invalidate();
+        return false;
+      }
       await invalidate();
-      return false;
-    }
-    await invalidate();
-    if (nothingDeleted(result)) {
-      toast.show({ message: `${label} war bereits gelöscht` });
-      return false;
-    }
-    pushWithToast(
-      {
-        label: `Löschen von ${label}`,
-        // Redo re-deletes; both halves refresh even when the call fails, so a list can never
-        // keep showing a row the server no longer has.
-        apply: async () => {
-          try {
-            await remove();
-          } finally {
-            await invalidate();
-          }
+      if (nothingDeleted(result)) {
+        toast.show({ message: `${label} war bereits gelöscht` });
+        return false;
+      }
+      pushWithToast(
+        {
+          label: `Löschen von ${label}`,
+          // Redo re-deletes; both halves refresh even when the call fails, so a list can never
+          // keep showing a row the server no longer has.
+          apply: async () => {
+            try {
+              await remove();
+            } finally {
+              await invalidate();
+            }
+          },
+          revert: async () => {
+            try {
+              await restore();
+            } finally {
+              await invalidate();
+            }
+          },
         },
-        revert: async () => {
-          try {
-            await restore();
-          } finally {
-            await invalidate();
-          }
-        },
-      },
-      `${label} gelöscht`,
-    );
-    return true;
-  };
+        `${label} gelöscht`,
+      );
+      return true;
+    },
+    [pushWithToast, toast, report, invalidate],
+  );
 }
 
 /**

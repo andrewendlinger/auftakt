@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import {
   flexRender,
   getCoreRowModel,
   getExpandedRowModel,
   useReactTable,
+  type CellContext,
   type ColumnDef,
   type ExpandedState,
 } from '@tanstack/react-table';
@@ -56,6 +57,51 @@ function ScopeChip({ label, tone }: { label: string; tone: 'neutral' | 'festival
 
 /** null = follow the configured automatic hierarchy; a rule = a temporary header-click override. */
 type SortState = TaskSortRule | null;
+
+/**
+ * Everything a cell needs from its table, handed down as context rather than captured in the
+ * `columns` memo.
+ *
+ * The memo is the whole point. TanStack renders a cell through `flexRender`, which is
+ * `React.createElement(columnDef.cell, ctx)` — so if `cell` is an inline arrow, every rebuild of
+ * `columns` hands React a *new component type* and React answers by unmounting and remounting
+ * every cell subtree in the table. With the per-render values (callbacks, option lists, the
+ * children map) in the dep list, that rebuild happened on every single render: measured on the
+ * demo season, one „＋ Unteraufgabe" click — which changes no data — remounted all 60 data
+ * cells, and a background refetch tore down an open Titel editor together with the text being
+ * typed into it, since removing a focused node fires no blur and nothing commits it
+ * (TTU-12, TTU-38).
+ *
+ * So the cells are stable module-level components and read the moving parts from here. The value
+ * is deliberately *not* memoised: a re-render of a mounted cell is cheap and correct, a remount
+ * is neither.
+ */
+interface TaskTableApi {
+  /** `colId(col)` → the column, so a stable cell component can resolve its own column. */
+  colById: Map<string, CustomColumn>;
+  doneValue: string;
+  statusOptions: CustomColumnOption[];
+  priorityOptions: CustomColumnOption[];
+  childrenByParent: Map<number, Task[]>;
+  showAssignment: boolean;
+  showProject: boolean;
+  saison: string;
+  commit: (task: Task, patch: Partial<Task>, label: string) => void;
+  commitCustom: (task: Task, colId: number, value: unknown) => void;
+  requestDelete: (task: Task) => void;
+  toggleExpand: (id: number) => void;
+  /** Expand the row and open its inline subtask composer. */
+  startSubtask: (id: number) => void;
+  startMove: (task: Task) => void;
+}
+
+const TaskTableCtx = createContext<TaskTableApi | null>(null);
+
+function useTaskTableApi(): TaskTableApi {
+  const api = useContext(TaskTableCtx);
+  if (!api) throw new Error('TaskTable cell rendered outside TaskTableCtx');
+  return api;
+}
 
 /**
  * Stable column id: built-ins use their `key`, custom columns `custom:<id>`.
@@ -410,149 +456,57 @@ export function TaskTable({
     [customColumns],
   );
 
+  const colById = useMemo(
+    () => new Map(visibleCols.map((c) => [colId(c), c])),
+    [visibleCols],
+  );
+  const startSubtask = useCallback((id: number) => {
+    setCollapsed((s) => {
+      const n = new Set(s);
+      n.delete(id);
+      return n;
+    });
+    setAddingChildFor(id);
+  }, []);
+
+  /**
+   * Which columns exist, and nothing else — every `cell` is a stable module-level component that
+   * reads the moving parts from `TaskTableCtx`. See the interface's docstring for why the dep
+   * list must stay this short (TTU-12).
+   */
   const columns = useMemo<ColumnDef<Task>[]>(() => {
     const cols: ColumnDef<Task>[] = [];
-    const assignCol: ColumnDef<Task> = {
-      id: 'assign',
-      header: 'Zuordnung',
-      cell: ({ row }) => {
-        if (row.depth > 0) return null; // subtask shares the parent's project — no redundant badge
-        const t = row.original;
-        const seasonWide = !t.project_id && !t.resolved_artist_id;
-        return (
-          <div className="flex items-center gap-1.5 whitespace-nowrap">
-            {showAssignment && t.resolved_artist_id && (
-              <Link
-                to={`/artist/${t.resolved_artist_id}`}
-                className="text-sm text-neutral-600 hover:underline"
-                style={{ color: t.artist_color ?? undefined }}
-              >
-                {t.artist_name}
-              </Link>
-            )}
-            {/* Imported projects can have no K-code; fall back to the name so the chip still shows. */}
-            {t.project_id && (t.project_code || t.project_name) && (
-              <ProjectBadge
-                code={t.project_code || t.project_name!}
-                projectId={t.project_id}
-                artistColor={t.artist_color}
-                projectColor={t.project_color}
-                to={`/project/${t.project_id}`}
-              />
-            )}
-            {/* Artist page: an artist-level todo (no project) is "Allgemein". */}
-            {showProject && !t.project_id && <ScopeChip label="Allgemein" tone="neutral" />}
-            {/* Dashboard: a todo with no artist and no project is season-wide — tag it with the
-                season's own name, not the generic word. `tone="festival"` is the violet token. */}
-            {showAssignment && seasonWide && <ScopeChip label={saison} tone="festival" />}
-          </div>
-        );
-      },
-    };
-
     for (const col of visibleCols) {
-      const isTitle = col.kind === 'builtin' && col.key === 'title';
       cols.push({
         id: colId(col),
         header: col.icon ? `${col.icon} ${col.name}` : col.name,
-        cell: ({ row }) => {
-          const inner = (
-            <ColumnCell
-              task={row.original}
-              col={col}
-              isChild={row.depth > 0}
-              doneValue={doneValue}
-              statusOptions={statusOptions}
-              priorityOptions={priorityOptions}
-              commit={commit}
-              commitCustom={commitCustom}
-            />
-          );
-          if (!isTitle) return inner;
-          // The hierarchy chrome lives in the leading gutter column, so all that belongs here
-          // is the subtask counter — a property of the task itself, and the one cue that stays
-          // meaningful wherever the user has ordered the Titel column.
-          const kids = childrenByParent.get(row.original.id) ?? [];
-          if (kids.length === 0) return inner;
-          const doneKids = kids.filter((k) => k.status === doneValue).length;
-          const isExpanded = row.getIsExpanded();
-          const pct = Math.round((doneKids / kids.length) * 100);
-          return (
-            <div className="flex items-start gap-2">
-              <div className="min-w-0 flex-1">{inner}</div>
-              {/* A second, larger disclosure target for anyone who never notices the chevron. */}
-              <button
-                type="button"
-                onClick={() => toggleExpand(row.original.id)}
-                title={`${doneKids} von ${kids.length} Unteraufgaben erledigt — ${isExpanded ? 'einklappen' : 'ausklappen'}`}
-                className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium tabular-nums transition ${
-                  isExpanded
-                    ? 'text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600'
-                    : 'text-neutral-600 ring-1 ring-neutral-200 ring-inset hover:ring-neutral-300'
-                }`}
-                // Expanded the children speak for themselves, so the pill recedes. Collapsed it
-                // carries the progress it is standing in for, as its own fill.
-                style={
-                  isExpanded
-                    ? undefined
-                    : {
-                        backgroundImage: `linear-gradient(to right, rgb(229 229 229) ${pct}%, rgb(245 245 245) ${pct}%)`,
-                      }
-                }
-              >
-                {doneKids}/{kids.length}
-              </button>
-            </div>
-          );
-        },
+        cell: DataCell,
       });
       // Keep the artist/project link next to the task identity.
       if (col.kind === 'builtin' && col.key === 'title' && (showAssignment || showProject)) {
-        cols.push(assignCol);
+        cols.push({ id: 'assign', header: 'Zuordnung', cell: AssignCell });
       }
     }
-
-    cols.push({
-      id: 'actions',
-      header: '',
-      cell: ({ row }) => (
-        <div className="flex items-center justify-end gap-0.5">
-          {/* Subtasks are one level deep, so only top-level rows can get one. Kept
-              persistently visible (like the trash icon) so the feature is discoverable. */}
-          {row.depth === 0 && (
-            <>
-              <IconButton
-                size="sm"
-                className="text-base"
-                title="Unteraufgabe hinzufügen"
-                onClick={() => {
-                  setCollapsed((s) => {
-                    const n = new Set(s);
-                    n.delete(row.original.id);
-                    return n;
-                  });
-                  setAddingChildFor(row.original.id);
-                }}
-              >
-                ＋
-              </IconButton>
-              <IconButton size="sm" title="Verschieben" onClick={() => setMoveTask(row.original)}>
-                <MoveIcon className="h-4 w-4" />
-              </IconButton>
-            </>
-          )}
-          <ColorSwatchPicker
-            value={row.original.color}
-            onChange={(color) => commit(row.original, { color }, 'Farbänderung')}
-          />
-          <IconButton variant="danger" size="sm" title="Löschen" onClick={() => requestDelete(row.original)}>
-            <TrashIcon className="h-4 w-4" />
-          </IconButton>
-        </div>
-      ),
-    });
+    cols.push({ id: 'actions', header: '', cell: ActionsCell });
     return cols;
-  }, [visibleCols, showAssignment, showProject, saison, doneValue, statusOptions, priorityOptions, commit, commitCustom, childrenByParent, toggleExpand, requestDelete]);
+  }, [visibleCols, showAssignment, showProject]);
+
+  const cellApi: TaskTableApi = {
+    colById,
+    doneValue,
+    statusOptions,
+    priorityOptions,
+    childrenByParent,
+    showAssignment,
+    showProject,
+    saison,
+    commit,
+    commitCustom,
+    requestDelete,
+    toggleExpand,
+    startSubtask,
+    startMove: setMoveTask,
+  };
 
   const table = useReactTable({
     data: sortedTop,
@@ -597,6 +551,7 @@ export function TaskTable({
   const defaultPriority = priorityOptions[0]?.value ?? 'mittel';
 
   return (
+    <TaskTableCtx.Provider value={cellApi}>
     <div className="overflow-x-auto rounded-2xl bg-white shadow-sm ring-1 ring-black/5">
       {/* Add row at the top so new tasks don't require scrolling past the done items. */}
       {parent && (
@@ -763,6 +718,137 @@ export function TaskTable({
           </p>
         </Modal>
       )}
+    </div>
+    </TaskTableCtx.Provider>
+  );
+}
+
+/* ---------- cell components ---------- */
+/* Module-level and therefore stable component *types* — see TaskTableApi's docstring (TTU-12). */
+
+/**
+ * Any data column. Resolves its own `CustomColumn` from the column id, and adds the subtask
+ * counter to the Titel column: the hierarchy chrome lives in the leading gutter, so all that
+ * belongs in a data cell is the counter — a property of the task itself, and the one cue that
+ * stays meaningful wherever the user has ordered the Titel column.
+ */
+function DataCell({ row, column }: CellContext<Task, unknown>) {
+  const api = useTaskTableApi();
+  const col = api.colById.get(column.id);
+  if (!col) return null;
+  const inner = (
+    <ColumnCell
+      task={row.original}
+      col={col}
+      isChild={row.depth > 0}
+      doneValue={api.doneValue}
+      statusOptions={api.statusOptions}
+      priorityOptions={api.priorityOptions}
+      commit={api.commit}
+      commitCustom={api.commitCustom}
+    />
+  );
+  if (!(col.kind === 'builtin' && col.key === 'title')) return inner;
+  const kids = api.childrenByParent.get(row.original.id) ?? [];
+  if (kids.length === 0) return inner;
+  const doneKids = kids.filter((k) => k.status === api.doneValue).length;
+  const isExpanded = row.getIsExpanded();
+  const pct = Math.round((doneKids / kids.length) * 100);
+  return (
+    <div className="flex items-start gap-2">
+      <div className="min-w-0 flex-1">{inner}</div>
+      {/* A second, larger disclosure target for anyone who never notices the chevron. */}
+      <button
+        type="button"
+        onClick={() => api.toggleExpand(row.original.id)}
+        title={`${doneKids} von ${kids.length} Unteraufgaben erledigt — ${isExpanded ? 'einklappen' : 'ausklappen'}`}
+        className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium tabular-nums transition ${
+          isExpanded
+            ? 'text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600'
+            : 'text-neutral-600 ring-1 ring-neutral-200 ring-inset hover:ring-neutral-300'
+        }`}
+        // Expanded the children speak for themselves, so the pill recedes. Collapsed it
+        // carries the progress it is standing in for, as its own fill.
+        style={
+          isExpanded
+            ? undefined
+            : {
+                backgroundImage: `linear-gradient(to right, rgb(229 229 229) ${pct}%, rgb(245 245 245) ${pct}%)`,
+              }
+        }
+      >
+        {doneKids}/{kids.length}
+      </button>
+    </div>
+  );
+}
+
+/** Artist name + project badge (dashboard) or just the project badge (artist page). */
+function AssignCell({ row }: CellContext<Task, unknown>) {
+  const { showAssignment, showProject, saison } = useTaskTableApi();
+  if (row.depth > 0) return null; // subtask shares the parent's project — no redundant badge
+  const t = row.original;
+  const seasonWide = !t.project_id && !t.resolved_artist_id;
+  return (
+    <div className="flex items-center gap-1.5 whitespace-nowrap">
+      {showAssignment && t.resolved_artist_id && (
+        <Link
+          to={`/artist/${t.resolved_artist_id}`}
+          className="text-sm text-neutral-600 hover:underline"
+          style={{ color: t.artist_color ?? undefined }}
+        >
+          {t.artist_name}
+        </Link>
+      )}
+      {/* Imported projects can have no K-code; fall back to the name so the chip still shows. */}
+      {t.project_id && (t.project_code || t.project_name) && (
+        <ProjectBadge
+          code={t.project_code || t.project_name!}
+          projectId={t.project_id}
+          artistColor={t.artist_color}
+          projectColor={t.project_color}
+          to={`/project/${t.project_id}`}
+        />
+      )}
+      {/* Artist page: an artist-level todo (no project) is "Allgemein". */}
+      {showProject && !t.project_id && <ScopeChip label="Allgemein" tone="neutral" />}
+      {/* Dashboard: a todo with no artist and no project is season-wide — tag it with the
+          season's own name, not the generic word. `tone="festival"` is the violet token. */}
+      {showAssignment && seasonWide && <ScopeChip label={saison} tone="festival" />}
+    </div>
+  );
+}
+
+/** Trailing row actions: add subtask, move, colour, delete. */
+function ActionsCell({ row }: CellContext<Task, unknown>) {
+  const api = useTaskTableApi();
+  const task = row.original;
+  return (
+    <div className="flex items-center justify-end gap-0.5">
+      {/* Subtasks are one level deep, so only top-level rows can get one. Kept
+          persistently visible (like the trash icon) so the feature is discoverable. */}
+      {row.depth === 0 && (
+        <>
+          <IconButton
+            size="sm"
+            className="text-base"
+            title="Unteraufgabe hinzufügen"
+            onClick={() => api.startSubtask(task.id)}
+          >
+            ＋
+          </IconButton>
+          <IconButton size="sm" title="Verschieben" onClick={() => api.startMove(task)}>
+            <MoveIcon className="h-4 w-4" />
+          </IconButton>
+        </>
+      )}
+      <ColorSwatchPicker
+        value={task.color}
+        onChange={(color) => api.commit(task, { color }, 'Farbänderung')}
+      />
+      <IconButton variant="danger" size="sm" title="Löschen" onClick={() => api.requestDelete(task)}>
+        <TrashIcon className="h-4 w-4" />
+      </IconButton>
     </div>
   );
 }
