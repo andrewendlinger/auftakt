@@ -138,6 +138,23 @@ function compareByRules(
  * instead preserve the *server's* order, which ranks priority and due date above sort_order.
  * An empty rule list leaves the server order (priority → due, done last) untouched.
  */
+/**
+ * The server's own ORDER BY (`TASK_ORDER` in server/src/lib/queries.ts) expressed as rules — the
+ * ordering actually in effect when the user has configured none. Keep the two in step.
+ *
+ * "No rules" is not "no constraints": with an empty hierarchy `sortTasks` short-circuits and the
+ * list keeps the server order, which ranks priority and due date above sort_order. Testing drops
+ * against the empty list therefore accepted every one of them, `reorder` renumbered the whole
+ * sibling list, and the refetch put the row straight back where it came from — the drag looked
+ * like it did nothing while having silently rewritten every sibling's sort_order (TTU-07).
+ * `compareByRules` already sinks done rows, so that leading key is not repeated here.
+ */
+const SERVER_DEFAULT_RULES: TaskSortRule[] = [
+  { id: 'priority', dir: 'asc' },
+  { id: 'due', dir: 'asc' },
+  { id: MANUAL_SORT_ID, dir: 'asc' },
+];
+
 function sortTasks(
   tasks: Task[],
   rules: TaskSortRule[],
@@ -262,9 +279,13 @@ export function TaskTable({
   // onto its neighbour and the drop landed on the floor with no highlight and no explanation
   // (TTU-33). Truncating also drops `manual` itself, which as the tiebreaker differs for every
   // pair and would forbid every drop.
+  //
+  // With no rules configured at all the *effective* ordering is still the server's, so that is
+  // what a drop is measured against — see SERVER_DEFAULT_RULES.
   const rankRules = useMemo(() => {
-    const manualAt = activeRules.findIndex((r) => r.id === MANUAL_SORT_ID);
-    return manualAt === -1 ? activeRules : activeRules.slice(0, manualAt);
+    const effective = activeRules.length > 0 ? activeRules : SERVER_DEFAULT_RULES;
+    const manualAt = effective.findIndex((r) => r.id === MANUAL_SORT_ID);
+    return manualAt === -1 ? effective : effective.slice(0, manualAt);
   }, [activeRules]);
   const byId = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
   const siblingsOf = useCallback(
