@@ -29,7 +29,7 @@ import { Modal } from './fields';
 import {
   useInvalidateAll,
   useSaison,
-  useSettings,
+  useTaskSortRules,
   useUndoableDelete,
   useUndoablePatch,
   resourceUndo,
@@ -172,15 +172,12 @@ export function TaskTable({
   const invalidate = useInvalidateAll();
   const del = useUndoableDelete();
   const undoablePatch = useUndoablePatch();
-  const { data: settings } = useSettings();
+  const sortRules = useTaskSortRules();
   const saison = useSaison();
   const [sort, setSort] = useState<SortState>(null);
   // Effective ordering: a header click (`sort`) is a temporary single-key override; otherwise
   // follow the configured automatic hierarchy from Settings (empty → leave server order).
-  const activeRules = useMemo(
-    () => (sort ? [sort] : settings?.task_sort ?? []),
-    [sort, settings?.task_sort],
-  );
+  const activeRules = useMemo(() => (sort ? [sort] : sortRules), [sort, sortRules]);
   // Subtask UI state: collapsed parents, the parent currently getting a new subtask,
   // and the parent awaiting a delete-with-children confirmation.
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());

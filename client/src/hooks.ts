@@ -1,7 +1,14 @@
 import { useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api/client';
-import type { CustomColumnOption, ID, LabelOverride, OptionUsage, Settings } from './api/types';
+import type {
+  CustomColumnOption,
+  ID,
+  LabelOverride,
+  OptionUsage,
+  Settings,
+  TaskSortRule,
+} from './api/types';
 import { doneValueOf } from './api/types';
 import { errorMessage } from './lib/errors';
 import { LABEL_DEFAULTS, isLabelKey, type LabelKey } from './lib/labels';
@@ -161,6 +168,32 @@ export function useTaskStatsConfig(): { metrics: TaskMetric[]; windowDays: numbe
     const windowDays = Number.isFinite(n) && n >= 1 ? Math.min(Math.round(n), 365) : DEFAULT_ATTENTION_DAYS;
     return { metrics, windowDays };
   }, [data?.task_stats, data?.attention_window_days]);
+}
+
+/**
+ * The configured automatic sort hierarchy. The single boundary where `task_sort` is read —
+ * consumers never touch the raw setting.
+ *
+ * It was the one array-valued setting read with a bare `?? []`, while `useTaskStatsConfig`,
+ * `useLabel` and `SectionArranger` all test `Array.isArray` first. A non-array value —
+ * settings.ts stores any non-array as `String(v)` and `safeParse` hands the raw string back —
+ * therefore survived the guard (`"status" ?? []` is `"status"`) and reached `value.some(…)`,
+ * throwing a TypeError mid-render. That blanked the Aufgaben tab *and* every task table, with
+ * no way left to repair the setting from the UI (PGS-15).
+ */
+export function useTaskSortRules(): TaskSortRule[] {
+  const { data } = useSettings();
+  const raw = data?.task_sort;
+  return useMemo(() => {
+    if (!Array.isArray(raw)) return [];
+    const out: TaskSortRule[] = [];
+    for (const row of raw as unknown[]) {
+      if (!row || typeof row !== 'object') continue;
+      const { id, dir } = row as TaskSortRule;
+      if (typeof id === 'string' && id) out.push({ id, dir: dir === 'desc' ? 'desc' : 'asc' });
+    }
+    return out;
+  }, [raw]);
 }
 
 /**

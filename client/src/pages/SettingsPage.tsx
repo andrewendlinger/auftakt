@@ -31,6 +31,7 @@ import {
   useProjectStatusOptions,
   useSeasonTerm,
   useSettings,
+  useTaskSortRules,
   useTaskStatsConfig,
 } from '../hooks';
 
@@ -98,6 +99,7 @@ function usePatchSettings(): (p: Record<string, unknown>) => Promise<boolean> {
 export function SettingsTasksTab() {
   const { data: settings, isLoading, isError, refetch } = useSettings();
   const patch = usePatchSettings();
+  const taskSort = useTaskSortRules();
   const [managingColumns, setManagingColumns] = useState(false);
 
   const { data: globalCols = [] } = useQuery({
@@ -145,10 +147,7 @@ export function SettingsTasksTab() {
           rutscht immer nach unten. Die Reihenfolge der Status-Werte selbst legst du bei den
           Status-Spaltenoptionen fest.
         </p>
-        <TaskSortEditor
-          value={settings.task_sort ?? []}
-          onChange={(v) => patch({ task_sort: v })}
-        />
+        <TaskSortEditor value={taskSort} onChange={(v) => patch({ task_sort: v })} />
       </Card>
 
       <Card className="p-5">
