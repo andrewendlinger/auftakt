@@ -33,7 +33,12 @@ export function PrintProject() {
         api.customColumns.list({ scope: 'global' }),
         api.customColumns.list({ scope: 'project', project_id: projectId }),
       ]);
-      const artist = await api.artists.get(project.artist_id);
+      // Non-fatal on purpose. Soft-deleting an artist does not cascade to its projects, and
+      // crudRouter 404s on a soft-deleted row, so an artist sitting in the Papierkorb made this
+      // one call reject — and with it the whole combined queryFn, which took the entire sheet
+      // down. The `artist?.…` fallbacks below were written for exactly this case but could
+      // never run, because the failure happened inside the query they belong to (PGS-06).
+      const artist = await api.artists.get(project.artist_id).catch(() => undefined);
       // Global columns first, then project ones — same order as the live page.
       return { project, artist, events, contacts, tasks, columns: [...globalCols, ...projectCols] };
     },
