@@ -302,13 +302,32 @@ export interface UndoableDeleteArgs {
  * whatever the user had edited *before* — the deleted row stayed gone and an edit they meant to
  * keep was rolled back. The failure arm of the restore lives in `UndoProvider` now, next to the
  * one the keyboard path already had.
+ *
+ * Returns whether the row is actually gone, mirroring `useGuardedAction` — a failed or empty
+ * delete gets a German toast and no undo affordance, never the „gelöscht" one (CCL-03).
  */
-export function useUndoableDelete(): (args: UndoableDeleteArgs) => Promise<void> {
+export function useUndoableDelete(): (args: UndoableDeleteArgs) => Promise<boolean> {
   const { pushWithToast } = useUndo();
+  const toast = useToast();
+  const report = useErrorToast();
   const invalidate = useInvalidateAll();
   return async ({ label, remove, restore }) => {
-    await remove();
+    let result: unknown;
+    try {
+      result = await remove();
+    } catch (err) {
+      // Every call site floats this promise, so without the catch a failed DELETE — a
+      // restarting server, a 500 mid-backup — surfaced as nothing at all: the row stayed on
+      // screen, no toast appeared, and the click read as missed (CCL-03).
+      report(err, `${label} konnte nicht gelöscht werden.`);
+      await invalidate();
+      return false;
+    }
     await invalidate();
+    if (nothingDeleted(result)) {
+      toast.show({ message: `${label} war bereits gelöscht` });
+      return false;
+    }
     pushWithToast(
       {
         label: `Löschen von ${label}`,
@@ -331,7 +350,29 @@ export function useUndoableDelete(): (args: UndoableDeleteArgs) => Promise<void>
       },
       `${label} gelöscht`,
     );
+    return true;
   };
+}
+
+/**
+ * Whether the server reports that it deleted nothing. `crudRouter`'s DELETE never 404s — it
+ * answers 200 with `{ deleted: false }` when the row was already gone — so a list still showing
+ * a row deleted seconds ago in another view (`staleTime: 5_000`, no refetch on focus) would
+ * otherwise produce a „… gelöscht" toast plus a „Rückgängig" for a delete that never happened;
+ * pressing it then 404s on `/restore` and contradicts the first toast.
+ *
+ * Both shapes count: one response, or the `Promise.all([…])` of a task plus its subtasks.
+ * Delete paths that answer with something else entirely (the landing snapshot patches) have no
+ * `deleted` key and are never mistaken for an empty delete.
+ */
+function nothingDeleted(result: unknown): boolean {
+  const rows = Array.isArray(result) ? result : [result];
+  return (
+    rows.length > 0 &&
+    rows.every(
+      (r) => typeof r === 'object' && r !== null && (r as { deleted?: unknown }).deleted === false,
+    )
+  );
 }
 
 /** Small helper to build the delete/restore pair for a resource id. */
