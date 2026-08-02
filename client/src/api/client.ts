@@ -96,6 +96,14 @@ export const api = {
      */
     move: (id: ID, to: Omit<TaskPlacement, 'id'>) =>
       http<{ ids: ID[]; before: TaskPlacement[] }>('POST', `/tasks/${id}/move`, to),
+    /**
+     * Soft-delete a task and its whole live subtree in one transaction. Answers with the ids it
+     * actually took — pass those to `restoreTree` to undo, so a descendant that was already in
+     * the Papierkorb is not resurrected along with them (TTU-35).
+     */
+    removeTree: (id: ID) => http<{ ids: ID[]; deleted: boolean }>('DELETE', `/tasks/${id}/tree`),
+    restoreTree: (id: ID, ids: ID[]) =>
+      http<{ ids: ID[] }>('POST', `/tasks/${id}/tree/restore`, { ids }),
   },
   links: resource<LinkItem>('/links'),
   customColumns: resource<CustomColumn>('/custom-columns'),

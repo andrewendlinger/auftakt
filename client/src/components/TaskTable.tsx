@@ -705,12 +705,26 @@ export function TaskTable({
                 variant="danger"
                 onClick={() => {
                   const { task, children } = confirmDelete;
-                  const ids = [task.id, ...children.map((c) => c.id)];
                   const n = children.length;
+                  // One transactional request, not a `Promise.all` of per-row DELETEs: a request
+                  // that failed part-way used to leave the tree half-deleted, and because
+                  // `Promise.all` rejects at the first failure, `useUndoableDelete` never reached
+                  // its invalidate or its toast — no error, no „Rückgängig", and the only way
+                  // back was the archive's trash (TTU-35).
+                  //
+                  // The undo restores exactly what the delete took, so a subtask that was already
+                  // in the Papierkorb is not resurrected with it. The ids are only known once the
+                  // request answers, hence the closure variable; a redo re-runs `remove` and
+                  // recomputes them.
+                  let removed: number[] = [];
                   void del({
                     label: `Aufgabe „${task.title}“ + ${n} Unteraufgabe${n === 1 ? '' : 'n'}`,
-                    remove: () => Promise.all(ids.map((id) => api.tasks.remove(id))),
-                    restore: () => Promise.all(ids.map((id) => api.tasks.restore(id))),
+                    remove: async () => {
+                      const res = await api.tasks.removeTree(task.id);
+                      removed = res.ids;
+                      return res;
+                    },
+                    restore: () => api.tasks.restoreTree(task.id, removed),
                   });
                   setConfirmDelete(null);
                 }}

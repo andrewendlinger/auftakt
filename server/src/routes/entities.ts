@@ -394,6 +394,55 @@ tasksRouter.post('/:id/move', (req, res) => {
   res.json({ ids, before });
 });
 
+/**
+ * Soft-delete a task and its whole live subtree in one transaction.
+ *
+ * The client used to do this as `Promise.all` of one DELETE per row, over a child list derived
+ * from the *rendered* table: a request that failed part-way left the tree half-deleted with no
+ * toast and no undo entry (TTU-35), and archived children and grandchildren were never in the
+ * list to begin with, so „+ N Unteraufgaben löschen" left them behind as rows no delete
+ * affordance could reach (TTU-05). One transaction over the server's own closure answers both.
+ *
+ * Responds in `crudRouter`'s delete shape (`deleted: false` rather than a 404 when there was
+ * nothing to take), because `useUndoableDelete`'s `nothingDeleted()` reads exactly that.
+ */
+tasksRouter.delete('/:id/tree', (req, res) => {
+  const db = getDb();
+  const rootId = Number(req.params.id);
+  const root = db.prepare('SELECT id FROM tasks WHERE id = ? AND deleted_at IS NULL').get(rootId);
+  if (!root) return res.json({ ids: [], deleted: false });
+  const stmt = db.prepare(
+    `UPDATE tasks SET deleted_at = datetime('now', 'localtime'), updated_at = datetime('now', 'localtime')
+     WHERE id = ? AND deleted_at IS NULL`,
+  );
+  const ids = liveSubtreeIds(db, rootId);
+  const removed = db.transaction(() => ids.filter((id) => stmt.run(id).changes > 0))();
+  res.json({ ids: removed, deleted: removed.length > 0 });
+});
+
+/**
+ * Restore exactly the rows a tree delete took — the ids it answered with, posted back.
+ *
+ * Not „restore the closure": a descendant that was already in the Papierkorb before the cascade
+ * must stay there, and the undo of a delete may never resurrect something the user trashed
+ * separately. Ids that no longer exist are skipped rather than 404ing, so an undo still works
+ * after `purgeExpired()` has taken one of them. `:id` names the root the set came from.
+ */
+tasksRouter.post('/:id/tree/restore', (req, res) => {
+  const ids = (req.body as { ids?: unknown } | undefined)?.ids;
+  const isRowId = (id: unknown): id is number =>
+    typeof id === 'number' && Number.isInteger(id) && id > 0;
+  if (!Array.isArray(ids) || !ids.every(isRowId)) {
+    throw new HttpError(400, 'ids must be a list of row ids');
+  }
+  const db = getDb();
+  const stmt = db.prepare(
+    `UPDATE tasks SET deleted_at = NULL, updated_at = datetime('now', 'localtime') WHERE id = ?`,
+  );
+  const restored = db.transaction(() => ids.filter((id) => stmt.run(id).changes > 0))();
+  res.json({ ids: restored });
+});
+
 export const eventsRouter = crudRouter({
   table: 'events',
   writable: [
