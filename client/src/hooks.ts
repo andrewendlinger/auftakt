@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api/client';
 import type { CustomColumnOption, ID, LabelOverride, OptionUsage, Settings } from './api/types';
 import { doneValueOf } from './api/types';
+import { errorMessage } from './lib/errors';
 import { LABEL_DEFAULTS, isLabelKey, type LabelKey } from './lib/labels';
 import { normalizeSelectOptions } from './lib/selectOptions';
 import {
@@ -18,6 +19,44 @@ import { useUndo } from './components/UndoProvider';
 export function useInvalidateAll(): () => Promise<void> {
   const qc = useQueryClient();
   return () => qc.invalidateQueries();
+}
+
+/**
+ * Report a rejected call as a German toast. `errorMessage` decides the wording — the German
+ * sentence leads, an ApiError's server text follows in parentheses.
+ */
+export function useErrorToast(): (err: unknown, fallback: string) => void {
+  const toast = useToast();
+  return (err, fallback) => toast.show({ message: errorMessage(err, fallback) });
+}
+
+/**
+ * Run a write and report a rejection instead of letting it vanish. **The designated catch →
+ * toast path for every write in the client** — reach for this rather than a hand-written
+ * try/catch, so the wording and the "did it actually happen" question stay answered in one
+ * place.
+ *
+ * Returns whether the call resolved, because "report it" is rarely the whole job: a caller
+ * that closes a dialog, clears a draft or shows a success toast has to do that *only* on the
+ * resolved path, or a failure still reads as success (PGS-07, PGS-09).
+ *
+ *     const guard = useGuardedAction();
+ *     if (await guard('Speichern fehlgeschlagen.', () => api.tasks.update(id, patch))) close();
+ */
+export function useGuardedAction(): (
+  fallback: string,
+  run: () => Promise<unknown>,
+) => Promise<boolean> {
+  const report = useErrorToast();
+  return async (fallback, run) => {
+    try {
+      await run();
+      return true;
+    } catch (err) {
+      report(err, fallback);
+      return false;
+    }
+  };
 }
 
 export function useSettings() {

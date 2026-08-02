@@ -1,11 +1,13 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import './index.css';
 import { ApiError } from './api/client';
+import { reportError } from './lib/errors';
 import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { GlobalErrorSurface } from './components/GlobalErrorSurface';
 import { ToastProvider } from './components/Toast';
 import { UndoProvider } from './components/UndoProvider';
 import { LandingPage } from './pages/LandingPage';
@@ -24,6 +26,14 @@ import { PrintArtist } from './pages/PrintArtist';
 import { PrintProject } from './pages/PrintProject';
 
 const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    // Only refetches of data already on screen. A first load's failure is the page's own
+    // story — it renders an ErrorState with a retry — but a background refetch has no such
+    // surface, so a season switch or a stopped server silently left stale rows in place.
+    onError: (err, query) => {
+      if (query.state.data !== undefined) reportError(err, 'Daten konnten nicht aktualisiert werden.');
+    },
+  }),
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
@@ -46,6 +56,7 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
+        <GlobalErrorSurface />
         <UndoProvider>
           <HashRouter>
             {/* Inside the router (so the fallback's links resolve) and inside ToastProvider
