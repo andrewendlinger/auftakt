@@ -10,7 +10,8 @@ import { Markdown } from './Markdown';
 import { TrashIcon } from './icons';
 import { EditableLabel } from './EditableLabel';
 import type { LabelKey } from '../lib/labels';
-import { useInvalidateAll, useUndoableDelete, resourceUndo } from '../hooks';
+import { useErrorToast, useInvalidateAll, useUndoableDelete, resourceUndo } from '../hooks';
+import { useUndo } from './UndoProvider';
 
 export function EventList({
   titleKey,
@@ -31,6 +32,8 @@ export function EventList({
 }) {
   const invalidate = useInvalidateAll();
   const del = useUndoableDelete();
+  const report = useErrorToast();
+  const { pushWithToast } = useUndo();
   const [editing, setEditing] = useState<EventItem | null>(null);
   const [creating, setCreating] = useState(false);
   const typeByValue = new Map(eventTypes.map((o) => [o.value, o]));
@@ -89,8 +92,32 @@ export function EventList({
             variant="ghost"
             title="Duplizieren"
             onClick={async () => {
-              await api.duplicateEvent(ev.id);
+              let copy: EventItem;
+              try {
+                copy = await api.duplicateEvent(ev.id);
+              } catch (err) {
+                report(err, `Termin „${ev.title}“ konnte nicht dupliziert werden.`);
+                return;
+              }
               await invalidate();
+              // ⧉ sits 40 px from ✎ and ✕, both undoable — a mis-click here used to leave a
+              // copy the user had to spot and delete by hand (SHL-24). Undo soft-deletes that
+              // copy and redo restores the same row, so the entry's id stays valid; duplicating
+              // again would point it at a different row.
+              pushWithToast(
+                {
+                  label: `Duplizieren von Termin „${ev.title}“`,
+                  apply: async () => {
+                    await api.events.restore(copy.id);
+                    await invalidate();
+                  },
+                  revert: async () => {
+                    await api.events.remove(copy.id);
+                    await invalidate();
+                  },
+                },
+                `Termin „${ev.title}“ dupliziert`,
+              );
             }}
           >
             ⧉
