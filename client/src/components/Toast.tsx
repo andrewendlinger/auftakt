@@ -42,7 +42,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastCtx.Provider value={{ show }}>
       {children}
-      <div className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex flex-col items-center gap-2">
+      {/* no-print: the layer is always mounted and outside `Layout`, so a live toast — the
+          undo pill after a delete, say — was painted onto the first page of a print or PDF.
+          `window.print()` blocks, so the 6 s timer cannot rescue it. */}
+      <div className="no-print pointer-events-none fixed inset-x-0 bottom-4 z-50 flex flex-col items-center gap-2">
         {items.map((t) => (
           <div
             key={t.id}
