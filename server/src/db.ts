@@ -264,15 +264,10 @@ export function createSeason(label: string): Season {
   while (taken(`season-${id}.db`)) id++;
   const season: Season = { id, label, file: `season-${id}.db`, createdAt: localStamp() };
   const fresh = new Database(join(dataDir(), season.file));
-  fresh.pragma('journal_mode = WAL');
-  fresh.pragma('foreign_keys = ON');
-  fresh.exec(SCHEMA);
-  ensureDefaultSettings(fresh);
-  // This file is created here rather than through getDb(), so it has to mark itself: getDb()
-  // decides "needs converting?" from the file already existing, and would otherwise shift a new
-  // season's stamps — which came from the local defaults above — a second time.
-  migrateStampsToLocal(fresh, true);
-  ensureBuiltinColumns(fresh);
+  // `isFresh: true` — the id search above guarantees no file of this name existed (nor a -wal or
+  // -shm to be replayed into it), so the stamps written from here on are already local and must
+  // not be converted a second time.
+  initDb(fresh, true);
   setSetting(fresh, 'saison', label);
   fresh.close();
   reg.seasons.push(season);
@@ -1020,14 +1015,24 @@ export const ARCHIVE_AFTER_DAYS = 30;
 
 let instance: Database.Database | null = null;
 
-export function getDb(): Database.Database {
-  if (instance) return instance;
-  const path = resolveDbPath();
-  mkdirSync(dirname(path), { recursive: true });
-  // Decided before the file is opened: `new Database()` creates it, after which nothing can
-  // tell a brand-new database from one whose stamps still need converting (migrateStampsToLocal).
-  const isFresh = !existsSync(path);
-  const db = new Database(path);
+/**
+ * Bring a just-opened season file up to date: pragmas, schema, defaults, built-in columns and
+ * every migration. **The single initialisation path** — `getDb()` and `createSeason()` both go
+ * through here.
+ *
+ * They used not to. `createSeason()` ran its own shorter sequence, so anything added to `getDb`
+ * had to be mirrored there by hand or new seasons silently missed it. That is exactly how the
+ * `stamps_localtime` marker was missed: the first open of a copied season re-ran the conversion
+ * and shifted every copied stamp by the UTC offset. Add a migration here, once.
+ *
+ * Every step is a no-op on a database that already has it — `CREATE TABLE IF NOT EXISTS`, and
+ * each `migrateX` detects the old shape first — so running the whole list against a file created
+ * from `SCHEMA` costs a few reads and nothing else.
+ *
+ * `isFresh` has to be decided *before* the file is opened: `new Database()` creates it, after
+ * which nothing can tell a brand-new database from one whose stamps still need converting.
+ */
+function initDb(db: Database.Database, isFresh: boolean): void {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA);
@@ -1045,6 +1050,15 @@ export function getDb(): Database.Database {
   migrateProjectsMergeNotes(db);
   migrateLinksCategory(db);
   migrateLinksSectionParent(db);
+}
+
+export function getDb(): Database.Database {
+  if (instance) return instance;
+  const path = resolveDbPath();
+  mkdirSync(dirname(path), { recursive: true });
+  const isFresh = !existsSync(path);
+  const db = new Database(path);
+  initDb(db, isFresh);
   instance = db;
   return db;
 }
