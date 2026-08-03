@@ -17,17 +17,22 @@ dashboardRouter.get('/', (_req, res) => {
     .all() as Array<{ aid: number; n: number }>;
 
   const done = doneStatusValue(db);
-  const openCounts = db
-    .prepare(
-      `SELECT COALESCE(t.artist_id, p.artist_id) AS aid, COUNT(*) AS n
-       FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
-       WHERE t.deleted_at IS NULL AND t.status != ?
-       GROUP BY aid`,
-    )
-    .all(done) as Array<{ aid: number; n: number }>;
+  const tasks = listTasks(db, { scope: 'live' }) as Array<{
+    status: string;
+    resolved_artist_id: number | null;
+  }>;
+
+  // Counted off the list this badge sits above, not off a second query. The separate one joined
+  // projects without a deleted_at test and applied neither the parent-live filter nor the archive
+  // condition, so an artist card counted open tasks of a soft-deleted project that the list below
+  // it no longer showed. Deriving it here makes the two agree by construction.
+  const openMap = new Map<number, number>();
+  for (const t of tasks) {
+    if (t.status === done || t.resolved_artist_id == null) continue;
+    openMap.set(t.resolved_artist_id, (openMap.get(t.resolved_artist_id) ?? 0) + 1);
+  }
 
   const projMap = new Map(projCounts.map((r) => [r.aid, r.n]));
-  const openMap = new Map(openCounts.map((r) => [r.aid, r.n]));
 
   const cards = artists.map((a) => ({
     ...a,
@@ -39,6 +44,6 @@ dashboardRouter.get('/', (_req, res) => {
     artists: cards,
     upcoming14: eventsWithin(db, 14),
     nextUp: eventsBeyond(db, 14, 6),
-    tasks: listTasks(db, { scope: 'live' }),
+    tasks,
   });
 });
