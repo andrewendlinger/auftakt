@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { Task } from '../api/types';
 import { attentionTasks, duePhrase } from '../lib/taskStats';
@@ -10,6 +11,16 @@ const ROW_CLS =
   'flex items-center gap-3 rounded-xl bg-white px-3 py-2.5 shadow-sm ring-1 ring-black/5 transition';
 
 /**
+ * How many rows the section shows before it collapses the rest behind „+ N weitere".
+ *
+ * The list was unbounded, and on a real festival season with 80 overdue tasks it became an
+ * 80-row scroll that pushed every section below it off screen — the long read-only table this
+ * component exists to replace (TTU-32). The cap is what makes „the short, actionable slice"
+ * true; the affordance is what keeps the rest reachable.
+ */
+const PREVIEW_ROWS = 8;
+
+/**
  * „Braucht Aufmerksamkeit" — the short, actionable slice of a task set: overdue plus everything
  * due within `windowDays`, most-urgent first. Read-only; each row links into the project (or
  * artist) where the task is edited, mirroring the dashboard's upcoming-events list. Reused on the
@@ -17,11 +28,19 @@ const ROW_CLS =
  */
 export function AttentionList({ tasks, windowDays }: { tasks: Task[]; windowDays: number }) {
   const doneValue = useDoneValue();
-  const items = attentionTasks(tasks, doneValue, windowDays);
+  const [expanded, setExpanded] = useState(false);
+  // Memoised: the filter+sort ran on every render of the page around it, and the page re-renders
+  // for every toast, every write and every refetch.
+  const items = useMemo(
+    () => attentionTasks(tasks, doneValue, windowDays),
+    [tasks, doneValue, windowDays],
+  );
+  const shown = expanded ? items : items.slice(0, PREVIEW_ROWS);
+  const hidden = items.length - shown.length;
   if (items.length === 0) return <EmptyState>Nichts Dringendes.</EmptyState>;
   return (
     <ul className="space-y-2">
-      {items.map((t) => {
+      {shown.map((t) => {
         const overdue = (daysUntil(t.due_date) ?? 0) < 0;
         const to = t.project_id
           ? `/project/${t.project_id}`
@@ -61,6 +80,17 @@ export function AttentionList({ tasks, windowDays }: { tasks: Task[]; windowDays
           </li>
         );
       })}
+      {(hidden > 0 || expanded) && (
+        <li>
+          <button
+            type="button"
+            onClick={() => setExpanded((x) => !x)}
+            className="px-3 py-1 text-xs font-medium text-neutral-500 transition hover:text-neutral-800"
+          >
+            {expanded ? 'Weniger anzeigen' : `+ ${hidden} weitere anzeigen`}
+          </button>
+        </li>
+      )}
     </ul>
   );
 }
