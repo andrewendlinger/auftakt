@@ -44,7 +44,13 @@ function MdLinkText({ children }: ComponentPropsWithoutRef<'a'>) {
 /**
  * Render user text as GitHub-flavoured Markdown (**bold**, lists, links, tables …).
  * Single newlines become <br> (remark-breaks) so note-style line breaks survive, and
- * bare URLs auto-link (remark-gfm). Raw HTML is not rendered — safe by default.
+ * bare URLs auto-link (remark-gfm).
+ *
+ * Raw HTML **is** parsed — `rehypeRaw` is in the plugin list, because the toolbar's underline
+ * round-trips as a literal `<u>` (lib/richtext.ts). It is `rehypeSanitize` running *after* it
+ * that keeps notes safe, so the order in `rehypePlugins` is load-bearing: drop or reorder it
+ * and an `<img src=x onerror=…>` typed into a note, imported from a CSV or restored from a
+ * backup executes in the renderer.
  */
 export function Markdown({
   children,
