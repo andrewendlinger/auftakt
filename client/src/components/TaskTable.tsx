@@ -872,22 +872,29 @@ function ActionsCell({ row }: CellContext<Task, unknown>) {
   const task = row.original;
   return (
     <div className="flex items-center justify-end gap-0.5">
-      {/* Subtasks are one level deep, so only top-level rows can get one. Kept
-          persistently visible (like the trash icon) so the feature is discoverable. */}
+      {/* Subtasks are one level deep, so only a task that is not itself a subtask can get one.
+          The test is `parent_id`, not `row.depth === 0`: depth is a *render position*, and
+          `topLevel` promotes orphans — subtasks whose parent is soft-deleted or archived — to
+          depth 0, so the depth test offered this button on exactly the rows that must not become
+          parents. Restore the parent from „Archiv" afterwards and the list holds a three-level
+          tree the table was never built to render (TTU-15).
+          Kept persistently visible (like the trash icon) so the feature is discoverable. */}
+      {task.parent_id == null && (
+        <IconButton
+          size="sm"
+          className="text-base"
+          title="Unteraufgabe hinzufügen"
+          onClick={() => api.startSubtask(task.id)}
+        >
+          ＋
+        </IconButton>
+      )}
+      {/* Depth, not `parent_id`: subtasks travel with their parent, but an orphan renders at
+          depth 0 and moving it is how the user repairs it (TTU-30). */}
       {row.depth === 0 && (
-        <>
-          <IconButton
-            size="sm"
-            className="text-base"
-            title="Unteraufgabe hinzufügen"
-            onClick={() => api.startSubtask(task.id)}
-          >
-            ＋
-          </IconButton>
-          <IconButton size="sm" title="Verschieben" onClick={() => api.startMove(task)}>
-            <MoveIcon className="h-4 w-4" />
-          </IconButton>
-        </>
+        <IconButton size="sm" title="Verschieben" onClick={() => api.startMove(task)}>
+          <MoveIcon className="h-4 w-4" />
+        </IconButton>
       )}
       <ColorSwatchPicker
         value={task.color}
