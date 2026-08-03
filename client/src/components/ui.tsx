@@ -226,6 +226,36 @@ export function DocumentRow({
   );
 }
 
+/**
+ * The link palette. Split out because one of the three sites is *not* an anchor: a Markdown
+ * preview rendered inside a clickable card styles its links as plain text so anchors do not nest
+ * (`MdLinkText`). `ExternalLink` adds the hover rule on top.
+ */
+export const EXTERNAL_LINK_CLASS =
+  'text-sky-700 underline decoration-sky-300 underline-offset-2 break-words';
+
+/**
+ * An anchor that opens in the OS browser or mail client rather than inside the app window — the
+ * one implementation of that, for `linkify` and Markdown's `a` alike. Both used to carry a
+ * character-for-character copy of the class string and the `preventDefault → openExternal`
+ * handler, with no shared component and no import between them, so a change to the link colour
+ * reached one surface and not the other (CCL-27).
+ */
+export function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      onClick={(e) => {
+        e.preventDefault();
+        openExternal(href);
+      }}
+      className={`${EXTERNAL_LINK_CLASS} hover:decoration-sky-600`}
+    >
+      {children}
+    </a>
+  );
+}
+
 export function Pill({
   children,
   color,

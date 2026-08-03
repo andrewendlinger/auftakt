@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
-import { openExternal } from '../lib/external';
+import { EXTERNAL_LINK_CLASS, ExternalLink } from './ui';
 
 // Allow the toolbar's <u> (underline has no Markdown syntax); everything else keeps
 // the safe GitHub sanitize defaults, so raw HTML in notes can't inject anything.
@@ -15,18 +15,9 @@ const sanitizeSchema = {
 
 /** Links open externally (OS browser / mail client), never inside the app window. */
 function MdLink({ href, children }: ComponentPropsWithoutRef<'a'>) {
-  return (
-    <a
-      href={href}
-      onClick={(e) => {
-        e.preventDefault();
-        if (href) openExternal(href);
-      }}
-      className="text-sky-700 underline decoration-sky-300 underline-offset-2 hover:decoration-sky-600 break-words"
-    >
-      {children}
-    </a>
-  );
+  // A Markdown link with no destination is still a node to render; ExternalLink takes a string.
+  if (!href) return <span className={EXTERNAL_LINK_CLASS}>{children}</span>;
+  return <ExternalLink href={href}>{children}</ExternalLink>;
 }
 
 /**
@@ -34,11 +25,7 @@ function MdLink({ href, children }: ComponentPropsWithoutRef<'a'>) {
  * clickable card) without nesting anchors. Keeps the link colour/underline as a visual hint.
  */
 function MdLinkText({ children }: ComponentPropsWithoutRef<'a'>) {
-  return (
-    <span className="text-sky-700 underline decoration-sky-300 underline-offset-2 break-words">
-      {children}
-    </span>
-  );
+  return <span className={EXTERNAL_LINK_CLASS}>{children}</span>;
 }
 
 /**

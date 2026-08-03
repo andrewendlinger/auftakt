@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode } from 'react';
-import { openExternal } from './external';
+import { ExternalLink } from '../components/ui';
 import { normalizeUrl } from './url';
 
 // URLs (http/https or bare www.) and email addresses. The final character class keeps sentence
@@ -54,17 +54,9 @@ export function linkify(text: string | null | undefined): ReactNode {
     const match = isEmail ? m[0] : trimUnbalancedParens(m[0]);
     const href = hrefFor(match, isEmail);
     out.push(
-      <a
-        key={key++}
-        href={href}
-        onClick={(e) => {
-          e.preventDefault();
-          openExternal(href);
-        }}
-        className="text-sky-700 underline decoration-sky-300 underline-offset-2 hover:decoration-sky-600 break-words"
-      >
+      <ExternalLink key={key++} href={href}>
         {match}
-      </a>,
+      </ExternalLink>,
     );
     lastIndex = index + match.length;
   }
