@@ -92,14 +92,6 @@ export function ColorSwatchPicker({
               ref={menuRef}
               className="fixed z-40 overflow-y-auto rounded-xl bg-white p-2 text-neutral-600 shadow-lg ring-1 ring-black/10"
               style={{ left: pos.left, top: pos.top, maxHeight: pos.maxHeight }}
-              onKeyDown={(e) => {
-                // Stopped here so dismissing the picker inside a dialog leaves the dialog open.
-                if (e.key !== 'Escape') return;
-                e.preventDefault();
-                e.stopPropagation();
-                closePopover();
-                anchorRef.current?.focus();
-              }}
             >
               <div className="grid grid-cols-8 gap-1">
                 {PRESETS.map((c) => (

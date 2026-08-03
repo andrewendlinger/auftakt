@@ -110,13 +110,9 @@ export function PillSelect({
               className="fixed z-40 min-w-36 overflow-y-auto rounded-xl bg-white p-1 shadow-lg ring-1 ring-black/10"
               style={{ left: pos.left, top: pos.top, minWidth: pos.minWidth, maxHeight: pos.maxHeight }}
               onKeyDown={(e) => {
-                // Escape must not travel on: a `Modal` listens for it on window and would
-                // close the whole dialog instead of just this menu.
-                if (e.key === 'Escape') {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  close();
-                } else if (e.key === 'ArrowDown') {
+                // Escape is the popover hook's — it needs a capture-phase window listener,
+                // because not every popover has focus inside its menu.
+                if (e.key === 'ArrowDown') {
                   e.preventDefault();
                   moveFocus(1);
                 } else if (e.key === 'ArrowUp') {

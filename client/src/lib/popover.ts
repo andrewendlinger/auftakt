@@ -92,11 +92,29 @@ export function useAnchoredPopover<A extends HTMLElement, M extends HTMLElement>
       if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) return;
       closePopover();
     };
+    /**
+     * Escape is caught here rather than with a React `onKeyDown` on the menu, because focus is
+     * not necessarily inside it — `ColorSwatchPicker` opens from a click and leaves focus on
+     * the trigger, so a React handler on the menu would never see the key at all.
+     *
+     * Capture phase on `window`, so it runs before `Modal`'s bubble-phase listener and can
+     * stop it: dismissing a popover inside a dialog must not dismiss the dialog. The
+     * `preventDefault` is belt-and-braces — `Modal` also checks `defaultPrevented`.
+     */
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      closePopover();
+      anchorRef.current?.focus();
+    };
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', closePopover);
+    window.addEventListener('keydown', onKeyDown, true);
     return () => {
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', closePopover);
+      window.removeEventListener('keydown', onKeyDown, true);
     };
   }, [open, closePopover]);
 
