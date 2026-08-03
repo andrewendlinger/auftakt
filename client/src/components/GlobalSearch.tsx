@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { SearchResults } from '../api/types';
 import { formatDate } from '../lib/dates';
@@ -80,10 +80,17 @@ export function GlobalSearch() {
     return () => document.removeEventListener('mousedown', onClick);
   }, []);
 
-  const { data } = useQuery({
+  // keepPreviousData because the key changes on every debounced keystroke, and v5 hands back
+  // `undefined` for a key it has not seen — so the panel blanked to „Keine Treffer." between
+  // „Quar" and „Quart" and the app repeatedly claimed a name the user knows exists does not
+  // exist (SHL-21). isFetching covers the one case it cannot: the very first query has no previous
+  // data to keep, so the panel stays closed until it answers rather than opening onto „Keine
+  // Treffer.".
+  const { data, isFetching } = useQuery({
     queryKey: ['search', debounced],
     queryFn: () => api.search(debounced),
     enabled: debounced.trim().length >= 2,
+    placeholderData: keepPreviousData,
   });
 
   const eventTypes = useEventTypeOptions();
@@ -108,7 +115,7 @@ export function GlobalSearch() {
         placeholder="Suchen … (Künstler, Projekte, Aufgaben, Termine, Kontakte)"
         className="w-full rounded-xl border border-white/20 bg-white/15 px-4 py-2 text-sm text-white placeholder:text-white/60 outline-none focus:bg-white/25"
       />
-      {open && debounced.trim().length >= 2 && (
+      {open && debounced.trim().length >= 2 && (hits.length > 0 || !isFetching) && (
         <div className="absolute z-30 mt-1 max-h-96 w-full overflow-y-auto rounded-xl bg-white py-2 text-neutral-800 shadow-xl ring-1 ring-black/10">
           {hits.length === 0 ? (
             <div className="px-4 py-3 text-sm text-neutral-400">Keine Treffer.</div>
