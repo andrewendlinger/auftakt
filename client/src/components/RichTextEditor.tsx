@@ -68,6 +68,13 @@ export function RichTextEditor({
   // (RTE-19). `setOptions` is no help here: it never rebuilds the extension manager.
   const placeholderRef = useRef(placeholder);
   placeholderRef.current = placeholder;
+  // One commit per departure, whichever path notices it first (see the effect below).
+  const blurFired = useRef(false);
+  const fireBlur = () => {
+    if (blurFired.current || !onBlurRef.current) return;
+    blurFired.current = true;
+    void onBlurRef.current();
+  };
   useLayoutEffect(() => {
     // Re-arm on (re)mount — StrictMode runs setup→cleanup→setup, so a cleanup-only ref would
     // stay stuck `false` and silently swallow every real blur-commit.
@@ -104,9 +111,41 @@ export function RichTextEditor({
     onBlur: ({ event }) => {
       if (!alive.current) return;
       if (rootRef.current?.contains(event.relatedTarget as Node | null)) return;
-      onBlurRef.current?.();
+      fireBlur();
     },
   });
+
+  /**
+   * Commit-on-blur fallback for the case ProseMirror cannot see.
+   *
+   * The editor's own `onBlur` only fires on the view, and focus moving into the link bar or
+   * the emoji picker is deliberately skipped (both live inside `rootRef`). Once focus sat on
+   * the link field or the picker's autofocused search input, clicking anywhere else moved
+   * focus off *that* element, not off the view — so `onBlur` never fired again, the caller's
+   * save was silently dropped and the typed note died with the next navigation (RTE-02).
+   *
+   * `focusin` catches focus landing outside us; the capture-phase `pointerdown` catches a
+   * click on something unfocusable, which moves no focus at all. `blurFired` keeps the two of
+   * them and ProseMirror's own blur to a single commit, and re-arms when focus comes back.
+   */
+  useEffect(() => {
+    const outside = (target: EventTarget | null) =>
+      !!rootRef.current && !rootRef.current.contains(target as Node | null);
+    const onFocusIn = (e: FocusEvent) => {
+      if (outside(e.target)) fireBlur();
+      else blurFired.current = false;
+    };
+    const onPointerDown = (e: Event) => {
+      if (outside(e.target)) fireBlur();
+    };
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => {
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('pointerdown', onPointerDown, true);
+    };
+    // Reads only refs, so it registers once and never needs to re-bind.
+  }, []);
 
   // The placeholder decoration is only recomputed when the editor state moves, so nudge it
   // when the prop changes; without this the ref above would be read once and never again.
@@ -127,7 +166,7 @@ export function RichTextEditor({
 
   return (
     <div ref={rootRef} className="rte-root">
-      {editor && <Toolbar editor={editor} compact={compact} rootRef={rootRef} />}
+      {editor && <Toolbar editor={editor} compact={compact} />}
       <EditorContent editor={editor} />
     </div>
   );
@@ -135,15 +174,7 @@ export function RichTextEditor({
 
 // --- toolbar --------------------------------------------------------------------------------
 
-function Toolbar({
-  editor,
-  compact,
-  rootRef,
-}: {
-  editor: Editor;
-  compact: boolean;
-  rootRef: React.RefObject<HTMLDivElement | null>;
-}) {
+function Toolbar({ editor, compact }: { editor: Editor; compact: boolean }) {
   const [link, setLink] = useState<{ text: string; url: string } | null>(null);
   const [emoji, setEmoji] = useState(false);
 
@@ -187,9 +218,19 @@ function Toolbar({
     chain().insertContent(ch).run();
     setEmoji(false);
   };
-  /** Dismiss the picker and put the caret back — `chain()` focuses before it runs. */
+  /**
+   * Dismiss an overlay and put the caret back — `chain()` focuses before it runs.
+   *
+   * `insertLink`/`insertEmoji` always did this; the *cancel* paths did not, so closing the
+   * link bar or toggling the picker shut left focus on `document.body` and the editor unable
+   * to re-arm its blur-commit until the user clicked back into the text (RTE-02).
+   */
   const closeEmoji = () => {
     setEmoji(false);
+    chain().run();
+  };
+  const closeLink = () => {
+    setLink(null);
     chain().run();
   };
 
@@ -249,7 +290,15 @@ function Toolbar({
           </>
         )}
         <Sep />
-        <Btn title="Emoji" on={emoji} onClick={() => { setLink(null); setEmoji((v) => !v); }}>
+        <Btn
+          title="Emoji"
+          on={emoji}
+          onClick={() => {
+            setLink(null);
+            if (emoji) closeEmoji();
+            else setEmoji(true);
+          }}
+        >
           <span className="text-sm">🙂</span>
         </Btn>
       </div>
@@ -261,7 +310,7 @@ function Toolbar({
           onText={(text) => setLink({ ...link, text })}
           onUrl={(url) => setLink({ ...link, url })}
           onInsert={insertLink}
-          onCancel={() => setLink(null)}
+          onCancel={closeLink}
         />
       )}
 
