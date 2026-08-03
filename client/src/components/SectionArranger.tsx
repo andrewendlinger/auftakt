@@ -50,11 +50,20 @@ function parseLayoutEntries(raw: unknown): LayoutEntry[] {
  *
  * One stored layout serves *many* pages: `artist_layout` is shared by every artist page,
  * but per-entity widget sections (`cs<id>`, WP-S) exist only on their own page. The layout
- * therefore keeps two views — `full` (every stored entry, foreign keys kept in place, this
- * page's new keys appended) and `display` (`full` filtered to this page's sections). All
- * mutations operate on and persist `full`; rendering uses `display`. Persisting the
- * filtered view instead would silently drop the other pages' widget entries on every
- * arrange action.
+ * therefore keeps two views — `full` (every stored entry, this page's new keys appended) and
+ * `display` (`full` filtered to this page's sections). All mutations operate on and persist
+ * `full`; rendering uses `display`. Persisting the filtered view instead would silently drop
+ * the other pages' widget entries on every arrange action.
+ *
+ * What `full` guarantees a foreign entry is **retention, not position** (decision 2026-08-03,
+ * SHL-19). A move lifts the section out and re-inserts it at the target's index, so a foreign
+ * `cs<id>` sitting between the two visible neighbours is stepped over and ends up on the other
+ * side of it — visible on that widget's own page as a section that moved by itself. That is
+ * accepted: the built-in order is global by design, so the other page is rearranged either way,
+ * and only the widget's position *relative to the moved section* differs. Pinning foreign
+ * entries to their index would buy a second ordering rule for a case that is not wrong.
+ * Separating the two — widget placement on the `custom_sections` row, which already has a
+ * `sort_order`, leaving this array to the built-ins — is the real cure and needs a migration.
  *
  * Sections are optional unless listed in `mandatoryKeys`: edit mode offers a 🗑 that hides a
  * built-in (`hidden: true` on its entry) or soft-deletes a custom widget (`onRemoveCustom`).
@@ -208,9 +217,10 @@ function Arranger({
   const idxInFull = (key: string) => full.findIndex((e) => e.key === key);
 
   const move = (key: string, dir: -1 | 1) => {
-    // The neighbour comes from the *visible* list, the move happens in the full one —
-    // so a section steps over the adjacent visible section, not over an invisible
-    // foreign widget entry that happens to sit between them in the stored layout.
+    // The neighbour comes from the *visible* list, the move happens in the full one — so one
+    // press of ▼ moves this section past the next section the user can see, not past an
+    // invisible foreign widget entry that happens to sit between them. Stepping over that entry
+    // therefore also moves it relative to this section, which is the accepted trade above.
     const i = display.findIndex((e) => e.key === key);
     const neighbour = display[i + dir];
     if (!neighbour) return;
