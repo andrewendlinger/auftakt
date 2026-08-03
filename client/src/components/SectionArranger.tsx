@@ -312,9 +312,13 @@ function Arranger({
           const canHalf = !fullWidthKeys.includes(key);
           // `[&_.section-title]:hidden`: the strip already names the section — hiding the
           // in-card heading (incl. its action buttons) avoids the double title in edit mode.
+          // `outline`, not `ring`: Tailwind implements `ring-*` as a box-shadow, which has no
+          // dash style, and `ring-dashed` is not a utility at all — it compiled to nothing and
+          // every section got a solid 2px ring instead of the dashed "you are arranging these"
+          // affordance it was meant to have (SHL-20).
           const arrangeCls = arranging
-            ? `select-none rounded-2xl p-3 ring-2 ring-dashed [&_.section-title]:hidden ${
-                drag.isDropTarget(key) ? 'ring-neutral-600' : 'ring-neutral-300'
+            ? `select-none rounded-2xl p-3 outline-2 outline-dashed [&_.section-title]:hidden ${
+                drag.isDropTarget(key) ? 'outline-neutral-600' : 'outline-neutral-300'
               } ${drag.isDragging(key) ? 'opacity-40' : ''}`
             : '';
           return (
