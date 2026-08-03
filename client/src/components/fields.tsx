@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type R
 import { Btn, IconButton } from './ui';
 import { RichTextEditor } from './RichTextEditor';
 import { resizeToDataUrl } from '../lib/image';
-import { useErrorToast } from '../hooks';
+import { useErrorToast, useGuardedAction } from '../hooks';
 
 // Viewport-relative, not a fixed rem cap: on a large window the old max-w-2xl left every
 // entity dialog at 42rem no matter how much room there was. The upper bounds stop form
@@ -149,16 +149,36 @@ export function Label({ children }: { children: ReactNode }) {
 const inputCls =
   'w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-800 outline-none transition focus:border-neutral-500 focus:ring-2 focus:ring-neutral-900/5';
 
-export function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...props} className={`${inputCls} ${props.className ?? ''}`} />;
+// Swapped in rather than appended: two `border-*` utilities on one element are resolved by
+// stylesheet order, not by the order they appear in the class attribute.
+const invalidInputCls = inputCls.replace('border-neutral-300', 'border-red-400');
+
+type Invalidatable = { invalid?: boolean };
+
+export function TextInput({
+  invalid,
+  ...props
+}: React.InputHTMLAttributes<HTMLInputElement> & Invalidatable) {
+  return (
+    <input
+      {...props}
+      aria-invalid={invalid || undefined}
+      className={`${invalid ? invalidInputCls : inputCls} ${props.className ?? ''}`}
+    />
+  );
 }
 
 export function Select({
   children,
+  invalid,
   ...props
-}: React.SelectHTMLAttributes<HTMLSelectElement> & { children: ReactNode }) {
+}: React.SelectHTMLAttributes<HTMLSelectElement> & Invalidatable & { children: ReactNode }) {
   return (
-    <select {...props} className={`${inputCls} ${props.className ?? ''}`}>
+    <select
+      {...props}
+      aria-invalid={invalid || undefined}
+      className={`${invalid ? invalidInputCls : inputCls} ${props.className ?? ''}`}
+    >
       {children}
     </select>
   );
@@ -326,14 +346,18 @@ export function RecordFormModal({
   }, [fields, initial]);
   const [vals, setVals] = useState<Values>(initialVals);
   const [busy, setBusy] = useState(false);
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const guard = useGuardedAction();
   const set = (k: string, val: string) => setVals((s) => ({ ...s, [k]: val }));
   // Compared by content, not identity: several call sites build `fields` per render.
   const dirty = fields.some((f) => (vals[f.name] ?? '') !== (initialVals[f.name] ?? ''));
+  // `submit` used to bail on these before any state change, so a user who left Bezeichnung or
+  // Name blank clicked Speichern over and over with nothing happening at all (TTU-27). The
+  // button now says so, and a required field the user has visited and left empty is marked.
+  const missing = fields.filter((f) => f.required && !vals[f.name]?.trim());
 
   const submit = async () => {
-    for (const f of fields) {
-      if (f.required && !vals[f.name]?.trim()) return;
-    }
+    if (missing.length) return;
     setBusy(true);
     const out: Record<string, string | null> = {};
     for (const f of fields) {
@@ -341,12 +365,15 @@ export function RecordFormModal({
       out[f.name] = v.trim() === '' ? null : v;
     }
     try {
-      await onSubmit(out);
-      onClose();
+      if (await guard(`${submitLabel} fehlgeschlagen.`, () => Promise.resolve(onSubmit(out)))) {
+        onClose();
+      }
     } finally {
       setBusy(false);
     }
   };
+  const invalid = (f: FieldDef) => !!f.required && !vals[f.name]?.trim() && !!touched[f.name];
+  const markTouched = (name: string) => setTouched((t) => ({ ...t, [name]: true }));
 
   return (
     <Modal
@@ -356,8 +383,13 @@ export function RecordFormModal({
       dirty={dirty}
       footer={
         <>
+          {missing.length > 0 && (
+            <p className="mr-auto self-center text-xs text-neutral-500">
+              Bitte ausfüllen: {missing.map((f) => f.label).join(', ')}
+            </p>
+          )}
           <Btn onClick={onClose}>Abbrechen</Btn>
-          <Btn variant="primary" onClick={submit} disabled={busy}>
+          <Btn variant="primary" onClick={submit} disabled={busy || missing.length > 0}>
             {submitLabel}
           </Btn>
         </>
@@ -385,7 +417,12 @@ export function RecordFormModal({
                 className={`${inputCls} min-h-40`}
               />
             ) : f.type === 'select' ? (
-              <Select value={vals[f.name]} onChange={(e) => set(f.name, e.target.value)}>
+              <Select
+                value={vals[f.name]}
+                invalid={invalid(f)}
+                onBlur={() => markTouched(f.name)}
+                onChange={(e) => set(f.name, e.target.value)}
+              >
                 <option value="">—</option>
                 {f.options?.map((o) => (
                   <option key={o.value} value={o.value}>
@@ -405,6 +442,8 @@ export function RecordFormModal({
               <TextInput
                 type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : f.type === 'email' ? 'email' : f.type === 'tel' ? 'tel' : 'text'}
                 value={vals[f.name]}
+                invalid={invalid(f)}
+                onBlur={() => markTouched(f.name)}
                 onChange={(e) => set(f.name, e.target.value)}
                 placeholder={f.placeholder}
               />
