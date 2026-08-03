@@ -149,6 +149,28 @@ export function DragHandle({
 }
 
 /**
+ * One selectable row of a picker list — the „Bereich hinzufügen" modals' option buttons. Both
+ * pickers had a character-identical `row`/`rowCls` helper of their own (SHL-29).
+ */
+export function PickerRow({
+  selected = false,
+  children,
+  ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement> & { selected?: boolean }) {
+  return (
+    <button
+      type="button"
+      className={`w-full rounded-lg border px-3 py-2 text-left text-sm transition ${
+        selected ? 'border-neutral-500 bg-neutral-50' : 'border-neutral-200 hover:bg-neutral-50'
+      }`}
+      {...rest}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
  * One row of a document/link list: the 🔗 glyph, the label as an external-link button (or a
  * plain label saying no URL is stored), and the row's actions revealed on hover.
  *

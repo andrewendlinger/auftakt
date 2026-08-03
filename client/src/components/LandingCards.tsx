@@ -6,7 +6,8 @@ import type {
   LandingSection,
   LandingSectionInput,
 } from '../api/types';
-import { Card, SectionTitle, Btn, DocumentRow, EmptyState } from './ui';
+import { Card, SectionTitle, Btn, DocumentRow, EmptyState, PickerRow } from './ui';
+import { SECTION_TYPES } from '../lib/sections';
 import { Modal, Label, TextInput, RecordFormModal, type FieldDef } from './fields';
 import { EditableLabel } from './EditableLabel';
 import { EditableText } from './EditableText';
@@ -303,16 +304,12 @@ export function useRemoveLandingSection(): (key: string) => void {
   };
 }
 
-const CUSTOM_TYPES: Array<{ type: LandingSection['type']; label: string }> = [
-  { type: 'text', label: 'Textfeld' },
-  { type: 'links', label: 'Dokumente & Links' },
-];
-
 /**
  * The landing's "+ Bereich" picker. Modeled on CustomSections' AddSectionModal but not
  * reusing it — that one creates per-season `custom_sections` rows, while landing
  * sections live in the registry. Offers the two custom types plus the hidden
- * built-ins to restore.
+ * built-ins to restore. The type list and the option row *are* shared: neither depends on
+ * where the section is persisted (SHL-29).
  */
 export function AddLandingSectionButton({
   hiddenKeys,
@@ -355,11 +352,6 @@ export function AddLandingSectionButton({
     }
   };
 
-  const rowCls = (selected: boolean) =>
-    `w-full rounded-lg border px-3 py-2 text-left text-sm transition ${
-      selected ? 'border-neutral-500 bg-neutral-50' : 'border-neutral-200 hover:bg-neutral-50'
-    }`;
-
   return (
     <>
       <Btn variant="subtle" onClick={() => setOpen(true)}>
@@ -382,23 +374,22 @@ export function AddLandingSectionButton({
         >
           <div className="space-y-4">
             <div className="space-y-1.5">
-              {CUSTOM_TYPES.map((t) => (
-                <button key={t.type} className={rowCls(chosen === t.type)} onClick={() => setChosen(t.type)}>
+              {SECTION_TYPES.map((t) => (
+                <PickerRow key={t.type} selected={chosen === t.type} onClick={() => setChosen(t.type)}>
                   {t.label}
                   <span className="ml-2 text-xs text-neutral-400">neu, mit eigenem Namen</span>
-                </button>
+                </PickerRow>
               ))}
               {hiddenKeys.map((k) => (
-                <button
+                <PickerRow
                   key={k}
-                  className={rowCls(false)}
                   onClick={() => {
                     onRestore(k);
                     close();
                   }}
                 >
                   {hiddenNames[k] ?? k}
-                </button>
+                </PickerRow>
               ))}
             </div>
             {chosen && (

@@ -2,8 +2,9 @@ import { useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { CustomSection } from '../api/types';
-import { Card, SectionTitle, Btn } from './ui';
+import { Card, SectionTitle, Btn, PickerRow } from './ui';
 import { Label, Modal, TextInput } from './fields';
+import { SECTION_TYPES } from '../lib/sections';
 import { InlineNotes } from './InlineNotes';
 import { EditableText } from './EditableText';
 import { LinkList } from './LinkList';
@@ -95,11 +96,6 @@ export function AddSectionButton({
   );
 }
 
-const CUSTOM_TYPES: Array<{ type: CustomSection['type']; label: string }> = [
-  { type: 'text', label: 'Textfeld' },
-  { type: 'links', label: 'Dokumente & Links' },
-];
-
 function AddSectionModal({
   parent,
   hiddenBuiltins,
@@ -138,10 +134,6 @@ function AddSectionModal({
   };
 
   const groupHeading = 'mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-400';
-  const row = (selected: boolean) =>
-    `w-full rounded-lg border px-3 py-2 text-left text-sm transition ${
-      selected ? 'border-neutral-500 bg-neutral-50' : 'border-neutral-200 hover:bg-neutral-50'
-    }`;
   const builtinsOf = (group: SectionGroup) => hiddenBuiltins.filter((b) => b.group === group);
 
   return (
@@ -163,23 +155,22 @@ function AddSectionModal({
         <div>
           <div className={groupHeading}>Eingabe</div>
           <div className="space-y-1.5">
-            {CUSTOM_TYPES.map((t) => (
-              <button key={t.type} className={row(chosen === t.type)} onClick={() => setChosen(t.type)}>
+            {SECTION_TYPES.map((t) => (
+              <PickerRow key={t.type} selected={chosen === t.type} onClick={() => setChosen(t.type)}>
                 {t.label}
                 <span className="ml-2 text-xs text-neutral-400">neu, mit eigenem Namen</span>
-              </button>
+              </PickerRow>
             ))}
             {builtinsOf('eingabe').map((b) => (
-              <button
+              <PickerRow
                 key={b.key}
-                className={row(false)}
                 onClick={() => {
                   onRestore(b.key);
                   onClose();
                 }}
               >
                 {label(b.labelKey)}
-              </button>
+              </PickerRow>
             ))}
           </div>
         </div>
@@ -188,16 +179,15 @@ function AddSectionModal({
             <div className={groupHeading}>Einblicke</div>
             <div className="space-y-1.5">
               {builtinsOf('einblicke').map((b) => (
-                <button
+                <PickerRow
                   key={b.key}
-                  className={row(false)}
                   onClick={() => {
                     onRestore(b.key);
                     onClose();
                   }}
                 >
                   {label(b.labelKey)}
-                </button>
+                </PickerRow>
               ))}
             </div>
           </div>
