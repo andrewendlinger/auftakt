@@ -6,10 +6,18 @@ import { compareColumns, customValueOf, parseColumnOptions } from '../api/types'
 import { Spinner, ErrorState, LoadError } from '../components/ui';
 import { isValidId } from '../lib/routeParams';
 import { Markdown } from '../components/Markdown';
-import { Empty, PrintFallback, PrintHeader, PrintPage, Section } from '../components/PrintSheet';
+import {
+  Empty,
+  PrintContacts,
+  PrintEvents,
+  PrintFallback,
+  PrintHeader,
+  PrintPage,
+  Section,
+} from '../components/PrintSheet';
 import { ProjectStatusPill } from '../components/ProjectStatusPill';
 import { contrastText, projectShade } from '../lib/colors';
-import { formatDate, formatEventWhen, weekdayShort } from '../lib/dates';
+import { formatDate } from '../lib/dates';
 import { useDoneValue, useLabel, useSaison } from '../hooks';
 
 export function PrintProject() {
@@ -104,42 +112,12 @@ export function PrintProject() {
       </PrintHeader>
 
       <Section title={label('project.kontakte')}>
-        {contacts.length === 0 ? (
-          <Empty />
-        ) : (
-          <table className="w-full text-sm">
-            <tbody>
-              {contacts.map((c) => (
-                <tr key={c.id} className="border-b border-neutral-100">
-                  <td className="py-1 pr-4 font-medium">{c.name}</td>
-                  <td className="py-1 pr-4 text-neutral-500">{c.role}</td>
-                  <td className="py-1 pr-4">{c.email}</td>
-                  <td className="py-1">{c.phone}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <PrintContacts contacts={contacts} />
       </Section>
 
+      {/* No `showProjectCode`: every event here belongs to the project in the header. */}
       <Section title={label('project.termine')}>
-        {events.length === 0 ? (
-          <Empty />
-        ) : (
-          <ul className="space-y-1 text-sm">
-            {events.map((e) => (
-              <li key={e.id} className="flex gap-3">
-                <span className="w-40 shrink-0 text-neutral-500">
-                  {e.start_at ? `${weekdayShort(e.start_at)} ${formatEventWhen(e)}` : 'Datum offen'}
-                </span>
-                <span>
-                  <span className="font-medium">{e.title}</span>
-                  {e.location ? <span className="text-neutral-500"> · {e.location}</span> : ''}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <PrintEvents events={events} />
       </Section>
 
       {/* See PrintArtist: the „nur offene“ qualifier lives in the count, not the name. */}

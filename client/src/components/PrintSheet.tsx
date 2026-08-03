@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import type { Contact, EventItem } from '../api/types';
+import { formatEventWhen, weekdayShort } from '../lib/dates';
 
 /**
  * Shared chrome for the print sheets (`#/print/artist/:id`, `#/print/project/:id`).
@@ -84,4 +86,58 @@ export function Section({ title, children }: { title: string; children: ReactNod
 
 export function Empty() {
   return <p className="text-sm text-neutral-400">—</p>;
+}
+
+/** The contacts table of both sheets — name, role, e-mail, phone, no header row. */
+export function PrintContacts({ contacts }: { contacts: Contact[] }) {
+  if (contacts.length === 0) return <Empty />;
+  return (
+    <table className="w-full text-sm">
+      <tbody>
+        {contacts.map((c) => (
+          <tr key={c.id} className="border-b border-neutral-100">
+            <td className="py-1 pr-4 font-medium">{c.name}</td>
+            <td className="py-1 pr-4 text-neutral-500">{c.role}</td>
+            <td className="py-1 pr-4">{c.email}</td>
+            <td className="py-1">{c.phone}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/**
+ * The events list of both sheets. `showProjectCode` is the only difference between them: the
+ * artist sheet spans every project and needs the `[NQ1]` tag to say which, the project sheet
+ * would print its own code on every row.
+ */
+export function PrintEvents({
+  events,
+  showProjectCode = false,
+}: {
+  events: EventItem[];
+  showProjectCode?: boolean;
+}) {
+  if (events.length === 0) return <Empty />;
+  return (
+    <ul className="space-y-1 text-sm">
+      {events.map((e) => (
+        <li key={e.id} className="flex gap-3">
+          <span className="w-40 shrink-0 text-neutral-500">
+            {e.start_at ? `${weekdayShort(e.start_at)} ${formatEventWhen(e)}` : 'Datum offen'}
+          </span>
+          <span>
+            <span className="font-medium">{e.title}</span>
+            {showProjectCode && e.project_code ? (
+              <span className="ml-1 text-neutral-400">[{e.project_code}]</span>
+            ) : (
+              ''
+            )}
+            {e.location ? <span className="text-neutral-500"> · {e.location}</span> : ''}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
 }

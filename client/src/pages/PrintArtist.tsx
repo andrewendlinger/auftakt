@@ -5,8 +5,16 @@ import { type Task } from '../api/types';
 import { Spinner, ErrorState, LoadError } from '../components/ui';
 import { isValidId } from '../lib/routeParams';
 import { Markdown } from '../components/Markdown';
-import { Empty, PrintFallback, PrintHeader, PrintPage, Section } from '../components/PrintSheet';
-import { formatDate, formatEventWhen, weekdayShort } from '../lib/dates';
+import {
+  Empty,
+  PrintContacts,
+  PrintEvents,
+  PrintFallback,
+  PrintHeader,
+  PrintPage,
+  Section,
+} from '../components/PrintSheet';
+import { formatDate } from '../lib/dates';
 import { useDoneValue, useLabel, useSaison } from '../hooks';
 
 export function PrintArtist() {
@@ -75,43 +83,12 @@ export function PrintArtist() {
       </PrintHeader>
 
       <Section title={label('artist.kontakte')}>
-        {contacts.length === 0 ? (
-          <Empty />
-        ) : (
-          <table className="w-full text-sm">
-            <tbody>
-              {contacts.map((c) => (
-                <tr key={c.id} className="border-b border-neutral-100">
-                  <td className="py-1 pr-4 font-medium">{c.name}</td>
-                  <td className="py-1 pr-4 text-neutral-500">{c.role}</td>
-                  <td className="py-1 pr-4">{c.email}</td>
-                  <td className="py-1">{c.phone}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <PrintContacts contacts={contacts} />
       </Section>
 
+      {/* The artist's events span every project, so each one names its own. */}
       <Section title={label('artist.termine')}>
-        {events.length === 0 ? (
-          <Empty />
-        ) : (
-          <ul className="space-y-1 text-sm">
-            {events.map((e) => (
-              <li key={e.id} className="flex gap-3">
-                <span className="w-40 shrink-0 text-neutral-500">
-                  {e.start_at ? `${weekdayShort(e.start_at)} ${formatEventWhen(e)}` : 'Datum offen'}
-                </span>
-                <span>
-                  <span className="font-medium">{e.title}</span>
-                  {e.project_code ? <span className="ml-1 text-neutral-400">[{e.project_code}]</span> : ''}
-                  {e.location ? <span className="text-neutral-500"> · {e.location}</span> : ''}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <PrintEvents events={events} showProjectCode />
       </Section>
 
       {/* "n offen" rather than a fixed „Offene “ prefix: the sheet omits done tasks and has to
