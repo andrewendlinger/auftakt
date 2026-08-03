@@ -4,7 +4,7 @@ import { RichTextEditor } from './RichTextEditor';
 import { Btn } from './ui';
 import { api } from '../api/client';
 import type { CustomColumnOption, EventItem } from '../api/types';
-import { useInvalidateAll, useUndoablePatch } from '../hooks';
+import { useGuardedAction, useInvalidateAll, useUndoablePatch } from '../hooks';
 
 export interface EventParent {
   artist_id?: number;
@@ -36,6 +36,7 @@ export function EventEditor({
 }) {
   const invalidate = useInvalidateAll();
   const undoablePatch = useUndoablePatch();
+  const guard = useGuardedAction();
   const [type, setType] = useState(event?.type ?? eventTypes[0]?.value ?? 'Termin');
   const [title, setTitle] = useState(event?.title ?? '');
   const [allDay, setAllDay] = useState<boolean>(!!event?.all_day);
@@ -83,13 +84,15 @@ export function EventEditor({
       notes: notes.trim() === '' ? null : notes,
     };
     try {
-      if (event) {
-        await undoablePatch({ res: api.events, row: event, patch: payload, label: 'Änderung am Termin' });
-      } else {
-        await api.events.create(payload);
-        await invalidate();
-      }
-      onClose();
+      // Without this the rejection was dropped by `Btn`'s onClick: the dialog stayed open
+      // looking exactly as before, so the user clicked Speichern again and again — collecting
+      // duplicate events once the transient cause cleared (RTE-04).
+      const ok = await guard('Der Termin konnte nicht gespeichert werden.', () =>
+        event
+          ? undoablePatch({ res: api.events, row: event, patch: payload, label: 'Änderung am Termin' })
+          : api.events.create(payload).then(invalidate),
+      );
+      if (ok) onClose();
     } finally {
       setBusy(false);
     }
