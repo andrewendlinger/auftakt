@@ -1046,6 +1046,7 @@ function initDb(db: Database.Database, isFresh: boolean): void {
   migrateArtistImage(db);
   migrateItemColors(db);
   migrateTaskParentId(db);
+  migrateFlattenDeepSubtasks(db);
   migrateEventsOptionalStart(db);
   migrateProjectsMergeNotes(db);
   migrateLinksCategory(db);
@@ -1347,6 +1348,53 @@ function migrateLinksCategory(db: Database.Database): void {
 function migrateTaskParentId(db: Database.Database): void {
   ensureColumn(db, 'tasks', 'parent_id', 'parent_id INTEGER REFERENCES tasks(id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id)');
+}
+
+/** Safety stop for the flatten loop below — see MAX_PURGE_PASSES for the same reasoning. */
+const MAX_FLATTEN_PASSES = 100;
+
+/**
+ * Lift every task deeper than one level up to its root, so the subtask tree is at most two
+ * levels — the rule the tasks transform enforces on the API (routes/entities.ts).
+ *
+ * Until now that rule was an *API* invariant only. `server/src/notion/` writes rows with raw SQL
+ * and bypasses the transform entirely, so an import could seat a subtask under a subtask, and
+ * nothing then repaired it: the transform is deliberately not retroactive (it fires only when
+ * `parent_id` is in the payload), so a deep tree that arrived that way stayed. The `'branch'`
+ * gutter kind keeps such a tree readable, which is why this was never urgent.
+ *
+ * **Deliberately not marker-guarded.** `migrateStampsToLocal` needs its `stamps_localtime` row
+ * because converting twice shifts everything twice — the data cannot reveal whether it already
+ * ran. This one is self-detecting and idempotent: once flattened, the WHERE clause matches
+ * nothing. A marker would also be actively wrong here, because it would disable the repair after
+ * the first launch — and the back door this closes is one a *future* import can re-open.
+ *
+ * One pass lifts every offender exactly one level, so an N-deep chain needs N-1 passes; the loop
+ * runs to a fixpoint. The bound only caps a pre-existing cycle (which `parent_id`'s own checks
+ * make unreachable through the API, but raw SQL does not), where the chain never terminates.
+ *
+ * Measured before writing: no database in this project holds a task at depth ≥ 2 — including the
+ * real Notion import, whose 97 tasks sit at depth 0 and 1. So this lands as a no-op guard, which
+ * is the cheapest moment it will ever have.
+ */
+function migrateFlattenDeepSubtasks(db: Database.Database): void {
+  const lift = db.prepare(`
+    UPDATE tasks SET parent_id = (SELECT p.parent_id FROM tasks p WHERE p.id = tasks.parent_id)
+    WHERE parent_id IS NOT NULL
+      AND (SELECT p.parent_id FROM tasks p WHERE p.id = tasks.parent_id) IS NOT NULL`);
+  let lifted = 0;
+  const tx = db.transaction(() => {
+    for (let pass = 0; pass < MAX_FLATTEN_PASSES; pass++) {
+      const changed = lift.run().changes;
+      if (changed === 0) return;
+      lifted += changed;
+    }
+    // Bound exhausted: a parent chain that never reaches NULL, i.e. a cycle written by raw SQL.
+    // Keep what was lifted (every intermediate state is a valid tree) and say so.
+    console.warn('Unteraufgaben-Migration abgebrochen: Zyklus in tasks.parent_id?');
+  });
+  tx();
+  if (lifted > 0) console.log(`${lifted} verschachtelte Unteraufgabe(n) auf die oberste Aufgabe gehoben.`);
 }
 
 /** Whether a stored `options` blob still holds at least one usable category. */
