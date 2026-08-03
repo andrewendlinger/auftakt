@@ -271,7 +271,13 @@ function Toolbar({
         <div className="relative">
           <div
             className="absolute left-0 z-50 mt-1"
-            onMouseDown={(e) => e.preventDefault()}
+            // Keeps the caret in the editor while the user clicks around the picker — except
+            // on its search field, which cannot be focused at all if the default is cancelled
+            // anywhere along the dispatch (RTE-15). Scoped to `input` on purpose: letting the
+            // emoji buttons take focus would open a blur-commit path that does not exist today.
+            onMouseDown={(e) => {
+              if (!(e.target as HTMLElement).closest('input')) e.preventDefault();
+            }}
             // The same guard LinkBar has. emoji-picker-react autofocuses its own search input,
             // so the key never reaches the editor's `handleKeyDown` (and therefore never
             // reaches a caller `onKeyDown`); it bubbled straight to Modal's window listener,
