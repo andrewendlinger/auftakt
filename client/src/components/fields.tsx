@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Btn, IconButton } from './ui';
 import { RichTextEditor } from './RichTextEditor';
 import { resizeToDataUrl } from '../lib/image';
@@ -34,6 +34,7 @@ export function Modal({
   footer,
   wide,
   size,
+  dirty = false,
 }: {
   title: ReactNode;
   children: ReactNode;
@@ -43,9 +44,20 @@ export function Modal({
   wide?: boolean;
   /** Modal max-width: md (default), lg, or xl. */
   size?: keyof typeof MODAL_WIDTH;
+  /** The form holds unsaved input: the *accidental* exits (backdrop, Escape) confirm first. */
+  dirty?: boolean;
 }) {
   const width = MODAL_WIDTH[size ?? (wide ? 'xl' : 'md')];
   const depth = useContext(ModalDepthCtx) + 1;
+  const [confirming, setConfirming] = useState(false);
+  // mousedown and mouseup must *both* land on the backdrop. A drag that starts on the dialog's
+  // own text and ends outside it is a text selection, not a dismissal (TTU-17).
+  const downOnBackdrop = useRef(false);
+  // Read from the (stable) window listener, so it never needs to re-register on a keystroke.
+  const dirtyRef = useRef(dirty);
+  const confirmingRef = useRef(confirming);
+  dirtyRef.current = dirty;
+  confirmingRef.current = confirming;
 
   useEffect(() => {
     const token = {};
@@ -63,25 +75,38 @@ export function Modal({
       let top = 0;
       for (const d of openModals.values()) top = Math.max(top, d);
       if (depth !== top) return;
-      onClose();
+      if (confirmingRef.current) setConfirming(false); // Escape backs out of the question.
+      else if (dirtyRef.current) setConfirming(true);
+      else onClose();
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, [onClose, depth]);
 
+  const requestClose = () => {
+    if (dirty) setConfirming(true);
+    else onClose();
+  };
+
   return (
     <div
       className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/30 p-4 py-10"
-      onMouseDown={onClose}
+      onMouseDown={(e) => {
+        downOnBackdrop.current = e.target === e.currentTarget;
+      }}
+      onClick={(e) => {
+        if (downOnBackdrop.current && e.target === e.currentTarget) requestClose();
+        downOnBackdrop.current = false;
+      }}
     >
       {/* Column layout with a scrolling body: height used to be unbounded and the *overlay*
           scrolled, which pushed a long form's own footer off-screen. py-10 above = 5rem. */}
       <div
-        className={`${width} flex max-h-[calc(100vh-5rem)] flex-col rounded-2xl bg-white text-neutral-800 shadow-xl`}
-        onMouseDown={(e) => e.stopPropagation()}
+        className={`relative ${width} flex max-h-[calc(100vh-5rem)] flex-col rounded-2xl bg-white text-neutral-800 shadow-xl`}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-neutral-100 px-5 py-3">
           <h3 className="font-semibold text-neutral-800">{title}</h3>
+          {/* ✕ and the footer's Abbrechen are deliberate exits and never confirm. */}
           <IconButton onClick={onClose} title="Schließen" aria-label="Schließen" className="-mr-1">
             ✕
           </IconButton>
@@ -92,6 +117,24 @@ export function Modal({
         {footer && (
           <div className="flex shrink-0 justify-end gap-2 border-t border-neutral-100 px-5 py-3">
             {footer}
+          </div>
+        )}
+        {confirming && (
+          // Inside the dialog rather than as a nested `Modal`: it must not register a depth of
+          // its own, and the form underneath has to stay visible while the user decides.
+          <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-white/80 p-4">
+            <div className="w-full max-w-sm rounded-xl bg-white p-4 text-sm shadow-lg ring-1 ring-black/10">
+              <p className="text-neutral-700">Änderungen verwerfen?</p>
+              <p className="mt-1 text-xs text-neutral-500">
+                Die eingegebenen Daten gehen verloren.
+              </p>
+              <div className="mt-4 flex justify-end gap-2">
+                <Btn onClick={() => setConfirming(false)}>Weiter bearbeiten</Btn>
+                <Btn variant="danger" onClick={onClose}>
+                  Verwerfen
+                </Btn>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -272,7 +315,7 @@ export function RecordFormModal({
   onSubmit: (values: Record<string, string | null>) => void | Promise<void>;
   onClose: () => void;
 }) {
-  const [vals, setVals] = useState<Values>(() => {
+  const initialVals = useMemo(() => {
     const src = initial as Record<string, unknown> | undefined;
     const v: Values = {};
     for (const f of fields) {
@@ -280,9 +323,12 @@ export function RecordFormModal({
       v[f.name] = raw == null ? '' : String(raw);
     }
     return v;
-  });
+  }, [fields, initial]);
+  const [vals, setVals] = useState<Values>(initialVals);
   const [busy, setBusy] = useState(false);
   const set = (k: string, val: string) => setVals((s) => ({ ...s, [k]: val }));
+  // Compared by content, not identity: several call sites build `fields` per render.
+  const dirty = fields.some((f) => (vals[f.name] ?? '') !== (initialVals[f.name] ?? ''));
 
   const submit = async () => {
     for (const f of fields) {
@@ -307,6 +353,7 @@ export function RecordFormModal({
       title={title}
       onClose={onClose}
       size="lg"
+      dirty={dirty}
       footer={
         <>
           <Btn onClick={onClose}>Abbrechen</Btn>

@@ -36,6 +36,18 @@ export function EventEditor({
   const [notes, setNotes] = useState(event?.notes ?? '');
   const [busy, setBusy] = useState(false);
 
+  // A stray backdrop click used to discard the whole dialog; it asks first once anything has
+  // been entered (TTU-17). Compared against what the dialog opened with, not against defaults.
+  const dirty =
+    type !== (event?.type ?? eventTypes[0]?.value ?? 'Termin') ||
+    title !== (event?.title ?? '') ||
+    allDay !== !!event?.all_day ||
+    tbd !== (event ? !event.start_at : false) ||
+    start !== (event?.start_at ?? '') ||
+    end !== (event?.end_at ?? '') ||
+    location !== (event?.location ?? '') ||
+    notes !== (event?.notes ?? '');
+
   const toggleAllDay = (v: boolean) => {
     setAllDay(v);
     setStart((s) => (v ? s.slice(0, 10) : s.length === 10 ? `${s}T09:00` : s));
@@ -74,6 +86,7 @@ export function EventEditor({
       title={event ? 'Termin bearbeiten' : 'Neuer Termin'}
       onClose={onClose}
       size="lg"
+      dirty={dirty}
       footer={
         <>
           <Btn onClick={onClose}>Abbrechen</Btn>
