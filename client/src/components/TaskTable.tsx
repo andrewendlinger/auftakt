@@ -9,7 +9,7 @@ import {
   type ExpandedState,
 } from '@tanstack/react-table';
 import { api } from '../api/client';
-import type { CustomColumn, CustomColumnOption, Task, TaskSortRule } from '../api/types';
+import type { CustomColumn, CustomColumnOption, Task, TaskSortRule, TaskUpdate } from '../api/types';
 import { compareColumns, customValueOf, doneValueOf, parseColumnOptions } from '../api/types';
 import { formatDate } from '../lib/dates';
 import { withAlpha } from '../lib/colors';
@@ -292,12 +292,8 @@ export function TaskTable({
   );
 
   const commit = useCallback(
-    async (
-      task: Task,
-      patch: Partial<Task> | { custom_values: Record<string, unknown> },
-      label: string,
-    ) => {
-      await undoablePatch({ res: api.tasks, row: task, patch: patch as Partial<Task>, label });
+    async (task: Task, patch: TaskUpdate, label: string) => {
+      await undoablePatch({ res: api.tasks, row: task, patch, label });
     },
     [undoablePatch],
   );

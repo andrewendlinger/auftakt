@@ -477,13 +477,18 @@ export function useRenameLabel(): (key: LabelKey, label: string) => Promise<void
  */
 const DERIVED_INVERSE_KEYS = new Map<unknown, string[]>([[api.tasks, ['erledigt_am']]]);
 
-export interface UndoablePatchArgs<T extends { id: ID }> {
-  /** Any `resource()` from api/client.ts. */
-  res: { update: (id: ID, data: Partial<T>) => Promise<unknown> };
+export interface UndoablePatchArgs<T extends { id: ID }, U> {
+  /** Any `resource()` from api/client.ts — `U` is its write type, inferred from `update`. */
+  res: { update: (id: ID, data: U) => Promise<unknown> };
   /** The row as it was *before* the edit — the inverse is picked off it. */
   row: T;
-  patch: Partial<T>;
-  /** German, names the change: „Statusänderung". */
+  /**
+   * `NoInfer` so the resource decides `U`, not the patch: the payload is then checked against
+   * the server's `writable` allowlist for that table rather than bidding for a type of its own
+   * (CCL-24).
+   */
+  patch: NoInfer<U>;
+  /** German, names the change: „Statusänderung“. */
   label: string;
 }
 
@@ -496,32 +501,37 @@ export interface UndoablePatchArgs<T extends { id: ID }> {
  * server passes strings through untouched, so putting it back verbatim restores the whole blob.
  * Rebuilding a single key instead would wipe the task's other custom columns.
  */
-export function useUndoablePatch(): <T extends { id: ID }>(
-  args: UndoablePatchArgs<T>,
+export function useUndoablePatch(): <T extends { id: ID }, U>(
+  args: UndoablePatchArgs<T, U>,
 ) => Promise<void> {
   const { push } = useUndo();
   const invalidate = useInvalidateAll();
   return useCallback(
-    async <T extends { id: ID }>({ res, row, patch, label }: UndoablePatchArgs<T>) => {
-      const patchKeys = Object.keys(patch) as (keyof T & string)[];
-      const derived = (DERIVED_INVERSE_KEYS.get(res) ?? []).filter(
-        (k) => k in row,
-      ) as (keyof T & string)[];
-      const inverse: Partial<T> = {};
-      for (const k of [...new Set([...patchKeys, ...derived])]) inverse[k] = row[k];
+    async <T extends { id: ID }, U>({ res, row, patch, label }: UndoablePatchArgs<T, U>) => {
+      // The walk is by key, which no generic signature can follow — `Object.keys` is `string[]`
+      // and the row is only as typed as the row. Three untyped views over objects this function
+      // never constructs, and one assertion on the result. Sound because every `…Update` type
+      // widens its row type (api/types.ts), so a set of raw row values is always a legal patch
+      // for that resource — the invariant to preserve when editing those types.
+      const before = row as Record<string, unknown>;
+      const after = patch as Record<string, unknown>;
+      const patchKeys = Object.keys(after);
+      const derived = (DERIVED_INVERSE_KEYS.get(res) ?? []).filter((k) => k in row);
+      const inverse: Record<string, unknown> = {};
+      for (const k of [...new Set([...patchKeys, ...derived])]) inverse[k] = before[k];
 
       const apply = async () => {
         await res.update(row.id, patch);
         await invalidate();
       };
       const revert = async () => {
-        await res.update(row.id, inverse);
+        await res.update(row.id, inverse as U);
         await invalidate();
       };
 
       await apply();
       // Saving a dialog without touching anything shouldn't consume an undo step.
-      if (patchKeys.some((k) => !Object.is(row[k], patch[k]))) push({ label, apply, revert });
+      if (patchKeys.some((k) => !Object.is(before[k], after[k]))) push({ label, apply, revert });
     },
     [push, invalidate],
   );

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { SectionTitle, Btn, EmptyState } from './ui';
 import { RecordFormModal, type FieldDef } from './fields';
 import { api } from '../api/client';
-import type { Contact } from '../api/types';
+import type { Contact, ContactCreate } from '../api/types';
 import { linkify } from '../lib/linkify';
 import { withAlpha } from '../lib/colors';
 import { InlineNotes } from './InlineNotes';
@@ -19,6 +19,16 @@ const FIELDS: FieldDef[] = [
   { name: 'phone', label: 'Telefon', type: 'tel' },
   // No notes field: "Allgemeines / Beschreibung" is edited inline on the contact card.
 ];
+
+/**
+ * The one place the modal's `Record<string, string | null>` bag becomes a typed payload. A cast
+ * here instead would put CCL-24's hole straight back: an index signature satisfies an
+ * all-optional target vacuously, so nothing at all would be checked. `?? ''` is unreachable —
+ * `name` is `required: true` and RecordFormModal refuses to submit while it is blank.
+ */
+function contactPayload(v: Record<string, string | null>): ContactCreate {
+  return { name: v.name ?? '', role: v.role, email: v.email, phone: v.phone };
+}
 
 export function ContactList({
   titleKey,
@@ -41,13 +51,13 @@ export function ContactList({
       await undoablePatch({
         res: api.contacts,
         row: editing,
-        patch: values,
+        patch: contactPayload(values),
         label: 'Änderung am Kontakt',
       });
       return;
     }
     await api.contacts.create({
-      ...values,
+      ...contactPayload(values),
       artist_id: parent.artist_id ?? null,
       project_id: parent.project_id ?? null,
     });

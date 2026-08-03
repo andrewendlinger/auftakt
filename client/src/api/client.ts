@@ -1,19 +1,33 @@
 import type {
   Artist,
+  ArtistCreate,
+  ArtistUpdate,
   Contact,
+  ContactCreate,
+  ContactUpdate,
   CustomColumn,
+  CustomColumnCreate,
+  CustomColumnUpdate,
   CustomSection,
+  CustomSectionCreate,
+  CustomSectionUpdate,
   Dashboard,
   DeletedItem,
   DeletedType,
+  EventCreate,
   EventItem,
+  EventUpdate,
   ID,
   LandingContent,
   LandingPatch,
+  LinkCreate,
   LinkItem,
+  LinkUpdate,
   OptionReassign,
   OptionUsage,
   Project,
+  ProjectCreate,
+  ProjectUpdate,
   SearchResults,
   Season,
   SeasonCopyOptions,
@@ -22,7 +36,9 @@ import type {
   SeasonStatsMap,
   Settings,
   Task,
+  TaskCreate,
   TaskPlacement,
+  TaskUpdate,
   WritableSettings,
 } from './types';
 
@@ -63,7 +79,13 @@ function qs(params?: Record<string, unknown>): string {
   return '?' + entries.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&');
 }
 
-function resource<T, Create = Partial<T>, Update = Partial<T>>(path: string) {
+/**
+ * `Create`/`Update` have no defaults on purpose. They used to default to `Partial<T>` — the whole
+ * row — so every non-writable column type-checked and was silently dropped by the server's
+ * allowlist (CCL-24). Requiring both makes a future one-argument `resource<Foo>()` a compile
+ * error rather than a quiet reopening of that hole.
+ */
+function resource<T, Create, Update>(path: string) {
   return {
     list: (params?: Record<string, unknown>) => http<T[]>('GET', path + qs(params)),
     get: (id: ID) => http<T>('GET', `${path}/${id}`),
@@ -82,12 +104,12 @@ export const api = {
   getSettings: () => http<Settings>('GET', '/settings'),
   patchSettings: (patch: Partial<WritableSettings>) => http<Settings>('PATCH', '/settings', patch),
 
-  artists: resource<Artist>('/artists'),
-  projects: resource<Project>('/projects'),
-  contacts: resource<Contact>('/contacts'),
-  events: resource<EventItem>('/events'),
+  artists: resource<Artist, ArtistCreate, ArtistUpdate>('/artists'),
+  projects: resource<Project, ProjectCreate, ProjectUpdate>('/projects'),
+  contacts: resource<Contact, ContactCreate, ContactUpdate>('/contacts'),
+  events: resource<EventItem, EventCreate, EventUpdate>('/events'),
   tasks: {
-    ...resource<Task>('/tasks'),
+    ...resource<Task, TaskCreate, TaskUpdate>('/tasks'),
     /**
      * Move a task and its whole live subtree to another scope, in one server-side transaction.
      * All three placement fields are explicit and always written, so this same call is also the
@@ -104,9 +126,9 @@ export const api = {
     restoreTree: (id: ID, ids: ID[]) =>
       http<{ ids: ID[] }>('POST', `/tasks/${id}/tree/restore`, { ids }),
   },
-  links: resource<LinkItem>('/links'),
-  customColumns: resource<CustomColumn>('/custom-columns'),
-  customSections: resource<CustomSection>('/custom-sections'),
+  links: resource<LinkItem, LinkCreate, LinkUpdate>('/links'),
+  customColumns: resource<CustomColumn, CustomColumnCreate, CustomColumnUpdate>('/custom-columns'),
+  customSections: resource<CustomSection, CustomSectionCreate, CustomSectionUpdate>('/custom-sections'),
 
   duplicateEvent: (id: ID) => http<EventItem>('POST', `/events/${id}/duplicate`),
 

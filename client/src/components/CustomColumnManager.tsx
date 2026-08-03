@@ -7,6 +7,7 @@ import type {
   CustomColumn,
   CustomColumnOption,
   CustomColumnType,
+  CustomColumnUpdate,
   ID,
   OptionUsage,
   ReassignField,
@@ -367,9 +368,9 @@ function ColumnEditModal({
   const persist = async (mapping: Array<{ from: string; to: string }>) => {
     setBusy(true);
     try {
-      const patch: Record<string, unknown> = { name: name.trim(), icon: icon.trim() || null };
+      const patch: CustomColumnUpdate = { name: name.trim(), icon: icon.trim() || null };
       if (editableOptions) patch.options = normalizeOptions(options);
-      await api.customColumns.update(col.id, patch as Partial<CustomColumn>);
+      await api.customColumns.update(col.id, patch);
       for (const m of mapping) {
         if (store) await api.reassignOption({ ...store, ...m });
       }
@@ -509,7 +510,7 @@ function AddColumnForm({
         scope: projectId ? 'project' : 'global',
         project_id: projectId ?? null,
         icon: icon.trim() || null,
-        options: type === 'select' ? (normalizeOptions(options) as unknown as string) : null,
+        options: type === 'select' ? normalizeOptions(options) : null,
         sort_order: nextSort,
       });
       setName('');

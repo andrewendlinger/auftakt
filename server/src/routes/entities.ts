@@ -8,6 +8,14 @@ import { listEvents, listTasks } from '../lib/queries';
 // silently-dropped filter that returned every row (SRV-09).
 import { HttpError, numParam as num, scopeParam } from '../lib/query';
 
+/*
+ * The `writable`/`required` lists below are mirrored by the `…Create`/`…Update` types in
+ * client/src/api/types.ts. Change one, change the other: a column added here is unreachable from
+ * the client until it is added there, and a column removed here keeps compiling on the client
+ * while the write silently does nothing — which is the defect CCL-24 was (`crudRouter` drops
+ * anything not on the list without a word).
+ */
+
 export const artistsRouter = crudRouter({
   table: 'artists',
   writable: ['name', 'color', 'notes', 'image', 'sort_order'],

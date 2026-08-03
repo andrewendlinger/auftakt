@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { SectionTitle, Btn, DocumentRow, EmptyState } from './ui';
 import { RecordFormModal, type FieldDef } from './fields';
 import { api } from '../api/client';
-import type { CustomColumnOption, LinkItem } from '../api/types';
+import type { CustomColumnOption, LinkCreate, LinkItem } from '../api/types';
 import { withAlpha } from '../lib/colors';
 import { normalizeUrl } from '../lib/url';
 import { ColorSwatchPicker } from './ColorSwatchPicker';
@@ -35,6 +35,23 @@ function fields(categories: CustomColumnOption[]): FieldDef[] {
   ];
 }
 
+/**
+ * The modal's `Record<string, string | null>` bag as a typed payload — a cast instead would put
+ * CCL-24's hole back, since an index signature satisfies an all-optional target vacuously.
+ *
+ * The URL is stored fully qualified, as the editor's link bar does (RTE-09): the field has no
+ * validation, so a typed „drive.google.com/…“ used to be stored verbatim and was then
+ * unopenable for ever (CCL-09). A cleared field stays null and clears the column.
+ *
+ * `category` passes straight through and must **not** gain a `?? null`: `fields()` omits the
+ * FieldDef entirely while no categories are configured, so the key is simply absent and the
+ * PATCH leaves the column alone. Defaulting it would clobber a stored category on every edit
+ * made in that state.
+ */
+function linkPayload(v: Record<string, string | null>): LinkCreate {
+  return { label: v.label ?? '', url: v.url ? normalizeUrl(v.url) : v.url, category: v.category };
+}
+
 export type LinkParent = {
   artist_id?: number;
   project_id?: number;
@@ -63,11 +80,8 @@ export function LinkList({
   const [editing, setEditing] = useState<LinkItem | null>(null);
   const [creating, setCreating] = useState(false);
 
-  // Store a fully-qualified URL, as the editor's link bar does (RTE-09) — the field is „URL
-  // (Google Drive etc.)" with no validation, so a typed „drive.google.com/…" used to be stored
-  // verbatim and was then unopenable for ever (CCL-09).
   const save = async (values: Record<string, string | null>) => {
-    const patch = { ...values, ...(values.url ? { url: normalizeUrl(values.url) } : {}) };
+    const patch = linkPayload(values);
     if (editing) {
       await undoablePatch({ res: api.links, row: editing, patch, label: 'Änderung am Link' });
       return;

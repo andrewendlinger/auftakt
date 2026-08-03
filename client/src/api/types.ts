@@ -165,6 +165,131 @@ export interface CustomSection extends SoftDeletable {
   value: string | null;
 }
 
+/* ────────────────────────────────────────────────────────────────────────────────────────────
+ * Write payloads — the client half of the server's `writable` allowlists.
+ *
+ * `crudRouter` (server/src/lib/crud.ts) filters every body through `writable` and drops the rest
+ * without a word, so a column that is not on that list is a *silent* no-op on the wire. Typing
+ * create/update as `Partial<Row>` let the whole row through: `customColumns.create({ …, key:
+ * 'status', kind: 'builtin' })` compiled, and produced a column bound to nothing that rendered
+ * empty for every task with no error at either end (CCL-24).
+ *
+ * `…Update` is the allowlist, all optional — PATCH is column-set semantics, only the supplied
+ * columns reach the SET clause. `…Create` adds the router's `required` list.
+ *
+ * These restate server/src/routes/entities.ts and are kept in step by hand — the same
+ * arrangement as `SERVER_DEFAULT_RULES` in TaskTable.tsx, which restates `taskOrder` from
+ * server/src/lib/queries.ts. There is no shared type package: `shared/` is dependency-free by
+ * design and the REST boundary is the boundary. A column added on the server is unreachable
+ * from here until it is added below.
+ *
+ * **Invariant:** every `…Update` *widens* its row type — same key, same or wider value type.
+ * That is what keeps a set of raw row values a legal patch, which `useUndoablePatch` relies on
+ * to build an inverse. Never narrow a column here.
+ * ──────────────────────────────────────────────────────────────────────────────────────────── */
+
+export type ArtistUpdate = Partial<Pick<Artist, 'name' | 'color' | 'notes' | 'image' | 'sort_order'>>;
+export type ArtistCreate = ArtistUpdate & Pick<Artist, 'name'>;
+
+export type ProjectUpdate = Partial<
+  Pick<Project, 'artist_id' | 'code' | 'name' | 'status' | 'description' | 'color' | 'sort_order'>
+>;
+export type ProjectCreate = ProjectUpdate & Pick<Project, 'artist_id' | 'code' | 'name'>;
+
+export type ContactUpdate = Partial<
+  Pick<
+    Contact,
+    'artist_id' | 'project_id' | 'role' | 'name' | 'email' | 'phone' | 'notes' | 'color' | 'sort_order'
+  >
+>;
+export type ContactCreate = ContactUpdate & Pick<Contact, 'name'>;
+
+export type EventUpdate = Partial<
+  Pick<
+    EventItem,
+    | 'artist_id'
+    | 'project_id'
+    | 'type'
+    | 'title'
+    | 'start_at'
+    | 'end_at'
+    | 'all_day'
+    | 'location'
+    | 'notes'
+    | 'sort_order'
+  >
+>;
+export type EventCreate = EventUpdate & Pick<EventItem, 'type' | 'title'>;
+
+export type LinkUpdate = Partial<
+  Pick<
+    LinkItem,
+    | 'artist_id'
+    | 'project_id'
+    | 'event_id'
+    | 'task_id'
+    | 'section_id'
+    | 'label'
+    | 'url'
+    | 'color'
+    | 'category'
+    | 'sort_order'
+  >
+>;
+export type LinkCreate = LinkUpdate & Pick<LinkItem, 'label'>;
+
+export type CustomSectionUpdate = Partial<
+  Pick<CustomSection, 'artist_id' | 'project_id' | 'name' | 'type' | 'value' | 'sort_order'>
+>;
+export type CustomSectionCreate = CustomSectionUpdate & Pick<CustomSection, 'name' | 'type'>;
+
+export type CustomColumnUpdate = Partial<
+  Pick<
+    CustomColumn,
+    'name' | 'type' | 'scope' | 'project_id' | 'icon' | 'enabled' | 'deletable' | 'sort_order'
+  >
+> & {
+  /**
+   * Written as the option *array* — `jsonColumns: ['options']` stringifies it server-side. The
+   * `| string` arm keeps a raw row value a legal patch (see the widening invariant above);
+   * `readOptions` accepts the JSON text too. Read back as the string the row type declares.
+   */
+  options?: CustomColumnOption[] | string | null;
+};
+/** `key` and `kind` are absent on purpose: not in `writable`, and a create is always `kind: 'custom'`. */
+export type CustomColumnCreate = CustomColumnUpdate & Pick<CustomColumn, 'name' | 'type'>;
+
+export type TaskUpdate = Partial<
+  Pick<
+    Task,
+    | 'artist_id'
+    | 'project_id'
+    | 'title'
+    | 'status'
+    | 'priority'
+    | 'due_date'
+    | 'comment'
+    | 'color'
+    | 'parent_id'
+    | 'sort_order'
+    /**
+     * Writable on purpose, and it has to stay: the undo stack restores the original completion
+     * date, and `acceptsErledigtAm()` server-side drops anything that is not that undo (SDL-02).
+     * Every other write of it is server-derived from the status flip.
+     */
+    | 'erledigt_am'
+  >
+> & {
+  /**
+   * An **object** patches the named keys into the row's own blob (merged server-side); a
+   * **string** replaces the blob verbatim. Both arms are load-bearing — the object arm is what
+   * makes concurrent cell edits safe, the string arm is what lets `useUndoablePatch` put a whole
+   * pre-edit blob back.
+   */
+  custom_values?: Record<string, unknown> | string;
+};
+export type TaskCreate = TaskUpdate & Pick<Task, 'title'>;
+
 /**
  * The content entities a user directly deletes and can find again in the archive's trash.
  * `column` is a user-added task column — built-ins never appear, since ensureBuiltinColumns()

@@ -3,7 +3,14 @@ import { useQuery } from '@tanstack/react-query';
 import { Btn } from './ui';
 import { RecordFormModal, type FieldDef } from './fields';
 import { api } from '../api/client';
-import type { Artist, CustomColumnOption, Project } from '../api/types';
+import type {
+  Artist,
+  ArtistCreate,
+  ArtistUpdate,
+  CustomColumnOption,
+  Project,
+  ProjectCreate,
+} from '../api/types';
 import { pickArtistColor, projectShade } from '../lib/colors';
 import { useInvalidateAll, useLabel, useProjectStatusOptions, useUndoablePatch } from '../hooks';
 
@@ -20,27 +27,40 @@ const ARTIST_FIELDS: FieldDef[] = [
   { name: 'color', label: 'Farbe', type: 'color' },
 ];
 
-/** Create: drop an empty colour so the NOT NULL default applies. */
-function stripEmptyColor(values: Record<string, string | null>): Record<string, string | null> {
-  if (!values.color) {
-    const { color, ...rest } = values;
-    void color;
-    return rest;
-  }
-  return values;
+/**
+ * Create: an empty colour is *dropped* so the NOT NULL default applies. `undefined` is exactly
+ * a deleted key here — JSON.stringify omits it and the crud router builds its column list from
+ * what the body actually carries.
+ *
+ * These mappers are where the modal's `Record<string, string | null>` bag becomes a typed
+ * payload. Casting instead would put CCL-24's hole back: an index signature satisfies an
+ * all-optional target vacuously, so nothing would be checked at all. `?? ''` is unreachable —
+ * `name` is `required: true` and RecordFormModal refuses to submit while it is blank.
+ */
+function artistCreatePayload(v: Record<string, string | null>): ArtistCreate {
+  return { name: v.name ?? '', image: v.image, color: v.color || undefined };
 }
 
 /**
  * Edit: send the default explicitly instead.
  *
- * On a PATCH an absent key means „leave unchanged", not „apply the DB default" — the crud
- * router builds its SET clause only from the keys present in the body. Sharing
- * `stripEmptyColor` with the create path therefore made clearing an artist's colour a silent
- * no-op: the dialog closed with no error, and the artist plus every project shade derived from
- * it kept the old value (SHL-06).
+ * On a PATCH an absent key means „leave unchanged“, not „apply the DB default“ — the crud
+ * router builds its SET clause only from the keys present in the body. Sharing the create
+ * path's drop-the-key rule therefore made clearing an artist's colour a silent no-op: the
+ * dialog closed with no error, and the artist plus every project shade derived from it kept
+ * the old value (SHL-06).
  */
-function resetEmptyColor(values: Record<string, string | null>): Record<string, string | null> {
-  return values.color ? values : { ...values, color: ARTIST_DEFAULT_COLOR };
+function artistUpdatePayload(v: Record<string, string | null>): ArtistUpdate {
+  return { name: v.name ?? '', image: v.image, color: v.color || ARTIST_DEFAULT_COLOR };
+}
+
+/**
+ * Both project arms: `artist_id` is the caller's, never the form's, so the create site supplies
+ * it and the edit site leaves it alone. An empty colour stays `null` here — a project with no
+ * explicit colour renders the inherited shade, which is a real state rather than a missing one.
+ */
+function projectPayload(v: Record<string, string | null>): Omit<ProjectCreate, 'artist_id'> {
+  return { code: v.code ?? '', name: v.name ?? '', status: v.status, color: v.color };
 }
 
 export function NewArtistButton() {
@@ -64,7 +84,7 @@ export function NewArtistButton() {
           fields={ARTIST_FIELDS}
           initial={{ color: pickArtistColor(artists.map((a) => a.color)) }}
           onSubmit={async (v) => {
-            await api.artists.create(stripEmptyColor(v));
+            await api.artists.create(artistCreatePayload(v));
             await invalidate();
           }}
           onClose={() => setOpen(false)}
@@ -94,7 +114,7 @@ export function EditArtistButton({ artist }: { artist: Artist }) {
             await undoablePatch({
               res: api.artists,
               row: artist,
-              patch: resetEmptyColor(v),
+              patch: artistUpdatePayload(v),
               label: `Änderung an ${artistLabel}`,
             });
           }}
@@ -140,7 +160,7 @@ export function NewProjectButton({ artistId, artistColor }: { artistId: number; 
           )}
           initial={{ status: statuses[0]?.value ?? '' }}
           onSubmit={async (v) => {
-            await api.projects.create({ ...v, artist_id: artistId });
+            await api.projects.create({ ...projectPayload(v), artist_id: artistId });
             await invalidate();
           }}
           onClose={() => setOpen(false)}
@@ -174,7 +194,7 @@ export function EditProjectButton({ project, artistColor }: { project: Project; 
             await undoablePatch({
               res: api.projects,
               row: project,
-              patch: v,
+              patch: projectPayload(v),
               label: 'Änderung am Projekt',
             });
           }}
