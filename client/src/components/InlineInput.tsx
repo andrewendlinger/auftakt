@@ -65,6 +65,13 @@ export function InlineInput(props: Props) {
     return trimmed === '' || trimmed === value ? undefined : trimmed;
   };
 
+  const write = async (next: string | null) => {
+    const call = props.empty === 'clear' ? props.onCommit(next) : props.onCommit(next as string);
+    return guard(errorMessage ?? 'Die Änderung konnte nicht gespeichert werden.', () =>
+      Promise.resolve(call),
+    );
+  };
+
   const commit = async () => {
     if (settled.current) return;
     settled.current = true;
@@ -73,11 +80,7 @@ export function InlineInput(props: Props) {
       onDone();
       return;
     }
-    const write = props.empty === 'clear' ? props.onCommit(next) : props.onCommit(next as string);
-    const ok = await guard(errorMessage ?? 'Die Änderung konnte nicht gespeichert werden.', () =>
-      Promise.resolve(write),
-    );
-    if (ok) onDone();
+    if (await write(next)) onDone();
     else settled.current = false;
   };
 
@@ -87,7 +90,22 @@ export function InlineInput(props: Props) {
     onDone();
   };
 
-  useCommitOnUnmount(true, () => void commit());
+  /**
+   * The unmount arm writes but never calls `onDone`.
+   *
+   * Leaving edit mode is the *parent's* state, and by the time we are unmounting it has either
+   * changed already or is about to go away with us — but under StrictMode the mount-time
+   * cleanup runs while the editor is still very much open, and an `onDone()` there closed the
+   * input the instant it appeared. Restricting this arm to the write keeps it inert whenever
+   * there is nothing to save, which is exactly the state a spurious cleanup finds.
+   */
+  useCommitOnUnmount(true, () => {
+    if (settled.current) return;
+    const next = pending();
+    if (next === undefined) return;
+    settled.current = true;
+    void write(next);
+  });
 
   return (
     <input
