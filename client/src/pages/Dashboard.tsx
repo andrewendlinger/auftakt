@@ -21,7 +21,12 @@ import {
   type SectionGroup,
 } from '../components/CustomSections';
 import type { LabelKey } from '../lib/labels';
-import { useAllTasks, useLabel, useTaskStatsConfig } from '../hooks';
+import {
+  useAllTasks,
+  useGlobalColumns,
+  useLabel,
+  useTaskStatsConfig,
+} from '../hooks';
 
 /** Which heading names each section in the "Bereiche bearbeiten" strip. */
 const SECTION_LABEL_KEYS: Record<string, LabelKey> = {
@@ -44,10 +49,7 @@ export function Dashboard() {
     queryKey: ['dashboard'],
     queryFn: api.dashboard,
   });
-  const { data: customColumns = [] } = useQuery({
-    queryKey: ['customColumns', 'global'],
-    queryFn: () => api.customColumns.list({ scope: 'global' }),
-  });
+  const customColumns = useGlobalColumns();
   const { data: customSections = [] } = useQuery({
     queryKey: ['customSections', 'dashboard'],
     queryFn: () => api.customSections.list({ scope: 'dashboard' }),

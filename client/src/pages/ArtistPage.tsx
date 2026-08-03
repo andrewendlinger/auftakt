@@ -28,7 +28,13 @@ import { AttentionList } from '../components/AttentionList';
 import { EditArtistButton, NewProjectButton } from '../components/EntityButtons';
 import { ProjectStatusPill } from '../components/ProjectStatusPill';
 import { ExcelButton } from '../components/ExcelButton';
-import { useAllTasks, useEventTypeOptions, useTaskStatsConfig, useUndoablePatch } from '../hooks';
+import {
+  useAllTasks,
+  useEventTypeOptions,
+  useGlobalColumns,
+  useTaskStatsConfig,
+  useUndoablePatch,
+} from '../hooks';
 
 /** Which heading names each section in the "Bereiche bearbeiten" strip. */
 const SECTION_LABEL_KEYS: Record<string, LabelKey> = {
@@ -83,10 +89,7 @@ export function ArtistPage() {
     queryFn: () => api.tasks.list({ resolved_artist_id: artistId }),
     enabled: validId,
   });
-  const { data: customColumns = [] } = useQuery({
-    queryKey: ['customColumns', 'global'],
-    queryFn: () => api.customColumns.list({ scope: 'global' }),
-  });
+  const customColumns = useGlobalColumns();
   const { data: customSections = [] } = useQuery({
     queryKey: ['customSections', 'artist', artistId],
     queryFn: () => api.customSections.list({ artist_id: artistId }),

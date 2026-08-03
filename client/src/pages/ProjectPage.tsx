@@ -27,7 +27,13 @@ import {
 } from '../components/CustomSections';
 import { TaskStatChips } from '../components/TaskStatChips';
 import { AttentionList } from '../components/AttentionList';
-import { useAllTasks, useEventTypeOptions, useTaskStatsConfig, useUndoablePatch } from '../hooks';
+import {
+  useAllTasks,
+  useEventTypeOptions,
+  useGlobalColumns,
+  useTaskStatsConfig,
+  useUndoablePatch,
+} from '../hooks';
 
 /**
  * Which heading names each section in the "Bereiche bearbeiten" strip. `kontakte` holds two
@@ -88,10 +94,7 @@ export function ProjectPage() {
     queryFn: () => api.tasks.list({ project_id: projectId }),
     enabled: validId,
   });
-  const { data: globalCols = [] } = useQuery({
-    queryKey: ['customColumns', 'global'],
-    queryFn: () => api.customColumns.list({ scope: 'global' }),
-  });
+  const globalCols = useGlobalColumns();
   const { data: projectCols = [] } = useQuery({
     queryKey: ['customColumns', 'project', projectId],
     queryFn: () => api.customColumns.list({ scope: 'project', project_id: projectId }),

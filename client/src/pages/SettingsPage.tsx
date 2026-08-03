@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { NavLink, Outlet } from 'react-router-dom';
 import { api } from '../api/client';
 import type { CustomColumnOption, ReassignField, Season, WritableSettings } from '../api/types';
@@ -24,6 +23,7 @@ import { openExternal, type UpdateStatus } from '../lib/external';
 import {
   useErrorToast,
   useEventTypeOptions,
+  useGlobalColumns,
   useGuardedAction,
   useInvalidateAll,
   useLinkCategoryOptions,
@@ -111,10 +111,7 @@ export function SettingsTasksTab() {
   const taskSort = useTaskSort();
   const [managingColumns, setManagingColumns] = useState(false);
 
-  const { data: globalCols = [] } = useQuery({
-    queryKey: ['customColumns', 'global'],
-    queryFn: () => api.customColumns.list({ scope: 'global' }),
-  });
+  const globalCols = useGlobalColumns();
 
   if (isLoading) return <Spinner />;
   // Settings have no "not found" case — they either load or they don't (PGS-05).
