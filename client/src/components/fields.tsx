@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Btn, IconButton } from './ui';
 import { RichTextEditor } from './RichTextEditor';
 import { resizeToDataUrl } from '../lib/image';
@@ -12,6 +12,20 @@ const MODAL_WIDTH = {
   lg: 'w-[min(64rem,92vw)]',
   xl: 'w-[min(76rem,92vw)]',
 } as const;
+
+/**
+ * Nesting depth of the `Modal` a subtree sits in — 0 outside any dialog.
+ *
+ * Escape used to close *every* open Modal at once: each one registered its own unconditional
+ * `window` listener, so dismissing `ColumnEditModal` also tore down „Spalten verwalten"
+ * underneath it and threw away the option edits (TTU-16). Only the topmost layer may act, and
+ * depth is how we identify it — deliberately *not* a mount-order stack, because React runs
+ * effects child-first and would register a nested dialog before its own parent.
+ */
+const ModalDepthCtx = createContext(0);
+
+/** Depth of every mounted Modal, keyed by instance token. Read at keydown time, not render. */
+const openModals = new Map<object, number>();
 
 export function Modal({
   title,
@@ -31,13 +45,29 @@ export function Modal({
   size?: keyof typeof MODAL_WIDTH;
 }) {
   const width = MODAL_WIDTH[size ?? (wide ? 'xl' : 'md')];
+  const depth = useContext(ModalDepthCtx) + 1;
+
+  useEffect(() => {
+    const token = {};
+    openModals.set(token, depth);
+    return () => {
+      openModals.delete(token);
+    };
+  }, [depth]);
+
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      // A layer that handled the key for itself (RichTextEditor's link bar and emoji picker)
+      // marks it; anything below the topmost dialog stays out of the way entirely.
+      let top = 0;
+      for (const d of openModals.values()) top = Math.max(top, d);
+      if (depth !== top) return;
+      onClose();
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }, [onClose]);
+  }, [onClose, depth]);
 
   return (
     <div
@@ -56,7 +86,9 @@ export function Modal({
             ✕
           </IconButton>
         </div>
-        <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        <ModalDepthCtx.Provider value={depth}>
+          <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        </ModalDepthCtx.Provider>
         {footer && (
           <div className="flex shrink-0 justify-end gap-2 border-t border-neutral-100 px-5 py-3">
             {footer}
