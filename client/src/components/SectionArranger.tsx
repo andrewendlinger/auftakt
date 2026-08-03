@@ -1,5 +1,4 @@
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
-import { api } from '../api/client';
 import type { LayoutEntry } from '../api/types';
 import { arrayMoveTo } from '../lib/arrays';
 import { useDragReorder } from '../lib/dragReorder';
@@ -7,9 +6,38 @@ import { Btn } from './ui';
 import { Modal } from './fields';
 import { TrashIcon } from './icons';
 import type { LabelKey } from '../lib/labels';
-import { useInvalidateAll, useLabel, useSettings } from '../hooks';
+import { useLabel, useSettingsArray } from '../hooks';
 
 type LayoutKey = 'artist_layout' | 'project_layout' | 'dashboard_layout';
+
+/**
+ * Shape-normalise a stored layout: legacy `string[]` layouts read as all-full entries, and a
+ * hand-edited or foreign value that is not an array reads as "no layout" rather than throwing
+ * mid-render (PGS-15). Module-level because `useSettingsArray` takes it as a memo dep.
+ *
+ * Only the shape. The page-dependent half — the `hidden` self-heal, this page's own new keys,
+ * which entries are visible here — stays in the component, which is where the props are.
+ */
+function parseLayoutEntries(raw: unknown): LayoutEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: LayoutEntry[] = [];
+  for (const item of raw as unknown[]) {
+    if (typeof item === 'string') {
+      if (item) out.push({ key: item, width: 'full' });
+      continue;
+    }
+    if (!item || typeof item !== 'object') continue;
+    const e = item as LayoutEntry;
+    const key = String(e.key ?? '');
+    if (!key) continue;
+    out.push({
+      key,
+      width: e.width === 'half' ? 'half' : 'full',
+      ...(e.hidden === true ? { hidden: true } : {}),
+    });
+  }
+  return out;
+}
 
 /**
  * Renders a page's sections in a user-defined layout (order + per-section width),
@@ -32,32 +60,24 @@ type LayoutKey = 'artist_layout' | 'project_layout' | 'dashboard_layout';
  * built-in (`hidden: true` on its entry) or soft-deletes a custom widget (`onRemoveCustom`).
  * Hidden sections are simply not rendered — re-adding goes through the "+ Bereich" picker,
  * which `addAction` receives the hidden keys and a restore callback for.
+ *
+ * **Every mutation is computed from `full` and `full` has to be current**, which is why both
+ * persistence arms publish the value they write before awaiting it. An arrange action is a
+ * click, and the previous one's invalidate → refetch takes hundreds of milliseconds on a real
+ * season: without the publish, the second gesture is computed from the pre-first-gesture array
+ * and silently replaces it. Drag „Termine" above „Kontakte", then hit „◧ Halbe Breite" on it —
+ * the drag was lost; 🗑 a section then toggle a width — the removed section is back (SHL-10).
  */
-export function SectionArranger({
-  layoutKey,
-  layout: layoutProp,
-  onPersist,
-  sections,
-  labelKeys,
-  titles = {},
-  mandatoryKeys,
-  defaultHidden = [],
-  fullWidthKeys = [],
-  nonEmptyKeys = [],
-  toolbarAfterKey,
-  onRemoveCustom,
-  removeCustomCopy = {
-    body: 'samt Inhalt in den Papierkorb verschieben? Du kannst den Bereich im Archiv wiederherstellen.',
-    confirm: 'In den Papierkorb',
-  },
-  addAction,
-}: {
+export interface SectionArrangerProps {
   /** Settings key holding the layout — the default persistence. Omit when `layout` + `onPersist` are given. */
   layoutKey?: LayoutKey;
   /** Stored entries when the page persists elsewhere (the landing: seasons.json via /api/landing). */
   layout?: LayoutEntry[];
-  /** Write-back override, paired with `layout`. */
-  onPersist?: (next: LayoutEntry[]) => Promise<void>;
+  /**
+   * Write-back override, paired with `layout`. Must report its own failures and must publish the
+   * value it writes before awaiting, the way `useSettingsArray` does — see `Arranger`.
+   */
+  onPersist?: (next: LayoutEntry[]) => Promise<unknown>;
   sections: Record<string, ReactNode>;
   /**
    * Section key → the heading id it is named by, so the strip below shows whatever the user
@@ -94,11 +114,52 @@ export function SectionArranger({
     restore: (key: string) => void;
     prepend: (key: string) => void;
   }) => ReactNode;
-}) {
+}
+
+/**
+ * Two persistence modes, one view. A page either names a settings key or brings its own layout
+ * and write-back; the split is here rather than inside the view so the settings hook is called
+ * unconditionally in the arm that has a key. No hooks run in this function, so the guard below
+ * is a plain argument check.
+ */
+export function SectionArranger(props: SectionArrangerProps) {
+  const { layoutKey, layout, onPersist } = props;
   if (!layoutKey && !onPersist) throw new Error('SectionArranger needs layoutKey or layout+onPersist');
-  const { data: settings } = useSettings();
+  return layoutKey ? (
+    <SettingsArranger {...props} layoutKey={layoutKey} />
+  ) : (
+    <Arranger {...props} layout={layout ?? []} onPersist={onPersist!} />
+  );
+}
+
+/** The settings-backed arm: `useSettingsArray` owns the write, the cache publish and the toast. */
+function SettingsArranger({ layoutKey, ...rest }: SectionArrangerProps & { layoutKey: LayoutKey }) {
+  const { value, write } = useSettingsArray(layoutKey, parseLayoutEntries);
+  return <Arranger {...rest} layout={value} onPersist={write} />;
+}
+
+function Arranger({
+  layout,
+  onPersist: persist,
+  sections,
+  labelKeys,
+  titles = {},
+  mandatoryKeys,
+  defaultHidden = [],
+  fullWidthKeys = [],
+  nonEmptyKeys = [],
+  toolbarAfterKey,
+  onRemoveCustom,
+  removeCustomCopy = {
+    body: 'samt Inhalt in den Papierkorb verschieben? Du kannst den Bereich im Archiv wiederherstellen.',
+    confirm: 'In den Papierkorb',
+  },
+  addAction,
+}: SectionArrangerProps & {
+  layout: LayoutEntry[];
+  onPersist: (next: LayoutEntry[]) => Promise<unknown>;
+}) {
   const label = useLabel();
-  const invalidate = useInvalidateAll();
   const [arranging, setArranging] = useState(false);
   // 🗑 on a *filled* section opens a dialog first: built-ins get a "must be emptied"
   // explanation, custom widgets a confirm that their content moves to the trash with them.
@@ -113,27 +174,16 @@ export function SectionArranger({
   const mandatorySig = mandatoryKeys.join(' ');
   const defaultHiddenSig = defaultHidden.join(' ');
 
-  const raw = layoutProp !== undefined ? layoutProp : layoutKey ? settings?.[layoutKey] : undefined;
-
   const { full, display, hiddenKeys } = useMemo(() => {
     const known = Object.keys(sections);
-    const stored: LayoutEntry[] = Array.isArray(raw)
-      ? (raw as unknown[]).map((item) => {
-          if (typeof item === 'string') return { key: item, width: 'full' as const };
-          const e = item as LayoutEntry;
-          const key = String(e.key);
-          return {
-            key,
-            width: e.width === 'half' ? ('half' as const) : ('full' as const),
-            // `hidden` only ever applies to built-ins (keys with a LabelKey): custom widgets
-            // are soft-deleted rows, and a mandatory section must never disappear even if a
-            // stale entry claims so — both self-heal here on read.
-            ...(e.hidden === true && key in labelKeys && !mandatoryKeys.includes(key)
-              ? { hidden: true }
-              : {}),
-          };
-        })
-      : [];
+    // `hidden` only ever applies to built-ins (keys with a LabelKey): custom widgets are
+    // soft-deleted rows, and a mandatory section must never disappear even if a stale entry
+    // claims so — both self-heal here on read.
+    const stored: LayoutEntry[] = layout.map(({ key, width, hidden }) => ({
+      key,
+      width,
+      ...(hidden === true && key in labelKeys && !mandatoryKeys.includes(key) ? { hidden: true } : {}),
+    }));
     const seen = new Set<string>();
     const full: LayoutEntry[] = [];
     for (const e of stored) {
@@ -153,16 +203,7 @@ export function SectionArranger({
     const hiddenKeys = full.filter((e) => known.includes(e.key) && e.hidden).map((e) => e.key);
     return { full, display, hiddenKeys };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the *Sig strings capture the only content used
-  }, [sectionSig, raw, fullWidthSig, mandatorySig, defaultHiddenSig]);
-
-  const persist = async (next: LayoutEntry[]) => {
-    if (onPersist) {
-      await onPersist(next);
-      return;
-    }
-    await api.patchSettings({ [layoutKey!]: next });
-    await invalidate();
-  };
+  }, [sectionSig, layout, fullWidthSig, mandatorySig, defaultHiddenSig]);
 
   const idxInFull = (key: string) => full.findIndex((e) => e.key === key);
 
@@ -217,11 +258,11 @@ export function SectionArranger({
 
   const drag = useDragReorder<string>({
     enabled: arranging,
-    onReorder: (fromKey, toKey) => {
+    onReorder: async (fromKey, toKey) => {
       const next = arrayMoveTo(full, idxInFull(fromKey), idxInFull(toKey));
-      // Hand the promise back rather than `void`-ing it: the hook awaits it and toasts a
+      // Awaited rather than `void`-ed: the hook awaits what it gets back and toasts a
       // rejection, so a layout that failed to save no longer just snaps back silently (CCL-13).
-      if (next !== full) return persist(next);
+      if (next !== full) await persist(next);
     },
   });
 

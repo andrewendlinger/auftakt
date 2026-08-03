@@ -43,7 +43,7 @@ export function LandingPage() {
     queryFn: api.seasons,
   });
   const { data: stats } = useQuery({ queryKey: ['seasonStats'], queryFn: api.seasonStats });
-  const { data: landing } = useLanding();
+  const { data: landing, patch: patchLanding } = useLanding();
   const navigate = useNavigate();
   const toast = useToast();
   const report = useErrorToast();
@@ -166,10 +166,7 @@ export function LandingPage() {
       {landing ? (
         <SectionArranger
           layout={landing.layout.length ? landing.layout : DEFAULT_LANDING_LAYOUT}
-          onPersist={async (next) => {
-            await api.landing.patch({ layout: next });
-            await invalidate();
-          }}
+          onPersist={(next) => patchLanding({ layout: next })}
           sections={sections}
           labelKeys={{ notizen: 'landing.notizen', dokumente: 'landing.dokumente' }}
           titles={titles}
