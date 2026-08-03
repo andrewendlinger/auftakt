@@ -17,7 +17,7 @@ import {
 import { NewSeasonModal, reloadToDashboard } from '../components/SeasonModals';
 import { SectionArranger } from '../components/SectionArranger';
 import { useToast } from '../components/Toast';
-import { useErrorToast, useInvalidateAll, useLabel, useSeasonTerm } from '../hooks';
+import { useErrorToast, useInvalidateAll, useLabel, useLanding, useSeasonTerm } from '../hooks';
 import { useListReorder, type DragReorder } from '../lib/dragReorder';
 import { formatDate } from '../lib/dates';
 
@@ -42,7 +42,7 @@ export function LandingPage() {
     queryFn: api.seasons,
   });
   const { data: stats } = useQuery({ queryKey: ['seasonStats'], queryFn: api.seasonStats });
-  const { data: landing } = useQuery({ queryKey: ['landing'], queryFn: api.landing.get });
+  const { data: landing } = useLanding();
   const navigate = useNavigate();
   const toast = useToast();
   const report = useErrorToast();
@@ -142,9 +142,9 @@ export function LandingPage() {
     for (const s of landing.sections) {
       sections[landingSectionKey(s)] =
         s.type === 'links' ? (
-          <LandingLinksSection section={s} all={landing.sections} />
+          <LandingLinksSection section={s} />
         ) : (
-          <LandingTextSection section={s} all={landing.sections} />
+          <LandingTextSection section={s} />
         );
       titles[landingSectionKey(s)] = s.name;
     }
@@ -182,7 +182,6 @@ export function LandingPage() {
           onRemoveCustom={removeLandingSection}
           addAction={({ hiddenKeys, restore, prepend }) => (
             <AddLandingSectionButton
-              landing={landing}
               hiddenKeys={hiddenKeys}
               hiddenNames={{ notizen: label('landing.notizen'), dokumente: label('landing.dokumente') }}
               onRestore={restore}

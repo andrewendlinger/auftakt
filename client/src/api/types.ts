@@ -283,6 +283,18 @@ export type LandingSectionInput = Omit<LandingSection, 'id' | 'documents'> & {
   documents?: LandingDocInput[];
 };
 
+/**
+ * A landing write. Every key present replaces its whole value — the registry stores what it is
+ * given, it does not merge — which is why the caller has to compute each array from the list as
+ * it is *now* (`useLanding().current()`) rather than from a render snapshot.
+ */
+export interface LandingPatch {
+  notes?: string | null;
+  documents?: LandingDocInput[];
+  layout?: LayoutEntry[];
+  sections?: LandingSectionInput[];
+}
+
 /** One section's placement in a page layout: its key and how wide it renders. */
 export interface LayoutEntry {
   key: string;

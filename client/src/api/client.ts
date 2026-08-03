@@ -9,9 +9,7 @@ import type {
   EventItem,
   ID,
   LandingContent,
-  LandingDocInput,
-  LandingSectionInput,
-  LayoutEntry,
+  LandingPatch,
   LinkItem,
   OptionReassign,
   OptionUsage,
@@ -147,11 +145,6 @@ export const api = {
   /** Cross-season landing-page content (Notizen, Dokumente, Textfelder, Layout). */
   landing: {
     get: () => http<LandingContent>('GET', '/landing'),
-    patch: (patch: {
-      notes?: string | null;
-      documents?: LandingDocInput[];
-      layout?: LayoutEntry[];
-      sections?: LandingSectionInput[];
-    }) => http<LandingContent>('PATCH', '/landing', patch),
+    patch: (patch: LandingPatch) => http<LandingContent>('PATCH', '/landing', patch),
   },
 };

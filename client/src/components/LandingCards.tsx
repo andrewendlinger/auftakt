@@ -14,7 +14,7 @@ import { EditableText } from './EditableText';
 import { InlineNotes } from './InlineNotes';
 import { TrashIcon } from './icons';
 import { openExternal } from '../lib/external';
-import { useInvalidateAll, useUndoableDelete } from '../hooks';
+import { useLanding, useUndoableDelete } from '../hooks';
 
 /**
  * The landing page's content sections below the season grid. Everything here is
@@ -26,16 +26,23 @@ import { useInvalidateAll, useUndoableDelete } from '../hooks';
 
 export const landingSectionKey = (s: LandingSection): string => `lt${s.id}`;
 
+/**
+ * Replace the landing's sections, computed from the list as it is *now*.
+ *
+ * The `all` prop this replaced was a render snapshot shared by every section on the page, so a
+ * write issued from one section — or an undo landing seconds after it was armed — carried the
+ * other sections back to how they looked at that render, reverting a rename or a note the user
+ * had typed in between (SHL-01, SHL-02).
+ */
 function usePatchSections() {
-  const invalidate = useInvalidateAll();
-  return async (sections: LandingSectionInput[]) => {
-    await api.landing.patch({ sections });
-    await invalidate();
+  const { current, patch } = useLanding();
+  return async (update: (sections: LandingSection[]) => LandingSectionInput[]) => {
+    await patch({ sections: update(current()?.sections ?? []) });
   };
 }
 
 export function LandingNotesSection({ landing }: { landing: LandingContent }) {
-  const invalidate = useInvalidateAll();
+  const { patch } = useLanding();
   return (
     <div>
       <SectionTitle>
@@ -46,8 +53,7 @@ export function LandingNotesSection({ landing }: { landing: LandingContent }) {
           value={landing.notes}
           placeholder="+ Notiz hinzufügen"
           onSave={async (notes) => {
-            await api.landing.patch({ notes });
-            await invalidate();
+            await patch({ notes });
           }}
         />
       </Card>
@@ -61,17 +67,23 @@ const DOC_FIELDS: FieldDef[] = [
 ];
 
 /**
- * A document list plus its add/edit modal and snapshot-undo delete, parameterized by
- * where the docs live: the builtin Dokumente section patches `landing.documents`, a
- * custom links section patches its own `documents` inside the sections array.
+ * A document list plus its add/edit modal and undoable delete, parameterized by where the docs
+ * live: the builtin Dokumente section patches `landing.documents`, a custom links section
+ * patches its own `documents` inside the sections array.
+ *
+ * `read` is that same location read at *write* time. Every mutation here computes a whole new
+ * array, and the `docs` prop is only as fresh as the last render — see `remove`.
  */
 function DocList({
   docs,
+  read,
   creating,
   onCloseCreate,
   onPatch,
 }: {
   docs: LandingDoc[];
+  /** The current contents of the list `onPatch` writes to. */
+  read: () => LandingDoc[];
   /** The "+ Dokument" button lives in the section title — the parent owns this state. */
   creating: boolean;
   onCloseCreate: () => void;
@@ -83,20 +95,29 @@ function DocList({
   const save = async (values: Record<string, string | null>) => {
     const label = values.label ?? '';
     const url = values.url ?? null;
+    const now = read();
     if (editing) {
-      await onPatch(docs.map((d) => (d.id === editing.id ? { ...d, label, url } : d)));
+      await onPatch(now.map((d) => (d.id === editing.id ? { ...d, label, url } : d)));
     } else {
-      await onPatch([...docs, { label, url }]); // id-less; the server assigns
+      await onPatch([...now, { label, url }]); // id-less; the server assigns
     }
   };
 
   const remove = (doc: LandingDoc) => {
-    // Restore posts the pre-delete snapshot back verbatim — id and position intact.
-    const before = docs;
+    // Both arms read the list as it is when they run, and the undo re-inserts this one document
+    // at the index it held. Posting the captured pre-delete array back instead — which is what
+    // this did — replayed the whole list six seconds later: a document added in the meantime was
+    // destroyed, a second one deleted came back, an edit to a third was reverted, all from one
+    // „Rückgängig" click and with nothing to recover any of it from (SHL-01).
+    const index = docs.findIndex((d) => d.id === doc.id);
     return del({
       label: `Dokument „${doc.label}“`,
-      remove: () => onPatch(before.filter((d) => d.id !== doc.id)),
-      restore: () => onPatch(before),
+      remove: () => onPatch(read().filter((d) => d.id !== doc.id)),
+      restore: () => {
+        const next = [...read()];
+        next.splice(index < 0 ? next.length : Math.min(index, next.length), 0, doc);
+        return onPatch(next);
+      },
     });
   };
 
@@ -156,7 +177,7 @@ function DocList({
 
 /** The builtin Dokumente section, backed by the top-level `landing.documents`. */
 export function LandingDocsSection({ landing }: { landing: LandingContent }) {
-  const invalidate = useInvalidateAll();
+  const { current, patch } = useLanding();
   const [creating, setCreating] = useState(false);
   return (
     <div>
@@ -165,11 +186,11 @@ export function LandingDocsSection({ landing }: { landing: LandingContent }) {
       </SectionTitle>
       <DocList
         docs={landing.documents}
+        read={() => current()?.documents ?? []}
         creating={creating}
         onCloseCreate={() => setCreating(false)}
         onPatch={async (documents) => {
-          await api.landing.patch({ documents });
-          await invalidate();
+          await patch({ documents });
         }}
       />
     </div>
@@ -177,22 +198,24 @@ export function LandingDocsSection({ landing }: { landing: LandingContent }) {
 }
 
 /** One custom Textfeld: renameable title, InlineNotes body — the registry twin of a text widget. */
-export function LandingTextSection({ section, all }: { section: LandingSection; all: LandingSection[] }) {
+export function LandingTextSection({ section }: { section: LandingSection }) {
   const patchSections = usePatchSections();
+  const set = (fields: Partial<LandingSection>) =>
+    patchSections((all) => all.map((s) => (s.id === section.id ? { ...s, ...fields } : s)));
   return (
     <div>
       <SectionTitle>
         <EditableText
           value={section.name}
           inputClassName="uppercase"
-          onSave={(name) => patchSections(all.map((s) => (s.id === section.id ? { ...s, name } : s)))}
+          onSave={(name) => set({ name })}
         />
       </SectionTitle>
       <Card className="p-5">
         <InlineNotes
           value={section.value}
           placeholder="+ Notiz hinzufügen"
-          onSave={(value) => patchSections(all.map((s) => (s.id === section.id ? { ...s, value } : s)))}
+          onSave={(value) => set({ value })}
         />
       </Card>
     </div>
@@ -200,7 +223,8 @@ export function LandingTextSection({ section, all }: { section: LandingSection; 
 }
 
 /** One custom Dokumente list: renameable title, its own documents inside the section row. */
-export function LandingLinksSection({ section, all }: { section: LandingSection; all: LandingSection[] }) {
+export function LandingLinksSection({ section }: { section: LandingSection }) {
+  const { current } = useLanding();
   const patchSections = usePatchSections();
   const [creating, setCreating] = useState(false);
   return (
@@ -209,15 +233,18 @@ export function LandingLinksSection({ section, all }: { section: LandingSection;
         <EditableText
           value={section.name}
           inputClassName="uppercase"
-          onSave={(name) => patchSections(all.map((s) => (s.id === section.id ? { ...s, name } : s)))}
+          onSave={(name) =>
+            patchSections((all) => all.map((s) => (s.id === section.id ? { ...s, name } : s)))
+          }
         />
       </SectionTitle>
       <DocList
         docs={section.documents ?? []}
+        read={() => current()?.sections.find((s) => s.id === section.id)?.documents ?? []}
         creating={creating}
         onCloseCreate={() => setCreating(false)}
         onPatch={(documents) =>
-          patchSections(all.map((s) => (s.id === section.id ? { ...s, documents } : s)))
+          patchSections((all) => all.map((s) => (s.id === section.id ? { ...s, documents } : s)))
         }
       />
     </div>
@@ -251,20 +278,18 @@ const CUSTOM_TYPES: Array<{ type: LandingSection['type']; label: string }> = [
  * built-ins to restore.
  */
 export function AddLandingSectionButton({
-  landing,
   hiddenKeys,
   hiddenNames,
   onRestore,
   onPrepend,
 }: {
-  landing: LandingContent;
   hiddenKeys: string[];
   /** Display names for the hidden built-ins (already label-resolved by the caller). */
   hiddenNames: Record<string, string>;
   onRestore: (key: string) => void;
   onPrepend: (key: string) => void;
 }) {
-  const invalidate = useInvalidateAll();
+  const { current, patch } = useLanding();
   const [open, setOpen] = useState(false);
   const [chosen, setChosen] = useState<LandingSection['type'] | null>(null);
   const [name, setName] = useState('');
@@ -280,11 +305,12 @@ export function AddLandingSectionButton({
     if (!name.trim() || !chosen || busy) return;
     setBusy(true);
     try {
-      const res = await api.landing.patch({
-        sections: [...landing.sections, { name: name.trim(), type: chosen, value: null }],
+      // Appended to the sections as they are now: a section added or deleted since this modal
+      // opened would otherwise be undone by the act of adding another one.
+      const res = await patch({
+        sections: [...(current()?.sections ?? []), { name: name.trim(), type: chosen, value: null }],
       });
       const created = res.sections.reduce((a, b) => (a.id > b.id ? a : b));
-      await invalidate();
       onPrepend(landingSectionKey(created));
       close();
     } finally {

@@ -5,6 +5,9 @@ import type {
   CustomColumnOption,
   ID,
   LabelOverride,
+  LandingContent,
+  LandingDocInput,
+  LandingPatch,
   OptionUsage,
   Settings,
   TaskSortRule,
@@ -266,6 +269,72 @@ export function useSettingsArray<T>(
     [qc, key, guard, invalidate],
   );
   return { value, write };
+}
+
+/**
+ * The cross-season landing content and the write that saves it — the `['landing']` twin of
+ * `useSettingsArray`, for the same reason.
+ *
+ * Landing content is one blob in `seasons.json` and every key of a PATCH replaces its whole
+ * array, so each write has to compute that array from somewhere. Computing it from the copy the
+ * component rendered with is a lost update: that copy is only refreshed by the invalidate →
+ * refetch the *previous* write started, so anything done inside that window is built on a
+ * pre-edit snapshot and silently overwrites it.
+ *
+ * Undo made it worse than a race. `restore` used to post the captured pre-delete array back
+ * verbatim, so one „Rückgängig" six seconds later rolled back every landing edit made since the
+ * delete — a document added, another renamed, a second one deleted — and unlike a soft-deleted
+ * row there is no Papierkorb to get any of it back from (SHL-01, SHL-02).
+ *
+ * `current()` is the answer for a closure that runs later: read the list as it is *now*.
+ * `patch` publishes its own value into the cache before awaiting, so an edit issued inside the
+ * round trip composes with the pending one instead of replacing it.
+ *
+ * Unlike `useSettingsArray` this **throws** instead of guarding: `useUndoableDelete`,
+ * `RecordFormModal`, `InlineNotes` and `EditableText` all own a catch → German toast already,
+ * and swallowing the rejection here would raise a „Rückgängig" toast for a delete that never
+ * happened.
+ */
+export function useLanding(): {
+  data: LandingContent | undefined;
+  /** The content as it is now, not as it was when the caller rendered. */
+  current: () => LandingContent | undefined;
+  patch: (next: LandingPatch) => Promise<LandingContent>;
+} {
+  const qc = useQueryClient();
+  const invalidate = useInvalidateAll();
+  const { data } = useQuery({ queryKey: ['landing'], queryFn: api.landing.get });
+  const current = useCallback(() => qc.getQueryData<LandingContent>(['landing']), [qc]);
+  const patch = useCallback(
+    async (next: LandingPatch) => {
+      // Publish before awaiting so the next reader — including an editor the user clicks 200 ms
+      // later — computes from this value. Skipped when the patch adds a row: ids are the
+      // server's to assign, and rendering an id-less row would break the list keys (and the
+      // ✎/🗑 that address rows by id) for the length of one request. The response below covers
+      // that case a few milliseconds later.
+      if (rowsAllHaveIds(next)) {
+        qc.setQueryData<LandingContent>(['landing'], (old) =>
+          old ? ({ ...old, ...next } as LandingContent) : old,
+        );
+      }
+      try {
+        const res = await api.landing.patch(next);
+        qc.setQueryData<LandingContent>(['landing'], res);
+        return res;
+      } finally {
+        // Also on the failure path: the optimistic value above must not outlive a rejected write.
+        await invalidate();
+      }
+    },
+    [qc, invalidate],
+  );
+  return { data, current, patch };
+}
+
+/** Whether every row this patch carries already has a server-assigned id. */
+function rowsAllHaveIds(patch: LandingPatch): boolean {
+  const docs = (list?: LandingDocInput[]) => (list ?? []).every((d) => d.id != null);
+  return docs(patch.documents) && (patch.sections ?? []).every((s) => s.id != null && docs(s.documents));
 }
 
 /**
