@@ -52,6 +52,12 @@ export function EventEditor({
   const [location, setLocation] = useState(event?.location ?? '');
   const [notes, setNotes] = useState(event?.notes ?? '');
   const [busy, setBusy] = useState(false);
+  const [titleTouched, setTitleTouched] = useState(false);
+  // The only required-field check used to be an invisible `return` in `submit`, with Speichern
+  // still enabled and „Titel *" unmarked: clicking it did nothing at all, not even a busy
+  // state, so users concluded the dialog was broken and left via Abbrechen or Escape — losing
+  // everything they had typed, rich-text notes included (RTE-10).
+  const missingTitle = !title.trim();
 
   // A stray backdrop click used to discard the whole dialog; it asks first once anything has
   // been entered (TTU-17). Compared against what the dialog opened with, not against defaults.
@@ -70,7 +76,7 @@ export function EventEditor({
     set(day === '' ? '' : `${day}T${current.slice(11) || fallback}`);
 
   const submit = async () => {
-    if (!title.trim()) return;
+    if (missingTitle) return;
     setBusy(true);
     const payload = {
       artist_id: event ? event.artist_id : (parent.artist_id ?? null),
@@ -106,8 +112,11 @@ export function EventEditor({
       dirty={dirty}
       footer={
         <>
+          {missingTitle && (
+            <p className="mr-auto self-center text-xs text-neutral-500">Bitte ausfüllen: Titel</p>
+          )}
           <Btn onClick={onClose}>Abbrechen</Btn>
-          <Btn variant="primary" onClick={submit} disabled={busy}>
+          <Btn variant="primary" onClick={submit} disabled={busy || missingTitle}>
             Speichern
           </Btn>
         </>
@@ -136,7 +145,12 @@ export function EventEditor({
         </div>
         <div className="col-span-2">
           <Label>Titel *</Label>
-          <TextInput value={title} onChange={(e) => setTitle(e.target.value)} />
+          <TextInput
+            value={title}
+            invalid={missingTitle && titleTouched}
+            onBlur={() => setTitleTouched(true)}
+            onChange={(e) => setTitle(e.target.value)}
+          />
         </div>
         <div className="col-span-2 sm:col-span-1">
           <Label>Beginn</Label>
