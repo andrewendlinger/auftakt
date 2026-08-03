@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { ID } from '../api/types';
 import { reloadToDashboard } from './SeasonModals';
-import { useErrorToast, useSeasonTerm } from '../hooks';
+import {
+  useErrorToast,
+  useSeasons,
+  useSeasonTerm,
+} from '../hooks';
 
 /**
  * Quick season switch in the header. Each season is its own SQLite file; switching
@@ -13,7 +16,7 @@ import { useErrorToast, useSeasonTerm } from '../hooks';
  * the landing page („Alle …" below), Löschen deliberately only in Einstellungen.
  */
 export function SeasonSwitcher() {
-  const { data } = useQuery({ queryKey: ['seasons'], queryFn: api.seasons });
+  const { data } = useSeasons();
   const navigate = useNavigate();
   const term = useSeasonTerm();
   const report = useErrorToast();

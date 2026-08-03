@@ -132,6 +132,20 @@ export function useSettings() {
 }
 
 /**
+ * The seasons.json registry — the season list, which one is active, and the renameable term.
+ *
+ * The single reader of `['seasons']`, the way `useSettings` is the single reader of
+ * `['settings']`. The same `useQuery` literal used to be written out in six places, so giving
+ * the query a `staleTime`, a `select` or a `placeholderData` — to stop the switcher flashing
+ * during season activation, say — meant finding and editing all six, and missing one left that
+ * component on the old behaviour (CCL-28). Returns the whole result, since the landing page
+ * needs `isLoading`/`isError`/`refetch` and not just the data.
+ */
+export function useSeasons() {
+  return useQuery({ queryKey: ['seasons'], queryFn: api.seasons });
+}
+
+/**
  * The active season's name, read from the seasons.json registry — the one place a rename
  * always lands. The per-season `settings.saison` row is *not* it: renaming a season on the
  * landing page while it is inactive updates the registry only (updateSeason can write the
@@ -148,7 +162,7 @@ export function useSettings() {
  * including as the kicker of a printed one-pager. Consumers drop the fragment instead (CCL-33).
  */
 export function useSaison(): string {
-  const { data } = useQuery({ queryKey: ['seasons'], queryFn: api.seasons });
+  const { data } = useSeasons();
   return data?.seasons.find((s) => s.id === data.activeId)?.label ?? '';
 }
 
@@ -158,7 +172,7 @@ export function useSaison(): string {
  * rides on the ['seasons'] query the header switcher already fetches on every page.
  */
 export function useSeasonTerm(): { singular: string; plural: string } {
-  const { data } = useQuery({ queryKey: ['seasons'], queryFn: api.seasons });
+  const { data } = useSeasons();
   return {
     singular: data?.terms?.season?.trim() || 'Saison',
     plural: data?.terms?.seasonPlural?.trim() || 'Saisons',

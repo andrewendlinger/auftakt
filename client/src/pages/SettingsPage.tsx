@@ -29,6 +29,7 @@ import {
   useLinkCategoryOptions,
   useOptionUsage,
   useProjectStatusOptions,
+  useSeasons,
   useSeasonTerm,
   useSettings,
   useTaskSort,
@@ -254,7 +255,7 @@ export function SettingsCategoriesTab() {
 
 /** The season list with the only delete affordance in the app — deliberately not on the landing. */
 function SeasonManagementCard() {
-  const { data } = useQuery({ queryKey: ['seasons'], queryFn: api.seasons });
+  const { data } = useSeasons();
   const invalidate = useInvalidateAll();
   const guard = useGuardedAction();
   const toast = useToast();
@@ -316,7 +317,7 @@ function SeasonManagementCard() {
 
 /** The user-renameable word for a season, stored app-globally in seasons.json. */
 function SeasonTermCard() {
-  const { data } = useQuery({ queryKey: ['seasons'], queryFn: api.seasons });
+  const { data } = useSeasons();
   const invalidate = useInvalidateAll();
   const guard = useGuardedAction();
   const [singular, setSingular] = useState('');

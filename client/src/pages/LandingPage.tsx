@@ -24,6 +24,7 @@ import {
   useInvalidateAll,
   useLabel,
   useLanding,
+  useSeasons,
   useSeasonTerm,
 } from '../hooks';
 import { useListReorder, type DragReorder } from '../lib/dragReorder';
@@ -45,10 +46,7 @@ const DEFAULT_LANDING_LAYOUT: LayoutEntry[] = [
 ];
 
 export function LandingPage() {
-  const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['seasons'],
-    queryFn: api.seasons,
-  });
+  const { data, isLoading, isError, refetch } = useSeasons();
   const { data: stats } = useQuery({ queryKey: ['seasonStats'], queryFn: api.seasonStats });
   const { data: landing, patch: patchLanding } = useLanding();
   const navigate = useNavigate();
