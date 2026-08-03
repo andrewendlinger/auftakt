@@ -37,9 +37,11 @@ server/src/notion/
 # notes. Stays local — seed.ts falls back to sample data when absent.
 files/
 
-# code-review findings and the work packages driving the fixing sessions. Stays local: it
-# spells out vulnerabilities that are not fixed yet, and this repo is meant to go public —
-# committing it once would make them world-readable the day visibility flips, permanently.
+# the 2026-07 code review: findings, the 15 work packages, and the 81 verification scripts
+# they were checked with. Closed 2026-08-04 — nothing in it is an unfixed vulnerability and it
+# holds no personal data. It stays local because it is a historical record of defects that are
+# fixed, and the commit log is the better index of those: `git log --grep=CCL-24`. What was
+# worth keeping lives in docs/ARCHITECTURE.md, docs/DECISIONS.md and docs/VERIFYING.md.
 # Ignored rather than merely untracked so a stray `git add -A` cannot sweep it in.
 review/
 
