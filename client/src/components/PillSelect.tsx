@@ -10,6 +10,13 @@ import type { CustomColumnOption } from '../api/types';
  *
  * The menu is rendered in a portal with fixed positioning so it can't be clipped by
  * the task table's `overflow-x-auto` container (which happens when the table is short).
+ *
+ * Replacing a `<select>` means re-implementing the keyboard contract it came with, and none
+ * of it was there: no Escape, no arrow keys, no focus moved into the menu, no listbox roles.
+ * Because the menu portals to `document.body`, its options sat at the very end of the tab
+ * order behind the entire rest of the page, so Tab from the pill walked to the next cell
+ * control instead — and the menu, with its full-screen backdrop, stayed open over the table
+ * (RTE-11). Escape, ArrowUp/ArrowDown/Home/End, Enter and focus return are below.
  */
 export function PillSelect({
   value,
@@ -37,9 +44,24 @@ export function PillSelect({
     if (r) setPos({ left: r.left, top: r.bottom + 4, minWidth: r.width });
     setOpen(true);
   };
-  const pick = (v: string) => {
+  /** Close and hand focus back to the pill, so the keyboard user is where they started. */
+  const close = () => {
     setOpen(false);
+    btnRef.current?.focus();
+  };
+  const pick = (v: string) => {
+    close();
     if (v !== value) onChange(v);
+  };
+
+  const optionEls = () =>
+    Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? []);
+  const moveFocus = (delta: number) => {
+    const items = optionEls();
+    if (!items.length) return;
+    const at = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next = at < 0 ? (delta > 0 ? 0 : items.length - 1) : (at + delta + items.length) % items.length;
+    items[next]?.focus();
   };
 
   // Once the menu is in the DOM, refine its position: flip above the trigger when there's
@@ -62,6 +84,10 @@ export function PillSelect({
       const left = Math.max(margin, Math.min(r.left, window.innerWidth - menuW - margin));
       const top = flipUp ? Math.max(margin, r.top - 4 - Math.min(menu.scrollHeight, maxHeight)) : r.bottom + 4;
       setPos({ left, top, minWidth: r.width, maxHeight });
+      // Focus lands on the current option, not the top of the list, so ↑/↓ start from where
+      // the value already is — the behaviour the native select had.
+      const items = optionEls();
+      (items.find((el) => el.dataset.value === value) ?? items[0])?.focus();
     }
     const onScroll = (e: Event) => {
       if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) return;
@@ -82,7 +108,16 @@ export function PillSelect({
         ref={btnRef}
         type="button"
         disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
         onClick={() => (open ? setOpen(false) : openMenu())}
+        onKeyDown={(e) => {
+          if (open || disabled) return;
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            openMenu();
+          }
+        }}
         className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold transition hover:brightness-95 disabled:cursor-default"
         style={
           current
@@ -101,13 +136,41 @@ export function PillSelect({
             <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
             <div
               ref={menuRef}
+              role="listbox"
               className="fixed z-40 min-w-36 overflow-y-auto rounded-xl bg-white p-1 shadow-lg ring-1 ring-black/10"
               style={{ left: pos.left, top: pos.top, minWidth: pos.minWidth, maxHeight: pos.maxHeight }}
+              onKeyDown={(e) => {
+                // Escape must not travel on: a `Modal` listens for it on window and would
+                // close the whole dialog instead of just this menu.
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  close();
+                } else if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  moveFocus(1);
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  moveFocus(-1);
+                } else if (e.key === 'Home' || e.key === 'End') {
+                  e.preventDefault();
+                  const items = optionEls();
+                  (e.key === 'Home' ? items[0] : items[items.length - 1])?.focus();
+                } else if (e.key === 'Tab') {
+                  // The portal sits at the end of the document, so Tab out of it lands
+                  // nowhere useful — treat it as "done here" instead.
+                  e.preventDefault();
+                  close();
+                }
+              }}
             >
               {allowEmpty && (
                 <button
                   type="button"
-                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-neutral-100"
+                  role="option"
+                  data-value=""
+                  aria-selected={value === ''}
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-neutral-100 focus:bg-neutral-100 focus:outline-none"
                   onClick={() => pick('')}
                 >
                   <span className="h-3 w-3 shrink-0 rounded-full ring-1 ring-inset ring-neutral-300" />
@@ -118,7 +181,10 @@ export function PillSelect({
                 <button
                   key={o.value}
                   type="button"
-                  className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-neutral-100 ${
+                  role="option"
+                  data-value={o.value}
+                  aria-selected={o.value === value}
+                  className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-neutral-100 focus:bg-neutral-100 focus:outline-none ${
                     o.value === value ? 'bg-neutral-50 font-semibold' : ''
                   }`}
                   onClick={() => pick(o.value)}
