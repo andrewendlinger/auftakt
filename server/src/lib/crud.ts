@@ -47,6 +47,33 @@ function one(table: string, id: unknown): Row | undefined {
   return getDb().prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id) as Row | undefined;
 }
 
+/** `#rgb` / `#rrggbb`, with the `#` optional — exactly what hexToRgb (client/src/lib/colors.ts) parses. */
+const HEX_COLOR = /^#?(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+
+/**
+ * Refuse a `color` that is not a hex value, on every table that has one.
+ *
+ * `hexToRgb` already falls back to mid grey rather than parsing `„rot"` as black (CCL-12), which
+ * covers `withAlpha`/`projectShade`/`luminance`. But `artist.color` is *also* interpolated
+ * straight into `style={{ background }}` in places, and there a non-hex value is simply an
+ * invalid CSS declaration: no fallback, nothing painted. Guarding the render path row by row
+ * chases the symptom; the value should never reach storage.
+ *
+ * Server-side, so it holds for the Notion importer and any future API caller too — neither goes
+ * through the client's colour picker. Empty and null stay legal: that is how a colour is cleared.
+ *
+ * Deliberately not retroactive. Existing rows may already hold a bad value (a CSV cell reading
+ * „rot" is where CCL-12 came from), and rejecting those on read would break pages that render
+ * fine today — hexToRgb's fallback stays the guard for stored data.
+ */
+function checkColor(body: Body): void {
+  const v = body.color;
+  if (v === undefined || v === null || v === '') return;
+  if (typeof v !== 'string' || !HEX_COLOR.test(v.trim())) {
+    throw new HttpError(400, 'Farbe muss ein Hex-Wert sein, z. B. #4f46e5.');
+  }
+}
+
 export function crudRouter(opts: CrudOptions): Router {
   const {
     table,
@@ -59,6 +86,10 @@ export function crudRouter(opts: CrudOptions): Router {
     customList,
   } = opts;
   const r = Router();
+
+  // Keyed off the allowlist, like the /reorder mount below: a sixth table that makes `color`
+  // client-writable is validated by construction, with nothing to remember to add here.
+  const validatesColor = writable.includes('color');
 
   const defaultList: RequestHandler = (req, res) => {
     const db = getDb();
@@ -136,6 +167,7 @@ export function crudRouter(opts: CrudOptions): Router {
     const db = getDb();
     let body = pick((req.body ?? {}) as Body, writable);
     if (transform) body = transform(body, { mode: 'create' });
+    if (validatesColor) checkColor(body);
     applyJson(body, jsonColumns);
     for (const key of required) {
       if (body[key] === undefined || body[key] === null || body[key] === '') {
@@ -161,6 +193,7 @@ export function crudRouter(opts: CrudOptions): Router {
     if (!existing || existing.deleted_at) return res.status(404).json({ error: 'not found' });
     let body = pick((req.body ?? {}) as Body, writable);
     if (transform) body = transform(body, { mode: 'update', existing });
+    if (validatesColor) checkColor(body);
     applyJson(body, jsonColumns);
     // A partial update may omit a required field, but must not blank one it does send
     // (e.g. an empty task title). Only keys present in the payload are checked.
