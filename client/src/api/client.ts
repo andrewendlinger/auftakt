@@ -23,6 +23,7 @@ import type {
   Settings,
   Task,
   TaskPlacement,
+  WritableSettings,
 } from './types';
 
 const BASE = '/api';
@@ -79,7 +80,7 @@ export const api = {
   dashboard: () => http<Dashboard>('GET', '/dashboard'),
   search: (q: string) => http<SearchResults>('GET', `/search${qs({ q })}`),
   getSettings: () => http<Settings>('GET', '/settings'),
-  patchSettings: (patch: Partial<Settings>) => http<Settings>('PATCH', '/settings', patch),
+  patchSettings: (patch: Partial<WritableSettings>) => http<Settings>('PATCH', '/settings', patch),
 
   artists: resource<Artist>('/artists'),
   projects: resource<Project>('/projects'),

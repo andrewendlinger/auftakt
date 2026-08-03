@@ -11,8 +11,11 @@ import type {
   LandingPatch,
   OptionUsage,
   Settings,
+  SettingsArrayKey,
+  SettingsArrayValue,
   Task,
   TaskSortRule,
+  WritableSettings,
 } from './api/types';
 import { doneValueOf } from './api/types';
 import { errorMessage } from './lib/errors';
@@ -290,10 +293,10 @@ export function useTaskStatsConfig(): { metrics: TaskMetric[]; windowDays: numbe
  * `parse` must be module-level (it is a dep), and must read defensively: any settings value can
  * be a hand-edited or legacy shape, and a throw here blanks the page (PGS-15).
  */
-export function useSettingsArray<T>(
-  key: string,
-  parse: (raw: unknown) => T[],
-): { value: T[]; write: (next: T[]) => Promise<boolean> } {
+export function useSettingsArray<K extends SettingsArrayKey>(
+  key: K,
+  parse: (raw: unknown) => SettingsArrayValue<K>,
+): { value: SettingsArrayValue<K>; write: (next: SettingsArrayValue<K>) => Promise<boolean> } {
   const qc = useQueryClient();
   const { data } = useSettings();
   const guard = useGuardedAction();
@@ -301,10 +304,16 @@ export function useSettingsArray<T>(
   const raw = data?.[key];
   const value = useMemo(() => parse(raw), [raw, parse]);
   const write = useCallback(
-    async (next: T[]) => {
-      qc.setQueryData<Settings>(['settings'], (old) => (old ? { ...old, [key]: next } : old));
+    async (next: SettingsArrayValue<K>) => {
+      // `{ [key]: next }` with a generic key infers a string index signature, not
+      // `Pick<WritableSettings, K>` — and an index signature satisfies an all-optional target
+      // vacuously, so it would compile whatever `key` held. The guarantee comes from the
+      // `K extends SettingsArrayKey` constraint; the assertion is what states that shape and
+      // what breaks if `Settings[K]` and `next` ever stop agreeing.
+      const patch = { [key]: next } as Pick<WritableSettings, K>;
+      qc.setQueryData<Settings>(['settings'], (old) => (old ? { ...old, ...patch } : old));
       const ok = await guard('Einstellung konnte nicht gespeichert werden.', async () => {
-        qc.setQueryData<Settings>(['settings'], await api.patchSettings({ [key]: next }));
+        qc.setQueryData<Settings>(['settings'], await api.patchSettings(patch));
       });
       await invalidate();
       return ok;

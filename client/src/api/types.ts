@@ -321,7 +321,13 @@ export interface TaskSortRule {
   dir: 'asc' | 'desc';
 }
 
-export interface Settings {
+/**
+ * Every settings key a client may write — the mirror of `WRITABLE_SETTINGS` in
+ * server/src/routes/settings.ts, which drops anything not on its list *silently*: the PATCH
+ * answers 200, the Settings page looks saved, and the control snaps back on the next refetch
+ * with nothing logged. Keep the two lists in step; add a new setting to both (CCL-22).
+ */
+export interface WritableSettings {
   saison: string;
   backup_dir: string | null;
   first_run_done: string;
@@ -346,10 +352,40 @@ export interface Settings {
   labels?: LabelOverride[];
   /** Enabled task-insight metric keys (`TaskMetric`); parsed via `useTaskStatsConfig`. */
   task_stats?: string[];
-  /** „Braucht Aufmerksamkeit" window in days, stored as a scalar string. */
+  /** „Braucht Aufmerksamkeit“ window in days, stored as a scalar string. */
   attention_window_days?: string;
-  [key: string]: unknown;
 }
+
+/**
+ * What `GET /api/settings` answers with: every writable setting, plus read-only values the
+ * server splices into the response. Anything added here and *not* to `WritableSettings` is
+ * invisible to `patchSettings` by construction — which is the point.
+ *
+ * There is deliberately no `[key: string]: unknown` index signature. It used to disable
+ * excess-property checking on the PATCH, so a mistyped key compiled cleanly and was dropped
+ * server-side with no error anywhere (CCL-22).
+ */
+export interface Settings extends WritableSettings {}
+
+/**
+ * The settings whose value is a JSON array — the mirror of `ARRAY_KEYS` in
+ * server/src/routes/settings.ts, which is what makes them round-trip parsed and what makes a
+ * non-array value a 400 (SDL-06). Written out rather than derived from `WritableSettings`,
+ * because the server's list is the one that decides, not this file's value types.
+ */
+export type SettingsArrayKey =
+  | 'event_types'
+  | 'project_statuses'
+  | 'link_categories'
+  | 'project_layout'
+  | 'artist_layout'
+  | 'dashboard_layout'
+  | 'task_sort'
+  | 'labels'
+  | 'task_stats';
+
+/** The array a settings key holds, with the optionality-induced `undefined` stripped. */
+export type SettingsArrayValue<K extends SettingsArrayKey> = NonNullable<WritableSettings[K]>;
 
 export interface Dashboard {
   artists: ArtistCard[];

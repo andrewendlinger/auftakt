@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { NavLink, Outlet } from 'react-router-dom';
 import { api } from '../api/client';
-import type { CustomColumnOption, ReassignField, Season } from '../api/types';
+import type { CustomColumnOption, ReassignField, Season, WritableSettings } from '../api/types';
 import { Card, SectionTitle, Spinner, Btn, IconButton, ErrorState } from '../components/ui';
 import { Label, TextInput, Modal } from '../components/fields';
 import { Breadcrumbs } from '../components/Breadcrumbs';
@@ -84,8 +84,12 @@ export function SettingsPage() {
  *
  * Returns whether the write landed, so a caller that has follow-up work — reassigning options,
  * closing a dialog — does not treat a reported failure as success.
+ *
+ * Typed `Partial<WritableSettings>` rather than a `Record` bag: a `Record<string, unknown>` is
+ * assignable to an all-optional target vacuously, so this wrapper would have re-opened CCL-22
+ * for every settings write on the page even after the index signature came off `Settings`.
  */
-function usePatchSettings(): (p: Record<string, unknown>) => Promise<boolean> {
+function usePatchSettings(): (p: Partial<WritableSettings>) => Promise<boolean> {
   const invalidate = useInvalidateAll();
   const guard = useGuardedAction();
   return (p) =>
@@ -160,7 +164,14 @@ export function SettingsTasksTab() {
           Welche Kennzahlen auf den Projekt- und Künstlerkarten sowie in der Übersicht angezeigt
           werden, und ab wann eine fällige Aufgabe unter „Braucht Aufmerksamkeit“ auftaucht.
         </p>
-        <TaskStatsSetting onSave={(task_stats, attention_window_days) => patch({ task_stats, attention_window_days })} />
+        {/* String(): the setting is a scalar, and the server stores every non-array value via
+            String(v) — so the stored and returned shape is text, which is what the type says.
+            `useTaskStatsConfig` parses it back with Number() on read. */}
+        <TaskStatsSetting
+          onSave={(task_stats, windowDays) =>
+            patch({ task_stats, attention_window_days: String(windowDays) })
+          }
+        />
       </Card>
 
       {managingColumns && (
