@@ -25,9 +25,11 @@ import { CHILD_BAND, TREE, TreeGutterCell, groupRows, spineColorFor } from './Ta
 import { MoveIcon, TrashIcon } from './icons';
 import { MoveTaskDialog } from './MoveTaskDialog';
 import { PillSelect } from './PillSelect';
+import { InlineInput } from './InlineInput';
 import { EmptyState, Btn, DragHandle, IconButton } from './ui';
 import { Modal } from './fields';
 import {
+  useCommitOnUnmount,
   useGuardedAction,
   useInvalidateAll,
   useSaison,
@@ -921,35 +923,6 @@ function ColumnCell({
 
 /* ---------- editable cells ---------- */
 
-/**
- * Commit an open inline editor when it is unmounted.
- *
- * `onBlur` cannot carry this on its own. React delegates focus events at the root container, and
- * a node that is already detached never reaches the component's handler — the native `blur` does
- * fire on the removed element, but `onBlur` does not run, so anything that unmounts a cell
- * mid-edit discarded whatever had been typed, silently and with no way back (TTU-38). Verified
- * both ways on the demo season: with the editor open and text typed, a history-back navigation
- * lost it before this hook and persists it after.
- *
- * Stabilising the column defs (TTU-12) removed the everyday cause — a re-render no longer
- * remounts the cell — but a column being disabled, the row leaving the list or a navigation still
- * unmount it, and those are exactly the moments a user has text in flight.
- *
- * `active` is the editor's own „am I open" flag, and blur closes the editor before this can run,
- * so the two paths can never both write. Under StrictMode the mount-time cleanup finds
- * `active === false` and does nothing.
- */
-function useCommitOnUnmount(active: boolean, commit: () => void): void {
-  const latest = useRef({ active, commit });
-  latest.current = { active, commit };
-  useEffect(
-    () => () => {
-      if (latest.current.active) latest.current.commit();
-    },
-    [],
-  );
-}
-
 function TitleCell({
   task,
   isChild,
@@ -1114,7 +1087,8 @@ function CustomCell({
 }: {
   task: Task;
   column: CustomColumn;
-  onCommit: (v: unknown) => void;
+  /** Returns its promise so `InlineInput` can report a rejected write instead of dropping it. */
+  onCommit: (v: unknown) => void | Promise<void>;
 }) {
   const raw = customValueOf(task, column.id);
   if (column.type === 'checkbox') {
@@ -1143,40 +1117,31 @@ function CustomCell({
   return <EditableTextCell value={raw} onCommit={(v) => onCommit(v)} />;
 }
 
-function EditableTextCell({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
+function EditableTextCell({
+  value,
+  onCommit,
+}: {
+  value: string;
+  onCommit: (v: string) => void | Promise<void>;
+}) {
   const [editing, setEditing] = useState(false);
-  const [v, setV] = useState(value);
-  useCommitOnUnmount(editing, () => {
-    if (v !== value) onCommit(v);
-  });
   if (editing) {
     return (
-      <input
-        autoFocus
+      // `empty: 'raw'` — clearing a custom text column stores the empty value, it is not a no-op.
+      <InlineInput
+        empty="raw"
+        value={value}
+        onCommit={onCommit}
+        onDone={() => setEditing(false)}
+        errorMessage="Die Änderung konnte nicht gespeichert werden."
         className={`w-40 ${INLINE_INPUT}`}
-        value={v}
-        onChange={(e) => setV(e.target.value)}
-        onBlur={() => {
-          setEditing(false);
-          if (v !== value) onCommit(v);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-          if (e.key === 'Escape') {
-            setV(value);
-            setEditing(false);
-          }
-        }}
       />
     );
   }
   return (
     <button
       className="min-w-20 text-left text-sm text-neutral-700 hover:text-neutral-900"
-      onClick={() => {
-        setV(value);
-        setEditing(true);
-      }}
+      onClick={() => setEditing(true)}
     >
       {value || <span className="text-neutral-300">—</span>}
     </button>

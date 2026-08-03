@@ -1,4 +1,9 @@
 import { useState } from 'react';
+import { InlineInput } from './InlineInput';
+
+// Inherits the heading's own size/weight/tracking so the text doesn't jump on click.
+const FIELD =
+  'rounded border border-neutral-300 bg-white px-1 py-0.5 font-[inherit] text-[inherit] text-neutral-800 outline-none focus:border-neutral-500';
 
 /**
  * Click-to-edit free text — the EditableLabel input pattern minus the label-key binding.
@@ -20,29 +25,16 @@ export function EditableText({
   truncate?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(value);
 
   if (editing) {
     return (
-      <input
-        autoFocus
-        // Inherits the heading's own size/weight/tracking so the text doesn't jump on click.
-        className={`min-w-32 rounded border border-neutral-300 bg-white px-1 py-0.5 font-[inherit] text-[inherit] tracking-[inherit] text-neutral-800 outline-none focus:border-neutral-500 ${inputClassName}`}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onClick={(e) => e.stopPropagation()}
-        onBlur={() => {
-          setEditing(false);
-          const v = text.trim();
-          if (v && v !== value) void onSave(v);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-          if (e.key === 'Escape') {
-            setText(value);
-            setEditing(false);
-          }
-        }}
+      <InlineInput
+        value={value}
+        onCommit={onSave}
+        onDone={() => setEditing(false)}
+        stopClicks
+        errorMessage="Der Name konnte nicht gespeichert werden."
+        className={`min-w-32 tracking-[inherit] ${FIELD} ${inputClassName}`}
       />
     );
   }
@@ -56,7 +48,6 @@ export function EditableText({
         className="shrink-0 rounded px-0.5 text-[11px] leading-none text-neutral-400 opacity-0 transition group-hover/label:opacity-100 focus:opacity-100 hover:text-neutral-700"
         onClick={(e) => {
           e.stopPropagation();
-          setText(value);
           setEditing(true);
         }}
       >
@@ -88,26 +79,18 @@ export function EditableFallbackText({
   className?: string;
 }) {
   const [editing, setEditing] = useState(false);
-  const [text, setText] = useState('');
 
   if (editing) {
     return (
-      <input
-        autoFocus
-        className={`min-w-40 rounded border border-neutral-300 bg-white px-1 py-0.5 font-[inherit] text-[inherit] text-neutral-800 outline-none focus:border-neutral-500 ${className}`}
-        value={text}
+      <InlineInput
+        empty="clear"
+        value={value ?? ''}
+        onCommit={onSave}
+        onDone={() => setEditing(false)}
         placeholder={fallback}
-        onChange={(e) => setText(e.target.value)}
-        onClick={(e) => e.stopPropagation()}
-        onBlur={() => {
-          setEditing(false);
-          const next = text.trim() || null;
-          if (next !== (value ?? null)) void onSave(next);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-          if (e.key === 'Escape') setEditing(false);
-        }}
+        stopClicks
+        errorMessage="Der Text konnte nicht gespeichert werden."
+        className={`min-w-40 ${FIELD} ${className}`}
       />
     );
   }
@@ -118,7 +101,6 @@ export function EditableFallbackText({
       className={`cursor-text text-left transition hover:text-neutral-600 ${className}`}
       onClick={(e) => {
         e.stopPropagation();
-        setText(value ?? '');
         setEditing(true);
       }}
     >

@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api/client';
 import type {
@@ -53,6 +53,37 @@ export function useErrorToast(): (err: unknown, fallback: string) => void {
   return useCallback(
     (err: unknown, fallback: string) => toast.show({ message: errorMessage(err, fallback) }),
     [toast],
+  );
+}
+
+/**
+ * Commit an open inline editor when it is unmounted.
+ *
+ * `onBlur` cannot carry this on its own. React delegates focus events at the root container, and
+ * a node that is already detached never reaches the component's handler — the native `blur` does
+ * fire on the removed element, but `onBlur` does not run, so anything that unmounts an editor
+ * mid-edit discarded whatever had been typed, silently and with no way back (TTU-38). Verified
+ * both ways on the demo season: with the editor open and text typed, a history-back navigation
+ * lost it before this hook and persists it after.
+ *
+ * Stabilising the task table's column defs (TTU-12) removed the everyday cause — a re-render no
+ * longer remounts the cell — but a column being disabled, the row leaving the list or a
+ * navigation still unmount it, and those are exactly the moments a user has text in flight. The
+ * same exposure applies to every inline editor on a page, which is why this lives here rather
+ * than inside `TaskTable`.
+ *
+ * `active` is the editor's own „am I open" flag, and blur closes the editor before this can run,
+ * so the two paths can never both write. Under StrictMode the mount-time cleanup finds
+ * `active === false` and does nothing.
+ */
+export function useCommitOnUnmount(active: boolean, commit: () => void): void {
+  const latest = useRef({ active, commit });
+  latest.current = { active, commit };
+  useEffect(
+    () => () => {
+      if (latest.current.active) latest.current.commit();
+    },
+    [],
   );
 }
 
