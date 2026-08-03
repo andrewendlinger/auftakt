@@ -206,13 +206,6 @@ function compareByRules(
 }
 
 /**
- * Order tasks by a multi-key hierarchy (Settings → Automatische Sortierung, or a single
- * header-click override), reading each key via a precomputed `getValue` accessor. Ties fall
- * through to the manual drag order (`sort_order`) — relying on the sort being stable would
- * instead preserve the *server's* order, which ranks priority and due date above sort_order.
- * An empty rule list leaves the server order (priority → due, done last) untouched.
- */
-/**
  * The server's own ORDER BY (`taskOrder` in server/src/lib/queries.ts) expressed as rules — the
  * ordering actually in effect when the user has configured none. Keep the two in step.
  *
@@ -233,6 +226,13 @@ const SERVER_DEFAULT_RULES: TaskSortRule[] = [
   { id: MANUAL_SORT_ID, dir: 'asc' },
 ];
 
+/**
+ * Order tasks by a multi-key hierarchy (Settings → Automatische Sortierung, or a single
+ * header-click override), reading each key via a precomputed `getValue` accessor. Ties fall
+ * through to the manual drag order (`sort_order`) — relying on the sort being stable would
+ * instead preserve the *server's* order, which ranks priority and due date above sort_order.
+ * An empty rule list leaves the server order (priority → due, done last) untouched.
+ */
 function sortTasks(
   tasks: Task[],
   rules: TaskSortRule[],
