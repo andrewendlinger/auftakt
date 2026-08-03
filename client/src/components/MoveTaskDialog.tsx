@@ -67,7 +67,7 @@ export function MoveTaskDialog({ task, onClose }: { task: Task; onClose: () => v
     [projects, current, artistName],
   );
 
-  const overviewLabel = `Übersicht — ${saison}`;
+  const overviewLabel = saison ? `Übersicht — ${saison}` : 'Übersicht';
   const currentLabel =
     task.project_id != null
       ? (task.project_code ? `${task.project_code} · ` : '') + (task.project_name ?? '')

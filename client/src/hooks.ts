@@ -138,10 +138,15 @@ export function useSettings() {
  * repair it (CCL-06). The setting stays as the file's own self-description (seed/demo).
  *
  * Rides on the ['seasons'] query the header switcher already fetches on every page.
+ *
+ * Empty until the registry answers, and empty for good if it never does. The old `'Auftakt'`
+ * fallback is not a name the server can ever store — every season overwrites it with its registry
+ * label — so it was a placeholder that a failed `GET /api/seasons` left on screen indefinitely,
+ * including as the kicker of a printed one-pager. Consumers drop the fragment instead (CCL-33).
  */
 export function useSaison(): string {
   const { data } = useQuery({ queryKey: ['seasons'], queryFn: api.seasons });
-  return data?.seasons.find((s) => s.id === data.activeId)?.label ?? 'Auftakt';
+  return data?.seasons.find((s) => s.id === data.activeId)?.label ?? '';
 }
 
 /**

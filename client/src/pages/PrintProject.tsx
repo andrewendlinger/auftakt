@@ -82,7 +82,7 @@ export function PrintProject() {
     <PrintPage>
       <PrintHeader
         accent={shade}
-        kicker={`${saison}${artist ? ` · ${artist.name}` : ''}`}
+        kicker={[saison, artist?.name].filter(Boolean).join(' · ')}
         title={project.name}
         badges={
           <>

@@ -1211,7 +1211,11 @@ function AddTaskRow({
       <span className="text-neutral-300">＋</span>
       <input
         className="flex-1 bg-transparent px-1 py-1 text-sm outline-none placeholder:text-neutral-300"
-        placeholder={parent.general ? `Neue allgemeine Aufgabe (${saison}) … (Enter)` : 'Neue Aufgabe … (Enter)'}
+        placeholder={
+          parent.general
+            ? `Neue allgemeine Aufgabe${saison ? ` (${saison})` : ''} … (Enter)`
+            : 'Neue Aufgabe … (Enter)'
+        }
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && void submit()}
