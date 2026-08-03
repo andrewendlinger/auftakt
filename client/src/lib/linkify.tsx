@@ -1,5 +1,6 @@
 import { Fragment, type ReactNode } from 'react';
 import { openExternal } from './external';
+import { normalizeUrl } from './url';
 
 // URLs (http/https or bare www.) and email addresses.
 const PATTERN =
@@ -7,7 +8,11 @@ const PATTERN =
 
 function hrefFor(match: string, isEmail: boolean): string {
   if (isEmail) return `mailto:${match}`;
-  return match.startsWith('www.') ? `https://${match}` : match;
+  // PATTERN matches case-insensitively, so this used to hand „Www.beispiel.de" (sentence start,
+  // mobile autocapitalisation) to openExternal with no scheme: rendered as a link, refused on
+  // click with „nicht unterstütztes Format". normalizeUrl is the app's one rule and is not
+  // case-sensitive (CCL-16).
+  return normalizeUrl(match);
 }
 
 /**
