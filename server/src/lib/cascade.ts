@@ -53,6 +53,37 @@ export const DELETE_ORDER = ['links', 'custom_sections', 'custom_columns', 'task
 
 export type Collected = Map<string, Set<number>>;
 
+/**
+ * Prepared-statement cache for the two walks below, keyed by connection and then by SQL.
+ *
+ * `collect()` compiled its statement inside the BFS loop, and `GET /api/deleted` calls
+ * `collect()` once per soft-deleted row — so the archive page cost O(trash × closure)
+ * compilations per load, against a trash that is now unbounded: the guarded purge parks any
+ * parent something still references rather than destroying live children (SDL-01).
+ *
+ * Keyed by the `Database` object, so a season's statements become collectable the moment
+ * `closeDb()` drops the handle, and the next `getDb()` — a different object — starts empty. No
+ * statement can outlive the connection it was compiled against.
+ *
+ * Every SQL string reaching here is built from the hardcoded `CHILD_EDGES`/table names above,
+ * never from client input, so the key space is a fixed handful of strings.
+ */
+const stmtCache = new WeakMap<Database.Database, Map<string, Database.Statement>>();
+
+function cached(db: Database.Database, sql: string): Database.Statement {
+  let bySql = stmtCache.get(db);
+  if (!bySql) {
+    bySql = new Map();
+    stmtCache.set(db, bySql);
+  }
+  let stmt = bySql.get(sql);
+  if (!stmt) {
+    stmt = db.prepare(sql);
+    bySql.set(sql, stmt);
+  }
+  return stmt;
+}
+
 /** Transitive closure of a row and everything that (recursively) references it, keyed by table. */
 export function collect(db: Database.Database, rootTable: string, rootId: number): Collected {
   const found: Collected = new Map();
@@ -72,7 +103,9 @@ export function collect(db: Database.Database, rootTable: string, rootId: number
     const [table, id] = queue.shift() as [string, number];
     for (const [childTable, fk] of CHILD_EDGES[table] ?? []) {
       // childTable/fk come from the hardcoded CHILD_EDGES map, never from the client.
-      const rows = db.prepare(`SELECT id FROM ${childTable} WHERE ${fk} = ?`).all(id) as { id: number }[];
+      const rows = cached(db, `SELECT id FROM ${childTable} WHERE ${fk} = ?`).all(id) as {
+        id: number;
+      }[];
       for (const row of rows) if (add(childTable, row.id)) queue.push([childTable, row.id]);
     }
   }
@@ -97,7 +130,7 @@ export function hasLiveDescendant(
   for (const [table, ids] of collected) {
     // One statement per table, one lookup per id — never an IN-list, which has a bound-parameter
     // ceiling and the trash is now unbounded (a blocked root stays until deleted by hand).
-    const stmt = db.prepare(`SELECT 1 FROM ${table} WHERE id = ? AND deleted_at IS NULL LIMIT 1`);
+    const stmt = cached(db, `SELECT 1 FROM ${table} WHERE id = ? AND deleted_at IS NULL LIMIT 1`);
     for (const id of ids) {
       if (table === rootTable && id === rootId) continue;
       if (stmt.get(id)) return true;
