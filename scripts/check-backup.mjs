@@ -11,6 +11,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
@@ -22,6 +23,36 @@ const Database = require('better-sqlite3');
 
 const PORT = 4319; // not 4317: never collide with a dev server the user has running
 const api = (p) => `http://localhost:${PORT}/api/${p}`;
+
+/**
+ * Refuse to run when something already holds :4319.
+ *
+ * Without this the script happily talks to whatever answers there — typically a leaked `tsx
+ * watch` supervisor from an earlier run or another session, still pointing at a long-deleted
+ * temp data dir. The run then fails at the second-season fixture with `no such table: artists`,
+ * which reads as a product bug and is not one. Fail here instead, naming the real problem.
+ */
+async function requireFreePort() {
+  const probe = createServer();
+  try {
+    await new Promise((res, rej) => {
+      probe.once('error', rej);
+      probe.listen(PORT, '127.0.0.1', res);
+    });
+  } catch (err) {
+    if (err?.code !== 'EADDRINUSE') throw err;
+    console.error(
+      `FAIL  Port ${PORT} ist belegt — vermutlich ein übrig gebliebener Server aus einem\n` +
+        `      früheren Lauf. Dieser Lauf würde gegen dessen (gelöschtes) Datenverzeichnis\n` +
+        `      prüfen und mit „no such table“ scheitern.\n` +
+        `      Beenden mit:  lsof -ti tcp:${PORT} | xargs kill`,
+    );
+    process.exit(1);
+  }
+  await new Promise((res) => probe.close(res));
+}
+
+await requireFreePort();
 
 const dataDir = mkdtempSync(join(tmpdir(), 'auftakt-check-'));
 const workDir = mkdtempSync(join(tmpdir(), 'auftakt-work-'));
