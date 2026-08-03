@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useGuardedAction } from '../hooks';
 import { Markdown } from './Markdown';
 import { RichTextEditor } from './RichTextEditor';
 
@@ -6,6 +7,8 @@ import { RichTextEditor } from './RichTextEditor';
  * Click-to-edit multi-line text: shows linkified text, a single click edits in place in a
  * rich-text editor (blur/⌘↵ saves, Esc cancels). Clicking a link inside the rendered text
  * follows the link instead of opening the editor. Used for "Allgemeines / Beschreibung" etc.
+ *
+ * The draft outlives a failed save on purpose — see `commit`.
  */
 export function InlineNotes({
   value,
@@ -18,15 +21,31 @@ export function InlineNotes({
 }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(value ?? '');
+  const guard = useGuardedAction();
 
   const start = () => {
     setText(value ?? '');
     setEditing(true);
   };
+  /**
+   * Leave edit mode only once the write has actually landed.
+   *
+   * This used to run `setEditing(false)` first and *then* await `onSave`, which unmounts the
+   * editor and its draft before the request resolves — and nothing caught the rejection. A
+   * rejected write was indistinguishable from a successful one: the block collapsed back to
+   * the old rendered value and the user's typed note was gone (RTE-01). Keeping the editor
+   * mounted is what makes the text recoverable; re-entering edit mode would only reseed the
+   * draft from the stale prop.
+   */
   const commit = async () => {
-    setEditing(false);
     const v = text.trim() === '' ? null : text;
-    if (v !== (value ?? null)) await onSave(v);
+    if (v === (value ?? null)) {
+      setEditing(false);
+      return;
+    }
+    if (await guard('Der Text konnte nicht gespeichert werden.', async () => void (await onSave(v)))) {
+      setEditing(false);
+    }
   };
 
   if (editing) {

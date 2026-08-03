@@ -43,7 +43,9 @@ export function RichTextEditor({
   onChange: (v: string) => void;
   className?: string;
   autoFocus?: boolean;
-  onBlur?: () => void;
+  /** Commit-on-blur. May be async — the editor fires it once and owns nothing after that, so
+   *  the callee has to catch its own failure (see `InlineNotes.commit`). */
+  onBlur?: () => void | Promise<void>;
   onKeyDown?: (e: KeyboardEvent) => void;
   placeholder?: string;
   compact?: boolean;
