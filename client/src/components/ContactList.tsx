@@ -91,7 +91,9 @@ export function ContactList({
                   <span className="font-medium text-neutral-800">{c.name}</span>
                   {c.role && <span className="text-xs text-neutral-500">{c.role}</span>}
                   {c.email && <span className="text-neutral-600">{linkify(c.email)}</span>}
-                  {c.phone && <span className="text-neutral-600">{linkify(c.phone)}</span>}
+                  {/* Plain text: linkify never matched a phone number, so this was already what
+                      rendered — a `tel:` link would mean widening openExternal's allowlist. */}
+                  {c.phone && <span className="text-neutral-600">{c.phone}</span>}
                 </div>
                 {/* Inline-edited; the add placeholder only appears on row hover so contact
                     lists without notes don't grow a button per row. */}
