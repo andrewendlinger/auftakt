@@ -560,6 +560,16 @@ function UpdateCard() {
 }
 
 /**
+ * The „Zeitfenster" draft as a number, or null while it is empty or unparseable. Clamped to the
+ * same [1, 365] `useTaskStatsConfig` clamps on read, so a bad value cannot escape at either end.
+ */
+function parseWindowDays(draft: string): number | null {
+  const n = Number(draft.trim());
+  if (draft.trim() === '' || !Number.isFinite(n)) return null;
+  return Math.max(1, Math.min(365, Math.round(n)));
+}
+
+/**
  * Editor for the task-insight prefs: which metrics show (toggle chips) and the
  * „Braucht Aufmerksamkeit" window in days. Local draft + one „Speichern" (like the option
  * editors), reseeded when the server data changes. An empty metric set is a valid save — the
@@ -572,17 +582,23 @@ function TaskStatsSetting({
 }) {
   const cfg = useTaskStatsConfig();
   const [metrics, setMetrics] = useState<Set<string>>(() => new Set(cfg.metrics));
-  const [windowDays, setWindowDays] = useState<number>(cfg.windowDays);
+  // The window is a *string* draft: held as a number and clamped per keystroke, `''` coerced to 1,
+  // the control wrote that 1 straight back and the next digits appended to it — so backspacing 14
+  // to type 60 saved 160, with no validation message (PGS-04). Clamping happens on blur and on
+  // save instead, which is what lets the field be emptied at all.
+  const [windowDraft, setWindowDraft] = useState<string>(() => String(cfg.windowDays));
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     setMetrics(new Set(cfg.metrics));
-    setWindowDays(cfg.windowDays);
+    setWindowDraft(String(cfg.windowDays));
   }, [cfg.metrics, cfg.windowDays]);
 
   const enabled = ALL_METRICS.filter((m) => metrics.has(m.key)).map((m) => m.key);
   const sameSet = (a: string[], b: string[]) =>
     a.length === b.length && [...a].sort().join() === [...b].sort().join();
-  const dirty = !sameSet(enabled, cfg.metrics) || windowDays !== cfg.windowDays;
+  // An unparseable draft is not a value to save: it neither counts as dirty nor reaches onSave.
+  const windowDays = parseWindowDays(windowDraft);
+  const dirty = !sameSet(enabled, cfg.metrics) || (windowDays !== null && windowDays !== cfg.windowDays);
 
   const toggle = (key: string) =>
     setMetrics((s) => {
@@ -595,7 +611,7 @@ function TaskStatsSetting({
   const save = async () => {
     setBusy(true);
     try {
-      await onSave(enabled, windowDays);
+      await onSave(enabled, windowDays ?? cfg.windowDays);
     } finally {
       setBusy(false);
     }
@@ -623,13 +639,15 @@ function TaskStatsSetting({
       </div>
       <div>
         <Label>Zeitfenster „Braucht Aufmerksamkeit" (Tage)</Label>
-        <input
+        <TextInput
           type="number"
           min={1}
           max={365}
-          value={windowDays}
-          onChange={(e) => setWindowDays(Math.max(1, Math.min(365, Math.round(Number(e.target.value)) || 1)))}
-          className="w-24 rounded-lg border border-neutral-300 bg-white px-2 py-1.5 text-sm text-neutral-800 outline-none transition focus:border-neutral-500 focus:ring-2 focus:ring-neutral-900/5"
+          className="w-24"
+          invalid={windowDays === null}
+          value={windowDraft}
+          onChange={(e) => setWindowDraft(e.target.value)}
+          onBlur={() => setWindowDraft(String(windowDays ?? cfg.windowDays))}
         />
       </div>
       <div className="flex justify-end">
