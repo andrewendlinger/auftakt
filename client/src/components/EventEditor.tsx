@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Label, Modal, Select, TextInput } from './fields';
+import { Label, Modal, TextInput } from './fields';
+import { PillSelect } from './PillSelect';
 import { RichTextEditor } from './RichTextEditor';
 import { Btn } from './ui';
 import { api } from '../api/client';
@@ -125,13 +126,13 @@ export function EventEditor({
       <div className="grid grid-cols-2 gap-x-3 gap-y-3">
         <div className="col-span-2 sm:col-span-1">
           <Label>Typ</Label>
-          <Select value={type} onChange={(e) => setType(e.target.value)}>
-            {eventTypes.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label}
-              </option>
-            ))}
-          </Select>
+          {/* `eventTypes` carries a colour per entry, and EventList renders each event's type
+              as a coloured pill from exactly that data. A plain <Select> threw the colour away,
+              so a user who colour-codes Auftritt/Probe/Deadline saw those colours everywhere
+              except the one screen where they pick a type (RTE-18). */}
+          <div>
+            <PillSelect value={type} options={eventTypes} onChange={setType} />
+          </div>
         </div>
         <div className="col-span-2 flex flex-col justify-end gap-1.5 sm:col-span-1">
           <label className="flex cursor-pointer items-center gap-2 text-sm text-neutral-700">
