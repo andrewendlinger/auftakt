@@ -10,7 +10,11 @@ export default function EmojiPickerLazy({ onPick }: { onPick: (ch: string) => vo
     <EmojiPicker
       onEmojiClick={(d) => onPick(d.emoji)}
       emojiStyle={EmojiStyle.NATIVE}
-      theme={Theme.AUTO}
+      // Pinned light, not AUTO: every surface in the app is hardcoded light (`grep -r 'dark:'
+      // client/src` finds nothing, `index.css` declares `color-scheme: light`), so the dark
+      // skin would drop a black panel over a white note editor. Revisit if a real dark mode
+      // ever arrives (RTE-20).
+      theme={Theme.LIGHT}
       height={340}
       width={300}
       previewConfig={{ showPreview: false }}
