@@ -18,7 +18,14 @@ import {
 import { NewSeasonModal, reloadToDashboard } from '../components/SeasonModals';
 import { SectionArranger } from '../components/SectionArranger';
 import { useToast } from '../components/Toast';
-import { useErrorToast, useInvalidateAll, useLabel, useLanding, useSeasonTerm } from '../hooks';
+import {
+  useErrorToast,
+  useGuardedAction,
+  useInvalidateAll,
+  useLabel,
+  useLanding,
+  useSeasonTerm,
+} from '../hooks';
 import { useListReorder, type DragReorder } from '../lib/dragReorder';
 import { formatDate } from '../lib/dates';
 
@@ -47,6 +54,7 @@ export function LandingPage() {
   const navigate = useNavigate();
   const toast = useToast();
   const report = useErrorToast();
+  const guard = useGuardedAction();
   const invalidate = useInvalidateAll();
   const label = useLabel();
   const term = useSeasonTerm();
@@ -166,7 +174,14 @@ export function LandingPage() {
       {landing ? (
         <SectionArranger
           layout={landing.layout.length ? landing.layout : DEFAULT_LANDING_LAYOUT}
-          onPersist={(next) => patchLanding({ layout: next })}
+          // Guarded here rather than left to the caller: the arranger fires five of its six
+          // layout writes as `void persist(…)`, so an unguarded rejection was invisible —
+          // no toast, and in the packaged app not even a console the user could open (SHL-14).
+          onPersist={(next) =>
+            guard('Die Anordnung konnte nicht gespeichert werden.', () =>
+              patchLanding({ layout: next }),
+            )
+          }
           sections={sections}
           labelKeys={{ notizen: 'landing.notizen', dokumente: 'landing.dokumente' }}
           titles={titles}
