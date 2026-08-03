@@ -17,8 +17,13 @@ interface Hit {
 
 function buildHits(r: SearchResults, typeLabel: (value: string) => string): Hit[] {
   const hits: Hit[] = [];
-  const parentTo = (projectId: number | null, artistId: number | null): string =>
-    projectId ? `/project/${projectId}` : `/artist/${artistId}`;
+  // A season-wide row has neither parent — the tasks CHECK allows it (migrateTasksAllowGeneral),
+  // and the dashboard's „Festival" table is where it lives. Interpolating the null instead produced
+  // the route `/artist/null`, which Number()s to NaN, 404s and spun on a blank page (SHL-07).
+  const parentTo = (projectId: number | null, artistId: number | null): string => {
+    if (projectId) return `/project/${projectId}`;
+    return artistId ? `/artist/${artistId}` : '/dashboard';
+  };
 
   for (const a of r.artists) hits.push({ key: `a${a.id}`, group: 'Künstler', label: a.name, to: `/artist/${a.id}` });
   for (const p of r.projects)

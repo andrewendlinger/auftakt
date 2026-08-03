@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { getDb } from '../db';
+import { parentJoins, parentLive } from '../lib/queries';
 
 export const searchRouter = Router();
 
@@ -9,6 +10,11 @@ const LIMIT = 20;
  * Global search across artists, projects, tasks, events, contacts (incl. comments/notes).
  * Each result carries resolved_artist_id / project_id so the client can jump-to-result.
  * LIKE-based (small dataset in phase 1); FTS5 is a later optimisation.
+ *
+ * Rows whose owning project or artist is soft-deleted are excluded, exactly as `listTasks` /
+ * `listEvents` exclude them: search used to filter only each row's own `deleted_at`, so a hit
+ * under a trashed project survived and its `to` route pointed at a page that no longer exists —
+ * a dead end with no way back but the browser's back action (SHL-07).
  */
 searchRouter.get('/', (req, res) => {
   const q = String(req.query.q ?? '').trim();
@@ -41,8 +47,9 @@ searchRouter.get('/', (req, res) => {
     .prepare(
       `SELECT t.id, t.title, t.status, t.project_id, t.artist_id,
               COALESCE(t.artist_id, p.artist_id) AS resolved_artist_id, p.code AS project_code
-       FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
-       WHERE t.deleted_at IS NULL AND (t.title LIKE ? ESCAPE '\\' OR t.comment LIKE ? ESCAPE '\\')
+       FROM tasks t${parentJoins('t')}
+       WHERE t.deleted_at IS NULL AND ${parentLive('t')}
+         AND (t.title LIKE ? ESCAPE '\\' OR t.comment LIKE ? ESCAPE '\\')
        LIMIT ?`,
     )
     .all(like, like, LIMIT);
@@ -51,8 +58,9 @@ searchRouter.get('/', (req, res) => {
     .prepare(
       `SELECT e.id, e.title, e.type, e.start_at, e.all_day, e.project_id, e.artist_id,
               COALESCE(e.artist_id, p.artist_id) AS resolved_artist_id, p.code AS project_code
-       FROM events e LEFT JOIN projects p ON p.id = e.project_id
-       WHERE e.deleted_at IS NULL AND (e.title LIKE ? ESCAPE '\\' OR e.location LIKE ? ESCAPE '\\' OR e.notes LIKE ? ESCAPE '\\' OR e.type LIKE ? ESCAPE '\\')
+       FROM events e${parentJoins('e')}
+       WHERE e.deleted_at IS NULL AND ${parentLive('e')}
+         AND (e.title LIKE ? ESCAPE '\\' OR e.location LIKE ? ESCAPE '\\' OR e.notes LIKE ? ESCAPE '\\' OR e.type LIKE ? ESCAPE '\\')
        ORDER BY e.start_at LIMIT ?`,
     )
     .all(like, like, like, like, LIMIT);
@@ -61,8 +69,8 @@ searchRouter.get('/', (req, res) => {
     .prepare(
       `SELECT c.id, c.name, c.role, c.email, c.project_id, c.artist_id,
               COALESCE(c.artist_id, p.artist_id) AS resolved_artist_id, p.code AS project_code
-       FROM contacts c LEFT JOIN projects p ON p.id = c.project_id
-       WHERE c.deleted_at IS NULL
+       FROM contacts c${parentJoins('c')}
+       WHERE c.deleted_at IS NULL AND ${parentLive('c')}
          AND (c.name LIKE ? ESCAPE '\\' OR c.role LIKE ? ESCAPE '\\' OR c.email LIKE ? ESCAPE '\\' OR c.phone LIKE ? ESCAPE '\\' OR c.notes LIKE ? ESCAPE '\\')
        LIMIT ?`,
     )
