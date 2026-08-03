@@ -1,6 +1,7 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { contrastText } from '../lib/colors';
+import { useAnchoredPopover } from '../lib/popover';
 import type { CustomColumnOption } from '../api/types';
 
 /**
@@ -33,20 +34,19 @@ export function PillSelect({
   placeholder?: string;
   disabled?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ left: number; top: number; minWidth: number; maxHeight?: number } | null>(null);
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const {
+    open,
+    pos,
+    anchorRef: btnRef,
+    menuRef,
+    openPopover,
+    closePopover,
+  } = useAnchoredPopover<HTMLButtonElement, HTMLDivElement>();
   const current = options.find((o) => o.value === value);
 
-  const openMenu = () => {
-    const r = btnRef.current?.getBoundingClientRect();
-    if (r) setPos({ left: r.left, top: r.bottom + 4, minWidth: r.width });
-    setOpen(true);
-  };
   /** Close and hand focus back to the pill, so the keyboard user is where they started. */
   const close = () => {
-    setOpen(false);
+    closePopover();
     btnRef.current?.focus();
   };
   const pick = (v: string) => {
@@ -64,43 +64,13 @@ export function PillSelect({
     items[next]?.focus();
   };
 
-  // Once the menu is in the DOM, refine its position: flip above the trigger when there's
-  // more room there, clamp horizontally to stay on screen, and cap the height to the
-  // available space (the menu scrolls internally) so long option lists stay reachable.
-  // A scroll of the page invalidates the anchor rect, so close — but ignore scrolls that
-  // originate inside the menu itself (its own overflow-y-auto), which must not close it.
+  // Focus lands on the current option, not the top of the list, so ↑/↓ start from where the
+  // value already is — the behaviour the native select had. Positioning is the popover hook's.
   useLayoutEffect(() => {
     if (!open) return;
-    const btn = btnRef.current;
-    const menu = menuRef.current;
-    if (btn && menu) {
-      const margin = 8;
-      const r = btn.getBoundingClientRect();
-      const menuW = menu.offsetWidth;
-      const spaceBelow = window.innerHeight - r.bottom - margin;
-      const spaceAbove = r.top - margin;
-      const flipUp = menu.scrollHeight > spaceBelow && spaceAbove > spaceBelow;
-      const maxHeight = Math.max(80, Math.floor(flipUp ? spaceAbove : spaceBelow));
-      const left = Math.max(margin, Math.min(r.left, window.innerWidth - menuW - margin));
-      const top = flipUp ? Math.max(margin, r.top - 4 - Math.min(menu.scrollHeight, maxHeight)) : r.bottom + 4;
-      setPos({ left, top, minWidth: r.width, maxHeight });
-      // Focus lands on the current option, not the top of the list, so ↑/↓ start from where
-      // the value already is — the behaviour the native select had.
-      const items = optionEls();
-      (items.find((el) => el.dataset.value === value) ?? items[0])?.focus();
-    }
-    const onScroll = (e: Event) => {
-      if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) return;
-      setOpen(false);
-    };
-    const close = () => setOpen(false);
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', close);
-    return () => {
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', close);
-    };
-  }, [open]);
+    const items = optionEls();
+    (items.find((el) => el.dataset.value === value) ?? items[0])?.focus();
+  }, [open, value]);
 
   return (
     <div className="inline-block">
@@ -110,12 +80,12 @@ export function PillSelect({
         disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={() => (open ? setOpen(false) : openMenu())}
+        onClick={() => (open ? closePopover() : openPopover())}
         onKeyDown={(e) => {
           if (open || disabled) return;
           if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
             e.preventDefault();
-            openMenu();
+            openPopover();
           }
         }}
         className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold transition hover:brightness-95 disabled:cursor-default"
@@ -133,7 +103,7 @@ export function PillSelect({
         pos &&
         createPortal(
           <>
-            <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+            <div className="fixed inset-0 z-30" onClick={closePopover} />
             <div
               ref={menuRef}
               role="listbox"
