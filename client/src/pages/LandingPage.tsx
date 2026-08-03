@@ -12,6 +12,7 @@ import {
   LandingNotesSection,
   LandingTextSection,
   landingSectionKey,
+  nonEmptyLandingKeys,
   useRemoveLandingSection,
 } from '../components/LandingCards';
 import { NewSeasonModal, reloadToDashboard } from '../components/SeasonModals';
@@ -177,9 +178,17 @@ export function LandingPage() {
           nonEmptyKeys={[
             ...(landing.notes ? ['notizen'] : []),
             ...(landing.documents.length ? ['dokumente'] : []),
+            ...nonEmptyLandingKeys(landing),
           ]}
           toolbarAfterKey="saisons"
           onRemoveCustom={removeLandingSection}
+          removeCustomCopy={{
+            // No „im Archiv wiederherstellen" here: these sections live in the seasons.json
+            // registry, which has no soft delete and no Papierkorb — the undo toast is the
+            // whole recovery window (SHL-03).
+            body: 'samt Inhalt löschen? Diese Bereiche liegen außerhalb der Saisons und landen nicht im Papierkorb — nur „Rückgängig“ holt sie zurück.',
+            confirm: 'Löschen',
+          }}
           addAction={({ hiddenKeys, restore, prepend }) => (
             <AddLandingSectionButton
               hiddenKeys={hiddenKeys}

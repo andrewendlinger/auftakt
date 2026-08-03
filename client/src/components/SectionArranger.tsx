@@ -46,6 +46,10 @@ export function SectionArranger({
   nonEmptyKeys = [],
   toolbarAfterKey,
   onRemoveCustom,
+  removeCustomCopy = {
+    body: 'samt Inhalt in den Papierkorb verschieben? Du kannst den Bereich im Archiv wiederherstellen.',
+    confirm: 'In den Papierkorb',
+  },
   addAction,
 }: {
   /** Settings key holding the layout — the default persistence. Omit when `layout` + `onPersist` are given. */
@@ -77,6 +81,13 @@ export function SectionArranger({
   toolbarAfterKey?: string;
   /** 🗑 on a custom widget's strip — the page soft-deletes the row (undoable). */
   onRemoveCustom?: (key: string) => void;
+  /**
+   * What the confirm dialog promises a filled custom section. The default is the soft-delete
+   * story every `custom_sections` page can keep. The landing's sections are registry rows with
+   * no `deleted_at` and no Archiv entry, so that page says what is actually true there instead
+   * of offering a recovery that does not exist (SHL-03).
+   */
+  removeCustomCopy?: { body: string; confirm: string };
   /** The "+ Bereich" button, rendered only in edit mode, fed the hidden built-ins to offer. */
   addAction?: (ctx: {
     hiddenKeys: string[];
@@ -326,7 +337,8 @@ export function SectionArranger({
             </p>
           </Modal>
         ) : (
-          // Custom widget: its content belongs to it and moves into the trash along with it.
+          // Custom widget: its content belongs to it and goes with it. Where it goes — and
+          // therefore what the dialog may promise — is the page's to say, see `removeCustomCopy`.
           <Modal
             title="Bereich löschen"
             onClose={() => setRemoving(null)}
@@ -340,14 +352,13 @@ export function SectionArranger({
                     setRemoving(null);
                   }}
                 >
-                  In den Papierkorb
+                  {removeCustomCopy.confirm}
                 </Btn>
               </>
             }
           >
             <p className="text-sm text-neutral-600">
-              „{titles[removing] ?? removing}“ samt Inhalt in den Papierkorb verschieben? Du
-              kannst den Bereich im Archiv wiederherstellen.
+              „{titles[removing] ?? removing}“ {removeCustomCopy.body}
             </p>
           </Modal>
         ))}

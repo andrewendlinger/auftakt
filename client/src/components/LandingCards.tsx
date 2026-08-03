@@ -26,6 +26,23 @@ import { useLanding, useUndoableDelete } from '../hooks';
 export const landingSectionKey = (s: LandingSection): string => `lt${s.id}`;
 
 /**
+ * The `lt<id>` keys of landing sections that still hold content, for the arranger's
+ * `nonEmptyKeys` — the registry twin of `useNonEmptyCustomSections`, testing the same two
+ * things (a Textfeld by its text, a Dokumente list by its rows).
+ *
+ * Without it the page reported only `notizen`/`dokumente`, so `nonEmptyKeys.includes(key)` was
+ * false for every custom section and the arranger's 🗑 skipped the confirm modal entirely: one
+ * click on a filled Textfeld deleted it and its text outright, while the identical 🗑 one card
+ * above — or on any widget on the dashboard, an artist or a project page — asks first
+ * (SHL-03, PGS-08).
+ */
+export function nonEmptyLandingKeys(landing: LandingContent): string[] {
+  return landing.sections
+    .filter((s) => (s.type === 'links' ? !!s.documents?.length : !!s.value?.trim()))
+    .map(landingSectionKey);
+}
+
+/**
  * Replace the landing's sections, computed from the list as it is *now*.
  *
  * The `all` prop this replaced was a render snapshot shared by every section on the page, so a
