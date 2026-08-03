@@ -450,9 +450,34 @@ export interface OptionReassign {
   to: string;
 }
 
+/**
+ * A task's parsed `custom_values`, cached per row object. **Treat the result as read-only** — it
+ * is shared by every reader of that row.
+ *
+ * Parsing per *access* was quietly quadratic. `makeSortValue` promises O(1) per comparison in its
+ * own docstring, but its custom-column branch called `customValueOf`, which re-parsed the whole
+ * blob every time — and `sortTasks` calls it twice per comparison, so clicking a custom column
+ * header on a 1500–2000 task season ran tens of thousands of `JSON.parse`s of the same strings in
+ * one synchronous pass and blocked the main thread for seconds. The cell path paid it again,
+ * once per custom column per row per render (TTU-22).
+ *
+ * Keyed by the row object rather than by the JSON text, so a refetch replaces the rows and the
+ * old entries are collected — a string-keyed cache would accumulate every historical blob.
+ */
+const CUSTOM_VALUE_CACHE = new WeakMap<Task, Record<string, unknown>>();
+
+export function customValues(task: Task): Record<string, unknown> {
+  let parsed = CUSTOM_VALUE_CACHE.get(task);
+  if (!parsed) {
+    parsed = parseCustomValues(task.custom_values);
+    CUSTOM_VALUE_CACHE.set(task, parsed);
+  }
+  return parsed;
+}
+
 /** A custom column's value on one task, stringified. Custom values are keyed by column id. */
 export function customValueOf(task: Task, colId: ID): string {
-  const v = parseCustomValues(task.custom_values)[String(colId)];
+  const v = customValues(task)[String(colId)];
   return v == null ? '' : String(v);
 }
 
