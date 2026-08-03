@@ -198,7 +198,10 @@ export function ArtistPage() {
     kontakte: <ContactList contacts={contacts} parent={{ artist_id: artistId }} titleKey="artist.kontakte" />,
     aufgaben: (
       <>
-        <SectionTitle right={<ExcelButton params={{ artist_id: artistId }} />}>
+        {/* resolved_artist_id, matching the page's own task query above — `artist_id` filters on
+            `t.artist_id` alone, so the export silently dropped every task that belongs to this
+            artist through its project (PGS-31). */}
+        <SectionTitle right={<ExcelButton params={{ resolved_artist_id: artistId }} />}>
           <EditableLabel k="artist.aufgaben" />
         </SectionTitle>
         <TaskTable tasks={generalTasks} customColumns={customColumns} parent={{ artist_id: artistId }} />
