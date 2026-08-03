@@ -9,7 +9,6 @@ import {
   type ExpandedState,
 } from '@tanstack/react-table';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import type { CustomColumn, CustomColumnOption, Task, TaskSortRule } from '../api/types';
 import { compareColumns, customValueOf, doneValueOf, parseColumnOptions } from '../api/types';
@@ -25,7 +24,6 @@ import { ColorSwatchPicker } from './ColorSwatchPicker';
 import { CHILD_BAND, TREE, TreeGutterCell, groupRows, spineColorFor } from './TaskTreeGutter';
 import { MoveIcon, TrashIcon } from './icons';
 import { MoveTaskDialog } from './MoveTaskDialog';
-import { ProjectBadge } from './ProjectBadge';
 import { PillSelect } from './PillSelect';
 import { EmptyState, Btn, DragHandle, IconButton } from './ui';
 import { Modal } from './fields';
@@ -48,14 +46,6 @@ export interface TaskTableParent {
   project_id?: number;
   /** Season-wide todos: created with neither artist nor project, chipped with the season name. */
   general?: boolean;
-}
-
-/** Muted chip marking a task's scope when it has no project badge („Allgemein“ / the season name).
- *  `tone="festival"` names the violet colour token, not the text. */
-function ScopeChip({ label, tone }: { label: string; tone: 'neutral' | 'festival' }) {
-  const cls =
-    tone === 'festival' ? 'bg-violet-100 text-violet-700' : 'bg-neutral-100 text-neutral-500';
-  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>{label}</span>;
 }
 
 /** null = follow the configured automatic hierarchy; a rule = a temporary header-click override. */
@@ -86,9 +76,6 @@ interface TaskTableApi {
   statusOptions: CustomColumnOption[];
   priorityOptions: CustomColumnOption[];
   childrenByParent: Map<number, Task[]>;
-  showAssignment: boolean;
-  showProject: boolean;
-  saison: string;
   commit: (task: Task, patch: Partial<Task>, label: string) => void;
   commitCustom: (task: Task, colId: number, value: unknown) => void;
   requestDelete: (task: Task) => void;
@@ -259,23 +246,16 @@ export function TaskTable({
   tasks,
   customColumns,
   parent,
-  showAssignment = false,
-  showProject = false,
 }: {
   tasks: Task[];
   /** The full, ordered set of columns (built-in + custom). Disabled ones are hidden. */
   customColumns: CustomColumn[];
   parent?: TaskTableParent;
-  /** Show artist name + project badge (global dashboard table). */
-  showAssignment?: boolean;
-  /** Show only the project badge (artist page, tasks span projects). */
-  showProject?: boolean;
 }) {
   const invalidate = useInvalidateAll();
   const del = useUndoableDelete();
   const undoablePatch = useUndoablePatch();
   const sortRules = useTaskSortRules();
-  const saison = useSaison();
   const [sort, setSort] = useState<SortState>(null);
   // Effective ordering: a header click (`sort`) is a temporary single-key override; otherwise
   // follow the configured automatic hierarchy from Settings (empty → leave server order).
@@ -515,14 +495,10 @@ export function TaskTable({
         header: col.icon ? `${col.icon} ${col.name}` : col.name,
         cell: DataCell,
       });
-      // Keep the artist/project link next to the task identity.
-      if (col.kind === 'builtin' && col.key === 'title' && (showAssignment || showProject)) {
-        cols.push({ id: 'assign', header: 'Zuordnung', cell: AssignCell });
-      }
     }
     cols.push({ id: 'actions', header: '', cell: ActionsCell });
     return cols;
-  }, [visibleCols, showAssignment, showProject]);
+  }, [visibleCols]);
 
   const cellApi: TaskTableApi = {
     colById,
@@ -530,9 +506,6 @@ export function TaskTable({
     statusOptions,
     priorityOptions,
     childrenByParent,
-    showAssignment,
-    showProject,
-    saison,
     commit,
     commitCustom,
     requestDelete,
@@ -838,42 +811,6 @@ function DataCell({ row, column }: CellContext<Task, unknown>) {
       >
         {doneKids}/{kids.length}
       </button>
-    </div>
-  );
-}
-
-/** Artist name + project badge (dashboard) or just the project badge (artist page). */
-function AssignCell({ row }: CellContext<Task, unknown>) {
-  const { showAssignment, showProject, saison } = useTaskTableApi();
-  if (row.depth > 0) return null; // subtask shares the parent's project — no redundant badge
-  const t = row.original;
-  const seasonWide = !t.project_id && !t.resolved_artist_id;
-  return (
-    <div className="flex items-center gap-1.5 whitespace-nowrap">
-      {showAssignment && t.resolved_artist_id && (
-        <Link
-          to={`/artist/${t.resolved_artist_id}`}
-          className="text-sm text-neutral-600 hover:underline"
-          style={{ color: t.artist_color ?? undefined }}
-        >
-          {t.artist_name}
-        </Link>
-      )}
-      {/* Imported projects can have no K-code; fall back to the name so the chip still shows. */}
-      {t.project_id && (t.project_code || t.project_name) && (
-        <ProjectBadge
-          code={t.project_code || t.project_name!}
-          projectId={t.project_id}
-          artistColor={t.artist_color}
-          projectColor={t.project_color}
-          to={`/project/${t.project_id}`}
-        />
-      )}
-      {/* Artist page: an artist-level todo (no project) is "Allgemein". */}
-      {showProject && !t.project_id && <ScopeChip label="Allgemein" tone="neutral" />}
-      {/* Dashboard: a todo with no artist and no project is season-wide — tag it with the
-          season's own name, not the generic word. `tone="festival"` is the violet token. */}
-      {showAssignment && seasonWide && <ScopeChip label={saison} tone="festival" />}
     </div>
   );
 }
