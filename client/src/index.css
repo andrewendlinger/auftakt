@@ -183,6 +183,9 @@ body {
   .print-page {
     box-shadow: none !important;
     margin: 0 !important;
+    /* The sheet's on-screen `p-10` would otherwise stack another 10.6 mm onto the 14 mm
+       @page margin on all four sides. @page owns the margins here. */
+    padding: 0 !important;
     /* Chromium's „Hintergrundgrafiken" is off by default in the browser and in Electron's
        window.print(), which drops every element background but keeps the foreground — so the
        project-code badge, whose contrastText is #ffffff on a saturated shade, printed white on
