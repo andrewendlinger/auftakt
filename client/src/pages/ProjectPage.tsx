@@ -19,7 +19,7 @@ import { ProjectStatusPill } from '../components/ProjectStatusPill';
 import { ExcelButton } from '../components/ExcelButton';
 import { InlineNotes } from '../components/InlineNotes';
 import {
-  AddSectionButton,
+  builtinPicker,
   customSectionEntries,
   useNonEmptyCustomSections,
   useRemoveCustomSection,
@@ -264,18 +264,7 @@ export function ProjectPage() {
         fullWidthKeys={['aufgaben', 'aufmerksamkeit']}
         nonEmptyKeys={nonEmptyKeys}
         onRemoveCustom={removeCustomSection}
-        addAction={({ hiddenKeys, restore, prepend }) => (
-          <AddSectionButton
-            parent={{ project_id: projectId }}
-            onRestore={restore}
-            onPrepend={prepend}
-            hiddenBuiltins={hiddenKeys.map((k) => ({
-              key: k,
-              labelKey: SECTION_LABEL_KEYS[k]!,
-              group: SECTION_GROUPS[k]!,
-            }))}
-          />
-        )}
+        addAction={builtinPicker(SECTION_LABEL_KEYS, SECTION_GROUPS, { project_id: projectId })}
       />
 
       {managingColumns && (

@@ -16,7 +16,7 @@ import { EventList } from '../components/EventList';
 import { ContactList } from '../components/ContactList';
 import { InlineNotes } from '../components/InlineNotes';
 import {
-  AddSectionButton,
+  builtinPicker,
   customSectionEntries,
   useNonEmptyCustomSections,
   useRemoveCustomSection,
@@ -273,18 +273,7 @@ export function ArtistPage() {
         fullWidthKeys={['aufgaben', 'aufmerksamkeit']}
         nonEmptyKeys={nonEmptyKeys}
         onRemoveCustom={removeCustomSection}
-        addAction={({ hiddenKeys, restore, prepend }) => (
-          <AddSectionButton
-            parent={{ artist_id: artistId }}
-            onRestore={restore}
-            onPrepend={prepend}
-            hiddenBuiltins={hiddenKeys.map((k) => ({
-              key: k,
-              labelKey: SECTION_LABEL_KEYS[k]!,
-              group: SECTION_GROUPS[k]!,
-            }))}
-          />
-        )}
+        addAction={builtinPicker(SECTION_LABEL_KEYS, SECTION_GROUPS, { artist_id: artistId })}
       />
     </div>
   );

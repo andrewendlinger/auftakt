@@ -60,6 +60,47 @@ export function useNonEmptyCustomSections(sections: CustomSection[]): string[] {
 }
 
 /**
+ * `SectionArranger`'s `addAction` for a page with built-in sections — the whole picker wiring
+ * given the page's own label/group tables and the parent a new widget hangs off.
+ *
+ * The three pages that have built-ins (Dashboard, Künstler, Projekt) used to spell out the same
+ * twelve-line block, byte-identical apart from `parent`. Adding a third picker group or changing
+ * the `HiddenBuiltin` shape meant editing all three, and missing one left that page's „+ Bereich"
+ * picker mis-grouping (PGS-28). The per-page `labelKeys`/`groups` tables genuinely differ and
+ * stay in their pages.
+ *
+ * A key with no entry in either table is dropped rather than asserted: `hiddenKeys` comes from
+ * the stored layout, which can carry a key this page does not know — the previous
+ * `SECTION_LABEL_KEYS[k]!` turned that into an unnamed picker entry or a crash.
+ */
+export function builtinPicker(
+  labelKeys: Record<string, LabelKey>,
+  groups: Record<string, SectionGroup>,
+  parent: SectionParent,
+): (ctx: {
+  hiddenKeys: string[];
+  restore: (key: string) => void;
+  prepend: (key: string) => void;
+}) => ReactNode {
+  return ({ hiddenKeys, restore, prepend }) => {
+    const hiddenBuiltins: HiddenBuiltin[] = [];
+    for (const key of hiddenKeys) {
+      const labelKey = labelKeys[key];
+      const group = groups[key];
+      if (labelKey && group) hiddenBuiltins.push({ key, labelKey, group });
+    }
+    return (
+      <AddSectionButton
+        parent={parent}
+        onRestore={restore}
+        onPrepend={prepend}
+        hiddenBuiltins={hiddenBuiltins}
+      />
+    );
+  };
+}
+
+/**
  * The "+ Bereich" button (edit mode only), opening a grouped picker: „Eingabe" holds the two
  * custom widget types (needing a name) plus this page's hidden built-in input sections;
  * „Einblicke" holds the hidden computed sections. Built-ins are singletons — clicking one

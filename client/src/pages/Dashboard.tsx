@@ -14,7 +14,7 @@ import { NewArtistButton } from '../components/EntityButtons';
 import { EditableLabel } from '../components/EditableLabel';
 import { SectionArranger } from '../components/SectionArranger';
 import {
-  AddSectionButton,
+  builtinPicker,
   customSectionEntries,
   useNonEmptyCustomSections,
   useRemoveCustomSection,
@@ -172,18 +172,7 @@ export function Dashboard() {
         nonEmptyKeys={nonEmptyKeys}
         toolbarAfterKey="artists"
         onRemoveCustom={removeCustomSection}
-        addAction={({ hiddenKeys, restore, prepend }) => (
-          <AddSectionButton
-            parent={{}}
-            onRestore={restore}
-            onPrepend={prepend}
-            hiddenBuiltins={hiddenKeys.map((k) => ({
-              key: k,
-              labelKey: SECTION_LABEL_KEYS[k]!,
-              group: SECTION_GROUPS[k]!,
-            }))}
-          />
-        )}
+        addAction={builtinPicker(SECTION_LABEL_KEYS, SECTION_GROUPS, {})}
       />
     </div>
   );
