@@ -8,6 +8,7 @@ import {
   type ColumnDef,
   type ExpandedState,
 } from '@tanstack/react-table';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import type { CustomColumn, CustomColumnOption, Task, TaskSortRule } from '../api/types';
@@ -17,6 +18,7 @@ import { withAlpha } from '../lib/colors';
 import { MANUAL_SORT_ID, SORTABLE_TASK_COLUMNS } from '../lib/taskSort';
 import { arrayMoveTo } from '../lib/arrays';
 import { useDragReorder } from '../lib/dragReorder';
+import { descendantsOf } from '../lib/taskTree';
 import { Markdown } from './Markdown';
 import { RichTextEditor } from './RichTextEditor';
 import { ColorSwatchPicker } from './ColorSwatchPicker';
@@ -286,6 +288,12 @@ export function TaskTable({
   // The task whose move dialog is open. Depth-0 only — subtasks travel with their parent.
   const [moveTask, setMoveTask] = useState<Task | null>(null);
 
+  // Live + archived, shared with MoveTaskDialog — the only list that shows the whole subtree.
+  const { data: allTasks = [], isSuccess: treeLoaded } = useQuery({
+    queryKey: ['tasks', 'scope-all'],
+    queryFn: () => api.tasks.list({ scope: 'all' }),
+  });
+
   const doneValue = useMemo(() => doneValueOf(customColumns), [customColumns]);
   const statusOptions = useMemo(
     () => parseColumnOptions(findBuiltin(customColumns, 'status')?.options),
@@ -447,16 +455,33 @@ export function TaskTable({
     });
   }, []);
 
+  /**
+   * The delete dialog has to count the *whole* subtree, which is not what this table renders.
+   *
+   * `childrenByParent` is built from the page list — `scope: 'live'`, so a done child past
+   * ARCHIVE_AFTER_DAYS is missing — and it is one level deep. Counting from it undercounted the
+   * „+ N Unteraufgaben löschen" button, deleted only what it had counted, and left the archived
+   * child behind under a soft-deleted parent: a row listed for ever in „Archiv" that no delete
+   * affordance could reach, and that `purgeExpired()` never touched because it was never
+   * soft-deleted. When *every* child was archived it was worse — `kids.length === 0`, so the
+   * parent went with no dialog at all and the user was never told subtasks existed (TTU-05).
+   *
+   * The scope-all list is the same query MoveTaskDialog uses, so opening either dialog warms it
+   * for the other. Until it lands, the live map is the fallback: it can undercount, but the
+   * server recomputes the closure for the actual delete, so it can never half-delete.
+   */
   const requestDelete = useCallback(
     (task: Task) => {
-      const kids = childrenByParent.get(task.id) ?? [];
+      const kids = treeLoaded
+        ? descendantsOf(allTasks, task.id)
+        : childrenByParent.get(task.id) ?? [];
       if (kids.length === 0) {
         void del({ label: `Aufgabe „${task.title}“`, ...resourceUndo(api.tasks, task.id) });
       } else {
         setConfirmDelete({ task, children: kids });
       }
     },
-    [childrenByParent, del],
+    [allTasks, treeLoaded, childrenByParent, del],
   );
 
   const visibleCols = useMemo(

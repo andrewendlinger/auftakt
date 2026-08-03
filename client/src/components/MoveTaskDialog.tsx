@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Project, Task, TaskPlacement } from '../api/types';
+import { descendantsOf } from '../lib/taskTree';
 import { Label, Modal, Select } from './fields';
 import { Btn } from './ui';
 import { useUndo } from './UndoProvider';
@@ -20,9 +21,13 @@ function projectLabel(p: Project): string {
 
 /**
  * Move a task — and its whole subtask tree — to any other scope: the overview (no parent),
- * an artist's „Allgemein" list, or a project. A move is one PATCH per row that sets the new
- * parent FK and nulls the other in the same request: the tasks CHECK allows at most one of
- * artist_id/project_id, so splitting the two keys across requests would trip it.
+ * an artist's „Allgemein" list, or a project.
+ *
+ * The write is one request to `POST /tasks/:id/move`, which resolves the subtree and rewrites it
+ * in a single transaction. The scope keys travel together because the tasks CHECK allows at most
+ * one of `artist_id`/`project_id`, so splitting them across requests would trip it — and the
+ * whole tree travels in one request because splitting *that* is what let a move half-fail with
+ * no error and no way back (TTU-03).
  */
 export function MoveTaskDialog({ task, onClose }: { task: Task; onClose: () => void }) {
   const saison = useSaison();
@@ -43,29 +48,9 @@ export function MoveTaskDialog({ task, onClose }: { task: Task; onClose: () => v
     queryFn: () => api.tasks.list({ scope: 'all' }),
   });
 
-  // The whole subtree travels with the task. BFS rather than the table's one-level map:
-  // the schema allows deeper nesting than the one level the UI creates.
-  const descendants = useMemo(() => {
-    const byParent = new Map<number, Task[]>();
-    for (const t of allTasks) {
-      if (t.parent_id == null) continue;
-      const arr = byParent.get(t.parent_id);
-      if (arr) arr.push(t);
-      else byParent.set(t.parent_id, [t]);
-    }
-    const out: Task[] = [];
-    const seen = new Set([task.id]);
-    const queue = [task.id];
-    while (queue.length > 0) {
-      for (const kid of byParent.get(queue.shift()!) ?? []) {
-        if (seen.has(kid.id)) continue;
-        seen.add(kid.id);
-        out.push(kid);
-        queue.push(kid.id);
-      }
-    }
-    return out;
-  }, [allTasks, task.id]);
+  // The whole subtree travels with the task; the server resolves it again for the write, so this
+  // is only what the count below promises the user.
+  const descendants = useMemo(() => descendantsOf(allTasks, task.id), [allTasks, task.id]);
 
   const artistName = useMemo(() => new Map(artists.map((a) => [a.id, a.name])), [artists]);
 
