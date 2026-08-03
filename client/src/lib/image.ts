@@ -2,6 +2,11 @@
  * Read an image File and return a resized data URL (JPEG). Aspect ratio is kept,
  * with the longest side capped at `max` px — small enough to store inline in the
  * SQLite row (so backups and season-copy carry the picture automatically).
+ *
+ * JPEG has no alpha channel, so the canvas is filled white first: the file input accepts
+ * `image/*`, and a PNG or WebP logo with a transparent background was otherwise encoded straight
+ * onto the fresh, fully transparent canvas, which JPEG renders as black (CCL-10). White rather
+ * than PNG-on-alpha because every avatar sits on a white card and the bytes live in the row.
  */
 export function resizeToDataUrl(file: File, max = 256): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -19,6 +24,8 @@ export function resizeToDataUrl(file: File, max = 256): Promise<string> {
         canvas.height = h;
         const ctx = canvas.getContext('2d');
         if (!ctx) return reject(new Error('Canvas nicht verfügbar'));
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
         ctx.drawImage(img, 0, 0, w, h);
         resolve(canvas.toDataURL('image/jpeg', 0.85));
       };
