@@ -2,7 +2,7 @@ import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import type { LayoutEntry } from '../api/types';
 import { arrayMoveTo } from '../lib/arrays';
 import { useDragReorder } from '../lib/dragReorder';
-import { Btn } from './ui';
+import { Btn, DragHandle } from './ui';
 import { Modal } from './fields';
 import { TrashIcon } from './icons';
 import type { LabelKey } from '../lib/labels';
@@ -332,9 +332,11 @@ function Arranger({
               {arranging && (
                 <div className="mb-3 flex items-center justify-between rounded-lg bg-neutral-100 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">
                   <span className="flex items-center gap-2">
-                    <span className="cursor-grab text-base leading-none text-neutral-400" title="Zum Verschieben ziehen">
-                      ⠿
-                    </span>
+                    {/* `opacity-100`: the strip is not a hover `group`, and this handle is the
+                        section's only visible grab affordance. The reorderer runs in the default
+                        `mode: 'always'` — the whole section div carries `draggable` — so
+                        `handleProps` is empty here and the ⠿ is an affordance, not the trigger. */}
+                    <DragHandle className="text-base opacity-100" {...drag.handleProps(key)} />
                     {labelKeys[key] ? label(labelKeys[key]) : (titles[key] ?? key)}
                   </span>
                   <span className="flex items-center gap-1">
