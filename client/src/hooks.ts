@@ -17,7 +17,7 @@ import type {
 import { doneValueOf } from './api/types';
 import { errorMessage } from './lib/errors';
 import { LABEL_DEFAULTS, isLabelKey, type LabelKey } from './lib/labels';
-import { normalizeSelectOptions } from './lib/selectOptions';
+import { normalizeEventTypeOptions, normalizeSelectOptions } from './lib/selectOptions';
 import {
   ALL_METRICS,
   DEFAULT_ATTENTION_DAYS,
@@ -164,7 +164,7 @@ export function useSeasonTerm(): { singular: string; plural: string } {
  */
 export function useEventTypeOptions(): CustomColumnOption[] {
   const { data } = useSettings();
-  return useMemo(() => normalizeSelectOptions(data?.event_types), [data?.event_types]);
+  return useMemo(() => normalizeEventTypeOptions(data?.event_types), [data?.event_types]);
 }
 
 export function useProjectStatusOptions(): CustomColumnOption[] {

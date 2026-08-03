@@ -28,22 +28,25 @@ function paletteFor(value: string): string {
   return OPTION_PALETTE[Math.abs(h) % OPTION_PALETTE.length]!;
 }
 
-function colorForName(name: string): string {
-  return LEGACY_EVENT_COLORS[name] ?? paletteFor(name);
-}
-
 /**
- * Normalise an `event_types` / `project_statuses` setting to coloured options. Existing seasons
- * store a plain `string[]`; new ones store `{ value, label, color }[]`. Read tolerantly so either
- * form parses — a bare string `s` becomes `{ value: s, label: s, color }`, and a malformed entry
- * is skipped rather than blanking the list.
+ * Normalise a coloured-options setting — `project_statuses`, `link_categories`, a task column's
+ * options. Existing seasons store a plain `string[]`; new ones store `{ value, label, color }[]`.
+ * Read tolerantly so either form parses — a bare string `s` becomes `{ value: s, label: s, color }`,
+ * and a malformed entry is skipped rather than blanking the list.
  *
  * Also the normalisation behind `parseColumnOptions`, which is why `done` is carried through:
  * a task column's Status options add that one field over an event type's, and losing it would
  * silently break `doneValueOf` (CCL-07).
+ *
+ * `legacy` is the event types' pre-WP-I colour table and belongs to them alone —
+ * `normalizeEventTypeOptions` is the only caller that passes it (CCL-23).
  */
-export function normalizeSelectOptions(raw: unknown): CustomColumnOption[] {
+export function normalizeSelectOptions(
+  raw: unknown,
+  legacy: Record<string, string> = {},
+): CustomColumnOption[] {
   if (!Array.isArray(raw)) return [];
+  const colorForName = (name: string): string => legacy[name] ?? paletteFor(name);
   const out: CustomColumnOption[] = [];
   for (const item of raw) {
     if (typeof item === 'string') {
@@ -59,6 +62,17 @@ export function normalizeSelectOptions(raw: unknown): CustomColumnOption[] {
     }
   }
   return out;
+}
+
+/**
+ * `event_types`, which alone still answers to the legacy colour table: a season storing the old
+ * plain-string form keeps the colours EventList used to hardcode. Applying that table to every
+ * taxonomy — as the shared helper used to — aliased unrelated settings onto one colour purely
+ * because the German words overlap: a project status named „Deadline" took the event-type red and
+ * a link category named „Termin" the event grey (CCL-23).
+ */
+export function normalizeEventTypeOptions(raw: unknown): CustomColumnOption[] {
+  return normalizeSelectOptions(raw, LEGACY_EVENT_COLORS);
 }
 
 /** Look up an option by its stored value (events.type / projects.status). */
