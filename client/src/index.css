@@ -183,6 +183,13 @@ body {
   .print-page {
     box-shadow: none !important;
     margin: 0 !important;
+    /* Chromium's „Hintergrundgrafiken" is off by default in the browser and in Electron's
+       window.print(), which drops every element background but keeps the foreground — so the
+       project-code badge, whose contrastText is #ffffff on a saturated shade, printed white on
+       white paper. Nothing shows it on screen: the preview is drawn with colours. The property
+       inherits, so the badge, the category chips and the status pill are all covered from here. */
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
   body {
     background: #fff;
