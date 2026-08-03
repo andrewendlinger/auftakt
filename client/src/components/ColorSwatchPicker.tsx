@@ -1,4 +1,6 @@
+import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useGuardedAction } from '../hooks';
 import { useAnchoredPopover } from '../lib/popover';
 import { DropletIcon } from './icons';
 
@@ -15,23 +17,54 @@ const PRESETS = [
  * The popover goes through `useAnchoredPopover` — plain `absolute` positioning was clipped by
  * the task table's `overflow-x-auto` wrapper whenever the table was short, cutting off the
  * „Keine" / „eigene" row entirely, and there was no Escape (RTE-13).
+ *
+ * The „eigene" input is a *draft* until the popover closes; see `draft` below.
  */
 export function ColorSwatchPicker({
   value,
   onChange,
 }: {
   value: string | null;
-  onChange: (color: string | null) => void;
+  /** Return the promise — the picker owns the failure arm for all three call sites. */
+  onChange: (color: string | null) => void | Promise<void>;
 }) {
+  const guard = useGuardedAction();
+  const write = (c: string | null) =>
+    void guard('Die Farbe konnte nicht gespeichert werden.', () => Promise.resolve(onChange(c)));
+  /**
+   * The native colour input's live value, held back from the write path.
+   *
+   * `<input type="color">` fires continuously while the user drags through the OS colour
+   * wheel, and every tick used to go straight to `onChange` → a PATCH, a full query
+   * invalidation and one undo entry *per frame*. Afterwards Cmd+Z stepped back one
+   * imperceptible shade at a time and the toast stack was full of identical „Farbänderung"
+   * entries (RTE-08). The trigger swatch previews the draft, so closing the popover is the
+   * commit — by any route, matching the preset buttons, which also pick and close.
+   */
+  const [draft, setDraft] = useState<string | null>(null);
+  // Read by the close callback, which is registered once per open.
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+
+  const commitDraft = () => {
+    const next = draftRef.current;
+    draftRef.current = null;
+    setDraft(null);
+    if (next !== null && next !== value) write(next);
+  };
+
   const { open, pos, anchorRef, menuRef, toggle, closePopover } = useAnchoredPopover<
     HTMLButtonElement,
     HTMLDivElement
-  >();
+  >(commitDraft);
   const pick = (c: string | null) => {
+    draftRef.current = null;
+    setDraft(null);
     closePopover();
     anchorRef.current?.focus();
-    onChange(c);
+    write(c);
   };
+  const shown = draft ?? value;
   return (
     <div className="relative inline-flex">
       <button
@@ -44,8 +77,8 @@ export function ColorSwatchPicker({
         onClick={toggle}
         className="flex h-7 w-7 items-center justify-center rounded text-neutral-400 transition hover:bg-black/5 hover:text-neutral-700"
       >
-        {value ? (
-          <span className="h-4 w-4 rounded-full ring-1 ring-black/20" style={{ background: value }} />
+        {shown ? (
+          <span className="h-4 w-4 rounded-full ring-1 ring-black/20" style={{ background: shown }} />
         ) : (
           <DropletIcon className="h-4 w-4" />
         )}
@@ -85,8 +118,8 @@ export function ColorSwatchPicker({
                 <label className="flex cursor-pointer items-center gap-1.5">
                   <input
                     type="color"
-                    value={value ?? '#888888'}
-                    onChange={(e) => onChange(e.target.value)}
+                    value={shown ?? '#888888'}
+                    onChange={(e) => setDraft(e.target.value)}
                     className="h-6 w-6 cursor-pointer rounded border border-neutral-300"
                   />
                   <span>eigene</span>
