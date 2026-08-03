@@ -180,7 +180,7 @@ export function ArchivePage() {
       </div>
 
       <div className="space-y-3">
-        <SectionTitle>Gelöschte Items</SectionTitle>
+        <SectionTitle>Gelöschte Einträge</SectionTitle>
         {deletedLoading ? (
           <Spinner />
         ) : deletedFailed ? (
