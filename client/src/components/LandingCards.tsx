@@ -282,18 +282,36 @@ export function useRemoveLandingSection(): (key: string) => void {
   const { current, patch } = useLanding();
   return (key) => {
     const sections = () => current()?.sections ?? [];
+    const layout = () => current()?.layout ?? [];
     const s = sections().find((x) => landingSectionKey(x) === key);
     if (!s) return;
     const index = sections().indexOf(s);
+    // The section's layout entry goes with it, in the same request. `display` already filters
+    // it out of the rendered list, but nothing ever removed it from the stored array, so
+    // `landing.layout` grew by one dead entry per section the user ever created — and because
+    // the registry hands out `max(surviving ids) + 1`, the next section reclaims the id and
+    // inherits a stale width (SHL-18). Landing keys are all known to one page, so a missing
+    // section really is a dead entry; the shared `artist_layout`/`project_layout` cannot tell
+    // that apart from another page's widget and must keep theirs.
+    const layoutIndex = layout().findIndex((e) => e.key === key);
+    const layoutEntry = layout()[layoutIndex];
     void del({
       label: `Bereich „${s.name}“`,
-      remove: () => patch({ sections: sections().filter((x) => x.id !== s.id) }),
+      remove: () =>
+        patch({
+          sections: sections().filter((x) => x.id !== s.id),
+          layout: layout().filter((e) => e.key !== key),
+        }),
       restore: () => {
-        // `s` carries its id, so the server keeps it and the section's `lt<id>` layout entry
-        // still points at it.
+        // `s` carries its id, so the server keeps it and the entry put back below still points
+        // at the restored row.
         const next = [...sections()];
         next.splice(index < 0 ? next.length : Math.min(index, next.length), 0, s);
-        return patch({ sections: next });
+        const nextLayout = [...layout()];
+        if (layoutEntry) {
+          nextLayout.splice(Math.min(layoutIndex, nextLayout.length), 0, layoutEntry);
+        }
+        return patch({ sections: next, layout: nextLayout });
       },
     });
   };

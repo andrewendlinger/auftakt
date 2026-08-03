@@ -260,8 +260,13 @@ function Arranger({
    */
   const prepend = (key: string) => {
     const entry: LayoutEntry = { key, width: 'full' };
-    const anchor = toolbarAfterKey != null ? full.findIndex((e) => e.key === toolbarAfterKey) : -1;
-    const next = [...full];
+    // Any entry already carrying this key goes first. A landing section id *is* reused — the
+    // registry's counter is `max(surviving ids) + 1`, so deleting `lt3` and adding a Textfeld
+    // yields `lt3` again — and without this the array is persisted holding the key twice, one
+    // of them with a stale `half` width that wins as soon as the order shifts (SHL-18).
+    const rest = full.filter((e) => e.key !== key);
+    const anchor = toolbarAfterKey != null ? rest.findIndex((e) => e.key === toolbarAfterKey) : -1;
+    const next = [...rest];
     next.splice(anchor + 1, 0, entry);
     void persist(next);
   };

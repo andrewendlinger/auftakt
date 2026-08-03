@@ -359,9 +359,17 @@ export function getLanding(): LandingContent {
   };
 }
 
-/** Documents/sections without an id get max+1 assigned — the client sends new rows
- *  id-less. Seeding the counter from current *and* incoming ids means a delete-then-add
- *  never reuses the deleted id while its undo toast is still alive. */
+/** Documents/sections without an id get max+1 assigned — the client sends new rows id-less.
+ *  Seeding the counter from the incoming rows *and* the stored ones is what keeps one patch
+ *  self-consistent: a body carrying existing rows plus a new one cannot hand the new one an id
+ *  already in that array.
+ *
+ *  It does not stop reuse *across* patches, and nothing here can: a deleted row is gone from the
+ *  stored array by the time the next request arrives, so deleting `lt3` and then adding a section
+ *  yields `lt3` again. Every holder of the key therefore has to survive it — the undo restores the
+ *  row carrying its own id, and SectionArranger's `prepend` replaces an existing layout entry for
+ *  the key instead of adding a second one (SHL-18). A monotonic counter in the registry would
+ *  close it properly. */
 export function patchLanding(patch: {
   notes?: string | null;
   documents?: Array<{ id?: number; label: string; url: string | null }>;
