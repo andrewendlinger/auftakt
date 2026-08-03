@@ -16,6 +16,11 @@ export interface Hsl {
 
 const clamp = (n: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, n));
 
+const HEX6 = /^[0-9a-f]{6}$/i;
+
+/** The documented fallback when a stored colour is not a hex value — mid grey, never black. */
+const FALLBACK_HEX = '888888';
+
 export function hexToRgb(hex: string): Rgb {
   let h = hex.replace('#', '').trim();
   if (h.length === 3)
@@ -23,7 +28,13 @@ export function hexToRgb(hex: string): Rgb {
       .split('')
       .map((c) => c + c)
       .join('');
-  const int = parseInt(h || '888888', 16);
+  // Validated, not just tested for empty: `parseInt('rroott', 16)` is NaN, which the masks below
+  // silently coerce to 0, so an artist whose CSV cell read „rot" rendered pure black — badge,
+  // header, project shades and every withAlpha tint — instead of the grey this line always
+  // promised. pickArtistColor then read that hue as 0 and steered new colours away from red
+  // (CCL-12).
+  if (!HEX6.test(h)) h = FALLBACK_HEX;
+  const int = parseInt(h, 16);
   return { r: (int >> 16) & 255, g: (int >> 8) & 255, b: int & 255 };
 }
 
