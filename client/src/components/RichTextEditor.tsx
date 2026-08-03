@@ -10,6 +10,7 @@ import {
 import { useEditor, EditorContent, useEditorState, type Editor } from '@tiptap/react';
 import { Placeholder } from '@tiptap/extensions';
 import { markdownExtensions } from '../lib/richtext';
+import { isParsableUrl, normalizeUrl } from '../lib/url';
 import { LinkIcon, ListIcon } from './icons';
 
 // Loaded on demand so the emoji dataset stays out of the main bundle.
@@ -205,8 +206,11 @@ function Toolbar({ editor, compact }: { editor: Editor; compact: boolean }) {
   };
   const insertLink = () => {
     if (!link) return;
-    const url = link.url.trim();
-    if (!url) return;
+    // Stored verbatim, a schemeless `www.beispiel.de` survives the markdown sanitizer, renders
+    // as a normal link, and then alerts „nicht unterstütztes Format" on every click because
+    // `new URL()` cannot parse it. Normalise before it is written, not on read (RTE-09).
+    if (!isParsableUrl(link.url)) return;
+    const url = normalizeUrl(link.url);
     const text = link.text.trim() || url;
     chain()
       .insertContent({ type: 'text', text, marks: [{ type: 'link', attrs: { href: url } }] })
@@ -403,6 +407,12 @@ function LinkBar({
 }) {
   const field =
     'min-w-0 flex-1 rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-800 outline-none transition focus:border-neutral-500';
+  // Immediate feedback beats a bad save the user only discovers days later, on a link that
+  // looked fine when they created it.
+  const usable = isParsableUrl(url);
+  const badUrl = url.trim() !== '' && !usable;
+  // Swapped, not appended: two `border-*` utilities are resolved by stylesheet order.
+  const urlField = badUrl ? field.replace('border-neutral-300', 'border-red-400') : field;
 
   const keys = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     // Modal listens for Escape on window — stopPropagation so closing the link bar doesn't
@@ -436,13 +446,14 @@ function LinkBar({
         onKeyDown={keys}
         placeholder="https://…"
         aria-label="Link-Adresse"
-        className={`${field} flex-[2]`}
+        aria-invalid={badUrl}
+        className={`${urlField} flex-[2]`}
       />
       <button
         type="button"
         onMouseDown={(e) => e.preventDefault()}
         onClick={onInsert}
-        disabled={!url.trim()}
+        disabled={!usable}
         className="rounded-md bg-neutral-800 px-2 py-1 text-xs font-medium text-white transition hover:bg-neutral-700 disabled:opacity-40"
       >
         Einfügen
