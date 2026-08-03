@@ -8,7 +8,7 @@ import { TrashIcon } from './icons';
 import type { LabelKey } from '../lib/labels';
 import { useLabel, useSettingsArray } from '../hooks';
 
-type LayoutKey = 'artist_layout' | 'project_layout' | 'dashboard_layout';
+export type LayoutKey = 'artist_layout' | 'project_layout' | 'dashboard_layout';
 
 /**
  * Shape-normalise a stored layout: legacy `string[]` layouts read as all-full entries, and a
@@ -18,7 +18,7 @@ type LayoutKey = 'artist_layout' | 'project_layout' | 'dashboard_layout';
  * Only the shape. The page-dependent half — the `hidden` self-heal, this page's own new keys,
  * which entries are visible here — stays in the component, which is where the props are.
  */
-function parseLayoutEntries(raw: unknown): LayoutEntry[] {
+export function parseLayoutEntries(raw: unknown): LayoutEntry[] {
   if (!Array.isArray(raw)) return [];
   const out: LayoutEntry[] = [];
   for (const item of raw as unknown[]) {

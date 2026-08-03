@@ -331,13 +331,26 @@ export function useRetention(): { archiveAfterDays: number; purgeAfterDays: numb
 export function useSettingsArray<K extends SettingsArrayKey>(
   key: K,
   parse: (raw: unknown) => SettingsArrayValue<K>,
-): { value: SettingsArrayValue<K>; write: (next: SettingsArrayValue<K>) => Promise<boolean> } {
+): {
+  value: SettingsArrayValue<K>;
+  /** The array as it is now, not as it was when the caller rendered — the `useLanding` twin. */
+  current: () => SettingsArrayValue<K>;
+  write: (next: SettingsArrayValue<K>) => Promise<boolean>;
+} {
   const qc = useQueryClient();
   const { data } = useSettings();
   const guard = useGuardedAction();
   const invalidate = useInvalidateAll();
   const raw = data?.[key];
   const value = useMemo(() => parse(raw), [raw, parse]);
+  // Same reasoning as `useLanding.current()`: an undo runs up to six seconds after the render
+  // that created it, by which time `value` names an array the user has since edited. Reading
+  // the cache instead is what keeps the two composable — `write` publishes there before it
+  // awaits, so this also sees a write that is still in flight.
+  const current = useCallback(
+    () => parse(qc.getQueryData<Settings>(['settings'])?.[key]),
+    [qc, key, parse],
+  );
   const write = useCallback(
     async (next: SettingsArrayValue<K>) => {
       // `{ [key]: next }` with a generic key infers a string index signature, not
@@ -355,7 +368,7 @@ export function useSettingsArray<K extends SettingsArrayKey>(
     },
     [qc, key, guard, invalidate],
   );
-  return { value, write };
+  return { value, current, write };
 }
 
 /**

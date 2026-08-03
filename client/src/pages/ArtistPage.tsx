@@ -95,7 +95,7 @@ export function ArtistPage() {
     queryFn: () => api.customSections.list({ artist_id: artistId }),
     enabled: validId,
   });
-  const removeCustomSection = useRemoveCustomSection(customSections);
+  const removeCustomSection = useRemoveCustomSection(customSections, 'artist_layout');
   const nonEmptyCustom = useNonEmptyCustomSections(customSections);
 
   // Everything statistical is computed over live + archived tasks: the list above is scope 'live',

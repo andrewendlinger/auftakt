@@ -9,7 +9,14 @@ import { InlineNotes } from './InlineNotes';
 import { EditableText } from './EditableText';
 import { LinkList } from './LinkList';
 import type { LabelKey } from '../lib/labels';
-import { useInvalidateAll, useLabel, useUndoableDelete, useUndoablePatch, resourceUndo } from '../hooks';
+import { parseLayoutEntries, type LayoutKey } from './SectionArranger';
+import {
+  useInvalidateAll,
+  useLabel,
+  useSettingsArray,
+  useUndoableDelete,
+  useUndoablePatch,
+} from '../hooks';
 
 /**
  * User-added widget sections (WP-S): named, typed sections the user adds to the dashboard,
@@ -37,12 +44,55 @@ export interface HiddenBuiltin {
   group: SectionGroup;
 }
 
-/** The arranger-strip 🗑 handler for custom widgets: soft-delete the row, undoable. */
-export function useRemoveCustomSection(sections: CustomSection[]): (key: string) => void {
+/**
+ * The arranger-strip 🗑 handler for custom widgets: soft-delete the row **and drop its layout
+ * entry**, undoable as one operation.
+ *
+ * Nothing used to remove the `cs<id>` entry, so `artist_layout`/`project_layout` grew by one dead
+ * entry per widget the user ever created. That is not merely untidy: `sort_order` and the widget
+ * ids are reused, so a later widget can land on a stale entry and inherit its width and hidden
+ * flag (the `lt<id>` half of this, SHL-18, is already closed in `useRemoveLandingSection`).
+ *
+ * `layoutKey` has to come from the page, and that is the whole reason this was deferred. These
+ * arrays are **shared by every artist and every project** — one `artist_layout` for all of them —
+ * so the entry can only be pruned where the deleted id is known. Doing it in the arranger's read
+ * pass instead (drop every `cs<id>` not visible here) would delete *another artist's* widget
+ * entry, which is exactly the loss the full/display split exists to prevent.
+ *
+ * `current()` rather than the rendered array, for the reason `useLanding` documents: the undo
+ * arm runs up to six seconds later, and rebuilding from a render snapshot would roll back every
+ * layout change the user made in between.
+ */
+export function useRemoveCustomSection(
+  sections: CustomSection[],
+  layoutKey: LayoutKey,
+): (key: string) => void {
   const del = useUndoableDelete();
+  const { current, write } = useSettingsArray(layoutKey, parseLayoutEntries);
   return (key) => {
     const s = sections.find((x) => sectionKey(x) === key);
-    if (s) void del({ label: `Bereich „${s.name}“`, ...resourceUndo(api.customSections, s.id) });
+    if (!s) return;
+    // Captured before the delete, so the undo can put the entry back where it sat rather than
+    // appending it — a restored widget that jumps to the bottom of the page reads as a bug.
+    const index = current().findIndex((e) => e.key === key);
+    const entry = current()[index];
+    void del({
+      label: `Bereich „${s.name}“`,
+      remove: async () => {
+        const res = await api.customSections.remove(s.id);
+        await write(current().filter((e) => e.key !== key));
+        return res;
+      },
+      restore: async () => {
+        const res = await api.customSections.restore(s.id);
+        if (entry) {
+          const next = [...current()];
+          next.splice(index < 0 ? next.length : Math.min(index, next.length), 0, entry);
+          await write(next);
+        }
+        return res;
+      },
+    });
   };
 }
 

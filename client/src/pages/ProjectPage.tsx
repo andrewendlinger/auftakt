@@ -105,7 +105,7 @@ export function ProjectPage() {
     queryFn: () => api.customSections.list({ project_id: projectId }),
     enabled: validId,
   });
-  const removeCustomSection = useRemoveCustomSection(customSections);
+  const removeCustomSection = useRemoveCustomSection(customSections, 'project_layout');
   const nonEmptyCustom = useNonEmptyCustomSections(customSections);
   const { windowDays } = useTaskStatsConfig();
 

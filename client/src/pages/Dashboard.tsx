@@ -56,7 +56,7 @@ export function Dashboard() {
   });
   const { windowDays } = useTaskStatsConfig();
   const artistLabel = useLabel()('dash.artists');
-  const removeCustomSection = useRemoveCustomSection(customSections);
+  const removeCustomSection = useRemoveCustomSection(customSections, 'dashboard_layout');
   // All dashboard built-ins are computed views — only filled custom widgets block their 🗑.
   const nonEmptyKeys = useNonEmptyCustomSections(customSections);
 
