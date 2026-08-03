@@ -187,6 +187,11 @@ function Toolbar({
     chain().insertContent(ch).run();
     setEmoji(false);
   };
+  /** Dismiss the picker and put the caret back — `chain()` focuses before it runs. */
+  const closeEmoji = () => {
+    setEmoji(false);
+    chain().run();
+  };
 
   return (
     <div className="mb-1">
@@ -264,7 +269,20 @@ function Toolbar({
         // Inside rootRef so the blur guard treats picker focus as "still in the editor", and
         // absolutely positioned so WP-K's scrolling dialog body doesn't reflow around it.
         <div className="relative">
-          <div className="absolute left-0 z-50 mt-1" onMouseDown={(e) => e.preventDefault()}>
+          <div
+            className="absolute left-0 z-50 mt-1"
+            onMouseDown={(e) => e.preventDefault()}
+            // The same guard LinkBar has. emoji-picker-react autofocuses its own search input,
+            // so the key never reaches the editor's `handleKeyDown` (and therefore never
+            // reaches a caller `onKeyDown`); it bubbled straight to Modal's window listener,
+            // which closed the whole „Neuer Termin" dialog and discarded every field (RTE-05).
+            onKeyDown={(e) => {
+              if (e.key !== 'Escape') return;
+              e.preventDefault();
+              e.stopPropagation();
+              closeEmoji();
+            }}
+          >
             <Suspense fallback={<div className="rounded-lg bg-neutral-100 p-3 text-xs text-neutral-400">Emoji lädt…</div>}>
               <EmojiPickerLazy onPick={insertEmoji} />
             </Suspense>
