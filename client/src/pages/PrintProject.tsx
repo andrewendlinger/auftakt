@@ -166,7 +166,9 @@ export function PrintProject() {
             )}
             {groups.map((g) => (
               <tbody key={g.label}>
-                <tr>
+                {/* print-group-head: this row is the group's heading, so the print block keeps
+                    it with the first task under it (see index.css). */}
+                <tr className="print-group-head">
                   <td colSpan={customCols.length + 3} className="pb-1 pt-4">
                     <span
                       className="rounded-full px-2 py-0.5 text-xs font-semibold text-neutral-700"

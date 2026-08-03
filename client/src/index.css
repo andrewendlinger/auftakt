@@ -204,8 +204,12 @@ body {
   li {
     break-inside: avoid;
   }
+  /* `.print-group-head` is the project sheet's status-group row. It introduces the tasks under
+     it exactly as a heading does, but it is a `<tr><td colSpan>` — so neither rule above reached
+     it and „In Arbeit (7)" could print alone as the last line of a page. */
   h2,
-  h3 {
+  h3,
+  .print-group-head {
     break-after: avoid;
   }
 }
