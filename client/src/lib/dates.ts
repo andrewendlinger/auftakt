@@ -102,12 +102,28 @@ export function weekdayShort(iso: string | null | undefined): string {
   return WEEKDAYS[dow] ?? '';
 }
 
-/** Days from today (local) to the given date; negative = past. */
-export function daysUntil(iso: string | null | undefined): number | null {
+/**
+ * Today's local calendar day as the epoch-ms value `daysUntil` measures against. UTC arithmetic
+ * on local Y/M/D — never a real UTC timestamp — so DST never shortens a day.
+ */
+export function todayUtcMs(): number {
+  const t = new Date();
+  return Date.UTC(t.getFullYear(), t.getMonth(), t.getDate());
+}
+
+/**
+ * Days from today (local) to the given date; negative = past.
+ *
+ * Pass `fromUtcMs` when comparing many dates against the same „today": it saves a `new Date()`
+ * per call, and — the reason it exists — it makes the answers *consistent*. A comparator that
+ * constructs its own clock per call can straddle a midnight rollover mid-sort and stop being a
+ * total order (CCL-31).
+ */
+export function daysUntil(
+  iso: string | null | undefined,
+  fromUtcMs: number = todayUtcMs(),
+): number | null {
   const p = parseLocal(iso);
   if (!p) return null;
-  const today = new Date();
-  const a = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
-  const b = Date.UTC(p.y, p.mo - 1, p.d);
-  return Math.round((b - a) / 86400000);
+  return Math.round((Date.UTC(p.y, p.mo - 1, p.d) - fromUtcMs) / 86400000);
 }

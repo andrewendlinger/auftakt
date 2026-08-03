@@ -6,7 +6,7 @@
  * (`doneValueOf`), never a hardcoded string.
  */
 import type { Task } from '../api/types';
-import { daysUntil } from './dates';
+import { daysUntil, todayUtcMs } from './dates';
 
 export type TaskMetric = 'offen' | 'ueberfaellig' | 'baldfaellig' | 'fortschritt';
 
@@ -68,11 +68,30 @@ export function computeStats(tasks: Task[], doneValue: string, windowDays: numbe
   return { offen, ueberfaellig, baldfaellig, done, total, pct: total ? Math.round((done / total) * 100) : 0 };
 }
 
-/** Overdue ∪ due-soon, sorted most-overdue first then soonest due (both always have a due date). */
+/**
+ * Overdue ∪ due-soon, sorted most-overdue first then soonest due (both always have a due date).
+ *
+ * Decorate-sort-undecorate rather than the obvious filter+sort, because `daysUntil` is a regex
+ * parse plus a `Date` allocation and the comparator ran it twice per comparison on top of two per
+ * task in the filter — several thousand of both for one render of a 300-task list, repeated on
+ * every parent re-render. Worse, each comparator call built its own „today", so a midnight
+ * rollover mid-sort left the comparator inconsistent and the sort no longer a total order
+ * (CCL-31). One `todayUtcMs()` for the whole pass fixes both.
+ *
+ * It does not go through `isOverdue`/`isDueSoon` for the same reason — they take no „today" and
+ * would put the per-call clock back. Their union is simply `d <= windowDays`.
+ */
 export function attentionTasks(tasks: Task[], doneValue: string, windowDays: number): Task[] {
-  return tasks
-    .filter((t) => isOverdue(t, doneValue) || isDueSoon(t, doneValue, windowDays))
-    .sort((a, b) => (daysUntil(a.due_date) ?? 0) - (daysUntil(b.due_date) ?? 0));
+  const today = todayUtcMs();
+  const rows: Array<{ task: Task; days: number }> = [];
+  for (const t of tasks) {
+    if (!isOpen(t, doneValue) || !t.due_date) continue;
+    const days = daysUntil(t.due_date, today);
+    if (days == null || days > windowDays) continue;
+    rows.push({ task: t, days });
+  }
+  rows.sort((a, b) => a.days - b.days);
+  return rows.map((r) => r.task);
 }
 
 /** German due phrase for a task row: „überfällig 2 Tage" / „heute fällig" / „fällig morgen" / „fällig in 3 Tagen". */
