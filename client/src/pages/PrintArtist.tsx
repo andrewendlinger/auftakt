@@ -1,7 +1,7 @@
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import { type Task } from '../api/types';
+import { type Contact, type Task } from '../api/types';
 import { Spinner, ErrorState, LoadError } from '../components/ui';
 import { isValidId } from '../lib/routeParams';
 import { Markdown } from '../components/Markdown';
@@ -31,18 +31,27 @@ export function PrintArtist() {
     queryKey: ['print-artist', artistId],
     enabled: validId,
     queryFn: async () => {
-      // These four are independent; contacts alone depend on the fetched projects.
-      const [artist, projects, events, tasks] = await Promise.all([
+      // One unfiltered contact list rather than one request per project — the season's contacts
+      // are a handful of rows and the filtering is a comparison, the trade CustomSections and
+      // SettingsPage already make. Fetching them per project made the sheet wait for a second
+      // round-trip wave that grew with the artist's project count (PGS-25).
+      const [artist, projects, events, tasks, allContacts] = await Promise.all([
         api.artists.get(artistId),
         api.projects.list({ artist_id: artistId }),
         api.events.list({ resolved_artist_id: artistId }),
         api.tasks.list({ resolved_artist_id: artistId }),
+        api.contacts.list(),
       ]);
-      const contactLists = await Promise.all([
-        api.contacts.list({ artist_id: artistId }),
-        ...projects.map((p) => api.contacts.list({ project_id: p.id })),
-      ]);
-      return { artist, events, tasks, contacts: contactLists.flat() };
+      // `projects` holds the live ones, so a contact hanging off a project in the Papierkorb
+      // stays out — as it did when its project was never asked about. Rank keeps the printed
+      // order: the artist's own contacts first, then per project in the project list's order,
+      // each group still in the server's sort_order (the sort is stable).
+      const rank = new Map(projects.map((p, i) => [p.id, i + 1]));
+      const rankOf = (c: Contact) => (c.artist_id === artistId ? 0 : (rank.get(c.project_id ?? -1) ?? 0));
+      const contacts = allContacts
+        .filter((c) => c.artist_id === artistId || rank.has(c.project_id ?? -1))
+        .sort((a, b) => rankOf(a) - rankOf(b));
+      return { artist, events, tasks, contacts };
     },
   });
 
