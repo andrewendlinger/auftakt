@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type Database from 'better-sqlite3';
-import { getDb, setActiveSeasonLabel } from '../db';
+import { ARCHIVE_AFTER_DAYS, PURGE_AFTER_DAYS, getDb, setActiveSeasonLabel } from '../db';
 
 /** Settings stored as JSON arrays; returned parsed, accepted as arrays. */
 const ARRAY_KEYS = new Set([
@@ -54,6 +54,14 @@ function getAllSettings(db: Database.Database): Record<string, unknown> {
   for (const { key, value } of rows) {
     out[key] = ARRAY_KEYS.has(key) && value ? safeParse(value) : value;
   }
+  // Retention constants, so the UI can state the policy the app actually follows instead of
+  // hardcoding „30 Tage" in German prose that goes stale the moment either constant changes
+  // (PGS-24). Read-only by construction: absent from WRITABLE_SETTINGS, so the PATCH drops
+  // them, and written last so a stray settings row of the same name cannot shadow them. Both
+  // the GET and the PATCH response go through here, so a settings write can never publish an
+  // object that is missing them.
+  out.archive_after_days = ARCHIVE_AFTER_DAYS;
+  out.purge_after_days = PURGE_AFTER_DAYS;
   return out;
 }
 

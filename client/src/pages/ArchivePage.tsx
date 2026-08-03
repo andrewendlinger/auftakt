@@ -7,9 +7,9 @@ import { SectionTitle, Spinner, EmptyState, ErrorState, Btn, Pill } from '../com
 import { ProjectBadge } from '../components/ProjectBadge';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { TextInput, Modal } from '../components/fields';
-import { formatDate, daysUntil } from '../lib/dates';
+import { formatDate, daysUntil, dayCount, dayCountDative } from '../lib/dates';
 import { Markdown } from '../components/Markdown';
-import { useGuardedAction, useInvalidateAll } from '../hooks';
+import { useGuardedAction, useInvalidateAll, useRetention } from '../hooks';
 import { useToast } from '../components/Toast';
 
 /** Singular/plural per type — drives the badge and the cascade summary. */
@@ -39,8 +39,7 @@ function purgeHint(purgeAt: string | null): string {
   if (purgeAt === null) return ' · bleibt, bis abhängige Einträge entfernt sind';
   const d = daysUntil(purgeAt);
   if (d == null) return '';
-  const n = Math.max(0, d);
-  return ` · wird in ${n} Tag${n === 1 ? '' : 'en'} endgültig entfernt`;
+  return ` · wird in ${dayCountDative(Math.max(0, d))} endgültig entfernt`;
 }
 
 export function ArchivePage() {
@@ -65,6 +64,7 @@ export function ArchivePage() {
     queryFn: () => api.deleted.list(),
   });
   const [q, setQ] = useState('');
+  const { archiveAfterDays, purgeAfterDays } = useRetention();
   const [confirmPurge, setConfirmPurge] = useState<DeletedItem | null>(null);
   const invalidate = useInvalidateAll();
   const guard = useGuardedAction();
@@ -136,7 +136,7 @@ export function ArchivePage() {
             />
           }
         >
-          Erledigte Aufgaben (älter als 30 Tage)
+          Erledigte Aufgaben (älter als {dayCount(archiveAfterDays)})
         </SectionTitle>
 
         {tasksFailed ? (
@@ -148,7 +148,7 @@ export function ArchivePage() {
         ) : filtered.length === 0 ? (
           <EmptyState>
             {tasks.length === 0
-              ? 'Noch nichts archiviert. Erledigte Aufgaben wandern 30 Tage nach Abschluss hierher.'
+              ? `Noch nichts archiviert. Erledigte Aufgaben wandern ${dayCount(archiveAfterDays)} nach Abschluss hierher.`
               : 'Keine Treffer.'}
           </EmptyState>
         ) : (
@@ -207,7 +207,7 @@ export function ArchivePage() {
         ) : filteredDeleted.length === 0 ? (
           <EmptyState>
             {deleted.length === 0
-              ? 'Papierkorb ist leer. Gelöschte Einträge erscheinen hier und werden nach 30 Tagen automatisch entfernt.'
+              ? `Papierkorb ist leer. Gelöschte Einträge erscheinen hier und werden nach ${dayCountDative(purgeAfterDays)} automatisch entfernt.`
               : 'Keine Treffer.'}
           </EmptyState>
         ) : (

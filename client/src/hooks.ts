@@ -273,6 +273,27 @@ export function useTaskStatsConfig(): { metrics: TaskMetric[]; windowDays: numbe
 }
 
 /**
+ * Fallbacks for the render before `['settings']` first resolves. They match server/src/db.ts
+ * and exist only so the copy never says „nach undefined Tagen" for one frame — the values the
+ * user sees come from the server (PGS-24).
+ */
+const RETENTION_FALLBACK = { archive: 30, purge: 30 };
+
+/**
+ * How long the server keeps things, in days — `ARCHIVE_AFTER_DAYS` (a done task leaves the live
+ * views) and `PURGE_AFTER_DAYS` (a trashed row is hard-deleted), spliced into the settings
+ * response. The single boundary for both, so no German string states a retention policy the app
+ * does not follow (PGS-24).
+ */
+export function useRetention(): { archiveAfterDays: number; purgeAfterDays: number } {
+  const { data } = useSettings();
+  return {
+    archiveAfterDays: data?.archive_after_days ?? RETENTION_FALLBACK.archive,
+    purgeAfterDays: data?.purge_after_days ?? RETENTION_FALLBACK.purge,
+  };
+}
+
+/**
  * An array-valued setting plus the write that replaces it — for the editors that save on every
  * interaction rather than behind a „Speichern" button.
  *

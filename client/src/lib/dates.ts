@@ -127,3 +127,18 @@ export function daysUntil(
   if (!p) return null;
   return Math.round((Date.UTC(p.y, p.mo - 1, p.d) - fromUtcMs) / 86400000);
 }
+
+/**
+ * „1 Tag“ / „30 Tage“ — nominative and accusative.
+ *
+ * Here because the retention copy interpolates a server constant now (PGS-24) and a bare
+ * `${n} Tage` reads „1 Tage“ if either constant is ever set to one.
+ */
+export function dayCount(n: number): string {
+  return `${n} Tag${n === 1 ? '' : 'e'}`;
+}
+
+/** „1 Tag“ / „30 Tagen“ — dative, i.e. after „nach“ or „in“. */
+export function dayCountDative(n: number): string {
+  return `${n} Tag${n === 1 ? '' : 'en'}`;
+}

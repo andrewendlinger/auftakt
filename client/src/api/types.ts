@@ -490,7 +490,17 @@ export interface WritableSettings {
  * excess-property checking on the PATCH, so a mistyped key compiled cleanly and was dropped
  * server-side with no error anywhere (CCL-22).
  */
-export interface Settings extends WritableSettings {}
+export interface Settings extends WritableSettings {
+  /**
+   * Server retention constants (`ARCHIVE_AFTER_DAYS` / `PURGE_AFTER_DAYS`, server/src/db.ts),
+   * spliced into the response so the German copy can state the policy in force rather than
+   * hardcode it (PGS-24). Read through `useRetention()`. Never writable — they are absent from
+   * `WritableSettings`, and the server's own allowlist drops them too. Optional so a response
+   * from an older server still type-checks.
+   */
+  readonly archive_after_days?: number;
+  readonly purge_after_days?: number;
+}
 
 /**
  * The settings whose value is a JSON array — the mirror of `ARRAY_KEYS` in

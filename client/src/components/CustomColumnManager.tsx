@@ -14,6 +14,7 @@ import type {
 } from '../api/types';
 import { parseColumnOptions } from '../api/types';
 import { arrayMove } from '../lib/arrays';
+import { dayCount } from '../lib/dates';
 import { OPTION_PALETTE } from '../lib/selectOptions';
 import {
   OptionsEditor,
@@ -23,7 +24,13 @@ import {
   validateOptions,
 } from './OptionsEditor';
 import { OptionRemovalDialog, type OptionRemoval } from './OptionRemovalDialog';
-import { useInvalidateAll, useOptionUsage, useUndoableDelete, resourceUndo } from '../hooks';
+import {
+  useInvalidateAll,
+  useOptionUsage,
+  useRetention,
+  useUndoableDelete,
+  resourceUndo,
+} from '../hooks';
 
 /** A handful of common symbols; users can also type any emoji into the free field. */
 const ICON_PRESETS = ['👤', '👥', '📞', '📧', '✅', '⭐', '📅', '🎵', '🎸', '🎤', '💶', '📝', '📌', '🏨', '🚗', '✈️'];
@@ -85,6 +92,7 @@ export function CustomColumnManager({
   const invalidate = useInvalidateAll();
   const del = useUndoableDelete();
   const { usage } = useOptionUsage();
+  const { purgeAfterDays } = useRetention();
   const [editing, setEditing] = useState<CustomColumn | null>(null);
   const [confirming, setConfirming] = useState<ColumnConfirm | null>(null);
 
@@ -242,8 +250,8 @@ export function CustomColumnManager({
               : 'Die Spalte enthält noch keine Werte.'}
           </p>
           <p className="mt-2 text-sm text-neutral-500">
-            Gelöschte Spalten liegen 30 Tage im Papierkorb und lassen sich im Archiv
-            wiederherstellen.
+            Gelöschte Spalten liegen {dayCount(purgeAfterDays)} im Papierkorb und lassen sich im
+            Archiv wiederherstellen.
           </p>
         </Modal>
       )}
