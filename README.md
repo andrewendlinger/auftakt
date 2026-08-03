@@ -95,8 +95,18 @@ Download-Start wäre Apple-Signierung + Notarisierung nötig (Developer-Account)
 server/   Express + better-sqlite3: db.ts (Schema), seed.ts, routes/, lib/
 client/   React-App: pages/, components/, api/, lib/ (linkify, dates, colors)
 electron/ main.ts, preload.ts, menu.ts, backup.ts
-scripts/  build.mjs (esbuild-Bündel für Server + Electron)
+scripts/  build.mjs (esbuild-Bündel) + die check-*.mjs-Gates
+docs/     Architektur, Entscheidungen, Test-Checklisten
 ```
+
+## Dokumentation
+
+| Datei | Inhalt |
+| --- | --- |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Aufbau der drei Schichten, Zeitstempel-Konvention, Saisons, CRUD-Factory, Soft-Delete, Spalten-Modell, Client-Verträge |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | Bewusst *nicht* umgesetzte Dinge, mit Begründung |
+| [`docs/VERIFYING.md`](docs/VERIFYING.md) | Fallstricke beim manuellen Prüfen im Browser |
+| [`docs/BACKUP-TESTING.md`](docs/BACKUP-TESTING.md) | Manuelle Backup-/Import-Checkliste vor jedem Release |
 
 ## Skripte
 
@@ -107,6 +117,7 @@ scripts/  build.mjs (esbuild-Bündel für Server + Electron)
 | `npm run demo:seed` | Nur die Demo-Datenbank neu bauen |
 | `npm run seed` | Echte Datenbank in `./.data/` neu befüllen |
 | `npm run typecheck` | Typecheck Server + Client + Electron |
+| `npm run check` | Alle vier Prüfskripte (Backup, Datum/Zeitzone, API-Invarianten, Markdown) |
 | `npm run build` | Client-Build + Server-/Electron-Bündel |
 | `npm run dist` | Installer für die aktuelle Plattform |
 
