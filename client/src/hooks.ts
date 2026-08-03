@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api/client';
 import type {
+  CustomColumn,
   CustomColumnOption,
   ID,
   LabelOverride,
@@ -172,21 +173,31 @@ export function useProjectStatusOptions(): CustomColumnOption[] {
 }
 
 /**
+ * The global column rows — every built-in plus the season-wide custom ones. Built-ins are
+ * inserted with `scope: 'global'`, so this list is the whole answer for anything keyed off a
+ * built-in: their `key`, their user-editable `name`, their options and their `enabled` flag.
+ */
+export function useGlobalColumns(): CustomColumn[] {
+  const { data = [] } = useQuery({
+    queryKey: ['customColumns', 'global'],
+    queryFn: () => api.customColumns.list({ scope: 'global' }),
+  });
+  return data;
+}
+
+/**
  * The Status column's „done" value — what drives gray-out, sink-to-bottom, the open/done split
  * in the stats and the archive. The single derivation, replacing the copy that sat on five
  * pages and was then prop-threaded into TaskStatChips, AttentionList, ArtistCard and
  * ProjectCard: changing how done-ness resolves used to mean touching five pages and every prop
  * signature, and any site missed silently kept the old semantics (PGS-27).
  *
- * Global columns are the whole answer — built-ins are inserted with `scope: 'global'`, so a
- * project page's merged global+project list can never resolve a different Status column.
+ * A project page's merged global+project list can never resolve a different Status column, because
+ * `useGlobalColumns` is where the built-ins live.
  */
 export function useDoneValue(): string {
-  const { data = [] } = useQuery({
-    queryKey: ['customColumns', 'global'],
-    queryFn: () => api.customColumns.list({ scope: 'global' }),
-  });
-  return useMemo(() => doneValueOf(data), [data]);
+  const columns = useGlobalColumns();
+  return useMemo(() => doneValueOf(columns), [columns]);
 }
 
 /**
