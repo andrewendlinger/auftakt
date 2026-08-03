@@ -62,6 +62,12 @@ export function RichTextEditor({
   // on that: Esc sets `editing=false` to *cancel*, and the unmount must not commit the draft.
   // This layout-effect cleanup runs before useEditor's own (destroy) cleanup.
   const alive = useRef(true);
+  // `useEditor` defaults its deps to `[]`, so anything baked into an extension's `configure`
+  // is frozen at construction. Reading the placeholder through a ref keeps it a real prop
+  // without re-creating the editor, which a deps array would do on every className change
+  // (RTE-19). `setOptions` is no help here: it never rebuilds the extension manager.
+  const placeholderRef = useRef(placeholder);
+  placeholderRef.current = placeholder;
   useLayoutEffect(() => {
     // Re-arm on (re)mount — StrictMode runs setup→cleanup→setup, so a cleanup-only ref would
     // stay stuck `false` and silently swallow every real blur-commit.
@@ -72,7 +78,10 @@ export function RichTextEditor({
   }, []);
 
   const editor = useEditor({
-    extensions: [...markdownExtensions(), Placeholder.configure({ placeholder: placeholder ?? '' })],
+    extensions: [
+      ...markdownExtensions(),
+      Placeholder.configure({ placeholder: () => placeholderRef.current ?? '' }),
+    ],
     content: value,
     contentType: 'markdown',
     autofocus: autoFocus ? 'end' : false,
@@ -98,6 +107,13 @@ export function RichTextEditor({
       onBlurRef.current?.();
     },
   });
+
+  // The placeholder decoration is only recomputed when the editor state moves, so nudge it
+  // when the prop changes; without this the ref above would be read once and never again.
+  useEffect(() => {
+    if (!editor) return;
+    editor.view.dispatch(editor.state.tr);
+  }, [placeholder, editor]);
 
   // Reflect an *external* value change (undo, a form reset) without clobbering the caret on
   // our own echo. Skip when the incoming Markdown already matches what we emitted or hold.
