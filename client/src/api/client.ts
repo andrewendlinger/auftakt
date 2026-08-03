@@ -72,7 +72,13 @@ async function http<T>(method: string, path: string, body?: unknown): Promise<T>
   return (await res.json()) as T;
 }
 
-function qs(params?: Record<string, unknown>): string {
+/**
+ * The one query-string encoder. Exported because the .xlsx export is a plain `<a href>` rather
+ * than a `fetch`, so it builds its URL itself — and had grown a second copy of this that
+ * disagreed about which values are droppable (SHL-30). Anything that changes here (array
+ * values, repeated keys, `URLSearchParams`) has to reach that link too.
+ */
+export function qs(params?: Record<string, unknown>): string {
   if (!params) return '';
   const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null);
   if (entries.length === 0) return '';
