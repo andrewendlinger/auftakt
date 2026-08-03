@@ -8,7 +8,6 @@ import {
   type ColumnDef,
   type ExpandedState,
 } from '@tanstack/react-table';
-import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { CustomColumn, CustomColumnOption, Task, TaskSortRule } from '../api/types';
 import { compareColumns, customValueOf, doneValueOf, parseColumnOptions } from '../api/types';
