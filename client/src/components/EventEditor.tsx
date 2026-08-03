@@ -11,6 +11,18 @@ export interface EventParent {
   project_id?: number;
 }
 
+/** A stored `YYYY-MM-DD` (all-day) widened to `YYYY-MM-DDTHH:mm`; anything else left alone. */
+function withTime(stored: string | null | undefined, fallback: string): string {
+  if (!stored) return '';
+  return stored.length === 10 ? `${stored}T${fallback}` : stored;
+}
+
+/** The value to store: all-day events keep only the calendar day, per the date convention. */
+function forStorage(v: string, allDay: boolean): string | null {
+  if (v.trim() === '') return null;
+  return allDay ? v.slice(0, 10) : v;
+}
+
 export function EventEditor({
   event,
   parent,
@@ -30,8 +42,12 @@ export function EventEditor({
   // TBD = no fixed date yet; stored as start_at NULL. The pickers keep their values while
   // the box is ticked so un-ticking restores them.
   const [tbd, setTbd] = useState<boolean>(event ? !event.start_at : false);
-  const [start, setStart] = useState(event?.start_at ?? '');
-  const [end, setEnd] = useState(event?.end_at ?? '');
+  // „Ganztägig" follows the same rule: `start`/`end` always hold the full `YYYY-MM-DDTHH:mm`
+  // and `submit` derives the date-only form. Truncating them on toggle destroyed the event's
+  // real clock times — tick and immediately untick and 19:30–21:15 came back as 09:00–10:00,
+  // unrecoverable inside the dialog and written to the DB on Speichern (RTE-03).
+  const [start, setStart] = useState(withTime(event?.start_at, '09:00'));
+  const [end, setEnd] = useState(withTime(event?.end_at, '10:00'));
   const [location, setLocation] = useState(event?.location ?? '');
   const [notes, setNotes] = useState(event?.notes ?? '');
   const [busy, setBusy] = useState(false);
@@ -43,16 +59,14 @@ export function EventEditor({
     title !== (event?.title ?? '') ||
     allDay !== !!event?.all_day ||
     tbd !== (event ? !event.start_at : false) ||
-    start !== (event?.start_at ?? '') ||
-    end !== (event?.end_at ?? '') ||
+    start !== withTime(event?.start_at, '09:00') ||
+    end !== withTime(event?.end_at, '10:00') ||
     location !== (event?.location ?? '') ||
     notes !== (event?.notes ?? '');
 
-  const toggleAllDay = (v: boolean) => {
-    setAllDay(v);
-    setStart((s) => (v ? s.slice(0, 10) : s.length === 10 ? `${s}T09:00` : s));
-    setEnd((e) => (!e ? e : v ? e.slice(0, 10) : e.length === 10 ? `${e}T10:00` : e));
-  };
+  /** Picking a day while „Ganztägig" is ticked keeps whatever time the event already had. */
+  const setDay = (set: (v: string) => void, current: string, day: string, fallback: string) =>
+    set(day === '' ? '' : `${day}T${current.slice(11) || fallback}`);
 
   const submit = async () => {
     if (!title.trim()) return;
@@ -62,8 +76,8 @@ export function EventEditor({
       project_id: event ? event.project_id : (parent.project_id ?? null),
       type,
       title: title.trim(),
-      start_at: tbd || start.trim() === '' ? null : start,
-      end_at: tbd || end.trim() === '' ? null : end,
+      start_at: tbd ? null : forStorage(start, allDay),
+      end_at: tbd ? null : forStorage(end, allDay),
       all_day: allDay ? 1 : 0,
       location: location.trim() === '' ? null : location,
       notes: notes.trim() === '' ? null : notes,
@@ -109,7 +123,7 @@ export function EventEditor({
         </div>
         <div className="col-span-2 flex flex-col justify-end gap-1.5 sm:col-span-1">
           <label className="flex cursor-pointer items-center gap-2 text-sm text-neutral-700">
-            <input type="checkbox" checked={allDay} onChange={(e) => toggleAllDay(e.target.checked)} />
+            <input type="checkbox" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} />
             Ganztägig / mehrtägig (ohne Uhrzeit)
           </label>
           <label className="flex cursor-pointer items-center gap-2 text-sm text-neutral-700">
@@ -125,20 +139,24 @@ export function EventEditor({
           <Label>Beginn</Label>
           <TextInput
             type={allDay ? 'date' : 'datetime-local'}
-            value={start}
+            value={allDay ? start.slice(0, 10) : start}
             disabled={tbd}
             className="disabled:bg-neutral-100 disabled:text-neutral-400"
-            onChange={(e) => setStart(e.target.value)}
+            onChange={(e) =>
+              allDay ? setDay(setStart, start, e.target.value, '09:00') : setStart(e.target.value)
+            }
           />
         </div>
         <div className="col-span-2 sm:col-span-1">
           <Label>Ende (optional)</Label>
           <TextInput
             type={allDay ? 'date' : 'datetime-local'}
-            value={end}
+            value={allDay ? end.slice(0, 10) : end}
             disabled={tbd}
             className="disabled:bg-neutral-100 disabled:text-neutral-400"
-            onChange={(e) => setEnd(e.target.value)}
+            onChange={(e) =>
+              allDay ? setDay(setEnd, end, e.target.value, '10:00') : setEnd(e.target.value)
+            }
           />
         </div>
         <div className="col-span-2">
