@@ -24,6 +24,8 @@ export const TREE = {
   /** Elbow arm length — this is the subtask indent, absorbed entirely by the gutter so that
    *  data columns stay aligned between a parent and its children. */
   stub: 12,
+  /** Shorter arm for a `branch` row, so its 16px chevron fits between the rail and `width`. */
+  branchStub: 4,
   /** Where a parent's rail starts: below the chevron (pt-1 = 4px + h-7 = 28px). */
   spineTop: 32,
 } as const;
@@ -65,6 +67,18 @@ type TreeKind =
   | 'leaf'
   /** Subtask: ├ or └ connector. */
   | 'child'
+  /**
+   * Subtask that itself has subtasks: the connector *plus* a disclosure chevron.
+   *
+   * The UI only ever builds two levels, but the schema allows more and an import can produce
+   * them — and without this kind a depth-1 parent failed the `child ? 'child' : canExpand ?
+   * 'parent'` test, so it rendered as a plain subtask with no chevron while its own children
+   * rendered identically one row below it. The user saw a flat list of five subtasks where two
+   * of them belonged to a third, force-expanded with no control to fold them (TTU-37). The
+   * chevron is small and sits on the elbow rather than in the rail lane, so it stays inside the
+   * gutter's fixed width.
+   */
+  | 'branch'
   /** The inline "new subtask" composer, which sits inside the group's rail. */
   | 'composer';
 
@@ -138,13 +152,32 @@ export function TreeGutterCell({
         </>
       )}
 
-      {(kind === 'child' || kind === 'composer') && (
+      {(kind === 'child' || kind === 'branch' || kind === 'composer') && (
         <>
           <span
             className={`absolute w-px ${continues ? '-bottom-px' : ''}`}
             style={{ ...line, top: 0, ...(continues ? null : { height: TREE.lineY }) }}
           />
-          <span className="absolute h-px" style={{ ...line, top: TREE.lineY, width: TREE.stub }} />
+          <span
+            className="absolute h-px"
+            style={{ ...line, top: TREE.lineY, width: kind === 'branch' ? TREE.branchStub : TREE.stub }}
+          />
+          {kind === 'branch' && (
+            // Sits on the elbow rather than in the rail lane, so the whole control still fits
+            // inside TREE.width and the data columns stay put.
+            <button
+              type="button"
+              aria-expanded={expanded}
+              title={expanded ? 'Einklappen' : 'Ausklappen'}
+              onClick={onToggle}
+              className="absolute flex h-4 w-4 items-center justify-center rounded text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-700"
+              style={{ left: TREE.spineX + TREE.branchStub, top: TREE.lineY - 8 }}
+            >
+              <ChevronRightIcon
+                className={`h-3 w-3 transition-transform duration-150 ${expanded ? 'rotate-90' : ''}`}
+              />
+            </button>
+          )}
         </>
       )}
     </td>

@@ -664,7 +664,19 @@ export function TaskTable({
                     {...drag.itemProps(row.original.id)}
                   >
                     <TreeGutterCell
-                      kind={child ? 'child' : row.getCanExpand() ? 'parent' : 'leaf'}
+                      // A subtask that has subtasks of its own gets the connector *and* a
+                      // chevron. The UI only builds two levels, but an import can produce more,
+                      // and without the third kind those rows rendered exactly like their own
+                      // children and could not be folded (TTU-37).
+                      kind={
+                        child
+                          ? row.getCanExpand()
+                            ? 'branch'
+                            : 'child'
+                          : row.getCanExpand()
+                            ? 'parent'
+                            : 'leaf'
+                      }
                       expanded={row.getIsExpanded()}
                       continues={i < lastIdx || composerOpen}
                       spineColor={spineColor}

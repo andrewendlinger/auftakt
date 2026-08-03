@@ -191,6 +191,21 @@ export const tasksRouter = crudRouter({
   required: ['title'],
   jsonColumns: ['custom_values'],
   transform: (body, { mode, existing }) => {
+    // Subtasks are one level deep. The „＋ Unteraufgabe" button enforces it too (TTU-15), but a
+    // button is not an invariant: the affordance was previously gated on render position, which
+    // let an orphan grow a third level, and a stale tab or a script can post whatever it likes.
+    // Checked on create as well, which is where the composer builds subtasks (TTU-37).
+    //
+    // Deliberately not retroactive: it fires only when `parent_id` is in the payload, so ordinary
+    // edits to a deep tree that arrived by import still work, and nothing is migrated.
+    if ('parent_id' in body && body.parent_id != null) {
+      const target = getDb()
+        .prepare('SELECT parent_id FROM tasks WHERE id = ?')
+        .get(Number(body.parent_id)) as { parent_id: number | null } | undefined;
+      if (target?.parent_id != null) {
+        throw new HttpError(400, 'Unteraufgaben können keine weiteren Unteraufgaben haben.');
+      }
+    }
     // A task may not be its own ancestor. On update, reject setting parent_id to the task
     // itself or to any descendant of it — either closes a cycle the client tree renderer (and
     // every recursive walk) can't handle. Create needs no check: the new row has no id yet, so
