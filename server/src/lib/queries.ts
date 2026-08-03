@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { ARCHIVE_AFTER_DAYS, doneStatusValue } from '../db';
+import { ARCHIVE_AFTER_DAYS, doneStatusValue, priorityValues } from '../db';
 import type { TaskScope } from './query';
 
 /**
@@ -42,13 +42,28 @@ FROM tasks t${parentJoins('t')}
 
 const TASK_PARENT_LIVE = parentLive('t');
 
-/** Open first, then by priority, then due date (nulls last); done tasks sink to the bottom.
- *  The done status value is parameterised (?) so it follows the editable Status column. */
-const TASK_ORDER = `
+/**
+ * Open first, then by priority, then due date (nulls last); done tasks sink to the bottom. Both
+ * categories are parameterised, so the ordering follows the editable Status and Priorität columns.
+ *
+ * The priority CASE used to be a hardcoded hoch/mittel/niedrig ladder. Rename those options — the
+ * column manager allows it — and every task fell into ELSE while the client ranked them 0..n by
+ * the configured order, so the two disagreed about which rows were of equal rank: with an empty
+ * sort hierarchy, `canDrop` could refuse a drop the server considered a tie.
+ *
+ * One bound param per option, and an unknown or empty priority sorts last, as it always did.
+ */
+const taskOrder = (priorities: string[]): string => {
+  // `CASE x END` with no WHEN is a syntax error, so an empty ladder degrades to "all equal".
+  const rank = priorities.length
+    ? `CASE t.priority ${priorities.map((_, i) => `WHEN ? THEN ${i}`).join(' ')} ELSE ${priorities.length} END`
+    : '0';
+  return `
 ORDER BY (t.status = ?) ASC,
-  CASE t.priority WHEN 'hoch' THEN 0 WHEN 'mittel' THEN 1 WHEN 'niedrig' THEN 2 ELSE 3 END ASC,
+  ${rank} ASC,
   (t.due_date IS NULL) ASC, t.due_date ASC, t.sort_order ASC, t.id ASC
 `;
+};
 
 /** 'localtime' because erledigt_am is a naive local stamp — a UTC cutoff compares two clocks. */
 const archivedCond = (): string =>
@@ -90,8 +105,13 @@ export function listTasks(db: Database.Database, q: TaskQuery = {}): unknown[] {
     where.push(archivedCond());
     params.push(done);
   }
-  params.push(done); // for TASK_ORDER's (t.status = ?)
-  return db.prepare(`${TASK_SELECT} WHERE ${where.join(' AND ')} ${TASK_ORDER}`).all(...params);
+  // ORDER BY binds the done value, then one param per priority option — keep this aligned with
+  // the SQL taskOrder() emits.
+  const priorities = priorityValues(db);
+  params.push(done, ...priorities);
+  return db
+    .prepare(`${TASK_SELECT} WHERE ${where.join(' AND ')} ${taskOrder(priorities)}`)
+    .all(...params);
 }
 
 /** Same shape as TASK_SELECT, same soft-deleted-parent filter and for the same reason (SDL-03). */

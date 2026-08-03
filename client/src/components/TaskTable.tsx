@@ -214,8 +214,12 @@ function compareByRules(
  * An empty rule list leaves the server order (priority → due, done last) untouched.
  */
 /**
- * The server's own ORDER BY (`TASK_ORDER` in server/src/lib/queries.ts) expressed as rules — the
+ * The server's own ORDER BY (`taskOrder` in server/src/lib/queries.ts) expressed as rules — the
  * ordering actually in effect when the user has configured none. Keep the two in step.
+ *
+ * They now agree on priority: the server ranks by the configured Priorität option order, as this
+ * side always has, rather than by a hardcoded hoch/mittel/niedrig ladder that put every renamed
+ * category into one bucket and made `canDrop` refuse drops the server considered ties.
  *
  * "No rules" is not "no constraints": with an empty hierarchy `sortTasks` short-circuits and the
  * list keeps the server order, which ranks priority and due date above sort_order. Testing drops

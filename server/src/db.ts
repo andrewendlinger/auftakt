@@ -1588,6 +1588,27 @@ export function doneStatusValue(db: Database.Database): string {
   return 'done';
 }
 
+/**
+ * The Priorität option values in the order the user configured them — the ranking the task list
+ * sorts by. Falls back to the factory options when the column is gone or its options are
+ * unreadable, which is what the ORDER BY used to hardcode.
+ */
+export function priorityValues(db: Database.Database): string[] {
+  const row = db
+    .prepare("SELECT options FROM custom_columns WHERE key = 'priority' AND deleted_at IS NULL LIMIT 1")
+    .get() as { options?: string | null } | undefined;
+  if (row?.options) {
+    try {
+      const opts = JSON.parse(row.options) as ColumnOption[];
+      const values = opts.map((o) => o.value).filter((v): v is string => typeof v === 'string' && v !== '');
+      if (values.length) return values;
+    } catch {
+      /* fall through */
+    }
+  }
+  return DEFAULT_PRIORITY_OPTIONS.map((o) => o.value);
+}
+
 function ensureDefaultSettings(db: Database.Database): void {
   const stmt = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
   const tx = db.transaction(() => {
