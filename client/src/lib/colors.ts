@@ -82,9 +82,26 @@ export function luminance(hex: string): number {
   return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
 }
 
-/** Black or white text that reads on the given background colour. */
+const DARK_TEXT = '#1c1c1e';
+const LIGHT_TEXT = '#ffffff';
+
+/** WCAG contrast ratio between two relative luminances. */
+const ratio = (a: number, b: number): number =>
+  (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+
+/**
+ * Black or white text that reads on the given background colour — whichever actually scores the
+ * higher contrast ratio.
+ *
+ * This was a luminance gate at 0.55, but the two candidates cross at ≈0.179, so every colour in
+ * between got white text where black reads far better — including the ones `pickArtistColor` is
+ * built to emit. Its s=62/l=52 lands on e.g. `#3cd23c` at luminance ≈0.538, just under the gate:
+ * white on that green is 1.8:1 (illegible), `#1c1c1e` is 11.7:1. The schema default `#888888` and
+ * every mid-tone `projectShade` were inverted the same way (CCL-11).
+ */
 export function contrastText(hex: string): string {
-  return luminance(hex) > 0.55 ? '#1c1c1e' : '#ffffff';
+  const bg = luminance(hex);
+  return ratio(bg, luminance(DARK_TEXT)) >= ratio(bg, luminance(LIGHT_TEXT)) ? DARK_TEXT : LIGHT_TEXT;
 }
 
 /** A translucent tint of a colour for soft backgrounds / row accents. */
