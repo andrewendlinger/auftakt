@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { api } from '../api/client';
 import type {
   LandingContent,
   LandingDoc,
@@ -251,17 +250,34 @@ export function LandingLinksSection({ section }: { section: LandingSection }) {
   );
 }
 
-/** The arranger's 🗑 handler for custom sections: snapshot-undo, like landing documents. */
-export function useRemoveLandingSection(landing: LandingContent | undefined): (key: string) => void {
+/**
+ * The arranger's 🗑 handler for custom sections. Undoable, and — like the document delete — both
+ * arms compute from the sections as they are when they run.
+ *
+ * The snapshot this replaced overwrote `landing.sections` wholesale, so undoing the removal of
+ * one Bereich six seconds later also carried every other one back to its pre-delete state: a note
+ * typed into a neighbouring Textfeld, a heading renamed through `EditableText`, a second Bereich
+ * deleted on purpose. Registry sections have no `deleted_at` and never appear in „Archiv", so
+ * none of that was recoverable (SHL-02).
+ */
+export function useRemoveLandingSection(): (key: string) => void {
   const del = useUndoableDelete();
+  const { current, patch } = useLanding();
   return (key) => {
-    const before = landing?.sections ?? [];
-    const s = before.find((x) => landingSectionKey(x) === key);
+    const sections = () => current()?.sections ?? [];
+    const s = sections().find((x) => landingSectionKey(x) === key);
     if (!s) return;
+    const index = sections().indexOf(s);
     void del({
       label: `Bereich „${s.name}“`,
-      remove: () => api.landing.patch({ sections: before.filter((x) => x.id !== s.id) }),
-      restore: () => api.landing.patch({ sections: before }),
+      remove: () => patch({ sections: sections().filter((x) => x.id !== s.id) }),
+      restore: () => {
+        // `s` carries its id, so the server keeps it and the section's `lt<id>` layout entry
+        // still points at it.
+        const next = [...sections()];
+        next.splice(index < 0 ? next.length : Math.min(index, next.length), 0, s);
+        return patch({ sections: next });
+      },
     });
   };
 }

@@ -49,7 +49,7 @@ export function LandingPage() {
   const invalidate = useInvalidateAll();
   const label = useLabel();
   const term = useSeasonTerm();
-  const removeLandingSection = useRemoveLandingSection(landing);
+  const removeLandingSection = useRemoveLandingSection();
 
   const [creating, setCreating] = useState(false);
   const [switching, setSwitching] = useState(false);
