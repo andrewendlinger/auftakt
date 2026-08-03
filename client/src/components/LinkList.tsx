@@ -4,6 +4,7 @@ import { RecordFormModal, type FieldDef } from './fields';
 import { api } from '../api/client';
 import type { CustomColumnOption, LinkItem } from '../api/types';
 import { withAlpha } from '../lib/colors';
+import { normalizeUrl } from '../lib/url';
 import { ColorSwatchPicker } from './ColorSwatchPicker';
 import { TrashIcon } from './icons';
 import { EditableLabel } from './EditableLabel';
@@ -62,13 +63,17 @@ export function LinkList({
   const [editing, setEditing] = useState<LinkItem | null>(null);
   const [creating, setCreating] = useState(false);
 
+  // Store a fully-qualified URL, as the editor's link bar does (RTE-09) — the field is „URL
+  // (Google Drive etc.)" with no validation, so a typed „drive.google.com/…" used to be stored
+  // verbatim and was then unopenable for ever (CCL-09).
   const save = async (values: Record<string, string | null>) => {
+    const patch = { ...values, ...(values.url ? { url: normalizeUrl(values.url) } : {}) };
     if (editing) {
-      await undoablePatch({ res: api.links, row: editing, patch: values, label: 'Änderung am Link' });
+      await undoablePatch({ res: api.links, row: editing, patch, label: 'Änderung am Link' });
       return;
     }
     await api.links.create({
-      ...values,
+      ...patch,
       artist_id: parent.artist_id ?? null,
       project_id: parent.project_id ?? null,
       event_id: parent.event_id ?? null,

@@ -2,6 +2,7 @@ import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from 'react';
 import { withAlpha } from '../lib/colors';
 import { isNotFound } from '../lib/errors';
 import { openExternal } from '../lib/external';
+import { normalizeUrl } from '../lib/url';
 
 export function Card({
   children,
@@ -204,7 +205,11 @@ export function DocumentRow({
         {url ? (
           <button
             className="text-left font-medium text-sky-700 hover:underline"
-            onClick={() => openExternal(url)}
+            // Normalised on the way out, not just on the way in: the field stores what the user
+            // typed, and „drive.google.com/…" without a scheme is unparseable, so openExternal
+            // refused it and the link could never be opened (CCL-09). Rows written before the
+            // save-time normalisation — or by an importer — only have this arm.
+            onClick={() => openExternal(normalizeUrl(url))}
           >
             {label}
           </button>

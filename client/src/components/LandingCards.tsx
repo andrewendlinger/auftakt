@@ -8,6 +8,7 @@ import type {
 } from '../api/types';
 import { Card, SectionTitle, Btn, DocumentRow, EmptyState, PickerRow } from './ui';
 import { SECTION_TYPES } from '../lib/sections';
+import { normalizeUrl } from '../lib/url';
 import { Modal, Label, TextInput, RecordFormModal, type FieldDef } from './fields';
 import { EditableLabel } from './EditableLabel';
 import { EditableText } from './EditableText';
@@ -110,7 +111,8 @@ function DocList({
 
   const save = async (values: Record<string, string | null>) => {
     const label = values.label ?? '';
-    const url = values.url ?? null;
+    // Same field, same rule as LinkList: store a scheme so the row is openable (CCL-09).
+    const url = values.url ? normalizeUrl(values.url) : null;
     const now = read();
     if (editing) {
       await onPatch(now.map((d) => (d.id === editing.id ? { ...d, label, url } : d)));
