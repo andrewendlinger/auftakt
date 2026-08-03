@@ -7,23 +7,40 @@ import type { Artist, CustomColumnOption, Project } from '../api/types';
 import { pickArtistColor, projectShade } from '../lib/colors';
 import { useInvalidateAll, useLabel, useProjectStatusOptions, useUndoablePatch } from '../hooks';
 
+/** `artists.color TEXT NOT NULL DEFAULT '#888888'` — the value an empty field means. */
+const ARTIST_DEFAULT_COLOR = '#888888';
+
 const ARTIST_FIELDS: FieldDef[] = [
   { name: 'name', label: 'Name', required: true, span2: true },
   { name: 'image', label: 'Profilbild', type: 'image' },
   // No `fallback`: artists.color is NOT NULL DEFAULT '#888888', so the plain grey swatch is
-  // exactly what an empty field ends up rendering. Nothing is inherited here.
+  // exactly what an empty field ends up rendering. Nothing is inherited here — which also
+  // means `ColorField` offers no „Zurücksetzen" and clearing the hex text is the only reset.
   // No notes field: "Allgemeines / Beschreibung" is edited inline on the artist page.
   { name: 'color', label: 'Farbe', type: 'color' },
 ];
 
+/** Create: drop an empty colour so the NOT NULL default applies. */
 function stripEmptyColor(values: Record<string, string | null>): Record<string, string | null> {
-  // Artist colour is NOT NULL — drop it when empty so the DB default applies.
   if (!values.color) {
     const { color, ...rest } = values;
     void color;
     return rest;
   }
   return values;
+}
+
+/**
+ * Edit: send the default explicitly instead.
+ *
+ * On a PATCH an absent key means „leave unchanged", not „apply the DB default" — the crud
+ * router builds its SET clause only from the keys present in the body. Sharing
+ * `stripEmptyColor` with the create path therefore made clearing an artist's colour a silent
+ * no-op: the dialog closed with no error, and the artist plus every project shade derived from
+ * it kept the old value (SHL-06).
+ */
+function resetEmptyColor(values: Record<string, string | null>): Record<string, string | null> {
+  return values.color ? values : { ...values, color: ARTIST_DEFAULT_COLOR };
 }
 
 export function NewArtistButton() {
@@ -77,7 +94,7 @@ export function EditArtistButton({ artist }: { artist: Artist }) {
             await undoablePatch({
               res: api.artists,
               row: artist,
-              patch: stripEmptyColor(v),
+              patch: resetEmptyColor(v),
               label: `Änderung an ${artistLabel}`,
             });
           }}
