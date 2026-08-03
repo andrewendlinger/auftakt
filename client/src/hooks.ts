@@ -10,6 +10,7 @@ import type {
   LandingPatch,
   OptionUsage,
   Settings,
+  Task,
   TaskSortRule,
 } from './api/types';
 import { doneValueOf } from './api/types';
@@ -186,6 +187,32 @@ export function useDoneValue(): string {
     queryFn: () => api.customColumns.list({ scope: 'global' }),
   });
   return useMemo(() => doneValueOf(data), [data]);
+}
+
+/**
+ * Every task in the season, live **and** archived (`scope: 'all'`; soft-deleted rows are excluded
+ * server-side) — the single boundary for everything that must not stop at the archive edge.
+ *
+ * Two kinds of consumer need it. The subtask tree (`TaskTable`, `MoveTaskDialog`) does, because a
+ * child done longer ago than `ARCHIVE_AFTER_DAYS` is missing from a page's `scope: 'live'` list and
+ * a subtree operation derived from that list would strand it (TTU-05). And the „Fortschritt"
+ * statistics do: the live list is what the server has already stripped of done tasks older than
+ * `ARCHIVE_AFTER_DAYS`, so `computeStats` fed that array reported a *falling* completion percentage
+ * as work was finished and aged out — a project whose 12 tasks were all completed six weeks ago
+ * rendered „0 %, 0/0" instead of „100 %, 12/12" (CCL-04, PGS-01, TTU-08).
+ *
+ * The other three metrics are indifferent: an archived task is done by definition, so it can never
+ * add to „offen"/„überfällig"/„bald fällig". Only `done`/`total`/`pct` were ever wrong.
+ *
+ * One query key for one request — every page that renders a `TaskTable` already pays for this
+ * fetch, so the statistics come for free.
+ */
+export function useAllTasks(): { tasks: Task[]; loaded: boolean } {
+  const { data = [], isSuccess } = useQuery({
+    queryKey: ['tasks', 'scope-all'],
+    queryFn: () => api.tasks.list({ scope: 'all' }),
+  });
+  return { tasks: data, loaded: isSuccess };
 }
 
 /**

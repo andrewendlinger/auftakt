@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
@@ -28,7 +28,7 @@ import { AttentionList } from '../components/AttentionList';
 import { EditArtistButton, NewProjectButton } from '../components/EntityButtons';
 import { ProjectStatusPill } from '../components/ProjectStatusPill';
 import { ExcelButton } from '../components/ExcelButton';
-import { useEventTypeOptions, useTaskStatsConfig, useUndoablePatch } from '../hooks';
+import { useAllTasks, useEventTypeOptions, useTaskStatsConfig, useUndoablePatch } from '../hooks';
 
 /** Which heading names each section in the "Bereiche bearbeiten" strip. */
 const SECTION_LABEL_KEYS: Record<string, LabelKey> = {
@@ -95,6 +95,26 @@ export function ArtistPage() {
   const removeCustomSection = useRemoveCustomSection(customSections);
   const nonEmptyCustom = useNonEmptyCustomSections(customSections);
 
+  // Everything statistical is computed over live + archived tasks: the list above is scope 'live',
+  // from which the server has already dropped whatever was finished longer ago than
+  // ARCHIVE_AFTER_DAYS, so „Fortschritt" ran backwards as work aged out (CCL-04). The map feeds the
+  // per-project card chips; the whole slice feeds the „Einblicke" tiles.
+  const { tasks: allTasks } = useAllTasks();
+  const statsTasks = useMemo(
+    () => allTasks.filter((t) => t.resolved_artist_id === artistId),
+    [allTasks, artistId],
+  );
+  const statsByProject = useMemo(() => {
+    const m = new Map<number, Task[]>();
+    for (const t of statsTasks) {
+      if (t.project_id == null) continue;
+      const arr = m.get(t.project_id);
+      if (arr) arr.push(t);
+      else m.set(t.project_id, [t]);
+    }
+    return m;
+  }, [statsTasks]);
+
   // Not `isLoading || !artist`: once the query settles in error, isLoading is false and data is
   // undefined, so that guard rendered the spinner for ever — a stale bookmark to a deleted
   // artist spun with no message and no way to retry (PGS-05).
@@ -122,18 +142,10 @@ export function ArtistPage() {
   ];
   const color = artist.color;
 
-  // The single resolved-task list splits cleanly on `project_id`: general (artist-level) tasks are
-  // the only editable table; project tasks feed the per-project card stats. A subtask inherits its
-  // parent's project_id, so whole trees stay on the same side of the split.
+  // The editable table is the live list, split on `project_id`: general (artist-level) tasks are
+  // the only ones editable here. A subtask inherits its parent's project_id, so whole trees stay
+  // on the same side of the split.
   const generalTasks = tasks.filter((t) => !t.project_id);
-  const tasksByProject = new Map<number, Task[]>();
-  for (const t of tasks) {
-    if (t.project_id != null) {
-      const arr = tasksByProject.get(t.project_id);
-      if (arr) arr.push(t);
-      else tasksByProject.set(t.project_id, [t]);
-    }
-  }
 
   // Insertion order = default section order for fresh layouts: Projekte first, directly
   // under the artist header (user decision).
@@ -149,7 +161,7 @@ export function ArtistPage() {
           <ProjectGrid
             projects={projects}
             artistColor={color}
-            tasksByProject={tasksByProject}
+            tasksByProject={statsByProject}
           />
         )}
       </>
@@ -177,7 +189,7 @@ export function ArtistPage() {
         <SectionTitle>
           <EditableLabel k="artist.stats" />
         </SectionTitle>
-        <TaskStatChips tasks={tasks} variant="tiles" />
+        <TaskStatChips tasks={statsTasks} variant="tiles" />
       </>
     ),
     kontakte: <ContactList contacts={contacts} parent={{ artist_id: artistId }} titleKey="artist.kontakte" />,

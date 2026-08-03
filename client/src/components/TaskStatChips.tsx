@@ -8,6 +8,9 @@ import { useDoneValue, useTaskStatsConfig } from '../hooks';
  * inline form for card footers; `variant="tiles"` is the larger KPI row on the dashboard. Which
  * metrics appear comes from `useTaskStatsConfig()` unless overridden via `metrics`. Nothing is
  * rendered when the user has turned every metric off.
+ *
+ * `tasks` must be the entity's slice of `useAllTasks()`, not the page's `scope: 'live'` list —
+ * „Fortschritt" counts finished work, and the live list is missing everything archived (CCL-04).
  */
 export function TaskStatChips({
   tasks,

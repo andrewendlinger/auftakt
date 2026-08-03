@@ -21,7 +21,7 @@ import {
   type SectionGroup,
 } from '../components/CustomSections';
 import type { LabelKey } from '../lib/labels';
-import { useLabel, useTaskStatsConfig } from '../hooks';
+import { useAllTasks, useLabel, useTaskStatsConfig } from '../hooks';
 
 /** Which heading names each section in the "Bereiche bearbeiten" strip. */
 const SECTION_LABEL_KEYS: Record<string, LabelKey> = {
@@ -58,17 +58,21 @@ export function Dashboard() {
   // All dashboard built-ins are computed views — only filled custom widgets block their 🗑.
   const nonEmptyKeys = useNonEmptyCustomSections(customSections);
 
-  // Group every live task under the artist it resolves to, for the enriched artist-card stats.
+  // Live + archived, because „Fortschritt" counts finished work while the dashboard's own list is
+  // scope 'live' — see useAllTasks (CCL-04).
+  const { tasks: allTasks } = useAllTasks();
+
+  // Group every task under the artist it resolves to, for the enriched artist-card stats.
   const tasksByArtist = useMemo(() => {
     const m = new Map<number, Task[]>();
-    for (const t of data?.tasks ?? []) {
+    for (const t of allTasks) {
       if (t.resolved_artist_id == null) continue;
       const arr = m.get(t.resolved_artist_id);
       if (arr) arr.push(t);
       else m.set(t.resolved_artist_id, [t]);
     }
     return m;
-  }, [data]);
+  }, [allTasks]);
 
   if (isLoading) return <Spinner />;
   if (isError || !data) {
@@ -126,7 +130,7 @@ export function Dashboard() {
         <SectionTitle>
           <EditableLabel k="dash.stats" />
         </SectionTitle>
-        <TaskStatChips tasks={data.tasks} variant="tiles" />
+        <TaskStatChips tasks={allTasks} variant="tiles" />
       </section>
     ),
     tasks: (

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
@@ -27,7 +27,7 @@ import {
 } from '../components/CustomSections';
 import { TaskStatChips } from '../components/TaskStatChips';
 import { AttentionList } from '../components/AttentionList';
-import { useEventTypeOptions, useTaskStatsConfig, useUndoablePatch } from '../hooks';
+import { useAllTasks, useEventTypeOptions, useTaskStatsConfig, useUndoablePatch } from '../hooks';
 
 /**
  * Which heading names each section in the "Bereiche bearbeiten" strip. `kontakte` holds two
@@ -106,6 +106,15 @@ export function ProjectPage() {
   const nonEmptyCustom = useNonEmptyCustomSections(customSections);
   const { windowDays } = useTaskStatsConfig();
 
+  // „Fortschritt" counts finished work, and the list above is scope 'live' — the server has already
+  // dropped whatever was done longer ago than ARCHIVE_AFTER_DAYS, so the percentage *fell* as the
+  // project was completed (CCL-04). The editable table below stays on the live list.
+  const { tasks: allTasks } = useAllTasks();
+  const statsTasks = useMemo(
+    () => allTasks.filter((t) => t.project_id === projectId),
+    [allTasks, projectId],
+  );
+
   // See ArtistPage: a settled error has isLoading === false and data === undefined, so the old
   // guard spun for ever on a stale link to a deleted project (PGS-05).
   if (!validId) {
@@ -154,7 +163,7 @@ export function ProjectPage() {
         <SectionTitle>
           <EditableLabel k="project.stats" />
         </SectionTitle>
-        <TaskStatChips tasks={tasks} variant="tiles" />
+        <TaskStatChips tasks={statsTasks} variant="tiles" />
       </>
     ),
     aufmerksamkeit: (

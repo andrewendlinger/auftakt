@@ -29,6 +29,7 @@ import { InlineInput } from './InlineInput';
 import { EmptyState, Btn, DragHandle, IconButton } from './ui';
 import { Modal } from './fields';
 import {
+  useAllTasks,
   useCommitOnUnmount,
   useGuardedAction,
   useInvalidateAll,
@@ -271,10 +272,7 @@ export function TaskTable({
   const [moveTask, setMoveTask] = useState<Task | null>(null);
 
   // Live + archived, shared with MoveTaskDialog — the only list that shows the whole subtree.
-  const { data: allTasks = [], isSuccess: treeLoaded } = useQuery({
-    queryKey: ['tasks', 'scope-all'],
-    queryFn: () => api.tasks.list({ scope: 'all' }),
-  });
+  const { tasks: allTasks, loaded: treeLoaded } = useAllTasks();
 
   const doneValue = useMemo(() => doneValueOf(customColumns), [customColumns]);
   const statusOptions = useMemo(

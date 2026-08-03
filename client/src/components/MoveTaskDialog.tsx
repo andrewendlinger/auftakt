@@ -6,7 +6,7 @@ import { descendantsOf } from '../lib/taskTree';
 import { Label, Modal, Select } from './fields';
 import { Btn } from './ui';
 import { useUndo } from './UndoProvider';
-import { useGuardedAction, useInvalidateAll, useSaison } from '../hooks';
+import { useAllTasks, useGuardedAction, useInvalidateAll, useSaison } from '../hooks';
 
 /** Select value encoding a move target: the overview, an artist's „Allgemein", or a project. */
 function parseTarget(value: string): { artist_id: number | null; project_id: number | null } {
@@ -39,14 +39,11 @@ export function MoveTaskDialog({ task, onClose }: { task: Task; onClose: () => v
 
   const { data: artists = [] } = useQuery({ queryKey: ['artists'], queryFn: () => api.artists.list() });
   const { data: projects = [] } = useQuery({ queryKey: ['projects'], queryFn: () => api.projects.list() });
-  // scope 'all' = live + archived. The page lists are scope 'live', so a done child past
-  // ARCHIVE_AFTER_DAYS is missing from the table's rows — collecting descendants there would
-  // strand it in the old scope. Soft-deleted rows stay behind by design: they are invisible
-  // everywhere but the trash, and a later restore behaves like any other restore-after-edit.
-  const { data: allTasks = [], isSuccess: treeLoaded } = useQuery({
-    queryKey: ['tasks', 'scope-all'],
-    queryFn: () => api.tasks.list({ scope: 'all' }),
-  });
+  // Live + archived: the page lists are scope 'live', so a done child past ARCHIVE_AFTER_DAYS is
+  // missing from the table's rows — collecting descendants there would strand it in the old scope.
+  // Soft-deleted rows stay behind by design: they are invisible everywhere but the trash, and a
+  // later restore behaves like any other restore-after-edit.
+  const { tasks: allTasks, loaded: treeLoaded } = useAllTasks();
 
   // The whole subtree travels with the task; the server resolves it again for the write, so this
   // is only what the count below promises the user.

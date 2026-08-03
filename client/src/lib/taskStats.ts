@@ -4,6 +4,12 @@
  * pages already fetch (no dedicated endpoint), so the numbers stay consistent with the „X offen"
  * badge by construction. „Done" is always the editable Status option flagged `done`
  * (`doneValueOf`), never a hardcoded string.
+ *
+ * **`computeStats` must be handed a `scope: 'all'` array** — `useAllTasks()` in hooks.ts. Fed a
+ * page's `scope: 'live'` list it counts only the un-archived window, so „Fortschritt" *falls* as
+ * work is finished and ages past `ARCHIVE_AFTER_DAYS`, ending at „0 %, 0/0" for a project that is
+ * in fact 100 % done (CCL-04). `attentionTasks` is indifferent — it keeps only open tasks, and an
+ * archived task is done by definition — so it may take either list.
  */
 import type { Task } from '../api/types';
 import { daysUntil, todayUtcMs } from './dates';
