@@ -70,8 +70,9 @@ export function ArchivePage() {
   const guard = useGuardedAction();
   const toast = useToast();
 
+  const needle = q.trim().toLowerCase();
+
   const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase();
     if (!needle) return tasks;
     return tasks.filter(
       (t) =>
@@ -80,7 +81,21 @@ export function ArchivePage() {
         (t.artist_name ?? '').toLowerCase().includes(needle) ||
         (t.project_code ?? '').toLowerCase().includes(needle),
     );
-  }, [tasks, q]);
+  }, [tasks, needle]);
+
+  // The box sits above both lists and is labelled for the whole Archiv, so it has to filter the
+  // trash too — narrowing only the table above left the user scrolling all 40 deleted rows and
+  // concluding the search was broken (PGS-22). Matched against the three things the row actually
+  // renders: its type word, its label and its sublabel.
+  const filteredDeleted = useMemo(() => {
+    if (!needle) return deleted;
+    return deleted.filter(
+      (item) =>
+        item.label.toLowerCase().includes(needle) ||
+        (item.sublabel ?? '').toLowerCase().includes(needle) ||
+        TYPE_LABELS[item.type].one.toLowerCase().includes(needle),
+    );
+  }, [deleted, needle]);
 
   // Guarded like `purge()` below: POST /restore 404s when the row is no longer there, which
   // happens whenever the cached list is stale — purgeExpired() hard-deletes 30-day-old rows on
@@ -189,14 +204,15 @@ export function ArchivePage() {
             hint="Gelöschte Einträge sind weiterhin da — nur die Liste konnte nicht abgerufen werden."
             onRetry={() => void refetchDeleted()}
           />
-        ) : deleted.length === 0 ? (
+        ) : filteredDeleted.length === 0 ? (
           <EmptyState>
-            Papierkorb ist leer. Gelöschte Einträge erscheinen hier und werden nach 30 Tagen automatisch
-            entfernt.
+            {deleted.length === 0
+              ? 'Papierkorb ist leer. Gelöschte Einträge erscheinen hier und werden nach 30 Tagen automatisch entfernt.'
+              : 'Keine Treffer.'}
           </EmptyState>
         ) : (
           <div className="divide-y divide-neutral-50 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-black/5">
-            {deleted.map((item) => (
+            {filteredDeleted.map((item) => (
               <div key={`${item.type}-${item.id}`} className="flex items-center gap-3 px-4 py-3">
                 <Pill bg="#f5f5f5" color="#525252">{TYPE_LABELS[item.type].one}</Pill>
                 <div className="min-w-0 flex-1">
