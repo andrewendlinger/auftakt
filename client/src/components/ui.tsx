@@ -1,5 +1,7 @@
 import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from 'react';
+import { withAlpha } from '../lib/colors';
 import { isNotFound } from '../lib/errors';
+import { openExternal } from '../lib/external';
 
 export function Card({
   children,
@@ -143,6 +145,57 @@ export function DragHandle({
     >
       ⠿
     </span>
+  );
+}
+
+/**
+ * One row of a document/link list: the 🔗 glyph, the label as an external-link button (or a
+ * plain label saying no URL is stored), and the row's actions revealed on hover.
+ *
+ * Shared because `LinkList` and the landing's `DocList` rendered the same markup down to the
+ * Tailwind classes and the German fallback text, differing only in the colour treatment — so
+ * every change to link-row presentation had to be made twice and the two drifted (SHL-28).
+ * `color` is the links half: it tints the row and paints the left border.
+ */
+export function DocumentRow({
+  label,
+  url,
+  color,
+  actions,
+}: {
+  label: string;
+  url: string | null;
+  /** Row accent. Landing documents have none, so they keep the plain white card. */
+  color?: string | null;
+  /** The ✎/🗑 pair (and, for links, the colour swatch) — hidden until the row is hovered. */
+  actions?: ReactNode;
+}) {
+  return (
+    <li
+      className={`group flex items-center gap-3 rounded-xl px-3 py-2 shadow-sm ring-1 ring-black/5 ${
+        color ? 'border-l-4' : 'bg-white'
+      }`}
+      style={color ? { background: withAlpha(color, 0.16), borderLeftColor: color } : undefined}
+    >
+      <span className="text-neutral-400">🔗</span>
+      <div className="min-w-0 flex-1">
+        {url ? (
+          <button
+            className="text-left font-medium text-sky-700 hover:underline"
+            onClick={() => openExternal(url)}
+          >
+            {label}
+          </button>
+        ) : (
+          <span className="font-medium text-neutral-700">
+            {label} <span className="text-xs font-normal text-neutral-400">(kein Link hinterlegt)</span>
+          </span>
+        )}
+      </div>
+      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
+        {actions}
+      </div>
+    </li>
   );
 }
 

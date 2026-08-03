@@ -1,9 +1,8 @@
 import { useState, type ReactNode } from 'react';
-import { SectionTitle, Btn, EmptyState } from './ui';
+import { SectionTitle, Btn, DocumentRow, EmptyState } from './ui';
 import { RecordFormModal, type FieldDef } from './fields';
 import { api } from '../api/client';
 import type { CustomColumnOption, LinkItem } from '../api/types';
-import { openExternal } from '../lib/external';
 import { withAlpha } from '../lib/colors';
 import { ColorSwatchPicker } from './ColorSwatchPicker';
 import { TrashIcon } from './icons';
@@ -84,42 +83,27 @@ export function LinkList({
   };
 
   const row = (l: LinkItem) => (
-    <li
+    <DocumentRow
       key={l.id}
-      className={`group flex items-center gap-3 rounded-xl px-3 py-2 shadow-sm ring-1 ring-black/5 ${
-        l.color ? 'border-l-4' : 'bg-white'
-      }`}
-      style={l.color ? { background: withAlpha(l.color, 0.16), borderLeftColor: l.color } : undefined}
-    >
-      <span className="text-neutral-400">🔗</span>
-      <div className="min-w-0 flex-1">
-        {l.url ? (
-          <button
-            className="text-left font-medium text-sky-700 hover:underline"
-            onClick={() => openExternal(l.url!)}
+      label={l.label}
+      url={l.url}
+      color={l.color}
+      actions={
+        <>
+          <ColorSwatchPicker value={l.color} onChange={(color) => setColor(l, color)} />
+          <Btn variant="ghost" title="Bearbeiten" onClick={() => setEditing(l)}>
+            ✎
+          </Btn>
+          <Btn
+            variant="danger"
+            title="Löschen"
+            onClick={() => del({ label: `Link „${l.label}“`, ...resourceUndo(api.links, l.id) })}
           >
-            {l.label}
-          </button>
-        ) : (
-          <span className="font-medium text-neutral-700">
-            {l.label} <span className="text-xs font-normal text-neutral-400">(kein Link hinterlegt)</span>
-          </span>
-        )}
-      </div>
-      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
-        <ColorSwatchPicker value={l.color} onChange={(color) => setColor(l, color)} />
-        <Btn variant="ghost" title="Bearbeiten" onClick={() => setEditing(l)}>
-          ✎
-        </Btn>
-        <Btn
-          variant="danger"
-          title="Löschen"
-          onClick={() => del({ label: `Link „${l.label}“`, ...resourceUndo(api.links, l.id) })}
-        >
-          <TrashIcon className="h-4 w-4" />
-        </Btn>
-      </div>
-    </li>
+            <TrashIcon className="h-4 w-4" />
+          </Btn>
+        </>
+      }
+    />
   );
 
   // One group per configured category (options order), then "Ohne Kategorie" as the catch-all

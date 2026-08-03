@@ -6,13 +6,12 @@ import type {
   LandingSection,
   LandingSectionInput,
 } from '../api/types';
-import { Card, SectionTitle, Btn, EmptyState } from './ui';
+import { Card, SectionTitle, Btn, DocumentRow, EmptyState } from './ui';
 import { Modal, Label, TextInput, RecordFormModal, type FieldDef } from './fields';
 import { EditableLabel } from './EditableLabel';
 import { EditableText } from './EditableText';
 import { InlineNotes } from './InlineNotes';
 import { TrashIcon } from './icons';
-import { openExternal } from '../lib/external';
 import { useLanding, useUndoableDelete } from '../hooks';
 
 /**
@@ -138,34 +137,21 @@ function DocList({
   };
 
   const row = (doc: LandingDoc) => (
-    <li
+    <DocumentRow
       key={doc.id}
-      className="group flex items-center gap-3 rounded-xl bg-white px-3 py-2 shadow-sm ring-1 ring-black/5"
-    >
-      <span className="text-neutral-400">🔗</span>
-      <div className="min-w-0 flex-1">
-        {doc.url ? (
-          <button
-            className="text-left font-medium text-sky-700 hover:underline"
-            onClick={() => openExternal(doc.url!)}
-          >
-            {doc.label}
-          </button>
-        ) : (
-          <span className="font-medium text-neutral-700">
-            {doc.label} <span className="text-xs font-normal text-neutral-400">(kein Link hinterlegt)</span>
-          </span>
-        )}
-      </div>
-      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
-        <Btn variant="ghost" title="Bearbeiten" onClick={() => setEditing(doc)}>
-          ✎
-        </Btn>
-        <Btn variant="danger" title="Löschen" onClick={() => void remove(doc)}>
-          <TrashIcon className="h-4 w-4" />
-        </Btn>
-      </div>
-    </li>
+      label={doc.label}
+      url={doc.url}
+      actions={
+        <>
+          <Btn variant="ghost" title="Bearbeiten" onClick={() => setEditing(doc)}>
+            ✎
+          </Btn>
+          <Btn variant="danger" title="Löschen" onClick={() => void remove(doc)}>
+            <TrashIcon className="h-4 w-4" />
+          </Btn>
+        </>
+      }
+    />
   );
 
   return (
