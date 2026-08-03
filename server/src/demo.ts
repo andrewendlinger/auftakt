@@ -286,7 +286,7 @@ const TASKS: DemoTask[] = [
  * exercises the trash cascade count and the purge guard that skips it.
  */
 const CUSTOM_SECTIONS = [
-  { id: 1, artist_id: null, project_id: null, name: 'Saison-Motto', type: 'text', value: 'Diese Saison steht unter dem Motto **„Klang & Raum"** 🎶.' },
+  { id: 1, artist_id: null, project_id: null, name: 'Saison-Motto', type: 'text', value: 'Diese Saison steht unter dem Motto **„Klang & Raum“** 🎶.' },
   { id: 2, artist_id: null, project_id: null, name: 'Wichtige Dokumente', type: 'links', value: null },
   { id: 3, artist_id: 1, project_id: null, name: 'Reiseplanung', type: 'text', value: 'Anreise gemeinsam im Nightliner — Details im [Tourplan](https://example.org/tourplan).\n\n- Abfahrt 08:00\n- Ankunft ca. 14:30' },
   { id: 4, artist_id: null, project_id: 1, name: 'Werbematerial', type: 'links', value: null },

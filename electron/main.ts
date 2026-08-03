@@ -150,7 +150,7 @@ async function reportBackupProblem(err: unknown): Promise<void> {
   await dialog.showMessageBox({
     type: 'error',
     message: 'Es wurde keine Sicherung angelegt.',
-    detail: `${(err as Error).message}\n\nEinstellungen → „Saison & Daten" → „Backup-Ordner" prüfen. Ohne funktionierenden Backup-Ordner werden beim Start keine Sicherungen erstellt.`,
+    detail: `${(err as Error).message}\n\nEinstellungen → „Saison & Daten“ → „Backup-Ordner“ prüfen. Ohne funktionierenden Backup-Ordner werden beim Start keine Sicherungen erstellt.`,
   });
 }
 

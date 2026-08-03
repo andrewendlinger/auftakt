@@ -98,7 +98,7 @@ export async function downloadAndInstallUpdate(): Promise<void> {
     defaultId: 1,
     cancelId: 0,
     message: 'Update heruntergeladen. Jetzt neu starten und installieren?',
-    detail: 'Bei „Später" wird das Update beim nächsten Beenden der App installiert.',
+    detail: 'Bei „Später“ wird das Update beim nächsten Beenden der App installiert.',
   });
   if (confirm.response === 1) updater.quitAndInstall(true, true);
 }

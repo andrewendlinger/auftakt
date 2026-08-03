@@ -158,7 +158,7 @@ export function SettingsTasksTab() {
         <SectionTitle>Aufgaben-Übersicht</SectionTitle>
         <p className="mt-1 mb-3 text-xs text-neutral-400">
           Welche Kennzahlen auf den Projekt- und Künstlerkarten sowie in der Übersicht angezeigt
-          werden, und ab wann eine fällige Aufgabe unter „Braucht Aufmerksamkeit" auftaucht.
+          werden, und ab wann eine fällige Aufgabe unter „Braucht Aufmerksamkeit“ auftaucht.
         </p>
         <TaskStatsSetting onSave={(task_stats, attention_window_days) => patch({ task_stats, attention_window_days })} />
       </Card>
@@ -331,7 +331,7 @@ function SeasonTermCard() {
     <Card className="p-5">
       <SectionTitle>Bezeichnung</SectionTitle>
       <p className="mt-1 mb-3 text-xs text-neutral-400">
-        Wie diese Einheit überall in der App heißt — z. B. „Saison", „Jahr" oder „Jahrgang".
+        Wie diese Einheit überall in der App heißt — z. B. „Saison“, „Jahr“ oder „Jahrgang“.
         Leer lassen setzt zurück.
       </p>
       <div className="flex items-end gap-3">
@@ -538,14 +538,14 @@ function UpdateCard() {
                           xattr -dr com.apple.quarantine /Applications/Auftakt.app
                         </code>{' '}
                         ausführen — die App ist nicht Apple-signiert, macOS meldet sie sonst als
-                        „beschädigt". Deine Daten bleiben beim Update erhalten.
+                        „beschädigt“. Deine Daten bleiben beim Update erhalten.
                       </li>
                     </ol>
                   ) : (
                     <p className="mt-2">
                       Die neue .exe-Datei von der Releases-Seite herunterladen und ausführen. Falls
-                      Windows mit SmartScreen warnt („Der Computer wurde durch Windows geschützt"):
-                      auf „Weitere Informationen" und dann „Trotzdem ausführen" klicken. Deine Daten
+                      Windows mit SmartScreen warnt („Der Computer wurde durch Windows geschützt“):
+                      auf „Weitere Informationen“ und dann „Trotzdem ausführen“ klicken. Deine Daten
                       bleiben beim Update erhalten.
                     </p>
                   )}
@@ -638,7 +638,7 @@ function TaskStatsSetting({
         })}
       </div>
       <div>
-        <Label>Zeitfenster „Braucht Aufmerksamkeit" (Tage)</Label>
+        <Label>Zeitfenster „Braucht Aufmerksamkeit“ (Tage)</Label>
         <TextInput
           type="number"
           min={1}
