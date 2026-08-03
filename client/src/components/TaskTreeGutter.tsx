@@ -86,8 +86,13 @@ type TreeKind =
  * The leading hierarchy cell. Connectors are 1px CSS boxes rather than Unicode glyphs so they
  * align to the pixel grid and scale with the row instead of with the font.
  *
- * `accentColor` paints the task's own colour bar here (it used to live on the `<tr>`); at x=0
- * it sits clear of the rail at x=20, so a coloured subtask keeps both cues.
+ * `accentColor` paints the task's own colour bar here (it used to live on the `<tr>`) as a 3px
+ * inset shadow at x=0, so it sits clear of the rail at `TREE.spineX` and a coloured subtask
+ * keeps both cues. The figure is named rather than written out because it is not free-standing:
+ * `spineX` is derived from `handleLane` plus half the rail column, so a comment quoting a number
+ * goes stale the moment either is tuned — this one already said „the rail at x=20" against a
+ * `spineX` of 36, i.e. it promised 16px of clearance that did not exist, and anyone widening the
+ * accent bar on that basis would have landed it under the rail (TTU-29).
  */
 export function TreeGutterCell({
   kind,
