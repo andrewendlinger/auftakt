@@ -271,8 +271,21 @@ function Arranger({
     void persist(next);
   };
 
+  // The toolbar can sit inside the grid after a named section (the dashboard puts it below
+  // the Künstler grid — you can't edit that anyway); everywhere else it tops the block.
+  const toolbarInGrid = toolbarAfterKey != null && display.some((e) => e.key === toolbarAfterKey);
+  /**
+   * Where the toolbar's anchor section sits, and therefore the one position in the grid that is
+   * fixed. Nothing pinned it before: `mandatoryKeys` only takes the 🗑 away, so ▲ on the section
+   * below „Künstler" swapped it above the grid and rendered the toolbar — „✓ Fertig", the only
+   * control that leaves arrange mode — halfway down the page (SHL-17).
+   */
+  const anchorIdx = toolbarInGrid ? display.findIndex((e) => e.key === toolbarAfterKey) : -1;
+
   const drag = useDragReorder<string>({
     enabled: arranging,
+    canDrop: (fromKey, toKey) =>
+      anchorIdx < 0 || (fromKey !== toolbarAfterKey && toKey !== toolbarAfterKey),
     onReorder: async (fromKey, toKey) => {
       const next = arrayMoveTo(full, idxInFull(fromKey), idxInFull(toKey));
       // Awaited rather than `void`-ed: the hook awaits what it gets back and toasts a
@@ -289,9 +302,6 @@ function Arranger({
       </Btn>
     </div>
   );
-  // The toolbar can sit inside the grid after a named section (the dashboard puts it below
-  // the Künstler grid — you can't edit that anyway); everywhere else it tops the block.
-  const toolbarInGrid = toolbarAfterKey != null && display.some((e) => e.key === toolbarAfterKey);
 
   return (
     <>
@@ -335,7 +345,9 @@ function Arranger({
                     )}
                     <button
                       className="rounded px-2 py-0.5 text-lg leading-none text-neutral-500 hover:bg-neutral-200 disabled:opacity-30"
-                      disabled={i === 0}
+                      // The anchor stays put and nothing may pass it, so the section right
+                      // below it cannot go up either.
+                      disabled={i === 0 || i === anchorIdx || i === anchorIdx + 1}
                       aria-label="nach oben"
                       onClick={() => move(key, -1)}
                     >
@@ -343,7 +355,7 @@ function Arranger({
                     </button>
                     <button
                       className="rounded px-2 py-0.5 text-lg leading-none text-neutral-500 hover:bg-neutral-200 disabled:opacity-30"
-                      disabled={i === display.length - 1}
+                      disabled={i === display.length - 1 || i === anchorIdx}
                       aria-label="nach unten"
                       onClick={() => move(key, 1)}
                     >
