@@ -198,14 +198,23 @@ export type DragReorder<K extends string | number = number> = ReturnType<typeof 
  *
  * Not for the task table, whose rows are *not* one flat list — it reorders within one sibling
  * group of a tree and has its own `canDrop`.
+ *
+ * `canDrop` here is the *rendered-in-groups* case (the link list's categories), not a tree: the
+ * list is still one flat `sort_order` sequence, only some pairings are refused. Passing the whole
+ * list to `arrayMoveTo` — rather than just the group's rows — is what keeps the other groups
+ * untouched: lifting one item out and re-inserting it elsewhere leaves every other item's
+ * relative position alone, so renumbering all ids afterwards rewrites nothing but the drag.
+ * Renumbering a single group on its own would restart at 0 and interleave it with the rest.
  */
 export function useListReorder<T extends { id: number }>(
   items: T[],
   reorder: (ids: number[]) => Promise<unknown>,
+  canDrop?: (from: number, to: number) => boolean,
 ) {
   const invalidate = useInvalidateAll();
   return useDragReorder<number>({
     mode: 'armed',
+    canDrop,
     onReorder: async (fromId, toId) => {
       const next = arrayMoveTo(
         items,

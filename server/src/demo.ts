@@ -304,10 +304,13 @@ const LINK_CATEGORIES = [
 /**
  * One row per link parent type, so all four branches of the links CHECK are covered.
  * Project 1 spans two categories plus an uncategorized link, so the grouped rendering
- * (incl. "Ohne Kategorie" last) is eyeballable on one page.
+ * (incl. "Ohne Kategorie" last) is eyeballable on one page. Its "Technik" group holds two
+ * rows on purpose — one group with a single row can't show the drag-reorder (WP-26) — and
+ * `notes` is set on some rows and left null on others, which are two different renderings:
+ * the description, or the hover-only „+ hinzufügen" placeholder.
  */
 const LINKS = [
-  { id: 1, artist_id: null, project_id: 1, event_id: null, task_id: null, label: 'Technikrider (PDF)', url: 'https://example.org/rider.pdf', category: 'technik' },
+  { id: 1, artist_id: null, project_id: 1, event_id: null, task_id: null, label: 'Technikrider (PDF)', url: 'https://example.org/rider.pdf', category: 'technik', notes: 'Stand März — gilt nur für die Quartettbesetzung.' },
   { id: 2, artist_id: 2, project_id: null, event_id: null, task_id: null, label: 'Künstlerwebsite', url: 'https://example.org/ana-belem' },
   { id: 3, artist_id: null, project_id: null, event_id: 1, task_id: null, label: 'Saalplan', url: 'https://example.org/saalplan' },
   { id: 4, artist_id: null, project_id: null, event_id: null, task_id: 20, label: 'Druckerei-Angebot', url: 'https://example.org/angebot' },
@@ -315,9 +318,9 @@ const LINKS = [
   { id: 5, artist_id: null, project_id: 2, event_id: null, task_id: null, label: 'Veraltetes Angebot', url: 'https://example.org/alt-angebot', deleted_at: stamp(-1) },
   { id: 6, artist_id: null, project_id: 1, event_id: null, task_id: null, label: 'Vertrag (unterschrieben)', url: 'https://example.org/vertrag.pdf', category: 'vertrag' },
   { id: 7, artist_id: null, project_id: 1, event_id: null, task_id: null, label: 'Bühnenplan', url: 'https://example.org/buehnenplan', category: 'technik' },
-  { id: 8, artist_id: null, project_id: 1, event_id: null, task_id: null, label: 'Sonstiges Dokument', url: null },
+  { id: 8, artist_id: null, project_id: 1, event_id: null, task_id: null, label: 'Sonstiges Dokument', url: null, notes: 'Noch **unsortiert** — Kategorie fehlt.' },
   // Links inside custom widgets (section_id as the fifth exclusive parent, WP-S).
-  { id: 9, section_id: 2, label: 'Festival-Handbuch', url: 'https://example.org/handbuch.pdf', category: 'presse' },
+  { id: 9, section_id: 2, label: 'Festival-Handbuch', url: 'https://example.org/handbuch.pdf', category: 'presse', notes: 'Für alle Beteiligten, bitte vor dem ersten Tag lesen.' },
   { id: 10, section_id: 2, label: 'Lageplan Gelände', url: 'https://example.org/lageplan' },
   { id: 11, section_id: 4, label: 'Plakatmotiv (Druckdaten)', url: 'https://example.org/plakat.pdf', category: 'presse' },
   // Live link under the soft-deleted widget 5 — invisible in the app, counted in its trash row.
@@ -388,8 +391,8 @@ function main(): void {
              @comment, @color, @custom_values, @erledigt_am, @deleted_at, @sort_order)`,
   );
   const insLink = db.prepare(
-    `INSERT INTO links (id, artist_id, project_id, event_id, task_id, section_id, label, url, category, deleted_at, sort_order)
-     VALUES (@id, @artist_id, @project_id, @event_id, @task_id, @section_id, @label, @url, @category, @deleted_at, @sort_order)`,
+    `INSERT INTO links (id, artist_id, project_id, event_id, task_id, section_id, label, url, category, notes, deleted_at, sort_order)
+     VALUES (@id, @artist_id, @project_id, @event_id, @task_id, @section_id, @label, @url, @category, @notes, @deleted_at, @sort_order)`,
   );
   const insSection = db.prepare(
     `INSERT INTO custom_sections (id, artist_id, project_id, name, type, value, deleted_at, sort_order)
@@ -446,6 +449,7 @@ function main(): void {
         task_id: null,
         section_id: null,
         category: null,
+        notes: null,
         deleted_at: null,
         ...l,
         sort_order: i,

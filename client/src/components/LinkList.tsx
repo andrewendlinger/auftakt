@@ -1,6 +1,8 @@
 import { useState, type ReactNode } from 'react';
-import { SectionTitle, Btn, DocumentRow, EmptyState } from './ui';
+import { SectionTitle, Btn, DocumentRow, DragHandle, EmptyState } from './ui';
 import { RecordFormModal, type FieldDef } from './fields';
+import { InlineNotes } from './InlineNotes';
+import { useListReorder } from '../lib/dragReorder';
 import { api } from '../api/client';
 import type { CustomColumnOption, LinkCreate, LinkItem } from '../api/types';
 import { withAlpha } from '../lib/colors';
@@ -17,20 +19,19 @@ import {
   resourceUndo,
 } from '../hooks';
 
-/** The category select only exists once categories are configured — an empty select is noise. */
+/**
+ * The category picker only exists once categories are configured — an empty one is noise.
+ *
+ * `pills` rather than a `<select>`: setting a category was two clicks and dropped the colour the
+ * list is grouped by, for a list that is a handful of entries long (WP-26). Deselecting is a
+ * second click on the same pill, so there is no "—" option to pass here.
+ */
 function fields(categories: CustomColumnOption[]): FieldDef[] {
   return [
     { name: 'label', label: 'Bezeichnung', required: true, placeholder: 'z. B. TechRider Quartett' },
     { name: 'url', label: 'URL (Google Drive etc.)', span2: true, placeholder: 'https://…' },
     ...(categories.length > 0
-      ? [
-          {
-            name: 'category',
-            label: 'Kategorie',
-            type: 'select' as const,
-            options: categories.map(({ value, label }) => ({ value, label })),
-          },
-        ]
+      ? [{ name: 'category', label: 'Kategorie', type: 'pills' as const, span2: true, options: categories }]
       : []),
   ];
 }
@@ -101,12 +102,49 @@ export function LinkList({
     await undoablePatch({ res: api.links, row: l, patch: { color }, label: 'Farbänderung' });
   };
 
+  // One group per configured category (options order), then "Ohne Kategorie" as the catch-all
+  // for links with no category *or* an unknown/legacy value — a stale value never hides a link.
+  const known = new Set(categories.map((c) => c.value));
+  /** The group a row is *rendered* in, which is what a drag may cross — not `l.category`. */
+  const groupOf = (l: LinkItem) => (l.category && known.has(l.category) ? l.category : '');
+  const grouped = categories
+    .map((c) => ({ key: c.value, label: c.label, color: c.color, items: links.filter((l) => l.category === c.value) }))
+    .filter((g) => g.items.length > 0);
+  const uncategorized = links.filter((l) => groupOf(l) === '');
+
+  // Dragging is confined to one category group: `sort_order` is a single sequence across the
+  // whole list, so a drop across groups would move a row under a heading that contradicts its
+  // category. Changing the category is the ✎ dialog's job. The reorder itself still renumbers
+  // every row — see useListReorder on why that leaves the other groups where they are.
+  const byId = new Map(links.map((l) => [l.id, l]));
+  const drag = useListReorder(links, api.links.reorder, (from, to) => {
+    const a = byId.get(from);
+    const b = byId.get(to);
+    return !!a && !!b && groupOf(a) === groupOf(b);
+  });
+
   const row = (l: LinkItem) => (
     <DocumentRow
       key={l.id}
       label={l.label}
       url={l.url}
       color={l.color}
+      dragging={drag.isDragging(l.id)}
+      dropTarget={drag.isDropTarget(l.id)}
+      handle={<DragHandle className="mt-0.5 text-base" {...drag.handleProps(l.id)} />}
+      notes={
+        // Inline-edited like a contact's note, and the add placeholder only shows on row hover
+        // so a list of plain documents doesn't grow a second line per row.
+        <div className={`mt-0.5 text-neutral-500 ${l.notes ? '' : 'opacity-0 transition group-hover:opacity-100'}`}>
+          <InlineNotes
+            compact
+            value={l.notes}
+            onSave={(notes) =>
+              undoablePatch({ res: api.links, row: l, patch: { notes }, label: 'Textänderung' })
+            }
+          />
+        </div>
+      }
       actions={
         <>
           <ColorSwatchPicker value={l.color} onChange={(color) => setColor(l, color)} />
@@ -122,16 +160,9 @@ export function LinkList({
           </Btn>
         </>
       }
+      {...drag.itemProps(l.id)}
     />
   );
-
-  // One group per configured category (options order), then "Ohne Kategorie" as the catch-all
-  // for links with no category *or* an unknown/legacy value — a stale value never hides a link.
-  const grouped = categories
-    .map((c) => ({ key: c.value, label: c.label, color: c.color, items: links.filter((l) => l.category === c.value) }))
-    .filter((g) => g.items.length > 0);
-  const known = new Set(categories.map((c) => c.value));
-  const uncategorized = links.filter((l) => l.category == null || !known.has(l.category));
 
   return (
     <div>

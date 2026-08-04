@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Btn, IconButton } from './ui';
 import { RichTextEditor } from './RichTextEditor';
+import { contrastText } from '../lib/colors';
 import { resizeToDataUrl } from '../lib/image';
 import { useErrorToast, useGuardedAction } from '../hooks';
 
@@ -188,12 +189,60 @@ export type FieldType =
   | 'text'
   | 'textarea'
   | 'select'
+  | 'pills'
   | 'color'
   | 'date'
   | 'number'
   | 'email'
   | 'tel'
   | 'image';
+
+/**
+ * `type: 'pills'` — a one-click alternative to `'select'` for a short, coloured option list.
+ * A `<select>` (and `PillSelect`, which is a popover too) costs two clicks to set a value and
+ * throws the option's colour away on the way; a row of pills is one click and shows the palette
+ * the list is grouped by. Clicking the selected pill again clears the field, which is why the
+ * option list needs no "—" entry.
+ *
+ * Only worth it while the list is short enough to scan — a long one wants the popover back.
+ */
+function PillsField({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: NonNullable<FieldDef['options']>;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5 pt-0.5">
+      {options.map((o) => {
+        const on = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            aria-pressed={on}
+            title={on ? `„${o.label}" entfernen` : `„${o.label}" wählen`}
+            onClick={() => onChange(on ? '' : o.value)}
+            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition ${
+              on ? 'ring-2 ring-neutral-800' : 'text-neutral-600 ring-1 ring-neutral-300 hover:ring-neutral-500'
+            }`}
+            style={on && o.color ? { background: o.color, color: contrastText(o.color) } : undefined}
+          >
+            {/* The swatch carries the colour while the pill is unselected, so the fill can stay
+                reserved for "this one is set" — two pastel fills apart is not a legible state. */}
+            {!on && (
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: o.color ?? '#e5e5e5' }} />
+            )}
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /** File picker that stores a resized data URL, with a round preview + clear button. */
 function ImageField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
@@ -304,7 +353,8 @@ export interface FieldDef {
   name: string;
   label: string;
   type?: FieldType;
-  options?: Array<{ value: string; label: string }>;
+  /** `color` is read by `type: 'pills'` only; `'select'` has no way to render it. */
+  options?: Array<{ value: string; label: string; color?: string }>;
   required?: boolean;
   placeholder?: string;
   span2?: boolean;
@@ -430,6 +480,12 @@ export function RecordFormModal({
                   </option>
                 ))}
               </Select>
+            ) : f.type === 'pills' ? (
+              <PillsField
+                value={vals[f.name] ?? ''}
+                options={f.options ?? []}
+                onChange={(v) => set(f.name, v)}
+              />
             ) : f.type === 'color' ? (
               <ColorField
                 value={vals[f.name] ?? ''}

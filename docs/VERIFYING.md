@@ -52,6 +52,12 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   native setter.
 - **A status change re-sorts the task table**, so `.first()` addresses a different row afterwards.
   Assert the write, not the label.
+- **A drag must start on the ⠿, not on the row.** Every reorderer runs `useDragReorder` in
+  `mode: 'armed'`, so the item is not `draggable` until a primary-button `pointerdown` lands on
+  its handle — `locator.dragTo()` on the row body is a silent no-op that reads as "reordering is
+  broken". What works: hover the row, `mouse.move` onto `[title="Zum Verschieben ziehen"]`,
+  `mouse.down`, `mouse.move` to the target with `{ steps: … }`, `mouse.up`. The handle is
+  `opacity-0` until the row is hovered but still hit-testable, so actionability passes either way.
 - **`keyboard.down` emits one keydown.** A repeat-key defect (TTU-24) needs events dispatched with
   `repeat: true`.
 - **Some repros only fire inside a refetch window.** On a local server the refetch beats a human's
@@ -103,6 +109,13 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   `#dcfce7`).
 - **Hiding a *filled* built-in opens the „Bereich ist nicht leer" dialog**, whose overlay then eats
   every following click. An *empty* custom widget skips the dialog entirely.
+- **The link dialog's „Kategorie" is `type: 'pills'`, not a `<select>`** — `selectOption` finds
+  nothing. The options are `[aria-pressed]` buttons and the current value is
+  `[aria-pressed="true"]`; a second click on it clears the field.
+- **Project 1's „Technik" group is the only link group with two rows**, so it is the only place a
+  reorder is observable, and the group's `sort_order` values are *interleaved* with the other
+  groups' (0, 5, 6, 7) — which is the case a per-group reorder must not disturb. The group
+  headings are `span.rounded-full` inside the list's `div.space-y-4` and CSS-uppercased.
 
 ## What is not verified this way
 

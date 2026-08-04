@@ -179,12 +179,21 @@ export function PickerRow({
  * Tailwind classes and the German fallback text, differing only in the colour treatment — so
  * every change to link-row presentation had to be made twice and the two drifted (SHL-28).
  * `color` is the links half: it tints the row and paints the left border.
+ *
+ * `handle`, `notes` and the drag styling are the links half too — the landing's `DocList` stores
+ * its documents inside a setting rather than as rows, so it has neither a reorder endpoint nor a
+ * column to put a note in. Both are omitted there and the row renders exactly as before.
  */
 export function DocumentRow({
   label,
   url,
   color,
   actions,
+  handle,
+  notes,
+  dragging = false,
+  dropTarget = false,
+  ...rest
 }: {
   label: string;
   url: string | null;
@@ -192,14 +201,26 @@ export function DocumentRow({
   color?: string | null;
   /** The ✎/🗑 pair (and, for links, the colour swatch) — hidden until the row is hovered. */
   actions?: ReactNode;
-}) {
+  /** The ⠿ grab handle, rendered before the 🔗 glyph. */
+  handle?: ReactNode;
+  /** Second line under the label — the inline-edited short description. */
+  notes?: ReactNode;
+  dragging?: boolean;
+  dropTarget?: boolean;
+  // `color` is omitted from the passthrough: HTMLAttributes has the legacy presentational
+  // attribute of that name, and intersecting it narrows our own `string | null` to `string`.
+} & Omit<HTMLAttributes<HTMLLIElement>, 'color'>) {
   return (
     <li
-      className={`group flex items-center gap-3 rounded-xl px-3 py-2 shadow-sm ring-1 ring-black/5 ${
+      {...rest}
+      // items-start, not items-center: with a notes line the glyph and the actions belong on the
+      // label's line, not floating to the middle of a two-line row.
+      className={`group flex items-start gap-3 rounded-xl px-3 py-2 shadow-sm ring-1 ring-black/5 transition ${
         color ? 'border-l-4' : 'bg-white'
-      }`}
+      } ${dropTarget ? 'ring-2 ring-neutral-500' : ''} ${dragging ? 'opacity-40' : ''}`}
       style={color ? { background: withAlpha(color, 0.16), borderLeftColor: color } : undefined}
     >
+      {handle}
       <span className="text-neutral-400">🔗</span>
       <div className="min-w-0 flex-1">
         {url ? (
@@ -218,6 +239,7 @@ export function DocumentRow({
             {label} <span className="text-xs font-normal text-neutral-400">(kein Link hinterlegt)</span>
           </span>
         )}
+        {notes}
       </div>
       <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
         {actions}

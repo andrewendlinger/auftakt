@@ -395,6 +395,54 @@ try {
     await stopServer();
     check('a second launch leaves the tree untouched', snapshot() === before);
   }
+
+  // `links.notes` (WP-26) is an ensureColumn, but `migrateLinksSectionParent` *rebuilds* the
+  // table from a hardcoded column list that does not name it — so the two are order-dependent
+  // and the wrong order costs the column again on any database that jumps both versions in one
+  // open. Silently: nothing re-adds it before the next launch, and by then the write that
+  // filled it has already been dropped. Plant a pre-WP-S links table and boot once.
+  console.log('\n== a pre-WP-S links table gains section_id *and* notes (WP-26)');
+  {
+    const db = new Database(seasonFile('auftakt.db'));
+    db.exec(`
+      DROP TABLE links;
+      CREATE TABLE links (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        artist_id  INTEGER REFERENCES artists(id),
+        project_id INTEGER REFERENCES projects(id),
+        event_id   INTEGER REFERENCES events(id),
+        task_id    INTEGER REFERENCES tasks(id),
+        label      TEXT NOT NULL,
+        url        TEXT,
+        color      TEXT,
+        category   TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        deleted_at TEXT,
+        CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) + (event_id IS NOT NULL) + (task_id IS NOT NULL) = 1)
+      );
+      INSERT INTO links (id, task_id, label, url, category, sort_order)
+        VALUES (1, ${deepTree[0]}, 'Altdokument', 'https://e.org/a', 'technik', 3);
+    `);
+    db.close();
+
+    await startServer();
+    await stopServer();
+
+    const db2 = new Database(seasonFile('auftakt.db'), { readonly: true });
+    const cols = db2.prepare('PRAGMA table_info(links)').all().map((c) => c.name);
+    check('the section_id rebuild ran', cols.includes('section_id'), cols.join(','));
+    check('…and notes survived it', cols.includes('notes'), cols.join(','));
+    const row = db2.prepare('SELECT * FROM links WHERE id = 1').get();
+    check(
+      'the pre-existing row came through intact',
+      row?.label === 'Altdokument' && row?.category === 'technik' && row?.sort_order === 3,
+      JSON.stringify(row),
+    );
+    check('a row written before the column reads NULL, not ""', row?.notes === null, String(row?.notes));
+    db2.close();
+  }
 } catch (err) {
   check('run completed', false, String(err));
   if (serverLog) console.log(serverLog.slice(-900));

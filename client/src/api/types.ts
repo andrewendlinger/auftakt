@@ -150,6 +150,8 @@ export interface LinkItem extends SoftDeletable {
   color: string | null;
   /** A `link_categories` option `value` (rename-safe), or null for "Ohne Kategorie". */
   category: string | null;
+  /** Short description under the row, edited inline (WP-26). Markdown, like every other note. */
+  notes: string | null;
 }
 
 /**
@@ -233,6 +235,7 @@ export type LinkUpdate = Partial<
     | 'url'
     | 'color'
     | 'category'
+    | 'notes'
     | 'sort_order'
   >
 >;
