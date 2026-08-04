@@ -244,7 +244,7 @@ function UpcomingList({ events }: { events: EventItem[] }) {
                 </div>
                 <div className="text-xs text-neutral-400">
                   {ev.artist_name}
-                  {ev.location ? ` · ${ev.location}` : ''}
+                  {ev.location ? <span className="italic"> 📍 {ev.location}</span> : ''}
                 </div>
               </div>
             </Link>

@@ -40,13 +40,18 @@ export function EventEditor({
   const guard = useGuardedAction();
   const [type, setType] = useState(event?.type ?? eventTypes[0]?.value ?? 'Termin');
   const [title, setTitle] = useState(event?.title ?? '');
-  const [allDay, setAllDay] = useState<boolean>(!!event?.all_day);
+  // A new event is all-day: typing a date and saving is the common case, and hunting for the
+  // checkbox every time was the friction WP-28 names. Editing still reads the record — an
+  // existing event with a clock time must not lose it on open. Used as the `dirty` baseline
+  // too, or an untouched „Neuer Termin" would open dirty and ask before closing on Escape.
+  const initialAllDay = event ? !!event.all_day : true;
+  const [allDay, setAllDay] = useState<boolean>(initialAllDay);
   // TBD = no fixed date yet; stored as start_at NULL. The pickers keep their values while
   // the box is ticked so un-ticking restores them.
   const [tbd, setTbd] = useState<boolean>(event ? !event.start_at : false);
-  // „Ganztägig" follows the same rule: `start`/`end` always hold the full `YYYY-MM-DDTHH:mm`
+  // „Mit Uhrzeit" follows the same rule: `start`/`end` always hold the full `YYYY-MM-DDTHH:mm`
   // and `submit` derives the date-only form. Truncating them on toggle destroyed the event's
-  // real clock times — tick and immediately untick and 19:30–21:15 came back as 09:00–10:00,
+  // real clock times — untick and immediately re-tick and 19:30–21:15 came back as 09:00–10:00,
   // unrecoverable inside the dialog and written to the DB on Speichern (RTE-03).
   const [start, setStart] = useState(withTime(event?.start_at, '09:00'));
   const [end, setEnd] = useState(withTime(event?.end_at, '10:00'));
@@ -65,14 +70,14 @@ export function EventEditor({
   const dirty =
     type !== (event?.type ?? eventTypes[0]?.value ?? 'Termin') ||
     title !== (event?.title ?? '') ||
-    allDay !== !!event?.all_day ||
+    allDay !== initialAllDay ||
     tbd !== (event ? !event.start_at : false) ||
     start !== withTime(event?.start_at, '09:00') ||
     end !== withTime(event?.end_at, '10:00') ||
     location !== (event?.location ?? '') ||
     notes !== (event?.notes ?? '');
 
-  /** Picking a day while „Ganztägig" is ticked keeps whatever time the event already had. */
+  /** Picking a day while „Mit Uhrzeit" is off keeps whatever time the event already had. */
   const setDay = (set: (v: string) => void, current: string, day: string, fallback: string) =>
     set(day === '' ? '' : `${day}T${current.slice(11) || fallback}`);
 
@@ -135,9 +140,16 @@ export function EventEditor({
           </div>
         </div>
         <div className="col-span-2 flex flex-col justify-end gap-1.5 sm:col-span-1">
+          {/* Ticked for a *time*, not against one: the default is all-day, so the box has to
+              read as the addition it now is. `all_day` in the DB is untouched — only the
+              wording and the checked state are inverted here. */}
           <label className="flex cursor-pointer items-center gap-2 text-sm text-neutral-700">
-            <input type="checkbox" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} />
-            Ganztägig / mehrtägig (ohne Uhrzeit)
+            <input
+              type="checkbox"
+              checked={!allDay}
+              onChange={(e) => setAllDay(!e.target.checked)}
+            />
+            Mit Uhrzeit
           </label>
           <label className="flex cursor-pointer items-center gap-2 text-sm text-neutral-700">
             <input type="checkbox" checked={tbd} onChange={(e) => setTbd(e.target.checked)} />

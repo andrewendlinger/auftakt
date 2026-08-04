@@ -18,6 +18,10 @@ Then drive `http://localhost:5317/#/artist/1`, `#/project/1`, `#/archiv`, `#/ein
 Use headless Playwright or curl — **not** `npm run electron:dev`, which opens a real window on the
 user's desktop.
 
+**The Übersicht is `#/dashboard`. `#/` is the season landing page** — a different screen with no
+task tiles and no „Nächste Termine". Asserting dashboard content against `#/` fails against
+working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id`.
+
 ### Before believing any result
 
 - **Confirm which database you are talking to.**

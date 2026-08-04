@@ -134,7 +134,8 @@ export function PrintEvents({
             ) : (
               ''
             )}
-            {e.location ? <span className="text-neutral-500"> · {e.location}</span> : ''}
+            {/* 📍 replaces the old „ · " — it is the separator now, so two would stack up. */}
+            {e.location ? <span className="italic text-neutral-500"> 📍 {e.location}</span> : ''}
           </span>
         </li>
       ))}

@@ -81,7 +81,9 @@ export function EventList({
             )}
             <span className="font-medium text-neutral-800">{ev.title}</span>
           </div>
-          {ev.location && <div className="text-sm text-neutral-500">{ev.location}</div>}
+          {ev.location && (
+            <div className="text-sm italic text-neutral-500">📍 {ev.location}</div>
+          )}
           {ev.notes && <Markdown className="mt-1 text-sm text-neutral-600">{ev.notes}</Markdown>}
         </div>
         <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
