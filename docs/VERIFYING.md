@@ -83,6 +83,17 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **Project 1's notes contain a Markdown table**, so `thead` first matches *that*, not the task
   table. Project 1 also shares its name with its opening concert, so a text match there hits the
   page heading rather than the event row.
+- **`getByRole('button', { name: 'Einfügen' })` is ambiguous in the rich-text editor** — it hits
+  the toolbar's „Tabelle einfügen" (via its `aria-label`) as well as the link bar's „Einfügen".
+  Use `{ exact: true }`. Every toolbar button carries `title` *and* `aria-label`, so accessible
+  names there are substrings of one another far more often than the markup suggests.
+- **The rich-text toolbar is not the same on every field.** `RichTextEditor`'s `compact` trims it
+  to B/I/U, bullet, link and emoji — headings, ordered list, quote and the table button are
+  simply absent. Only the contact-row note and the task-comment cell are compact; asserting on
+  „Tabelle einfügen" anywhere else is fine, asserting on it there will always fail.
+- **The table controls („Zeile +", „Spalte +", „Tabelle löschen") render *below* the editor** and
+  only while the caret is inside a table. A script that clicks the table button and then looks
+  for them above the text finds nothing.
 - **The project-scoped column manager lists nothing on the demo** (there are no project-scoped
   columns) — drive those cases from Einstellungen instead.
 - **The „Zeitfenster" input is the only `type="number"` in the client**, but its „Speichern" is not

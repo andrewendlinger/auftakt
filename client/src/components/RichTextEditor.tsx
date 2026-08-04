@@ -8,10 +8,15 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
 import { useEditor, EditorContent, useEditorState, type Editor } from '@tiptap/react';
+import { Extension } from '@tiptap/core';
 import { Placeholder } from '@tiptap/extensions';
+import { Plugin, PluginKey } from '@tiptap/pm/state';
+import type { Node as PMNode } from '@tiptap/pm/model';
+import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { markdownExtensions } from '../lib/richtext';
 import { isParsableUrl, normalizeUrl } from '../lib/url';
-import { LinkIcon, ListIcon } from './icons';
+import { EXTERNAL_LINK_CLASS } from './ui';
+import { LinkIcon, ListIcon, TrashIcon } from './icons';
 
 // Loaded on demand so the emoji dataset stays out of the main bundle.
 const EmojiPickerLazy = lazy(() => import('./EmojiPickerLazy'));
@@ -28,6 +33,47 @@ const EmojiPickerLazy = lazy(() => import('./EmojiPickerLazy'));
  */
 const DEFAULT_CONTENT =
   'w-full min-h-20 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-800 outline-none transition focus:border-neutral-500 focus:ring-2 focus:ring-neutral-900/5';
+
+const linkTitleKey = new PluginKey<DecorationSet>('rteLinkTitle');
+
+/**
+ * Hover a link while editing and see where it actually goes (WP-29d).
+ *
+ * A **decoration**, not a rendered `title=` attribute, and that distinction is the whole point:
+ * the link mark has a real `title` in its schema with the default `parseHTML`, so an attribute
+ * would be read back on any HTML re-parse — copy a link, paste it, and the note now stores
+ * `[text](href "href")`. Decorations never enter the document and never reach the clipboard,
+ * which serializes from the doc rather than from the rendered DOM.
+ *
+ * Lives here rather than in `lib/richtext.ts`, which is deliberately free of DOM-only
+ * extensions so the headless round-trip check exercises exactly what the app serializes.
+ */
+const LinkHoverTitle = Extension.create({
+  name: 'rteLinkTitle',
+  addProseMirrorPlugins() {
+    const build = (doc: PMNode) => {
+      const decos: Decoration[] = [];
+      doc.descendants((node, pos) => {
+        if (!node.isText) return;
+        const href = node.marks.find((m) => m.type.name === 'link')?.attrs.href;
+        if (href) decos.push(Decoration.inline(pos, pos + node.nodeSize, { title: href }));
+      });
+      return DecorationSet.create(doc, decos);
+    };
+    return [
+      new Plugin({
+        key: linkTitleKey,
+        // Rebuilt only when the document actually changed — moving the caret must not walk the
+        // whole doc on every keystroke's selection update.
+        state: {
+          init: (_, state) => build(state.doc),
+          apply: (tr, old) => (tr.docChanged ? build(tr.doc) : old),
+        },
+        props: { decorations: (state) => linkTitleKey.getState(state) },
+      }),
+    ];
+  },
+});
 
 export function RichTextEditor({
   value,
@@ -48,6 +94,12 @@ export function RichTextEditor({
   onBlur?: () => void | Promise<void>;
   onKeyDown?: (e: KeyboardEvent) => void;
   placeholder?: string;
+  /**
+   * Small surface — a table cell, a one-line note in a row. Trims the toolbar to what fits and
+   * keeps paragraphs at the compact spacing. Everything else is a document-sized field: full
+   * toolbar (headings, tables) and roomy paragraphs. The read-mode `Markdown` on the same
+   * surface has to be given the matching `roomy`, or the text reflows the moment it saves.
+   */
   compact?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -89,14 +141,15 @@ export function RichTextEditor({
 
   const editor = useEditor({
     extensions: [
-      ...markdownExtensions(),
+      ...markdownExtensions({ linkClass: EXTERNAL_LINK_CLASS }),
       Placeholder.configure({ placeholder: () => placeholderRef.current ?? '' }),
+      LinkHoverTitle,
     ],
     content: value,
     contentType: 'markdown',
     autofocus: autoFocus ? 'end' : false,
     editorProps: {
-      attributes: { class: `prose-md rte-content ${className}` },
+      attributes: { class: `prose-md ${compact ? '' : 'prose-md--roomy '}rte-content ${className}` },
       // ProseMirror-level: the caller peeks first; if it preventDefaults (Esc, ⌘↵) we tell
       // ProseMirror we handled the key so its keymap doesn't also act.
       handleKeyDown: (_view, event) => {
@@ -171,6 +224,11 @@ export function RichTextEditor({
     <div ref={rootRef} className="rte-root">
       {editor && <Toolbar editor={editor} compact={compact} />}
       <EditorContent editor={editor} />
+      {/* Below the text, not above it: this strip appears and disappears as the caret enters and
+          leaves a table, and above the editor that would shove the paragraph being edited up and
+          down by a row's height every time. Shown even when `compact`, because a table stored in
+          a note can be opened in a cell editor and these are the only controls that can fix it. */}
+      {editor && <TableBar editor={editor} />}
     </div>
   );
 }
@@ -178,7 +236,15 @@ export function RichTextEditor({
 // --- toolbar --------------------------------------------------------------------------------
 
 function Toolbar({ editor, compact }: { editor: Editor; compact: boolean }) {
-  const [link, setLink] = useState<{ text: string; url: string } | null>(null);
+  // `origin` is the text the bar opened with, so `insertLink` can tell "only the address
+  // changed" from "the label changed". Note `setLink` here is this state setter, *not* TipTap's
+  // command of the same name — the editor commands are reached through `chain()`.
+  const [link, setLink] = useState<{
+    text: string;
+    url: string;
+    origin: string;
+    existing: boolean;
+  } | null>(null);
   const [emoji, setEmoji] = useState(false);
 
   // Re-render the toolbar on selection/content change so active states stay in sync.
@@ -200,11 +266,23 @@ function Toolbar({ editor, compact }: { editor: Editor; compact: boolean }) {
 
   const chain = () => editor.chain().focus();
 
+  /**
+   * Open the bar on the link the caret is already in, not next to it.
+   *
+   * It used to seed `url: ''` unconditionally and never read the existing `href`, so clicking
+   * the button inside a link offered an empty field and „Einfügen" appended a *second* link
+   * beside the first — existing links were effectively uneditable (WP-29c). Extending the
+   * selection over the whole mark first is what makes editing and inserting the same path:
+   * both then act on a selection that is exactly the link.
+   */
   const openLink = () => {
+    setEmoji(false);
+    if (editor.isActive('link')) chain().extendMarkRange('link').run();
     const { from, to } = editor.state.selection;
     const selected = editor.state.doc.textBetween(from, to, ' ');
-    setEmoji(false);
-    setLink({ text: selected.includes('\n') ? '' : selected, url: '' });
+    const href = (editor.getAttributes('link').href as string | undefined) ?? '';
+    const text = selected.includes('\n') ? '' : selected;
+    setLink({ text, url: href, origin: text, existing: !!href });
   };
   const insertLink = () => {
     if (!link) return;
@@ -214,9 +292,24 @@ function Toolbar({ editor, compact }: { editor: Editor; compact: boolean }) {
     if (!isParsableUrl(link.url)) return;
     const url = normalizeUrl(link.url);
     const text = link.text.trim() || url;
-    chain()
-      .insertContent({ type: 'text', text, marks: [{ type: 'link', attrs: { href: url } }] })
-      .run();
+    if (text !== '' && text === link.origin) {
+      // Label untouched — re-mark the range instead of replacing it, so anything *inside* the
+      // link survives a change of address. `insertContent` writes one flat text node, which
+      // silently drops the bold in `[**fett**](…)` (and did the same to a bold word you
+      // selected before pressing the link button). `title: null` because `setMark` merges over
+      // the existing attributes, and a stored `[t](u "Titel")` would otherwise keep a title
+      // that no longer belongs to the new address.
+      chain().setMark('link', { href: url, title: null }).run();
+    } else {
+      chain()
+        .insertContent({ type: 'text', text, marks: [{ type: 'link', attrs: { href: url } }] })
+        .run();
+    }
+    setLink(null);
+  };
+  /** `unsetLink` extends an empty selection over the mark itself, so a caret inside is enough. */
+  const removeLink = () => {
+    chain().unsetLink().run();
     setLink(null);
   };
 
@@ -269,7 +362,7 @@ function Toolbar({ editor, compact }: { editor: Editor; compact: boolean }) {
             </Btn>
           </>
         )}
-        <Btn title="Link einfügen" on={active?.link} onClick={openLink}>
+        <Btn title={active?.link ? 'Link bearbeiten' : 'Link einfügen'} on={active?.link} onClick={openLink}>
           <LinkIcon className="h-4 w-4" />
         </Btn>
         {!compact && (
@@ -317,6 +410,7 @@ function Toolbar({ editor, compact }: { editor: Editor; compact: boolean }) {
           onUrl={(url) => setLink({ ...link, url })}
           onInsert={insertLink}
           onCancel={closeLink}
+          onRemove={link.existing ? removeLink : undefined}
         />
       )}
 
@@ -354,6 +448,42 @@ function Toolbar({ editor, compact }: { editor: Editor; compact: boolean }) {
   );
 }
 
+/**
+ * Row and column controls, visible only while the caret sits in a table.
+ *
+ * Its own `useEditorState` rather than a `table:` entry in the main toolbar's selector, so
+ * entering a table re-renders this strip and not the whole button row. The buttons are `Btn`s
+ * for one load-bearing reason: `Btn` cancels `mousedown`, and without that a click here blurs
+ * the view and fires the caller's commit-on-blur mid-edit (RTE-02).
+ */
+function TableBar({ editor }: { editor: Editor }) {
+  const inTable = useEditorState({ editor, selector: ({ editor }) => editor.isActive('table') });
+  if (!inTable) return null;
+  const chain = () => editor.chain().focus();
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-0.5">
+      <span className="mr-1 text-[11px] text-neutral-400">Tabelle</span>
+      <Btn title="Zeile darunter einfügen" onClick={() => chain().addRowAfter().run()}>
+        <span className="text-[11px] font-semibold">Zeile +</span>
+      </Btn>
+      <Btn title="Zeile löschen" onClick={() => chain().deleteRow().run()}>
+        <span className="text-[11px] font-semibold">Zeile −</span>
+      </Btn>
+      <Sep />
+      <Btn title="Spalte rechts einfügen" onClick={() => chain().addColumnAfter().run()}>
+        <span className="text-[11px] font-semibold">Spalte +</span>
+      </Btn>
+      <Btn title="Spalte löschen" onClick={() => chain().deleteColumn().run()}>
+        <span className="text-[11px] font-semibold">Spalte −</span>
+      </Btn>
+      <Sep />
+      <Btn title="Tabelle löschen" onClick={() => chain().deleteTable().run()}>
+        <TrashIcon className="h-4 w-4" />
+      </Btn>
+    </div>
+  );
+}
+
 function Sep() {
   return <span className="mx-0.5 h-4 w-px bg-neutral-200" aria-hidden />;
 }
@@ -378,7 +508,9 @@ function Btn({
       // Keep focus in the editor so an onBlur-to-save never fires on a toolbar click.
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
-      className={`flex h-7 w-7 items-center justify-center rounded-lg text-sm transition ${
+      // `min-w-7` rather than `w-7`: the single-glyph buttons stay square, the table strip's
+      // word labels get to be as wide as they need.
+      className={`flex h-7 min-w-7 items-center justify-center rounded-lg px-1 text-sm transition ${
         on ? 'bg-neutral-800 text-white' : 'text-neutral-600 hover:bg-neutral-200'
       }`}
     >
@@ -399,6 +531,7 @@ function LinkBar({
   onUrl,
   onInsert,
   onCancel,
+  onRemove,
 }: {
   text: string;
   url: string;
@@ -406,6 +539,8 @@ function LinkBar({
   onUrl: (v: string) => void;
   onInsert: () => void;
   onCancel: () => void;
+  /** Only passed when the bar opened on an existing link — otherwise there is nothing to strip. */
+  onRemove?: () => void;
 }) {
   const field =
     'min-w-0 flex-1 rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-800 outline-none transition focus:border-neutral-500';
@@ -460,6 +595,16 @@ function LinkBar({
       >
         Einfügen
       </button>
+      {onRemove && (
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={onRemove}
+          className="rounded-md px-2 py-1 text-xs text-neutral-500 transition hover:text-red-600"
+        >
+          Entfernen
+        </button>
+      )}
       <button
         type="button"
         onMouseDown={(e) => e.preventDefault()}

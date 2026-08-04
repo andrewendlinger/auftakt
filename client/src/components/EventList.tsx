@@ -84,7 +84,9 @@ export function EventList({
           {ev.location && (
             <div className="text-sm italic text-neutral-500">📍 {ev.location}</div>
           )}
-          {ev.notes && <Markdown className="mt-1 text-sm text-neutral-600">{ev.notes}</Markdown>}
+          {/* Roomy to match the modal editor these notes are written in — the row shows them in
+              full, so a tighter reading view than the editor would reflow the text on save. */}
+          {ev.notes && <Markdown roomy className="mt-1 text-sm text-neutral-600">{ev.notes}</Markdown>}
         </div>
         <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
           <Btn variant="ghost" title="Bearbeiten" onClick={() => setEditing(ev)}>

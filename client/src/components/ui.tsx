@@ -241,10 +241,21 @@ export const EXTERNAL_LINK_CLASS =
  * handler, with no shared component and no import between them, so a change to the link colour
  * reached one surface and not the other (CCL-27).
  */
-export function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
+export function ExternalLink({
+  href,
+  title,
+  children,
+}: {
+  href: string;
+  /** Hover text. Markdown passes the destination; `linkify`'s e-mails don't, since the address
+   *  is already the visible text and a `mailto:` tooltip would only repeat it. */
+  title?: string;
+  children: ReactNode;
+}) {
   return (
     <a
       href={href}
+      title={title}
       onClick={(e) => {
         e.preventDefault();
         openExternal(href);

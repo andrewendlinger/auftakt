@@ -14,10 +14,17 @@ export function InlineNotes({
   value,
   onSave,
   placeholder = '+ hinzufügen',
+  compact = false,
 }: {
   value: string | null;
   onSave: (v: string | null) => void | Promise<void>;
   placeholder?: string;
+  /**
+   * For the one-line notes that live inside another row (a contact). Off by default, because
+   * every other caller is a document-sized field. This block renders *both* halves of its
+   * surface, so the flag goes to the editor and the reader together and they cannot drift.
+   */
+  compact?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(value ?? '');
@@ -52,7 +59,7 @@ export function InlineNotes({
     return (
       <RichTextEditor
         autoFocus
-        compact
+        compact={compact}
         value={text}
         onChange={setText}
         className="min-h-32 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-800 outline-none transition focus:border-neutral-500 focus:ring-2 focus:ring-neutral-900/5"
@@ -88,7 +95,7 @@ export function InlineNotes({
         start();
       }}
     >
-      <Markdown>{value}</Markdown>
+      <Markdown roomy={!compact}>{value}</Markdown>
     </div>
   );
 }

@@ -13,19 +13,33 @@ const sanitizeSchema = {
   tagNames: [...(defaultSchema.tagNames ?? []), 'u'],
 };
 
-/** Links open externally (OS browser / mail client), never inside the app window. */
-function MdLink({ href, children }: ComponentPropsWithoutRef<'a'>) {
+/**
+ * Links open externally (OS browser / mail client), never inside the app window.
+ *
+ * The hover text is the destination, because a link's label rarely is one — `[die Technik-Seite]`
+ * tells you nothing about where it goes (WP-29d). A link that carries its own Markdown title
+ * (`[t](u "Titel")`) keeps it; the author said something more useful than the URL.
+ */
+function MdLink({ href, title, children }: ComponentPropsWithoutRef<'a'>) {
   // A Markdown link with no destination is still a node to render; ExternalLink takes a string.
   if (!href) return <span className={EXTERNAL_LINK_CLASS}>{children}</span>;
-  return <ExternalLink href={href}>{children}</ExternalLink>;
+  return (
+    <ExternalLink href={href} title={title ?? href}>
+      {children}
+    </ExternalLink>
+  );
 }
 
 /**
  * Link styled as plain text — no <a>, so a preview can render inside an enclosing <a> (e.g. a
  * clickable card) without nesting anchors. Keeps the link colour/underline as a visual hint.
  */
-function MdLinkText({ children }: ComponentPropsWithoutRef<'a'>) {
-  return <span className={EXTERNAL_LINK_CLASS}>{children}</span>;
+function MdLinkText({ href, title, children }: ComponentPropsWithoutRef<'a'>) {
+  return (
+    <span title={title ?? href} className={EXTERNAL_LINK_CLASS}>
+      {children}
+    </span>
+  );
 }
 
 /**
@@ -43,11 +57,18 @@ export function Markdown({
   children,
   className = '',
   plainLinks = false,
+  roomy = false,
 }: {
   children: string | null | undefined;
   className?: string;
   /** Render links as non-interactive text — use when the Markdown sits inside an enclosing <a>. */
   plainLinks?: boolean;
+  /**
+   * Space paragraphs like a document rather than like a table cell. Set it on the large notes
+   * surfaces and leave it off in clamped previews and table cells; a surface that also *edits*
+   * this text has to match `RichTextEditor`'s `compact`, or the note visibly reflows on blur.
+   */
+  roomy?: boolean;
 }) {
   // Parsing GFM is not free; memoise on the text so a parent re-render (e.g. sorting
   // the task table) doesn't re-parse every unchanged note/comment cell.
@@ -65,5 +86,5 @@ export function Markdown({
     [children, plainLinks],
   );
   if (!children) return null;
-  return <div className={`prose-md ${className}`}>{rendered}</div>;
+  return <div className={`prose-md ${roomy ? 'prose-md--roomy ' : ''}${className}`}>{rendered}</div>;
 }

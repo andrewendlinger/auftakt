@@ -81,6 +81,14 @@ const corpus: Record<string, string> = {
   heading: '# Titel\n\n## Abschnitt\n\n### Unterpunkt',
   quote: '> ein Zitat\n> über zwei Zeilen',
   table: '| Instrument | Anzahl |\n| --- | --- |\n| Geige | 4 |\n| Cello | 2 |',
+  // The shapes the toolbar can now produce, since WP-29 made tables reachable from the notes
+  // fields and added row/column controls. Two further shapes are *known* to lose content and are
+  // deliberately absent — a `|` inside a cell and a line break inside a cell, both filed as WP-30.
+  tableMarks: '| **Rolle** | Person |\n| --- | --- |\n| *Licht* | [Anna](https://example.com) |\n| Ton | <u>Ben</u> |',
+  tableEmptyCell: '| Rolle | Person |\n| --- | --- |\n| Licht |  |\n| Ton | Ben |',
+  tableAligned: '| Rolle | Anzahl |\n| :--- | ---: |\n| Licht | 2 |',
+  tableSingleColumn: '| Aufgabe |\n| --- |\n| Aufbau |\n| Abbau |',
+  tableBetweenParas: 'Davor.\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\nDanach.',
   emoji: 'Auftakt 🎉 geschafft 🙂 — super!',
   // A realistic ~1-page project description, the shape WP-Q's feedback singled out.
   longProse: [

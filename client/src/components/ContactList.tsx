@@ -99,6 +99,7 @@ export function ContactList({
                     lists without notes don't grow a button per row. */}
                 <div className={`mt-0.5 text-neutral-500 ${c.notes ? '' : 'opacity-0 transition group-hover:opacity-100'}`}>
                   <InlineNotes
+                    compact
                     value={c.notes}
                     onSave={(v) =>
                       undoablePatch({ res: api.contacts, row: c, patch: { notes: v }, label: 'Textänderung' })

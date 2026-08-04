@@ -35,12 +35,28 @@ const MdUnderline = Underline.extend({
  *   that renderer (documented in WP-J), whereas 3 nests under both bullet and ordered parents.
  * - `codeBlock` / `horizontalRule` stay enabled (StarterKit defaults) so any such content in
  *   existing notes round-trips even though the toolbar doesn't author them.
+ *
+ * `linkClass` is the one thing the app injects, so links look the same while you edit them as
+ * they do once rendered (WP-29). It stays a parameter rather than an import: this module is
+ * loaded by the headless round-trip check, which has no stylesheet and passes nothing. Anything
+ * added here must be provably absent from the mark's `renderMarkdown` — the link mark serializes
+ * `href` and `title` only, which is why a class cannot reach the stored Markdown.
  */
-export function markdownExtensions(): AnyExtension[] {
+export function markdownExtensions(opts: { linkClass?: string } = {}): AnyExtension[] {
   return [
     StarterKit.configure({
       underline: false, // replaced by MdUnderline so it serializes to <u>
-      link: { openOnClick: false, autolink: true },
+      link: {
+        openOnClick: false,
+        autolink: true,
+        // Replaces the extension's default object wholesale, so `target`/`rel` have to be
+        // restated here or editor-copied HTML loses them.
+        HTMLAttributes: {
+          target: '_blank',
+          rel: 'noopener noreferrer nofollow',
+          class: opts.linkClass ?? null,
+        },
+      },
     }),
     MdUnderline,
     Table.configure({ resizable: false }),

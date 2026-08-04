@@ -123,6 +123,26 @@ body {
   text-align: left;
 }
 
+/* Roomy variant for the large notes fields and their reading view (WP-29a). At 0.35em two
+   paragraphs sit a quarter of a line apart, so one Enter doesn't read as a break and users
+   press it a second time — which doesn't even persist, since the empty paragraph collapses
+   back on the next round-trip. Adjacent margins collapse, so 1em *is* the whole gap: 14px
+   against a 20px line, a clear break without turning a note into a poster.
+
+   Last in the block on purpose — every rule above has the same specificity, so this one only
+   wins by order.
+
+   Direct children only. A TipTap list item wraps its text in a <p> (`listItem` content is
+   `paragraph block*`) while the rendered Markdown of a tight list does not, so an unscoped
+   `p` rule would inflate lists in the editor and not in the reading view — the very thing
+   sharing `.prose-md` across both is meant to prevent. The same reasoning keeps paragraphs
+   inside table cells and blockquotes on the compact rule. */
+.prose-md--roomy > p,
+.prose-md--roomy > ul,
+.prose-md--roomy > ol {
+  margin: 1em 0;
+}
+
 /* Rich-text editor (RichTextEditor.tsx). The editable area carries `.prose-md` too, so
    what-you-type matches the rendered output; these rules add only the editor chrome. */
 .rte-content {
