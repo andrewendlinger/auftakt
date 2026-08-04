@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.4.0",
   "description": "Auftakt — Künstler- und Projektverwaltung für ein klassisches Musikfestival",
+  "author": "Andre Wendlinger",
   "license": "SEE LICENSE IN LICENSE.md",
   "main": "electron/dist/main.cjs",
   "scripts": {

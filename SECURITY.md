@@ -45,6 +45,11 @@ in-app updater (Settings → "Version & Updates", Windows only) cannot verify a
 signature on the package it downloads — electron-updater skips that step when no
 publisher is configured.
 
+The installer and the app do name a publisher in their file properties, and
+Windows shows it under "Apps & Features". That is **unverified metadata** — any
+build can claim any name, and nothing checks it. It is not a signature, and it is
+not what SmartScreen reads; SmartScreen still reports an unknown publisher.
+
 What the update does check is the sha512 hash published in `latest.yml` in the
 GitHub Release, fetched over HTTPS, and every release artifact carries the build
 provenance attestation described above. So an update is only as trustworthy as

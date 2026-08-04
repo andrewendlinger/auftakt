@@ -18,6 +18,14 @@ What stands in for it: the sha512 published in `latest.yml`, fetched over HTTPS,
 provenance attestation on every release artifact. Documented as a known limitation in
 `SECURITY.md` rather than hidden. Revisit if a certificate is bought.
 
+**`win.publisherName` stays unset (2026-08-04, WP-27).** It is the obvious-looking follow-up when
+naming the publisher, and it is the wrong knob. Nothing user-visible reads it while the installer
+is unsigned — the name in the file properties and in „Apps & Features" comes from `author` in
+`package.json` — but `verifyUpdateCodeSignature` defaults to true, so electron-builder copies it
+into `app-update.yml`, and `NsisUpdater.verifySignature` skips its check *only* while that key is
+absent. Setting it would turn every in-app update into `ERR_UPDATER_INVALID_SIGNATURE`. It becomes
+correct on the same day a certificate is bought, and not before.
+
 ## Pre-seed snapshot — declined (2026-07-31)
 
 `npm run seed` is unconditionally destructive: `clearTables()` runs before the CSV/sample branch,

@@ -1,6 +1,6 @@
 appId: com.auftakt.app
 productName: Auftakt
-copyright: © 2026 Auftakt
+copyright: © 2026 Andre Wendlinger
 
 directories:
   output: release
@@ -37,6 +37,12 @@ mac:
   target: dmg
   category: public.app-category.productivity
 
+# The publisher shown in the file properties and in "Apps & Features" comes from
+# `author` in package.json, not from `win.publisherName` — leave that one unset.
+# It only feeds signtool's expected subject and, because `verifyUpdateCodeSignature`
+# defaults to true, gets copied into app-update.yml; electron-updater skips its
+# signature check exactly while that key is absent. Setting it on an unsigned
+# installer would turn every in-app update into ERR_UPDATER_INVALID_SIGNATURE.
 win:
   target: nsis
 

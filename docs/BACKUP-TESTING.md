@@ -95,7 +95,17 @@ that season's settings.
 
 ## Notes
 
-- The data dir is `<repo>/.data` in dev and Electron `userData` when packaged
-  (`~/Library/Application Support/Auftakt` on macOS, `%APPDATA%\Auftakt` on Windows).
+- The data dir is `<repo>/.data` in dev and Electron `userData` when packaged. Both paths are
+  **lowercase** — `~/Library/Application Support/auftakt` on macOS, `%APPDATA%\auftakt` on
+  Windows. `userData` is named after `app.getName()`, which reads `name` from the bundled
+  `package.json`; `productName: Auftakt` only capitalises the *installer* side. Do not "fix" the
+  case without migrating the folder — it is where every existing installation's database lives.
 - Windows is worth prioritising for case 4: that is where the crash was reported, though the
   cause was never platform-specific.
+- **Installer metadata (Windows, WP-27).** While a Windows machine is at hand, check the two
+  places that only a real install shows: *Einstellungen → Apps → Installierte Apps → Auftakt
+  0.4.0* must list **Herausgeber: Andre Wendlinger**, and right-click → *Eigenschaften → Details*
+  on both `Auftakt Setup <version>.exe` and the installed `Auftakt.exe` must show **Firma: Andre
+  Wendlinger** and **Copyright: © 2026 Andre Wendlinger**. SmartScreen's „Unbekannter Herausgeber"
+  on first run is **expected and unrelated** — that one needs the certificate deferred in
+  `DECISIONS.md`, not a metadata field.
