@@ -66,18 +66,28 @@ twice: FIX-01 handed it to FIX-08, which handed it on again once `DELETE /tasks/
 the case that actually hurt. Until then the guarded purge parks such parents, which is safe — it
 can never destroy data the user never trashed — merely untidy.
 
-## Foreign layout entries are retained, not position-stable (2026-08-03, SHL-19)
+## ~~Foreign layout entries are retained, not position-stable~~ — SUPERSEDED (2026-08-04)
 
-`artist_layout` and `project_layout` are single settings arrays shared by every artist and every
-project. Moving a section steps over invisible `cs<id>` entries belonging to other entities, so
-their position *relative to* the moved section changes on a page nobody touched.
+**The decision below was taken on 2026-08-03 and reversed on 2026-08-04.** Layouts are to become
+**per-artist and per-project**, which removes the shared array this rested on. The successor is
+`WP-25` — an entity-level `layout` column, with the existing settings array demoted to the
+*template* new pages inherit. Leave this entry here rather than deleting it: it records why the
+sharing existed, which the migration has to preserve for pages that never get arranged.
 
-Accepted: built-in order is global by design, so the other page is rearranged either way, and
-pinning would add a second ordering rule for a case that is not wrong.
+> `artist_layout` and `project_layout` are single settings arrays shared by every artist and every
+> project. Moving a section steps over invisible `cs<id>` entries belonging to other entities, so
+> their position *relative to* the moved section changes on a page nobody touched.
+>
+> Accepted: built-in order is global by design, so the other page is rearranged either way, and
+> pinning would add a second ordering rule for a case that is not wrong.
+>
+> The alternative — putting widget placement on the `custom_sections` row, which already carries a
+> `sort_order`, leaving the settings array to the built-ins — was rejected here as a schema +
+> migration change, **not as a bad idea**. Do not re-raise without that decision.
 
-The alternative — putting widget placement on the `custom_sections` row, which already carries a
-`sort_order`, leaving the settings array to the built-ins — was rejected here as a schema +
-migration change, **not as a bad idea**. Do not re-raise without that decision.
+The reversal came from the other end: a user request to „save a layout as a draft and apply it to
+a new artist", which turned out to describe behaviour that already existed — and surfaced that the
+*global* arrangement was the actual complaint, not the missing draft feature.
 
 ## `linkify` is e-mail-only; no `tel:` (2026-08-03)
 

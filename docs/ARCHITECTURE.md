@@ -204,6 +204,11 @@ arrays are shared across pages** — one `artist_layout` for every artist — so
 only be removed where the deleted id is known (`useRemoveCustomSection`), never by pruning
 everything the current page cannot see.
 
+> **Changing:** per-artist and per-project layouts are planned (`WP-25`), moving the array onto an
+> entity-level `layout` column and demoting the setting to the template a new page inherits. The
+> sharing rule above holds until that lands — see the superseded SHL-19 entry in
+> [DECISIONS.md](DECISIONS.md).
+
 ## Client contracts
 
 Which module owns which invariant. Reach for these rather than rebuilding the behaviour.
