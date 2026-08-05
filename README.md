@@ -118,6 +118,8 @@ docs/     Architektur, Entscheidungen, Test-Checklisten
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Bewusst *nicht* umgesetzte Dinge, mit Begründung |
 | [`docs/VERIFYING.md`](docs/VERIFYING.md) | Fallstricke beim manuellen Prüfen im Browser |
 | [`docs/BACKUP-TESTING.md`](docs/BACKUP-TESTING.md) | Manuelle Backup-/Import-Checkliste vor jedem Release |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Issues, lokale Einrichtung, Prüf-Gates, Commit-Konvention |
+| [`SECURITY.md`](SECURITY.md) | Meldeweg, Signierung, Download-Verifikation |
 
 ## Skripte
 
@@ -162,5 +164,7 @@ kommerzielle Lizenz bitte melden — siehe [LICENSE.md](LICENSE.md).
 
 ## Beiträge
 
-Dies ist ein Einzelentwickler-Projekt; Pull Requests werden derzeit nicht
-angenommen. Fehlerberichte und Ideen sind als Issue willkommen.
+Dies ist ein Einzelentwickler-Projekt. Pull Requests werden nicht angenommen —
+die Lizenz erlaubt weder Veränderung noch Weitergabe, ein PR wäre beides.
+Fehlerberichte und Ideen sind als Issue sehr willkommen; bitte dabei **keine
+echten Festivaldaten** einfügen. Details: [CONTRIBUTING.md](CONTRIBUTING.md).

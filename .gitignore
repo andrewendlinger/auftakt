@@ -4,10 +4,10 @@ node_modules/
 
 # build output
 dist/
-build/*
+/build/*
 # ...but keep the committed app-icon assets (electron-builder buildResources)
-!build/icon.png
-!build/icon.icns
+!/build/icon.png
+!/build/icon.icns
 release/
 server/dist/
 client/dist/
@@ -23,10 +23,10 @@ client/dist/
 .demo/
 
 # the Notion importer — a one-off onboarding tool, kept locally but not published. It
-# documents a customer's internal Notion template (K-codes, aside layout, German field
-# labels), which is theirs rather than ours. Run it with:
+# documents a third party's internal template, which is theirs rather than ours. Run it
+# with:
 #   cd server && npx tsx src/notion/import.ts <export-dir> [ziel-verzeichnis]
-server/src/notion/
+/server/src/notion/
 
 # output of the Notion importer — season databases built from a user's Notion export,
 # so they hold the same real names, addresses and notes that `files/` does. Globbed: one
@@ -35,7 +35,7 @@ server/src/notion/
 
 # real import data: the CSVs hold real names, e-mail addresses and internal
 # notes. Stays local — seed.ts falls back to sample data when absent.
-files/
+/files/
 
 # the 2026-07 code review: findings, the 15 work packages, and the 81 verification scripts
 # they were checked with. Closed 2026-08-04 — nothing in it is an unfixed vulnerability and it
@@ -43,7 +43,21 @@ files/
 # fixed, and the commit log is the better index of those: `git log --grep=CCL-24`. What was
 # worth keeping lives in docs/ARCHITECTURE.md, docs/DECISIONS.md and docs/VERIFYING.md.
 # Ignored rather than merely untracked so a stray `git add -A` cannot sweep it in.
-review/
+/review/
+
+# secrets. None of these exist yet — the app has no API keys and CI uses only the
+# implicit GITHUB_TOKEN — but code signing is the known next step (docs/DECISIONS.md),
+# and a certificate is exactly the kind of file that arrives in a hurry. On a public
+# repo the ignore rule has to predate the file, not follow it.
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+*.mobileprovision
+.npmrc
 
 # logs / os
 *.log

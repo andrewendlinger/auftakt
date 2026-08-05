@@ -1,7 +1,15 @@
 {
   "name": "auftakt-client",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.5.0",
+  "description": "Auftakt frontend — React + Vite, talks to auftakt-server over REST",
+  "author": "Andre Wendlinger",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andrewendlinger/auftakt.git",
+    "directory": "client"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
