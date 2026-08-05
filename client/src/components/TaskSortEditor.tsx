@@ -8,8 +8,8 @@ import { Btn, IconButton, ReorderArrows } from './ui';
 /**
  * What to call a sortable column, and whether the user has hidden it.
  *
- * The ids in `SORTABLE_TASK_COLUMNS` are built-in column `key`s, and CLAUDE.md makes the
- * `custom_columns` rows the single source of truth for their names — the ✎ in
+ * The ids in `SORTABLE_TASK_COLUMNS` are built-in column `key`s, and docs/ARCHITECTURE.md makes
+ * the `custom_columns` rows the single source of truth for their names — the ✎ in
  * CustomColumnManager renames a built-in like any other column. Reading the hardcoded labels
  * instead meant the sort editor named a column the task table never did: out of the box the
  * `title` built-in ships as „Aufgabe" while this list said „Titel", and renaming „Fällig" to

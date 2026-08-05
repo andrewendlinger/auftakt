@@ -9,7 +9,7 @@
  * every consumer that slices its first 10 characters then reports the wrong day (FIX-06).
  *
  * On the SQL side the counterpart is the `'localtime'` modifier on every `date('now', …)` /
- * `datetime('now', …)`; see CLAUDE.md.
+ * `datetime('now', …)`; see docs/ARCHITECTURE.md.
  *
  * Imported across the tier boundary so the format has one definition (ELP-11). It stays
  * dependency-free on purpose: esbuild inlines it into both bundles and `tsx` resolves it in dev.

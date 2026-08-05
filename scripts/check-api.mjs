@@ -401,7 +401,7 @@ try {
       `UPDATE artists SET deleted_at = datetime('now', 'localtime', '-60 days') WHERE deleted_at IS NOT NULL`,
     ).run();
 
-    // Raw SQL, exactly as server/src/notion/ writes: four levels, bypassing the transform.
+    // Raw SQL, exactly as a bulk importer writes: four levels, bypassing the transform.
     const ins = db.prepare(
       `INSERT INTO tasks (title, status, parent_id, created_at, updated_at)
        VALUES (?, 'new', ?, datetime('now','localtime'), datetime('now','localtime'))`,

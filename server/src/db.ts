@@ -1387,8 +1387,8 @@ const MAX_FLATTEN_PASSES = 100;
  * Lift every task deeper than one level up to its root, so the subtask tree is at most two
  * levels — the rule the tasks transform enforces on the API (routes/entities.ts).
  *
- * Until now that rule was an *API* invariant only. `server/src/notion/` writes rows with raw SQL
- * and bypasses the transform entirely, so an import could seat a subtask under a subtask, and
+ * Until now that rule was an *API* invariant only. A bulk importer writing rows with raw SQL
+ * bypasses the transform entirely, so an import could seat a subtask under a subtask, and
  * nothing then repaired it: the transform is deliberately not retroactive (it fires only when
  * `parent_id` is in the payload), so a deep tree that arrived that way stayed. The `'branch'`
  * gutter kind keeps such a tree readable, which is why this was never urgent.
