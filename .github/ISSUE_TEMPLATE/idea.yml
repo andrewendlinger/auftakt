@@ -1,0 +1,43 @@
+name: Idee oder Wunsch
+description: Ein Vorschlag, was Auftakt können sollte
+labels: ["idea"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > [!CAUTION]
+        > **Bitte keine echten Festivaldaten einfügen.** Issues sind öffentlich und dauerhaft.
+
+        Hinweis vorab: Auftakt ist ein Einzelentwickler-Projekt und die Lizenz lässt keine
+        Pull Requests zu — siehe
+        [CONTRIBUTING.md](https://github.com/andrewendlinger/auftakt/blob/main/CONTRIBUTING.md).
+        Ideen sind trotzdem willkommen, aber Umsetzung und Zeitpunkt bleiben offen.
+
+        Manches ist bewusst *nicht* umgesetzt. Ein Blick in
+        [docs/DECISIONS.md](https://github.com/andrewendlinger/auftakt/blob/main/docs/DECISIONS.md)
+        lohnt sich vorher.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Welches Problem löst es?
+      description: Die Situation im Festivalalltag, nicht die vorgeschlagene Lösung.
+      placeholder: Vor der Anreise muss ich für jeden Künstler einzeln nachsehen, ob …
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: Wie könnte es aussehen?
+      description: Grobe Vorstellung genügt.
+    validations:
+      required: false
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Wie behilfst du dir aktuell?
+      description: Zeigt, wie dringend es ist und was eine Lösung ersetzen müsste.
+    validations:
+      required: false

@@ -1,0 +1,72 @@
+name: Fehler melden
+description: Etwas funktioniert nicht wie erwartet
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Danke für den Bericht.
+
+        > [!CAUTION]
+        > **Bitte keine echten Festivaldaten einfügen** — keine Namen, E-Mail-Adressen,
+        > Telefonnummern oder Notizen zu identifizierbaren Personen. Issues sind
+        > öffentlich und dauerhaft. Zum Reproduzieren gibt es `npm run demo` mit
+        > erfundenen Daten; Screenshots bitte vorher zuschneiden oder unkenntlich machen.
+
+        Sicherheitslücken bitte **nicht** hier melden, sondern privat über
+        [SECURITY.md](https://github.com/andrewendlinger/auftakt/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Was ist passiert?
+      description: Was hast du getan, was hast du erwartet, was kam stattdessen?
+      placeholder: |
+        1. Aufgabe unter „Festival" angelegt
+        2. Auf eine andere Saison gewechselt
+        3. Erwartet: … / Stattdessen: …
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Einstellungen → *Saison & Daten* → **Version & Updates**
+      placeholder: "0.5.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Betriebssystem
+      options:
+        - macOS (Apple Silicon)
+        - Windows
+        - Anderes / Entwicklungsumgebung
+    validations:
+      required: true
+
+  - type: dropdown
+    id: how-run
+    attributes:
+      label: Wie ausgeführt?
+      options:
+        - Installierte App
+        - Entwicklungsserver (npm run dev)
+        - Demo (npm run demo)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: repro-demo
+    attributes:
+      label: Tritt der Fehler auch mit `npm run demo` auf?
+      description: Hilft sehr — trennt Datenproblem von Programmfehler. „Nicht geprüft" ist ok.
+      options:
+        - Nicht geprüft
+        - "Ja"
+        - "Nein"
+    validations:
+      required: false

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Sicherheitslücke melden
+    url: https://github.com/andrewendlinger/auftakt/security/advisories/new
+    about: Bitte privat melden, nicht als öffentliches Issue. Details in SECURITY.md.
+  - name: Kommerzielle Lizenz anfragen
+    url: https://github.com/andrewendlinger/auftakt/blob/main/LICENSE.md
+    about: Die PolyForm-Strict-Lizenz deckt keine kommerzielle oder betriebliche Nutzung ab.
+  - name: Vorher lesen — bewusst nicht umgesetzt
+    url: https://github.com/andrewendlinger/auftakt/blob/main/docs/DECISIONS.md
+    about: Entscheidungen, die schon getroffen und dokumentiert sind.
