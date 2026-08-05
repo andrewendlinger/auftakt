@@ -22,6 +22,7 @@ import remarkRehype from 'remark-rehype';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import rehypeStringify from 'rehype-stringify';
+import type { JSONContent } from '@tiptap/core';
 
 // --- jsdom so TipTap (ProseMirror) can mount headless --------------------------------
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { pretendToBeVisual: true });
@@ -61,6 +62,13 @@ const roundtrip = (md: string) => {
   return editor.getMarkdown();
 };
 
+/**
+ * C0 controls except tab and newline. Stored Markdown is plain text a human edits and a backup
+ * round-trips; a control character in it is corruption, not formatting. WP-30 found one being
+ * written for real — the table serializer joined the blocks of a multi-block cell with U+001F.
+ */
+const CONTROL_CHARS = /[\x00-\x08\x0b-\x1f]/;
+
 // --- corpus: every authored construct + realistic prose, incl. legacy <u> ------------
 const corpus: Record<string, string> = {
   bold: 'A **bold** word.',
@@ -82,13 +90,20 @@ const corpus: Record<string, string> = {
   quote: '> ein Zitat\n> über zwei Zeilen',
   table: '| Instrument | Anzahl |\n| --- | --- |\n| Geige | 4 |\n| Cello | 2 |',
   // The shapes the toolbar can now produce, since WP-29 made tables reachable from the notes
-  // fields and added row/column controls. Two further shapes are *known* to lose content and are
-  // deliberately absent — a `|` inside a cell and a line break inside a cell, both filed as WP-30.
+  // fields and added row/column controls.
   tableMarks: '| **Rolle** | Person |\n| --- | --- |\n| *Licht* | [Anna](https://example.com) |\n| Ton | <u>Ben</u> |',
   tableEmptyCell: '| Rolle | Person |\n| --- | --- |\n| Licht |  |\n| Ton | Ben |',
   tableAligned: '| Rolle | Anzahl |\n| :--- | ---: |\n| Licht | 2 |',
   tableSingleColumn: '| Aufgabe |\n| --- |\n| Aufbau |\n| Abbau |',
   tableBetweenParas: 'Davor.\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\nDanach.',
+  // WP-30. A `|` in a cell used to be written back unescaped and re-read as a column separator;
+  // a line break in a cell used to be flattened to a space. The code-span case is the same bug
+  // seen from the other side: the editor's own tokenizer re-escapes those pipes on the way in, so
+  // an unescaped `` `x | y` `` round-tripped through TipTap while `remark-gfm` — the app's actual
+  // renderer — read it as three columns.
+  tablePipeInCell: '| a | b |\n| --- | --- |\n| x \\| y | 2 |',
+  tableHardBreakInCell: '| Rolle | Person |\n| --- | --- |\n| Licht | erste<br>zweite |',
+  tablePipeInCode: '| a | b |\n| --- | --- |\n| `x \\| y` | 2 |',
   emoji: 'Auftakt 🎉 geschafft 🙂 — super!',
   // A realistic ~1-page project description, the shape WP-Q's feedback singled out.
   longProse: [
@@ -117,20 +132,56 @@ const corpus: Record<string, string> = {
   ].join('\n'),
 };
 
+// --- JSON-seeded cases: shapes the editor can produce but Markdown cannot spell -------
+// A cell holding two paragraphs has no GFM syntax — `<br>` reads back as one paragraph with a
+// hard break — yet the editor makes one as soon as you press Enter inside a cell. Seeding from
+// ProseMirror JSON is the only way to reach that branch of the table serializer.
+const para = (text: string) => ({ type: 'paragraph', content: [{ type: 'text', text }] });
+const jsonCorpus: Record<string, JSONContent> = {
+  tableTwoBlocksInCell: {
+    type: 'doc',
+    content: [
+      {
+        type: 'table',
+        content: [
+          {
+            type: 'tableRow',
+            content: [
+              { type: 'tableHeader', content: [para('Rolle')] },
+              { type: 'tableHeader', content: [para('Notiz')] },
+            ],
+          },
+          {
+            type: 'tableRow',
+            content: [
+              { type: 'tableCell', content: [para('Licht')] },
+              { type: 'tableCell', content: [para('erster Absatz'), para('zweiter Absatz')] },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+};
+
 let failures = 0;
-for (const [name, md] of Object.entries(corpus)) {
+
+const assertMarkdown = (name: string, md: string, source: 'md' | 'json') => {
   const out1 = roundtrip(md);
   const out2 = roundtrip(out1);
   const renderEqual = render(md) === render(out1);
   const idempotent = out1 === out2;
-  if (renderEqual && idempotent) {
+  const clean = !CONTROL_CHARS.test(md) && !CONTROL_CHARS.test(out1);
+  if (renderEqual && idempotent && clean) {
     console.log(`  ok   ${name}`);
-    continue;
+    return;
   }
   failures++;
-  console.log(`  FAIL ${name}${renderEqual ? '' : '  [render differs]'}${idempotent ? '' : '  [not idempotent]'}`);
+  console.log(
+    `  FAIL ${name}${renderEqual ? '' : '  [render differs]'}${idempotent ? '' : '  [not idempotent]'}${clean ? '' : '  [control chars]'}`,
+  );
   if (!renderEqual) {
-    console.log(`       in  md : ${JSON.stringify(md)}`);
+    console.log(`       ${source === 'json' ? 'json md' : 'in  md '}: ${JSON.stringify(md)}`);
     console.log(`       out md : ${JSON.stringify(out1)}`);
     console.log(`       in  html: ${render(md)}`);
     console.log(`       out html: ${render(out1)}`);
@@ -139,11 +190,24 @@ for (const [name, md] of Object.entries(corpus)) {
     console.log(`       pass1  : ${JSON.stringify(out1)}`);
     console.log(`       pass2  : ${JSON.stringify(out2)}`);
   }
+  if (!clean) {
+    console.log(`       md     : ${JSON.stringify(md)}`);
+  }
+};
+
+for (const [name, md] of Object.entries(corpus)) {
+  assertMarkdown(name, md, 'md');
+}
+
+for (const [name, doc] of Object.entries(jsonCorpus)) {
+  editor.commands.setContent(doc);
+  assertMarkdown(name, editor.getMarkdown(), 'json');
 }
 
 editor.destroy();
+const total = Object.keys(corpus).length + Object.keys(jsonCorpus).length;
 if (failures) {
   console.error(`\nmarkdown round-trip: ${failures} case(s) failed`);
   process.exit(1);
 }
-console.log(`\nmarkdown round-trip: all ${Object.keys(corpus).length} cases render-equal and idempotent`);
+console.log(`\nmarkdown round-trip: all ${total} cases render-equal, idempotent and control-char free`);

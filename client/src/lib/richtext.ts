@@ -1,7 +1,7 @@
 import StarterKit from '@tiptap/starter-kit';
 import { Underline } from '@tiptap/extension-underline';
 import { Markdown } from '@tiptap/markdown';
-import { Table } from '@tiptap/extension-table';
+import { Table, renderTableToMarkdown } from '@tiptap/extension-table';
 import { TableRow } from '@tiptap/extension-table-row';
 import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
@@ -18,6 +18,35 @@ import type { AnyExtension } from '@tiptap/core';
 const MdUnderline = Underline.extend({
   renderMarkdown(node, helpers) {
     return `<u>${helpers.renderChildren(node)}</u>`;
+  },
+});
+
+/**
+ * A `|` inside a table cell is written back escaped (WP-30).
+ *
+ * The extension serializes cell text verbatim, so a cell containing `x | y` used to come out as
+ * `| x | y | 2 |` and be read back as three columns — silent data loss, and the reason the fix
+ * sits on the *write* side only: the read side is already correct. The extension's tokenizer
+ * hands table rows to marked's `splitCells`, which splits on unescaped pipes and unescapes `\|`
+ * afterwards, so `\|` survives a parse untouched.
+ *
+ * Escaping inside code spans is deliberate, not an oversight. GFM splits the row and unescapes
+ * `\|` *before* inline parsing, so ``` `x \| y` ``` is the correct spelling of a code span
+ * holding a pipe — and it is what the extension's own tokenizer produces on the way in. Writing
+ * it unescaped round-tripped through the editor but made `remark-gfm` (`Markdown.tsx`, i.e. what
+ * the reader actually sees) split the row, so editor and display disagreed about one string.
+ *
+ * `renderChildren` is the only channel through which cell content reaches the serializer, so
+ * wrapping it escapes before whitespace collapsing and before the column widths are measured —
+ * the padding stays aligned and the extension's ~120-line renderer is not forked into the app.
+ */
+const MdTable = Table.extend({
+  renderMarkdown(node, helpers) {
+    return renderTableToMarkdown(node, {
+      ...helpers,
+      renderChildren: (nodes, separator) =>
+        helpers.renderChildren(nodes, separator).replace(/(?<!\\)\|/g, '\\|'),
+    });
   },
 });
 
@@ -59,7 +88,7 @@ export function markdownExtensions(opts: { linkClass?: string } = {}): AnyExtens
       },
     }),
     MdUnderline,
-    Table.configure({ resizable: false }),
+    MdTable.configure({ resizable: false }),
     TableRow,
     TableCell,
     TableHeader,
