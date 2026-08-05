@@ -12,7 +12,7 @@ import { TaskStatChips } from '../components/TaskStatChips';
 import { AttentionList } from '../components/AttentionList';
 import { NewArtistButton } from '../components/EntityButtons';
 import { EditableLabel } from '../components/EditableLabel';
-import { SectionArranger } from '../components/SectionArranger';
+import { SectionArranger, parseLayoutEntries } from '../components/SectionArranger';
 import {
   builtinPicker,
   customSectionEntries,
@@ -25,6 +25,7 @@ import {
   useAllTasks,
   useGlobalColumns,
   useLabel,
+  useSettingsArray,
   useTaskStatsConfig,
 } from '../hooks';
 
@@ -56,7 +57,10 @@ export function Dashboard() {
   });
   const { windowDays } = useTaskStatsConfig();
   const artistLabel = useLabel()('dash.artists');
-  const removeCustomSection = useRemoveCustomSection(customSections, 'dashboard_layout');
+  // Still the settings array: there is only one dashboard, so it has nothing to be per-entity
+  // about and stays the one page whose layout is a setting (WP-25).
+  const dashboardLayout = useSettingsArray('dashboard_layout', parseLayoutEntries);
+  const removeCustomSection = useRemoveCustomSection(customSections, dashboardLayout);
   // All dashboard built-ins are computed views — only filled custom widgets block their 🗑.
   const nonEmptyKeys = useNonEmptyCustomSections(customSections);
 

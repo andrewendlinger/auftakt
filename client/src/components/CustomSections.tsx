@@ -9,14 +9,8 @@ import { InlineNotes } from './InlineNotes';
 import { EditableText } from './EditableText';
 import { LinkList } from './LinkList';
 import type { LabelKey } from '../lib/labels';
-import { parseLayoutEntries, type LayoutKey } from './SectionArranger';
-import {
-  useInvalidateAll,
-  useLabel,
-  useSettingsArray,
-  useUndoableDelete,
-  useUndoablePatch,
-} from '../hooks';
+import type { LayoutStore } from './SectionArranger';
+import { useInvalidateAll, useLabel, useUndoableDelete, useUndoablePatch } from '../hooks';
 
 /**
  * User-added widget sections (WP-S): named, typed sections the user adds to the dashboard,
@@ -48,16 +42,15 @@ export interface HiddenBuiltin {
  * The arranger-strip 🗑 handler for custom widgets: soft-delete the row **and drop its layout
  * entry**, undoable as one operation.
  *
- * Nothing used to remove the `cs<id>` entry, so `artist_layout`/`project_layout` grew by one dead
- * entry per widget the user ever created. That is not merely untidy: `sort_order` and the widget
- * ids are reused, so a later widget can land on a stale entry and inherit its width and hidden
- * flag (the `lt<id>` half of this, SHL-18, is already closed in `useRemoveLandingSection`).
+ * Nothing used to remove the `cs<id>` entry, so the layout grew by one dead entry per widget the
+ * user ever created. That is not merely untidy: `sort_order` and the widget ids are reused, so a
+ * later widget can land on a stale entry and inherit its width and hidden flag (the `lt<id>` half
+ * of this, SHL-18, is closed in `useRemoveLandingSection`).
  *
- * `layoutKey` has to come from the page, and that is the whole reason this was deferred. These
- * arrays are **shared by every artist and every project** — one `artist_layout` for all of them —
- * so the entry can only be pruned where the deleted id is known. Doing it in the arranger's read
- * pass instead (drop every `cs<id>` not visible here) would delete *another artist's* widget
- * entry, which is exactly the loss the full/display split exists to prevent.
+ * The `store` comes from the page because the layout does — `useEntityLayout` for an artist or a
+ * project, `useSettingsArray` for the dashboard. Pruning stays here, at the delete site, because
+ * this is where the deleted id is known; the arranger's read pass cannot tell a dead entry from a
+ * widget whose section has not loaded yet.
  *
  * `current()` rather than the rendered array, for the reason `useLanding` documents: the undo
  * arm runs up to six seconds later, and rebuilding from a render snapshot would roll back every
@@ -65,10 +58,10 @@ export interface HiddenBuiltin {
  */
 export function useRemoveCustomSection(
   sections: CustomSection[],
-  layoutKey: LayoutKey,
+  store: LayoutStore,
 ): (key: string) => void {
   const del = useUndoableDelete();
-  const { current, write } = useSettingsArray(layoutKey, parseLayoutEntries);
+  const { current, write } = store;
   return (key) => {
     const s = sections.find((x) => sectionKey(x) === key);
     if (!s) return;
@@ -80,7 +73,10 @@ export function useRemoveCustomSection(
       label: `Bereich „${s.name}“`,
       remove: async () => {
         const res = await api.customSections.remove(s.id);
-        await write(current().filter((e) => e.key !== key));
+        // Only when the entry is actually stored. On an entity page still following the template
+        // `current()` *is* the template, and writing a filtered copy of it back would freeze it
+        // onto this artist as its own layout — an arrangement the user never made (WP-25).
+        if (index >= 0) await write(current().filter((e) => e.key !== key));
         return res;
       },
       restore: async () => {

@@ -1,12 +1,15 @@
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
-import type { LayoutEntry } from '../api/types';
+import { Fragment, useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { api } from '../api/client';
+import type { Artist, LayoutEntry, Project } from '../api/types';
 import { arrayMoveTo } from '../lib/arrays';
 import { useDragReorder } from '../lib/dragReorder';
 import { Btn, DragHandle } from './ui';
 import { Modal } from './fields';
 import { TrashIcon } from './icons';
+import { useToast } from './Toast';
 import type { LabelKey } from '../lib/labels';
-import { useLabel, useSettingsArray } from '../hooks';
+import { useGuardedAction, useInvalidateAll, useLabel, useSettingsArray } from '../hooks';
 
 export type LayoutKey = 'artist_layout' | 'project_layout' | 'dashboard_layout';
 
@@ -40,6 +43,187 @@ export function parseLayoutEntries(raw: unknown): LayoutEntry[] {
 }
 
 /**
+ * The same for an entity's `layout` column, which arrives as JSON *text*: the crud factory has no
+ * read transform, so a JSON-in-TEXT column reaches the client unparsed (as `tasks.custom_values`
+ * does). Reads `null`, a legacy shape and a hand-edited value all as „no layout", which is what
+ * makes the fallback to the template the single failure mode instead of a blank page (PGS-15).
+ */
+export function parseEntityLayout(raw: unknown): LayoutEntry[] {
+  if (typeof raw !== 'string' || !raw) return [];
+  try {
+    return parseLayoutEntries(JSON.parse(raw));
+  } catch {
+    return [];
+  }
+}
+
+/** A widget entry — `cs<id>`, keyed to a `custom_sections` row that lives on exactly one page. */
+const WIDGET_KEY = /^cs\d+$/;
+
+/**
+ * Read + write access to one stored layout. `useSettingsArray(key, parseLayoutEntries)` and
+ * `useEntityLayout` both produce it, which is what lets `useRemoveCustomSection` prune an entry
+ * without knowing where the array lives.
+ */
+export interface LayoutStore {
+  value: LayoutEntry[];
+  /** The array as it is *now* — for a closure (an undo) that runs after the render that made it. */
+  current: () => LayoutEntry[];
+  write: (next: LayoutEntry[]) => Promise<boolean>;
+}
+
+export interface EntityLayoutStore extends LayoutStore {
+  /** This page has arranged itself; `false` means it is still following the template. */
+  hasOwn: boolean;
+  /** Back to `NULL` — the page follows the template again. */
+  reset: () => Promise<boolean>;
+  /** Publish this arrangement as the template new pages inherit. */
+  saveTemplate: (full: LayoutEntry[]) => Promise<boolean>;
+}
+
+/**
+ * One artist's or one project's own section layout (WP-25), falling back to the
+ * `artist_layout` / `project_layout` setting — which is no longer *the* layout but the **template**
+ * a page inherits until it arranges itself. A `NULL` column is that "never arranged" state, so an
+ * upgraded database renders exactly as it did before the column existed.
+ *
+ * The `['artist', id]` cache is published *before* the request is awaited, for the reason
+ * `useSettingsArray` does it and `Arranger` restates: five of the six arrange mutations fire as
+ * `void persist(…)`, so a second click inside the invalidate → refetch window would otherwise be
+ * computed from the pre-first-click array and silently replace it (SHL-10). `useUndoablePatch` is
+ * deliberately not used here — it does not publish, and no layout write has ever been undoable.
+ */
+export function useEntityLayout(
+  kind: 'artist' | 'project',
+  row: Artist | Project | undefined,
+): EntityLayoutStore {
+  const qc = useQueryClient();
+  const guard = useGuardedAction();
+  const invalidate = useInvalidateAll();
+  const template = useSettingsArray(
+    kind === 'artist' ? 'artist_layout' : 'project_layout',
+    parseLayoutEntries,
+  );
+  const id = row?.id;
+  const raw = row?.layout;
+
+  const own = useMemo(() => parseEntityLayout(raw), [raw]);
+  // Emptiness, not `!= null`: a corrupt or empty stored value then falls back to the template
+  // rather than presenting a layout with no entries in it.
+  const hasOwn = own.length > 0;
+
+  const templateCurrent = template.current;
+  const templateWrite = template.write;
+
+  const current = useCallback(() => {
+    const stored = parseEntityLayout(
+      (qc.getQueryData([kind, id]) as { layout?: unknown } | undefined)?.layout,
+    );
+    return stored.length ? stored : templateCurrent();
+  }, [qc, kind, id, templateCurrent]);
+
+  const patch = useCallback(
+    async (next: LayoutEntry[] | null, fallback: string) => {
+      if (id == null) return false;
+      qc.setQueryData([kind, id], (old: unknown) =>
+        old && typeof old === 'object'
+          ? { ...(old as object), layout: next && JSON.stringify(next) }
+          : old,
+      );
+      const res = kind === 'artist' ? api.artists : api.projects;
+      const ok = await guard(fallback, () => res.update(id, { layout: next }));
+      await invalidate();
+      return ok;
+    },
+    [qc, kind, id, guard, invalidate],
+  );
+
+  const write = useCallback(
+    (next: LayoutEntry[]) => patch(next, 'Die Anordnung konnte nicht gespeichert werden.'),
+    [patch],
+  );
+  const reset = useCallback(
+    () => patch(null, 'Die Anordnung konnte nicht zurückgesetzt werden.'),
+    [patch],
+  );
+  // Widget entries are dropped: a `cs<id>` names a row that exists on exactly one page, so
+  // carrying it into the template would hand every new page an entry it can never render.
+  const saveTemplate = useCallback(
+    (full: LayoutEntry[]) => templateWrite(full.filter((e) => !WIDGET_KEY.test(e.key))),
+    [templateWrite],
+  );
+
+  return { value: hasOwn ? own : template.value, current, write, hasOwn, reset, saveTemplate };
+}
+
+/**
+ * The two template actions in the arrange toolbar — the „save a layout as a draft and apply it to
+ * a new artist" the package started from, without a second place to store drafts: the template
+ * *is* the settings array every page used to share.
+ *
+ * Passed the arranger's `full` rather than the store's own value, so „als Vorlage" saves what is
+ * on screen — including the defaults a page that never arranged is currently showing.
+ */
+export function LayoutTemplateActions({
+  store,
+  full,
+}: {
+  store: EntityLayoutStore;
+  full: LayoutEntry[];
+}) {
+  const toast = useToast();
+  const [resetting, setResetting] = useState(false);
+  return (
+    <>
+      <Btn
+        variant="subtle"
+        title="Diese Anordnung als Vorlage für neue Seiten speichern"
+        onClick={async () => {
+          if (await store.saveTemplate(full)) toast.show({ message: 'Als Vorlage gespeichert.' });
+        }}
+      >
+        ⌂ Als Vorlage
+      </Btn>
+      <Btn
+        variant="subtle"
+        title="Diese Seite auf die Vorlage zurücksetzen"
+        disabled={!store.hasOwn}
+        onClick={() => setResetting(true)}
+      >
+        ↺ Vorlage
+      </Btn>
+      {resetting && (
+        // Confirmed, unlike every other arrange action: those are each one reversible gesture,
+        // this discards the whole arrangement at once and no layout write goes on the undo stack.
+        <Modal
+          title="Auf Vorlage zurücksetzen"
+          onClose={() => setResetting(false)}
+          footer={
+            <>
+              <Btn onClick={() => setResetting(false)}>Abbrechen</Btn>
+              <Btn
+                variant="danger"
+                onClick={() => {
+                  void store.reset();
+                  setResetting(false);
+                }}
+              >
+                Zurücksetzen
+              </Btn>
+            </>
+          }
+        >
+          <p className="text-sm text-neutral-600">
+            Die eigene Anordnung dieser Seite geht verloren und die Seite folgt wieder der Vorlage.
+            Das lässt sich nicht rückgängig machen.
+          </p>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+/**
  * Renders a page's sections in a user-defined layout (order + per-section width),
  * persisted in a settings array of {key,width}. A "Bereiche anordnen" toggle reveals
  * a drag handle (native HTML5 drag-and-drop reorder), ▲/▼ move buttons as a keyboard
@@ -48,22 +232,19 @@ export function parseLayoutEntries(raw: unknown): LayoutEntry[] {
  * legacy string[] layouts are read as all-full. Shared by the dashboard, artist and
  * project pages.
  *
- * One stored layout serves *many* pages: `artist_layout` is shared by every artist page,
- * but per-entity widget sections (`cs<id>`, WP-S) exist only on their own page. The layout
- * therefore keeps two views — `full` (every stored entry, this page's new keys appended) and
- * `display` (`full` filtered to this page's sections). All mutations operate on and persist
- * `full`; rendering uses `display`. Persisting the filtered view instead would silently drop
- * the other pages' widget entries on every arrange action.
+ * Where the layout lives is the caller's business: a settings key (`dashboard_layout`), an
+ * entity's own `layout` column via `useEntityLayout` (artists and projects, WP-25), or the
+ * landing's `seasons.json` blob. No stored layout is shared between pages any more — that was
+ * SHL-19, reversed by WP-25 — so every key in an array belongs to the page that wrote it.
  *
- * What `full` guarantees a foreign entry is **retention, not position** (decision 2026-08-03,
- * SHL-19). A move lifts the section out and re-inserts it at the target's index, so a foreign
- * `cs<id>` sitting between the two visible neighbours is stepped over and ends up on the other
- * side of it — visible on that widget's own page as a section that moved by itself. That is
- * accepted: the built-in order is global by design, so the other page is rearranged either way,
- * and only the widget's position *relative to the moved section* differs. Pinning foreign
- * entries to their index would buy a second ordering rule for a case that is not wrong.
- * Separating the two — widget placement on the `custom_sections` row, which already has a
- * `sort_order`, leaving this array to the built-ins — is the real cure and needs a migration.
+ * The layout still keeps two views: `full` (every stored entry, this page's new keys appended)
+ * and `display` (`full` filtered to this page's sections, minus the hidden ones). All mutations
+ * operate on and persist `full`; rendering uses `display`. What `full` still buys, now that the
+ * sharing is gone, is that an entry survives a round trip its page cannot currently render — a
+ * widget key inherited from the template, or one whose section is still loading. Retaining those
+ * is safe rather than merely tidy: `custom_sections` is AUTOINCREMENT, so a purged `cs<id>` is
+ * never handed back inside a season and a stale entry can never be reclaimed by a later widget,
+ * which is the hazard `useRemoveLandingSection` has to close for the reusable `lt<id>`.
  *
  * Sections are optional unless listed in `mandatoryKeys`: edit mode offers a 🗑 that hides a
  * built-in (`hidden: true` on its entry) or soft-deletes a custom widget (`onRemoveCustom`).
@@ -123,6 +304,12 @@ export interface SectionArrangerProps {
     restore: (key: string) => void;
     prepend: (key: string) => void;
   }) => ReactNode;
+  /**
+   * Further edit-mode toolbar actions — the entity pages' `LayoutTemplateActions`. Fed `full`
+   * rather than the stored array so "save this as the template" saves what is on screen, defaults
+   * included. Kept a render prop so this component stays unaware that templates exist.
+   */
+  templateActions?: (ctx: { full: LayoutEntry[] }) => ReactNode;
 }
 
 /**
@@ -159,6 +346,7 @@ function Arranger({
   nonEmptyKeys = [],
   toolbarAfterKey,
   onRemoveCustom,
+  templateActions,
   removeCustomCopy = {
     body: 'samt Inhalt in den Papierkorb verschieben? Du kannst den Bereich im Archiv wiederherstellen.',
     confirm: 'In den Papierkorb',
@@ -295,8 +483,9 @@ function Arranger({
   });
 
   const toolbar = (
-    <div className="flex items-center justify-end gap-2">
+    <div className="flex flex-wrap items-center justify-end gap-2">
       {arranging && addAction?.({ hiddenKeys, restore, prepend })}
+      {arranging && templateActions?.({ full })}
       <Btn variant="subtle" onClick={() => setArranging((a) => !a)}>
         {arranging ? '✓ Fertig' : '✎ Bereiche bearbeiten'}
       </Btn>

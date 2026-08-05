@@ -18,6 +18,13 @@ export interface Artist extends SoftDeletable {
   notes: string | null;
   /** Profile picture as a resized data URL (JPEG), or null. */
   image: string | null;
+  /**
+   * This page's own section arrangement as JSON text — a `LayoutEntry[]`, unparsed the way every
+   * JSON-in-TEXT column arrives (the crud factory has no read transform). `null` means „never
+   * arranged": the page then follows the `artist_layout` setting, which is the template. Read it
+   * through `parseEntityLayout` (SectionArranger.tsx), never `JSON.parse` at a call site.
+   */
+  layout: string | null;
 }
 
 export interface ArtistCard extends Artist {
@@ -32,6 +39,8 @@ export interface Project extends SoftDeletable {
   status: string | null;
   description: string | null;
   color: string | null;
+  /** This page's own section arrangement — see `Artist.layout`; the template is `project_layout`. */
+  layout: string | null;
 }
 
 export type ContactParent = { artist_id: ID | null; project_id: ID | null };
@@ -190,12 +199,21 @@ export interface CustomSection extends SoftDeletable {
  * to build an inverse. Never narrow a column here.
  * ──────────────────────────────────────────────────────────────────────────────────────────── */
 
-export type ArtistUpdate = Partial<Pick<Artist, 'name' | 'color' | 'notes' | 'image' | 'sort_order'>>;
+/**
+ * `layout` widens the row's `string | null` by the parsed array, the way `TaskUpdate` widens
+ * `custom_values`: the server stringifies an array (`jsonColumns`) and stores `null` as-is, so a
+ * writer may send either and a raw row value stays a legal patch.
+ */
+type LayoutPatch = { layout?: string | LayoutEntry[] | null };
+
+export type ArtistUpdate = Partial<Pick<Artist, 'name' | 'color' | 'notes' | 'image' | 'sort_order'>> &
+  LayoutPatch;
 export type ArtistCreate = ArtistUpdate & Pick<Artist, 'name'>;
 
 export type ProjectUpdate = Partial<
   Pick<Project, 'artist_id' | 'code' | 'name' | 'status' | 'description' | 'color' | 'sort_order'>
->;
+> &
+  LayoutPatch;
 export type ProjectCreate = ProjectUpdate & Pick<Project, 'artist_id' | 'code' | 'name'>;
 
 export type ContactUpdate = Partial<

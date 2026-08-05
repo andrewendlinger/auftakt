@@ -455,8 +455,8 @@ export function setActiveSeasonLabel(label: string): void {
 
 /** Columns copied between season DBs (ids preserved so FKs & custom_values stay linked). */
 const COPY_COLS: Record<string, string[]> = {
-  artists: ['id', 'name', 'color', 'notes', 'image', 'sort_order'],
-  projects: ['id', 'artist_id', 'code', 'name', 'status', 'description', 'color', 'sort_order'],
+  artists: ['id', 'name', 'color', 'notes', 'image', 'layout', 'sort_order'],
+  projects: ['id', 'artist_id', 'code', 'name', 'status', 'description', 'color', 'layout', 'sort_order'],
   contacts: ['id', 'artist_id', 'project_id', 'role', 'name', 'email', 'phone', 'notes', 'color', 'sort_order'],
   events: ['id', 'artist_id', 'project_id', 'type', 'title', 'start_at', 'end_at', 'all_day', 'location', 'notes', 'sort_order'],
   tasks: ['id', 'artist_id', 'project_id', 'title', 'status', 'priority', 'due_date', 'comment', 'color', 'custom_values', 'erledigt_am', 'parent_id', 'sort_order'],
@@ -771,6 +771,7 @@ CREATE TABLE IF NOT EXISTS artists (
   color      TEXT NOT NULL DEFAULT '#888888',
   notes      TEXT,
   image      TEXT,
+  layout     TEXT,
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
@@ -785,6 +786,7 @@ CREATE TABLE IF NOT EXISTS projects (
   status      TEXT,
   description TEXT,
   color       TEXT,
+  layout      TEXT,
   sort_order  INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
@@ -1054,6 +1056,7 @@ function initDb(db: Database.Database, isFresh: boolean): void {
   migrateLinksSectionParent(db);
   // After the rebuild, not before — see migrateLinksNotes.
   migrateLinksNotes(db);
+  migrateEntityLayout(db);
 }
 
 export function getDb(): Database.Database {
@@ -1333,6 +1336,18 @@ function ensureColumn(db: Database.Database, table: string, name: string, ddl: s
 /** Add the artist profile-image column (stored as a data URL) to older databases. */
 function migrateArtistImage(db: Database.Database): void {
   ensureColumn(db, 'artists', 'image', 'image TEXT');
+}
+
+/**
+ * Add the per-entity section layout (WP-25) to older databases. Idempotent.
+ *
+ * No data migration and no cut-off date on purpose: `NULL` is the „never arranged" sentinel, and
+ * a page reading it falls back to the `artist_layout` / `project_layout` setting — which is what
+ * every page shared before this column existed. So an upgraded database looks exactly as it did.
+ */
+function migrateEntityLayout(db: Database.Database): void {
+  ensureColumn(db, 'artists', 'layout', 'layout TEXT');
+  ensureColumn(db, 'projects', 'layout', 'layout TEXT');
 }
 
 /** Add the per-item color column to tasks/contacts/links in older databases. */

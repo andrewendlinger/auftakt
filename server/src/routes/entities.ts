@@ -16,17 +16,26 @@ import { HttpError, numParam as num, scopeParam } from '../lib/query';
  * anything not on the list without a word).
  */
 
+/*
+ * `layout` is this page's own section arrangement (WP-25), a JSON array of {key,width,hidden}.
+ * Whole-value replacement, so no `transform` the way `custom_values` needs one: the arranger
+ * always persists the complete array. `jsonColumns` stringifies it, and `applyJson` leaves `null`
+ * alone — which is what makes „auf Vorlage zurücksetzen" a plain `PATCH {layout: null}`, since
+ * NULL is the sentinel for „never arranged, follow the artist_layout/project_layout setting".
+ */
 export const artistsRouter = crudRouter({
   table: 'artists',
-  writable: ['name', 'color', 'notes', 'image', 'sort_order'],
+  writable: ['name', 'color', 'notes', 'image', 'layout', 'sort_order'],
   required: ['name'],
+  jsonColumns: ['layout'],
   order: 'sort_order ASC, name ASC',
 });
 
 export const projectsRouter = crudRouter({
   table: 'projects',
-  writable: ['artist_id', 'code', 'name', 'status', 'description', 'color', 'sort_order'],
+  writable: ['artist_id', 'code', 'name', 'status', 'description', 'color', 'layout', 'sort_order'],
   required: ['artist_id', 'code', 'name'],
+  jsonColumns: ['layout'],
   filters: ['artist_id'],
   order: 'sort_order ASC, id ASC',
 });

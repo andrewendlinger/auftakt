@@ -74,13 +74,15 @@ twice: FIX-01 handed it to FIX-08, which handed it on again once `DELETE /tasks/
 the case that actually hurt. Until then the guarded purge parks such parents, which is safe — it
 can never destroy data the user never trashed — merely untidy.
 
-## ~~Foreign layout entries are retained, not position-stable~~ — SUPERSEDED (2026-08-04)
+## ~~Foreign layout entries are retained, not position-stable~~ — SUPERSEDED (2026-08-04, landed 2026-08-05)
 
-**The decision below was taken on 2026-08-03 and reversed on 2026-08-04.** Layouts are to become
-**per-artist and per-project**, which removes the shared array this rested on. The successor is
-`WP-25` — an entity-level `layout` column, with the existing settings array demoted to the
-*template* new pages inherit. Leave this entry here rather than deleting it: it records why the
-sharing existed, which the migration has to preserve for pages that never get arranged.
+**The decision below was taken on 2026-08-03, reversed on 2026-08-04 and replaced on 2026-08-05.**
+Layouts are now **per-artist and per-project** — `artists.layout` / `projects.layout`, with the
+settings array demoted to the *template* a page inherits while its column is `NULL` (`WP-25`, see
+[ARCHITECTURE.md](ARCHITECTURE.md)). The shared array this rested on is gone, so the trade-off
+below no longer arises: no entry in a layout belongs to another page. Leave the entry here rather
+than deleting it — it records why the sharing existed, which the `NULL` fallback preserves for
+every page that never gets arranged.
 
 > `artist_layout` and `project_layout` are single settings arrays shared by every artist and every
 > project. Moving a section steps over invisible `cs<id>` entries belonging to other entities, so
@@ -95,7 +97,9 @@ sharing existed, which the migration has to preserve for pages that never get ar
 
 The reversal came from the other end: a user request to „save a layout as a draft and apply it to
 a new artist", which turned out to describe behaviour that already existed — and surfaced that the
-*global* arrangement was the actual complaint, not the missing draft feature.
+*global* arrangement was the actual complaint, not the missing draft feature. The draft half then
+fell out of the same change for free, as „Als Vorlage" / „↺ Vorlage" in arrange mode, without a
+second place to store drafts.
 
 ## `linkify` is e-mail-only; no `tel:` (2026-08-03)
 

@@ -121,6 +121,7 @@ const seasonFile = (name) => join(dataDir, name);
 
 /** Carried across the stop/start boundary, where the purge and the on-disk checks run. */
 let copyTarget = null;
+let projectCopyTarget = null;
 let purge = {};
 let deepTree = [];
 
@@ -151,6 +152,33 @@ try {
     const patched = await ok('PATCH', `/artists/${a.id}`, { name: 'Allowlist 2', created_at: '1999-01-01 00:00:00' });
     check('an unlisted created_at is dropped on patch', patched.created_at === before, patched.created_at);
     check('the listed column on the same payload still writes', patched.name === 'Allowlist 2', patched.name);
+  }
+
+  // ------------------------------------------------------------------ per-entity layout (WP-25)
+  // The positive counterpart of the section above: `layout` *is* on both allowlists, is stored as
+  // JSON text via `jsonColumns`, and reads back unparsed — the client's `parseEntityLayout` is
+  // written against that. `null` has to survive as SQL NULL, because NULL is the "never arranged"
+  // sentinel a page falls back to its artist_layout/project_layout template on.
+  console.log('\n== an entity carries its own layout (WP-25)');
+  {
+    const entries = [{ key: 'termine', width: 'half' }, { key: 'aufgaben', width: 'full' }];
+    const owner = await ok('POST', '/artists', { name: 'Anordnung' });
+    for (const [path, create] of [
+      ['/artists', { name: 'Anordnung Künstler' }],
+      ['/projects', { name: 'Anordnung Projekt', code: 'L1', artist_id: owner.id }],
+    ]) {
+      const row = await ok('POST', path, create);
+      check(`a fresh ${path} row has no layout`, row.layout === null, String(row.layout));
+
+      const set = await ok('PATCH', `${path}/${row.id}`, { layout: entries });
+      check(`${path}: an array layout is stored as JSON text`, set.layout === JSON.stringify(entries), String(set.layout));
+
+      const read = await ok('GET', `${path}/${row.id}`);
+      check(`${path}: the layout reads back unparsed`, read.layout === JSON.stringify(entries), String(read.layout));
+
+      const cleared = await ok('PATCH', `${path}/${row.id}`, { layout: null });
+      check(`${path}: null clears it back to the template`, cleared.layout === null, String(cleared.layout));
+    }
   }
 
   // ------------------------------------------------------------------ colour validation (CCL-12)
@@ -302,9 +330,20 @@ try {
     await ok('POST', '/events', { artist_id: artist.id, type: 'Auftritt', title: 'Termin am Künstler', start_at: '2026-09-01', all_day: 1 });
     await ok('POST', '/events', { project_id: project.id, type: 'Auftritt', title: 'Termin am Projekt', start_at: '2026-09-02', all_day: 1 });
 
+    // Arranged before the copy: `layout` is in COPY_COLS, so a season copy has to carry the
+    // arrangement over. It is the one column of these two tables that holds no user *content*,
+    // which is exactly why it is easy to forget there (WP-25).
+    await ok('PATCH', `/artists/${artist.id}`, { layout: [{ key: 'kontakte', width: 'half' }] });
+    await ok('PATCH', `/projects/${project.id}`, { layout: [{ key: 'termine', width: 'half' }] });
+
     const season = await ok('POST', '/seasons', { label: 'Kopie ohne Projekte', copyFrom: 1, includeEvents: true });
     check('the copy reported no error', season.copyError === undefined, String(season.copyError));
     copyTarget = seasonFile(season.file);
+
+    // A second copy, this one *with* projects, so the project half of the layout is reachable.
+    const withProjects = await ok('POST', '/seasons', { label: 'Kopie mit Projekten', copyFrom: 1, includeProjects: true });
+    check('the second copy reported no error', withProjects.copyError === undefined, String(withProjects.copyError));
+    projectCopyTarget = seasonFile(withProjects.file);
   }
 
   // ------------------------------------------------------- purge fixtures (SDL-01 / DBW-02)
@@ -332,6 +371,16 @@ try {
     const titles = db.prepare('SELECT title FROM events ORDER BY id').all().map((e) => e.title);
     check('the artist-owned event came over', titles.includes('Termin am Künstler'), titles.join(', '));
     check('the project-owned event stayed behind (DBW-06)', !titles.includes('Termin am Projekt'), titles.join(', '));
+    const artistLayout = db.prepare("SELECT layout FROM artists WHERE name = 'Kopie'").get()?.layout;
+    check('the artist layout travelled with the copy (WP-25)', artistLayout === '[{"key":"kontakte","width":"half"}]', String(artistLayout));
+    db.close();
+  }
+
+  // -------------------------------------------------- the project layout, in the second copy
+  {
+    const db = new Database(projectCopyTarget, { readonly: true });
+    const layout = db.prepare("SELECT layout FROM projects WHERE name = 'Projekt'").get()?.layout;
+    check('the project layout travelled with the copy (WP-25)', layout === '[{"key":"termine","width":"half"}]', String(layout));
     db.close();
   }
 
@@ -441,6 +490,31 @@ try {
       JSON.stringify(row),
     );
     check('a row written before the column reads NULL, not ""', row?.notes === null, String(row?.notes));
+    db2.close();
+  }
+
+  // The whole WP-25 fallback rests on NULL meaning "never arranged": an upgraded database has to
+  // read back NULL, not '', or every existing page would show an *empty* layout instead of the
+  // artist_layout/project_layout template it showed before the column existed.
+  console.log('\n== a pre-WP-25 database gains the layout column, reading NULL');
+  {
+    const db = new Database(seasonFile('auftakt.db'));
+    db.exec(`
+      ALTER TABLE artists DROP COLUMN layout;
+      ALTER TABLE projects DROP COLUMN layout;
+    `);
+    db.close();
+
+    await startServer();
+    await stopServer();
+
+    const db2 = new Database(seasonFile('auftakt.db'), { readonly: true });
+    for (const table of ['artists', 'projects']) {
+      const cols = db2.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+      check(`${table}.layout was re-added`, cols.includes('layout'), cols.join(','));
+      const row = db2.prepare(`SELECT layout FROM ${table} LIMIT 1`).get();
+      check(`a ${table} row from before the column reads NULL, not ""`, row?.layout === null, String(row?.layout));
+    }
     db2.close();
   }
 } catch (err) {

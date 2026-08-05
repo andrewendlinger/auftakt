@@ -4,7 +4,11 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { contrastText, projectShade, withAlpha } from '../lib/colors';
 import { Breadcrumbs } from '../components/Breadcrumbs';
-import { SectionArranger } from '../components/SectionArranger';
+import {
+  LayoutTemplateActions,
+  SectionArranger,
+  useEntityLayout,
+} from '../components/SectionArranger';
 import { EditableLabel } from '../components/EditableLabel';
 import type { LabelKey } from '../lib/labels';
 import { Card, SectionTitle, Spinner, Btn, ErrorState, LoadError } from '../components/ui';
@@ -105,7 +109,9 @@ export function ProjectPage() {
     queryFn: () => api.customSections.list({ project_id: projectId }),
     enabled: validId,
   });
-  const removeCustomSection = useRemoveCustomSection(customSections, 'project_layout');
+  // This project's own arrangement, falling back to the `project_layout` template (WP-25).
+  const layout = useEntityLayout('project', project);
+  const removeCustomSection = useRemoveCustomSection(customSections, layout);
   const nonEmptyCustom = useNonEmptyCustomSections(customSections);
   const { windowDays } = useTaskStatsConfig();
 
@@ -255,7 +261,8 @@ export function ProjectPage() {
       </Card>
 
       <SectionArranger
-        layoutKey="project_layout"
+        layout={layout.value}
+        onPersist={layout.write}
         sections={sections}
         labelKeys={SECTION_LABEL_KEYS}
         titles={custom.titles}
@@ -265,6 +272,7 @@ export function ProjectPage() {
         nonEmptyKeys={nonEmptyKeys}
         onRemoveCustom={removeCustomSection}
         addAction={builtinPicker(SECTION_LABEL_KEYS, SECTION_GROUPS, { project_id: projectId })}
+        templateActions={({ full }) => <LayoutTemplateActions store={layout} full={full} />}
       />
 
       {managingColumns && (

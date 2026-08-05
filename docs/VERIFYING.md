@@ -85,7 +85,16 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **The default `task_sort` is `[status, priority, due]`, not empty.** A „keine Regel" repro needs
   `PATCH /api/settings {"task_sort": []}` first.
 - **The project and artist pages ship `defaultHidden={['stats', …]}`**, so the „Fortschritt" tile
-  is *not on screen* until `project_layout`/`artist_layout` are written. The dashboard's is.
+  is *not on screen* until a layout that names it is written. The dashboard's is.
+- **Artist 2 and project 3 ship their own `layout`; artists 1/3/4 and every other project are
+  `NULL`** and follow the `artist_layout`/`project_layout` template (WP-25). So the two states are
+  both on the demo — and a check that arranges one artist must assert against a *different* one,
+  because asserting against artist 2 proves nothing. Artist 2 also un-hides `stats`.
+- **A layout assertion reads `[data-section]`/`[data-width]`, not the headings** — the arranger
+  stamps both on every rendered section, and in arrange mode the in-card heading is hidden anyway.
+- **An *empty* custom widget's 🗑 deletes straight away** — `nonEmptyKeys` is what routes it to the
+  „Bereich löschen" dialog, so a script that waits for „In den Papierkorb" after binning a fresh
+  widget times out against working code.
 - **Project 1's notes contain a Markdown table**, so `thead` first matches *that*, not the task
   table. Project 1 also shares its name with its opening concert, so a text match there hits the
   page heading rather than the event row.

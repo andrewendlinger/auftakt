@@ -197,17 +197,25 @@ ordering actually in effect; **the two are kept in step by comment only.** The s
 `CASE` is generated from the configured option order via `priorityValues(db)`, so renaming those
 categories does not drop them all into `ELSE`.
 
-Page section order is stored per page in the `artist_layout` / `project_layout` /
-`dashboard_layout` settings and edited by `SectionArranger`. Settings whose values are JSON arrays
-must be listed in `ARRAY_KEYS` in `server/src/routes/settings.ts` to round-trip parsed. **Those
-arrays are shared across pages** — one `artist_layout` for every artist — so a `cs<id>` entry may
-only be removed where the deleted id is known (`useRemoveCustomSection`), never by pruning
-everything the current page cannot see.
+Page section order is edited by `SectionArranger` and **stored per entity**: `artists.layout` and
+`projects.layout` hold that page's own array as JSON text, and `NULL` means „never arranged"
+(WP-25). A page reading `NULL` falls back to the `artist_layout` / `project_layout` setting, which
+is no longer *the* layout but the **template** a new page inherits — written only by „Als Vorlage"
+in arrange mode, and stripped of `cs<id>` entries there, since a widget key names a row that exists
+on exactly one page. `dashboard_layout` stays a plain setting: there is only one dashboard.
 
-> **Changing:** per-artist and per-project layouts are planned (`WP-25`), moving the array onto an
-> entity-level `layout` column and demoting the setting to the template a new page inherits. The
-> sharing rule above holds until that lands — see the superseded SHL-19 entry in
-> [DECISIONS.md](DECISIONS.md).
+Which store a page uses is the page's business, and both stores expose the same `LayoutStore`
+shape (`value` / `current()` / `write()`), so `useRemoveCustomSection` prunes a `cs<id>` without
+knowing where the array lives: `useEntityLayout` for artists and projects, `useSettingsArray` for
+the dashboard, `useLanding` for the landing. Settings whose values are JSON arrays must still be
+listed in `ARRAY_KEYS` in `server/src/routes/settings.ts` to round-trip parsed; the entity column
+is **not** parsed on read, because the CRUD factory has no read transform — use `parseEntityLayout`.
+
+Two things that look like tidiness and are not. A layout write must **publish to its query cache
+before awaiting**, because five of the six arrange mutations fire as `void persist(…)` (SHL-10);
+and pruning a widget entry stays at the delete site, where the id is known — with the extra rule
+that a page still following the template must not be written to at all, or the template freezes
+onto it as an arrangement the user never made.
 
 ## Client contracts
 

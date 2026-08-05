@@ -7,7 +7,11 @@ import { contrastText, projectShade, withAlpha } from '../lib/colors';
 import { useListReorder, type DragReorder } from '../lib/dragReorder';
 import { Markdown } from '../components/Markdown';
 import { Breadcrumbs } from '../components/Breadcrumbs';
-import { SectionArranger } from '../components/SectionArranger';
+import {
+  LayoutTemplateActions,
+  SectionArranger,
+  useEntityLayout,
+} from '../components/SectionArranger';
 import { EditableLabel } from '../components/EditableLabel';
 import type { LabelKey } from '../lib/labels';
 import { Card, DragHandle, SectionTitle, Spinner, EmptyState, ErrorState, LoadError } from '../components/ui';
@@ -95,7 +99,9 @@ export function ArtistPage() {
     queryFn: () => api.customSections.list({ artist_id: artistId }),
     enabled: validId,
   });
-  const removeCustomSection = useRemoveCustomSection(customSections, 'artist_layout');
+  // This artist's own arrangement, falling back to the `artist_layout` template (WP-25).
+  const layout = useEntityLayout('artist', artist);
+  const removeCustomSection = useRemoveCustomSection(customSections, layout);
   const nonEmptyCustom = useNonEmptyCustomSections(customSections);
 
   // Everything statistical is computed over live + archived tasks: the list above is scope 'live',
@@ -267,7 +273,8 @@ export function ArtistPage() {
       </Card>
 
       <SectionArranger
-        layoutKey="artist_layout"
+        layout={layout.value}
+        onPersist={layout.write}
         sections={sections}
         labelKeys={SECTION_LABEL_KEYS}
         titles={custom.titles}
@@ -277,6 +284,7 @@ export function ArtistPage() {
         nonEmptyKeys={nonEmptyKeys}
         onRemoveCustom={removeCustomSection}
         addAction={builtinPicker(SECTION_LABEL_KEYS, SECTION_GROUPS, { artist_id: artistId })}
+        templateActions={({ full }) => <LayoutTemplateActions store={layout} full={full} />}
       />
     </div>
   );

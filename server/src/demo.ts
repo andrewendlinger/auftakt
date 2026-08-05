@@ -123,9 +123,29 @@ const RICH_ARTIST_NOTES = `Streichquartett, <u>Residenz</u> über das ganze Fest
 
 const RICH_EVENT_NOTES = `Doors 19:00, Beginn **19:30**. Zugabe ist abgesprochen 🎻.`;
 
+/**
+ * A per-entity section arrangement (WP-25). Only artist 2 and project 3 carry one; everyone else
+ * stays `NULL` and follows the `artist_layout`/`project_layout` template, so the two states — and
+ * the fact that arranging one artist leaves the others alone — are both on screen. Artist 2 also
+ * un-hides `stats`, which both entity pages ship as `defaultHidden`.
+ */
+const ARTIST_2_LAYOUT = JSON.stringify([
+  { key: 'kontakte', width: 'half' },
+  { key: 'stats', width: 'half' },
+  { key: 'termine', width: 'full' },
+  { key: 'projekte', width: 'full' },
+  { key: 'aufgaben', width: 'full' },
+]);
+
+const PROJECT_3_LAYOUT = JSON.stringify([
+  { key: 'aufgaben', width: 'full' },
+  { key: 'termine', width: 'half' },
+  { key: 'kontakte', width: 'half' },
+]);
+
 const ARTISTS = [
   { id: 1, name: 'Nordlicht Quartett', color: '#3b82f6', notes: RICH_ARTIST_NOTES },
-  { id: 2, name: 'Ana Belém Trio', color: '#ec4899', notes: 'Anreise aus Lissabon — Visa früh klären.' },
+  { id: 2, name: 'Ana Belém Trio', color: '#ec4899', notes: 'Anreise aus Lissabon — Visa früh klären.', layout: ARTIST_2_LAYOUT },
   { id: 3, name: 'Kollektiv Halbton', color: '#10b981', notes: null },
   { id: 4, name: 'Jonas Wehrmann', color: '#f59e0b', notes: 'Solopianist, spielt auch den Meisterkurs.' },
 ];
@@ -135,7 +155,7 @@ const PROJECTS = [
   // The only project with an explicit colour — deliberately off its artist's blue, so the
   // "explicitly set" and "inherits a shade" states of the colour field are both eyeballable.
   { id: 2, artist_id: 1, code: 'NQ2', name: 'Schulworkshop', status: 'Not Started', description: 'Vormittagsformat für zwei Schulklassen.', color: '#8b5cf6' },
-  { id: 3, artist_id: 2, code: 'AB1', name: 'Hauptkonzert', status: 'In Progress', description: null },
+  { id: 3, artist_id: 2, code: 'AB1', name: 'Hauptkonzert', status: 'In Progress', description: null, layout: PROJECT_3_LAYOUT },
   { id: 4, artist_id: 2, code: 'AB2', name: 'Radio-Session', status: 'In Progress', description: 'Mitschnitt für den Kultursender.' },
   { id: 5, artist_id: 3, code: 'KH1', name: 'Klanginstallation', status: 'In Progress', description: 'Läuft durchgehend im Foyer.' },
   { id: 6, artist_id: 3, code: 'KH2', name: 'Late-Night-Set', status: 'Not Started', description: null },
@@ -370,11 +390,12 @@ function main(): void {
   const db = getDb();
 
   const insArtist = db.prepare(
-    `INSERT INTO artists (id, name, color, notes, sort_order) VALUES (@id, @name, @color, @notes, @sort_order)`,
+    `INSERT INTO artists (id, name, color, notes, layout, sort_order)
+     VALUES (@id, @name, @color, @notes, @layout, @sort_order)`,
   );
   const insProject = db.prepare(
-    `INSERT INTO projects (id, artist_id, code, name, status, description, color, deleted_at, sort_order)
-     VALUES (@id, @artist_id, @code, @name, @status, @description, @color, @deleted_at, @sort_order)`,
+    `INSERT INTO projects (id, artist_id, code, name, status, description, color, layout, deleted_at, sort_order)
+     VALUES (@id, @artist_id, @code, @name, @status, @description, @color, @layout, @deleted_at, @sort_order)`,
   );
   const insContact = db.prepare(
     `INSERT INTO contacts (id, artist_id, project_id, role, name, email, phone, notes, deleted_at, sort_order)
@@ -404,8 +425,10 @@ function main(): void {
   );
 
   const tx = db.transaction(() => {
-    ARTISTS.forEach((a, i) => insArtist.run({ ...a, sort_order: i }));
-    PROJECTS.forEach((p, i) => insProject.run({ color: null, deleted_at: null, ...p, sort_order: i }));
+    ARTISTS.forEach((a, i) => insArtist.run({ layout: null, ...a, sort_order: i }));
+    PROJECTS.forEach((p, i) =>
+      insProject.run({ color: null, layout: null, deleted_at: null, ...p, sort_order: i }),
+    );
     CONTACTS.forEach((c, i) => insContact.run({ notes: null, deleted_at: null, ...c, sort_order: i }));
     EVENTS.forEach((e, i) => insEvent.run({ notes: null, deleted_at: null, ...e, sort_order: i }));
 
