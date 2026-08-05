@@ -92,6 +92,15 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   because asserting against artist 2 proves nothing. Artist 2 also un-hides `stats`.
 - **A layout assertion reads `[data-section]`/`[data-width]`, not the headings** — the arranger
   stamps both on every rendered section, and in arrange mode the in-card heading is hidden anyway.
+- **The demo seeds `artist_layout_saved` but leaves `artist_layout` unset**, so „Gespeichertes
+  Layout anwenden" is live from the first run while „Auf Standard zurücksetzen" starts disabled.
+  The two are separate stores — asserting one after writing the other is how you prove the split.
+- **The layout menu is a portal at `[role="menu"]`, not a child of the toolbar.** Its rows are
+  `[role="menuitem"]`; the heading and status line are its first two `div`s. It closes on Escape
+  (capture-phase, from `useAnchoredPopover`) and on a click on the `.fixed.inset-0` backdrop.
+- **`Layout · Künstler` is composed from a renameable label** (`artist.kicker`). A check that the
+  heading is right should rename it via `PATCH /api/settings {"labels":[…]}` and reload — that is
+  the case the non-fused wording exists for, and a hardcoded assertion passes against both.
 - **An *empty* custom widget's 🗑 deletes straight away** — `nonEmptyKeys` is what routes it to the
   „Bereich löschen" dialog, so a script that waits for „In den Papierkorb" after binning a fresh
   widget times out against working code.

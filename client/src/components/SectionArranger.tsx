@@ -1,9 +1,11 @@
 import { Fragment, useCallback, useMemo, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Artist, LayoutEntry, Project } from '../api/types';
 import { arrayMoveTo } from '../lib/arrays';
 import { useDragReorder } from '../lib/dragReorder';
+import { useAnchoredPopover } from '../lib/popover';
 import { Btn, DragHandle } from './ui';
 import { Modal } from './fields';
 import { TrashIcon } from './icons';
@@ -73,19 +75,27 @@ export interface LayoutStore {
 }
 
 export interface EntityLayoutStore extends LayoutStore {
-  /** This page has arranged itself; `false` means it is still following the template. */
+  /** This page has arranged itself; `false` means it is still following the standard. */
   hasOwn: boolean;
-  /** Back to `NULL` — the page follows the template again. */
-  reset: () => Promise<boolean>;
-  /** Publish this arrangement as the template new pages inherit. */
-  saveTemplate: (full: LayoutEntry[]) => Promise<boolean>;
+  /** Something is in the saved store, so „anwenden" has anything to apply. */
+  hasSaved: boolean;
+  /** Keep this arrangement to apply elsewhere later — the `*_layout_saved` store. */
+  saveLayout: (full: LayoutEntry[]) => Promise<boolean>;
+  /** Put the saved arrangement onto *this* page. */
+  applySaved: () => Promise<boolean>;
+  /** Publish this arrangement as the standard new pages inherit — the `*_layout` store. */
+  saveAsDefault: (full: LayoutEntry[]) => Promise<boolean>;
+  /** Back to `NULL` — the page follows the standard again. */
+  resetToDefault: () => Promise<boolean>;
 }
 
 /**
- * One artist's or one project's own section layout (WP-25), falling back to the
- * `artist_layout` / `project_layout` setting — which is no longer *the* layout but the **template**
- * a page inherits until it arranges itself. A `NULL` column is that "never arranged" state, so an
- * upgraded database renders exactly as it did before the column existed.
+ * One artist's or one project's own section layout (WP-25), plus the two settings stores it can be
+ * exchanged with (WP-31). A `NULL` column means „never arranged" and reads as the **standard**
+ * (`artist_layout` / `project_layout`), so a database from before the column renders exactly as it
+ * did; a **saved** layout (`artist_layout_saved` / `project_layout_saved`) is a second, independent
+ * store the user applies by hand. Keeping them apart is what lets „was neue Seiten erben" and „ein
+ * Layout, das ich gelegentlich aufspiele" be different arrangements.
  *
  * The `['artist', id]` cache is published *before* the request is awaited, for the reason
  * `useSettingsArray` does it and `Arranger` restates: five of the six arrange mutations fire as
@@ -100,27 +110,33 @@ export function useEntityLayout(
   const qc = useQueryClient();
   const guard = useGuardedAction();
   const invalidate = useInvalidateAll();
-  const template = useSettingsArray(
+  const standard = useSettingsArray(
     kind === 'artist' ? 'artist_layout' : 'project_layout',
+    parseLayoutEntries,
+  );
+  const saved = useSettingsArray(
+    kind === 'artist' ? 'artist_layout_saved' : 'project_layout_saved',
     parseLayoutEntries,
   );
   const id = row?.id;
   const raw = row?.layout;
 
   const own = useMemo(() => parseEntityLayout(raw), [raw]);
-  // Emptiness, not `!= null`: a corrupt or empty stored value then falls back to the template
+  // Emptiness, not `!= null`: a corrupt or empty stored value then falls back to the standard
   // rather than presenting a layout with no entries in it.
   const hasOwn = own.length > 0;
 
-  const templateCurrent = template.current;
-  const templateWrite = template.write;
+  const standardCurrent = standard.current;
+  const standardWrite = standard.write;
+  const savedCurrent = saved.current;
+  const savedWrite = saved.write;
 
   const current = useCallback(() => {
     const stored = parseEntityLayout(
       (qc.getQueryData([kind, id]) as { layout?: unknown } | undefined)?.layout,
     );
-    return stored.length ? stored : templateCurrent();
-  }, [qc, kind, id, templateCurrent]);
+    return stored.length ? stored : standardCurrent();
+  }, [qc, kind, id, standardCurrent]);
 
   const patch = useCallback(
     async (next: LayoutEntry[] | null, fallback: string) => {
@@ -142,81 +158,223 @@ export function useEntityLayout(
     (next: LayoutEntry[]) => patch(next, 'Die Anordnung konnte nicht gespeichert werden.'),
     [patch],
   );
-  const reset = useCallback(
+  const resetToDefault = useCallback(
     () => patch(null, 'Die Anordnung konnte nicht zurückgesetzt werden.'),
     [patch],
   );
-  // Widget entries are dropped: a `cs<id>` names a row that exists on exactly one page, so
-  // carrying it into the template would hand every new page an entry it can never render.
-  const saveTemplate = useCallback(
-    (full: LayoutEntry[]) => templateWrite(full.filter((e) => !WIDGET_KEY.test(e.key))),
-    [templateWrite],
+  // Widget entries are dropped from **both** stores: a `cs<id>` names a row that exists on exactly
+  // one page, so carrying it into a store other pages read hands them an entry they can never
+  // render. Only the entity's own column may hold one.
+  const withoutWidgets = (full: LayoutEntry[]) => full.filter((e) => !WIDGET_KEY.test(e.key));
+  const saveAsDefault = useCallback(
+    (full: LayoutEntry[]) => standardWrite(withoutWidgets(full)),
+    [standardWrite],
   );
+  const saveLayout = useCallback(
+    (full: LayoutEntry[]) => savedWrite(withoutWidgets(full)),
+    [savedWrite],
+  );
+  // `current()` rather than the rendered array, so an apply issued right after a save uses what
+  // was actually stored — `useSettingsArray.write` publishes before it awaits.
+  const applySaved = useCallback(() => write(savedCurrent()), [write, savedCurrent]);
 
-  return { value: hasOwn ? own : template.value, current, write, hasOwn, reset, saveTemplate };
+  return {
+    value: hasOwn ? own : standard.value,
+    current,
+    write,
+    hasOwn,
+    hasSaved: saved.value.length > 0,
+    saveLayout,
+    applySaved,
+    saveAsDefault,
+    resetToDefault,
+  };
+}
+
+/** A row in the layout menu; disabled rows keep their reason in `title` rather than just greying. */
+function MenuRow({
+  onClick,
+  disabled,
+  title,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  title?: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      disabled={disabled}
+      title={title}
+      onClick={onClick}
+      className="w-full rounded-lg px-3 py-1.5 text-left text-sm text-neutral-700 hover:bg-neutral-100 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent"
+    >
+      {children}
+    </button>
+  );
+}
+
+/** What a page-changing action discards, or `null` when there is nothing to lose. */
+interface PendingLayoutAction {
+  title: string;
+  body: string;
+  confirm: string;
+  run: () => Promise<boolean>;
+  done: string;
 }
 
 /**
- * The two template actions in the arrange toolbar — the „save a layout as a draft and apply it to
- * a new artist" the package started from, without a second place to store drafts: the template
- * *is* the settings array every page used to share.
+ * The arrange toolbar's „Layout" menu — the one place the two stores are visible and named.
  *
- * Passed the arranger's `full` rather than the store's own value, so „als Vorlage" saves what is
- * on screen — including the defaults a page that never arranged is currently showing.
+ * Both are settings arrays, but they answer different questions: the **standard** is what a page
+ * inherits while its own column is NULL, and the **saved** layout is one the user keeps around and
+ * applies by hand. They were the same thing in WP-25, which made „Als Vorlage" read as the only
+ * action and hid the fact that the reset *was* the apply (WP-31).
+ *
+ * The heading names the scope through `useLabel`, because „Künstler" is renameable — and it is
+ * appended, never fused: `Layout · ${label}` survives a rename to „Ensembles" where
+ * „Künstlerseiten-Layout" would not.
+ *
+ * Passed the arranger's `full` rather than the store's own value, so a save records what is on
+ * screen, including the defaults a page that never arranged is currently showing.
  */
-export function LayoutTemplateActions({
+export function LayoutMenu({
   store,
   full,
+  labelKey,
 }: {
   store: EntityLayoutStore;
   full: LayoutEntry[];
+  labelKey: LabelKey;
 }) {
+  const label = useLabel();
   const toast = useToast();
-  const [resetting, setResetting] = useState(false);
+  const { open, pos, anchorRef, menuRef, toggle, closePopover } = useAnchoredPopover<
+    HTMLButtonElement,
+    HTMLDivElement
+  >();
+  const [pending, setPending] = useState<PendingLayoutAction | null>(null);
+
+  const run = async (fn: () => Promise<boolean>, done: string) => {
+    closePopover();
+    if (await fn()) toast.show({ message: done });
+  };
+
+  /**
+   * The two page-changing actions confirm — they discard this page's arrangement at once and no
+   * layout write goes on the undo stack. Only when there *is* one: on a page still following the
+   * standard nothing is lost, and the dialog would be pure friction.
+   */
+  const ask = (action: PendingLayoutAction) => {
+    closePopover();
+    if (store.hasOwn) setPending(action);
+    else void run(action.run, action.done);
+  };
+
   return (
     <>
-      <Btn
-        variant="subtle"
-        title="Diese Anordnung als Vorlage für neue Seiten speichern"
-        onClick={async () => {
-          if (await store.saveTemplate(full)) toast.show({ message: 'Als Vorlage gespeichert.' });
-        }}
-      >
-        ⌂ Als Vorlage
+      <Btn ref={anchorRef} variant="subtle" aria-haspopup="menu" aria-expanded={open} onClick={toggle}>
+        ⌂ Layout <span className="text-[9px] opacity-70">▾</span>
       </Btn>
-      <Btn
-        variant="subtle"
-        title="Diese Seite auf die Vorlage zurücksetzen"
-        disabled={!store.hasOwn}
-        onClick={() => setResetting(true)}
-      >
-        ↺ Vorlage
-      </Btn>
-      {resetting && (
-        // Confirmed, unlike every other arrange action: those are each one reversible gesture,
-        // this discards the whole arrangement at once and no layout write goes on the undo stack.
+      {open &&
+        pos &&
+        createPortal(
+          <>
+            <div className="fixed inset-0 z-30" onClick={closePopover} />
+            <div
+              ref={menuRef}
+              role="menu"
+              className="fixed z-40 w-72 overflow-y-auto rounded-xl bg-white p-1 shadow-xl ring-1 ring-black/10"
+              style={{ left: pos.left, top: pos.top, maxHeight: pos.maxHeight }}
+            >
+              <div className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                {`Layout · ${label(labelKey)}`}
+              </div>
+              <div className="px-3 pb-2 text-xs text-neutral-500">
+                {store.hasOwn
+                  ? 'Diese Seite hat eine eigene Anordnung.'
+                  : 'Diese Seite folgt dem Standard.'}
+              </div>
+              <div className="my-1 border-t border-neutral-100" />
+              <MenuRow
+                title="Diese Anordnung merken, um sie später auf andere Seiten anzuwenden"
+                onClick={() => void run(() => store.saveLayout(full), 'Layout gespeichert.')}
+              >
+                Layout speichern
+              </MenuRow>
+              <MenuRow
+                disabled={!store.hasSaved}
+                title={
+                  store.hasSaved
+                    ? 'Das gespeicherte Layout auf diese Seite anwenden'
+                    : 'Noch kein Layout gespeichert.'
+                }
+                onClick={() =>
+                  ask({
+                    title: 'Gespeichertes Layout anwenden',
+                    body: 'Die eigene Anordnung dieser Seite wird durch das gespeicherte Layout ersetzt. Das lässt sich nicht rückgängig machen.',
+                    confirm: 'Anwenden',
+                    run: store.applySaved,
+                    done: 'Gespeichertes Layout angewendet.',
+                  })
+                }
+              >
+                Gespeichertes Layout anwenden
+              </MenuRow>
+              <div className="my-1 border-t border-neutral-100" />
+              <MenuRow
+                title="Neue Seiten dieses Typs übernehmen künftig diese Anordnung"
+                onClick={() => void run(() => store.saveAsDefault(full), 'Als Standard gespeichert.')}
+              >
+                Als Standard für neue Seiten speichern
+              </MenuRow>
+              <MenuRow
+                disabled={!store.hasOwn}
+                title={
+                  store.hasOwn
+                    ? 'Die eigene Anordnung verwerfen und wieder dem Standard folgen'
+                    : 'Diese Seite folgt bereits dem Standard.'
+                }
+                onClick={() =>
+                  ask({
+                    title: 'Auf Standard zurücksetzen',
+                    body: 'Die eigene Anordnung dieser Seite geht verloren und die Seite folgt wieder dem Standard. Das lässt sich nicht rückgängig machen.',
+                    confirm: 'Zurücksetzen',
+                    run: store.resetToDefault,
+                    done: 'Auf Standard zurückgesetzt.',
+                  })
+                }
+              >
+                Auf Standard zurücksetzen
+              </MenuRow>
+            </div>
+          </>,
+          document.body,
+        )}
+      {/* A sibling of the popover, not a child: the menu closes on the click that opens this. */}
+      {pending && (
         <Modal
-          title="Auf Vorlage zurücksetzen"
-          onClose={() => setResetting(false)}
+          title={pending.title}
+          onClose={() => setPending(null)}
           footer={
             <>
-              <Btn onClick={() => setResetting(false)}>Abbrechen</Btn>
+              <Btn onClick={() => setPending(null)}>Abbrechen</Btn>
               <Btn
                 variant="danger"
                 onClick={() => {
-                  void store.reset();
-                  setResetting(false);
+                  void run(pending.run, pending.done);
+                  setPending(null);
                 }}
               >
-                Zurücksetzen
+                {pending.confirm}
               </Btn>
             </>
           }
         >
-          <p className="text-sm text-neutral-600">
-            Die eigene Anordnung dieser Seite geht verloren und die Seite folgt wieder der Vorlage.
-            Das lässt sich nicht rückgängig machen.
-          </p>
+          <p className="text-sm text-neutral-600">{pending.body}</p>
         </Modal>
       )}
     </>
@@ -305,11 +463,11 @@ export interface SectionArrangerProps {
     prepend: (key: string) => void;
   }) => ReactNode;
   /**
-   * Further edit-mode toolbar actions — the entity pages' `LayoutTemplateActions`. Fed `full`
-   * rather than the stored array so "save this as the template" saves what is on screen, defaults
-   * included. Kept a render prop so this component stays unaware that templates exist.
+   * The entity pages' „Layout" menu. Fed `full` rather than the stored array so a save records
+   * what is on screen, defaults included. Kept a render prop so this component stays unaware that
+   * a saved layout or a standard exist at all — the dashboard and the landing pass nothing.
    */
-  templateActions?: (ctx: { full: LayoutEntry[] }) => ReactNode;
+  layoutAction?: (ctx: { full: LayoutEntry[] }) => ReactNode;
 }
 
 /**
@@ -346,7 +504,7 @@ function Arranger({
   nonEmptyKeys = [],
   toolbarAfterKey,
   onRemoveCustom,
-  templateActions,
+  layoutAction,
   removeCustomCopy = {
     body: 'samt Inhalt in den Papierkorb verschieben? Du kannst den Bereich im Archiv wiederherstellen.',
     confirm: 'In den Papierkorb',
@@ -485,7 +643,7 @@ function Arranger({
   const toolbar = (
     <div className="flex flex-wrap items-center justify-end gap-2">
       {arranging && addAction?.({ hiddenKeys, restore, prepend })}
-      {arranging && templateActions?.({ full })}
+      {arranging && layoutAction?.({ full })}
       <Btn variant="subtle" onClick={() => setArranging((a) => !a)}>
         {arranging ? '✓ Fertig' : '✎ Bereiche bearbeiten'}
       </Btn>

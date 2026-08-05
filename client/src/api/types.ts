@@ -486,12 +486,24 @@ export interface WritableSettings {
   project_statuses: Array<string | CustomColumnOption>;
   /** Link categories (WP-P); unset on older seasons. Read via `useLinkCategoryOptions`. */
   link_categories?: Array<string | CustomColumnOption>;
-  /** Layout of the project-page sections (termine/kontakte/stats/… + custom widgets) — order, width, hidden. */
+  /**
+   * The **default** a project page inherits while its own `projects.layout` column is NULL —
+   * order, width, hidden of the sections (termine/kontakte/stats/…). Written by „Als Standard für
+   * neue Seiten speichern"; never holds a `cs<id>` widget key, which belongs to one page only.
+   */
   project_layout?: LayoutEntry[];
-  /** Layout of the artist-page sections (projekte/termine/kontakte/… + custom widgets) — order, width, hidden. */
+  /** The same default for artist pages, read while `artists.layout` is NULL. */
   artist_layout?: LayoutEntry[];
   /** Layout of the dashboard sections (artists/events/tasks + custom widgets) — order + width. */
   dashboard_layout?: LayoutEntry[];
+  /**
+   * The **saved** project layout — a second, independent store the user applies to a page on
+   * demand („Gespeichertes Layout anwenden"), rather than the one new pages inherit (WP-31).
+   * Also widget-free, since it is applied to pages other than the one it was saved from.
+   */
+  project_layout_saved?: LayoutEntry[];
+  /** The same saved store for artist pages. */
+  artist_layout_saved?: LayoutEntry[];
   /** Automatic ordering hierarchy for the main task table. */
   task_sort?: TaskSortRule[];
   /** User-renamed headings; only overrides are stored, defaults live in `lib/labels.ts`. */
@@ -536,6 +548,8 @@ export type SettingsArrayKey =
   | 'project_layout'
   | 'artist_layout'
   | 'dashboard_layout'
+  | 'project_layout_saved'
+  | 'artist_layout_saved'
   | 'task_sort'
   | 'labels'
   | 'task_stats';

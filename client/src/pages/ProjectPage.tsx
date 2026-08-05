@@ -4,11 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { contrastText, projectShade, withAlpha } from '../lib/colors';
 import { Breadcrumbs } from '../components/Breadcrumbs';
-import {
-  LayoutTemplateActions,
-  SectionArranger,
-  useEntityLayout,
-} from '../components/SectionArranger';
+import { LayoutMenu, SectionArranger, useEntityLayout } from '../components/SectionArranger';
 import { EditableLabel } from '../components/EditableLabel';
 import type { LabelKey } from '../lib/labels';
 import { Card, SectionTitle, Spinner, Btn, ErrorState, LoadError } from '../components/ui';
@@ -272,7 +268,9 @@ export function ProjectPage() {
         nonEmptyKeys={nonEmptyKeys}
         onRemoveCustom={removeCustomSection}
         addAction={builtinPicker(SECTION_LABEL_KEYS, SECTION_GROUPS, { project_id: projectId })}
-        templateActions={({ full }) => <LayoutTemplateActions store={layout} full={full} />}
+        layoutAction={({ full }) => (
+          <LayoutMenu store={layout} full={full} labelKey="project.kicker" />
+        )}
       />
 
       {managingColumns && (

@@ -251,6 +251,16 @@ try {
     check('the retention constants ride on the response (PGS-24)', settings.purge_after_days === 30 && settings.archive_after_days === 30);
     const readonly = await ok('PATCH', '/settings', { purge_after_days: 1 });
     check('…and are read-only by construction', readonly.purge_after_days === 30, String(readonly.purge_after_days));
+
+    // The saved layout is a *second* store beside the standard new pages inherit (WP-31). It is
+    // only useful if writing one leaves the other alone, which is the whole point of the split —
+    // and it has to be on ARRAY_KEYS, or it round-trips as a string and the client reads no layout.
+    const entries = [{ key: 'termine', width: 'half' }];
+    const saved = await ok('PATCH', '/settings', { artist_layout_saved: entries });
+    check('a saved layout round-trips parsed', JSON.stringify(saved.artist_layout_saved) === JSON.stringify(entries), JSON.stringify(saved.artist_layout_saved));
+    check('…and left the standard alone', saved.artist_layout === undefined, JSON.stringify(saved.artist_layout));
+    const savedScalar = await req('PATCH', '/settings', { project_layout_saved: 'nonsense' });
+    check('a scalar saved layout is refused', savedScalar.status === 400, String(savedScalar.status));
   }
 
   // ------------------------------------------------------------------ task tree (SRV-11)

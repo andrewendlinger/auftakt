@@ -486,6 +486,20 @@ function main(): void {
   setSetting(db, 'saison', SEASON_LABEL);
   setActiveSeasonLabel(SEASON_LABEL);
   setSetting(db, 'link_categories', JSON.stringify(LINK_CATEGORIES));
+  // A saved artist layout, so „Gespeichertes Layout anwenden" has something to apply on a fresh
+  // demo instead of sitting disabled. Deliberately *not* the same as any page's own arrangement,
+  // and deliberately not written to `artist_layout` — the point of WP-31 is that the saved layout
+  // and the standard for new pages are two separate stores.
+  setSetting(
+    db,
+    'artist_layout_saved',
+    JSON.stringify([
+      { key: 'termine', width: 'half' },
+      { key: 'kontakte', width: 'half' },
+      { key: 'projekte', width: 'full' },
+      { key: 'aufgaben', width: 'full' },
+    ]),
+  );
 
   // Two extra seasons so the Saison-Übersicht (landing page) has every card branch on
   // screen: a populated inactive one (exercises the real copy path; no tasks → 0 offene

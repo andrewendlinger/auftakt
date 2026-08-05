@@ -97,9 +97,23 @@ every page that never gets arranged.
 
 The reversal came from the other end: a user request to „save a layout as a draft and apply it to
 a new artist", which turned out to describe behaviour that already existed — and surfaced that the
-*global* arrangement was the actual complaint, not the missing draft feature. The draft half then
-fell out of the same change for free, as „Als Vorlage" / „↺ Vorlage" in arrange mode, without a
-second place to store drafts.
+*global* arrangement was the actual complaint, not the missing draft feature.
+
+## The saved layout is a second store, not the standard (2026-08-05)
+
+WP-25 folded „save a draft" and „what new pages inherit" into one settings array, on the grounds
+that a second storage location was not worth it. **That was wrong in use, and WP-31 split them.**
+With one array, saving a layout to apply later also silently changed what every not-yet-arranged
+page showed — two different intentions writing the same slot. The keys are now
+`artist_layout` / `project_layout` (the standard) and `artist_layout_saved` /
+`project_layout_saved` (the one applied by hand).
+
+The trigger was not a defect report but a question — „where can I apply this now?" — asked after
+WP-25 shipped. The mechanism had been right and the *vocabulary* had hidden it: the apply action
+was labelled „↺ Vorlage" and worded as a reset, so nothing on screen said the feature existed.
+A rename alone would have fixed the reading; splitting the store is what made the two actions
+independently useful. Both now live in one named `LayoutMenu` that states which page type it acts
+on and whether this page follows the standard or has its own arrangement.
 
 ## `linkify` is e-mail-only; no `tel:` (2026-08-03)
 

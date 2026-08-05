@@ -199,12 +199,24 @@ categories does not drop them all into `ELSE`.
 
 Page section order is edited by `SectionArranger` and **stored per entity**: `artists.layout` and
 `projects.layout` hold that page's own array as JSON text, and `NULL` means „never arranged"
-(WP-25). A page reading `NULL` falls back to the `artist_layout` / `project_layout` setting, which
-is no longer *the* layout but the **template** a new page inherits — written only by „Als Vorlage"
-in arrange mode, and stripped of `cs<id>` entries there, since a widget key names a row that exists
-on exactly one page. `dashboard_layout` stays a plain setting: there is only one dashboard.
+(WP-25). `dashboard_layout` stays a plain setting: there is only one dashboard.
 
-Which store a page uses is the page's business, and both stores expose the same `LayoutStore`
+Around that column sit **two independent settings arrays per page type** (WP-31), and the
+difference between them is the thing to get right:
+
+| store | key | who writes it | who reads it |
+|---|---|---|---|
+| the **standard** | `artist_layout` / `project_layout` | „Als Standard für neue Seiten speichern" | every page whose column is `NULL` |
+| the **saved** layout | `artist_layout_saved` / `project_layout_saved` | „Layout speichern" | only „Gespeichertes Layout anwenden", on demand |
+
+Both are widget-free by construction: a save filters out `cs<id>`, because a widget key names a
+`custom_sections` row that exists on exactly one page and would be dead weight on every other.
+Only the entity's own column may hold one. All four actions live in one `LayoutMenu` in the arrange
+toolbar, whose heading names the scope through `useLabel` — **appended, never fused**
+(`Layout · ${label}`), since „Künstler" is renameable and „Künstlerseiten-Layout" would become
+„Ensemblesseiten-Layout".
+
+Which store a page uses is the page's business, and all of them expose the same `LayoutStore`
 shape (`value` / `current()` / `write()`), so `useRemoveCustomSection` prunes a `cs<id>` without
 knowing where the array lives: `useEntityLayout` for artists and projects, `useSettingsArray` for
 the dashboard, `useLanding` for the landing. Settings whose values are JSON arrays must still be
@@ -214,7 +226,7 @@ is **not** parsed on read, because the CRUD factory has no read transform — us
 Two things that look like tidiness and are not. A layout write must **publish to its query cache
 before awaiting**, because five of the six arrange mutations fire as `void persist(…)` (SHL-10);
 and pruning a widget entry stays at the delete site, where the id is known — with the extra rule
-that a page still following the template must not be written to at all, or the template freezes
+that a page still following the standard must not be written to at all, or the standard freezes
 onto it as an arrangement the user never made.
 
 ## Client contracts

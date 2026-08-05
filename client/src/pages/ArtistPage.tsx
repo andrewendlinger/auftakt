@@ -7,11 +7,7 @@ import { contrastText, projectShade, withAlpha } from '../lib/colors';
 import { useListReorder, type DragReorder } from '../lib/dragReorder';
 import { Markdown } from '../components/Markdown';
 import { Breadcrumbs } from '../components/Breadcrumbs';
-import {
-  LayoutTemplateActions,
-  SectionArranger,
-  useEntityLayout,
-} from '../components/SectionArranger';
+import { LayoutMenu, SectionArranger, useEntityLayout } from '../components/SectionArranger';
 import { EditableLabel } from '../components/EditableLabel';
 import type { LabelKey } from '../lib/labels';
 import { Card, DragHandle, SectionTitle, Spinner, EmptyState, ErrorState, LoadError } from '../components/ui';
@@ -284,7 +280,11 @@ export function ArtistPage() {
         nonEmptyKeys={nonEmptyKeys}
         onRemoveCustom={removeCustomSection}
         addAction={builtinPicker(SECTION_LABEL_KEYS, SECTION_GROUPS, { artist_id: artistId })}
-        templateActions={({ full }) => <LayoutTemplateActions store={layout} full={full} />}
+        layoutAction={({ full }) => (
+          // `artist.kicker`, not `dash.artists`: this menu sits on the artist page, under that
+          // heading, so it follows that rename — the same rule EditArtistButton states.
+          <LayoutMenu store={layout} full={full} labelKey="artist.kicker" />
+        )}
       />
     </div>
   );

@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from 'react';
+import type { ButtonHTMLAttributes, ComponentPropsWithRef, HTMLAttributes, ReactNode } from 'react';
 import { withAlpha } from '../lib/colors';
 import { isNotFound } from '../lib/errors';
 import { openExternal } from '../lib/external';
@@ -34,7 +34,10 @@ export function SectionTitle({ children, right }: { children: ReactNode; right?:
   );
 }
 
-type BtnProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+// `ComponentPropsWithRef`, not `ButtonHTMLAttributes`: on React 19 a function component takes
+// `ref` as an ordinary prop, so this is all it takes to let a caller anchor a popover to a Btn
+// (`useAnchoredPopover` focuses `anchorRef` on close, which only works on a real button).
+type BtnProps = ComponentPropsWithRef<'button'> & {
   variant?: 'primary' | 'ghost' | 'subtle' | 'danger';
 };
 

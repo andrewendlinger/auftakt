@@ -10,6 +10,10 @@ const ARRAY_KEYS = new Set([
   'project_layout',
   'artist_layout',
   'dashboard_layout',
+  // The layout a page applies on demand — a separate store from the `*_layout` above, which is
+  // what a page inherits while its own `layout` column is NULL (WP-31).
+  'project_layout_saved',
+  'artist_layout_saved',
   'task_sort',
   'labels',
   'task_stats',
