@@ -2,12 +2,56 @@ name: Build desktop apps
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
+  # Runs on every push, PR and tag — the installers below only build on a tag, so
+  # without this job the repo's correctness gates would run at release time only and a
+  # broken `main` would stay invisible until someone tried to ship it.
+  #
+  # Linux-only on purpose. The four check scripts boot the real server and drive it;
+  # `check-dates` re-runs the API under two timezones via `TZ`, and `check-backup`
+  # exercises POSIX file permissions. Neither is worth reproducing on Windows, and a
+  # false failure there would block releases, since `build` needs this job.
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm --prefix server ci
+          npm --prefix client ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # backup/import, the naive-local-time convention, server data invariants and the
+      # Markdown round-trip. There is no test framework by design (docs/DECISIONS.md).
+      - name: Checks
+        run: npm run check
+
   build:
+    needs: checks
+    # The installers are the expensive half — two runners, a native rebuild of
+    # better-sqlite3 and electron-builder. Only worth it for something publishable.
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -32,15 +76,18 @@ jobs:
         with:
           node-version: 22
 
+      # `ci`, not `install`: the lockfiles are committed, and a provenance attestation
+      # that says "this binary came from this source" is worth little if the dependency
+      # tree is resolved fresh on every build.
       - name: Install dependencies
         run: |
-          npm install
-          npm --prefix server install
-          npm --prefix client install
+          npm ci
+          npm --prefix server ci
+          npm --prefix client ci
 
-      # The only correctness gate in the repo: there are no tests and no linter, and
-      # `npm run build` is vite + esbuild, neither of which does type analysis. Without
-      # this step a type error reaches a published installer.
+      # Repeated from `checks` because that job runs on Linux only: this is what catches
+      # a type error that is platform-specific. `npm run build` is vite + esbuild, and
+      # neither does type analysis, so without this a type error reaches an installer.
       - name: Typecheck
         run: npm run typecheck
 
@@ -92,8 +139,10 @@ jobs:
         with:
           path: installers
 
+      # Pinned to a commit, not the mutable `v3` tag: this is the only third-party action
+      # in the repo and it runs with `contents: write`. (= v3)
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
           files: |
             installers/**/*.dmg
