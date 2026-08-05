@@ -36,9 +36,15 @@ Security problems go through [SECURITY.md](SECURITY.md) instead, privately.
 ## Running it locally
 
 ```bash
+node --version    # must match .nvmrc (22) — see below
 npm run setup     # root, server and client — three separate installs, no workspaces
 npm run demo      # build the demo database and start against it → localhost:5317
 ```
+
+**Use the Node version in `.nvmrc`.** CI installs with `npm ci`, which refuses a lockfile
+that does not match its resolution exactly, and different npm majors resolve optional
+transitive dependencies differently. Regenerating a lockfile on another Node version
+produces one that fails in CI without failing locally.
 
 `npm run demo` writes only to `./.demo/`. It cannot touch a real database in `./.data/`
 — `demo.ts` pins its own data directory before the first connection is opened. Prefer
