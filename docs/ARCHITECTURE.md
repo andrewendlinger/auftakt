@@ -169,8 +169,8 @@ client mirror, used for the counts the dialogs promise. **Keep the two in step.*
 into a general batch API.
 
 The subtask tree is at most two levels. The tasks transform enforces it on the API and
-`migrateFlattenDeepSubtasks` repairs anything that arrived another way (`server/src/notion/` writes
-rows with raw SQL and bypasses the transform).
+`migrateFlattenDeepSubtasks` repairs anything that arrived another way (a local one-off Notion
+importer, not part of this repo, writes rows with raw SQL and bypasses the transform).
 
 ## Data-driven task columns
 
@@ -268,7 +268,8 @@ Which module owns which invariant. Reach for these rather than rebuilding the be
 `scripts/build.mjs` esbuilds the server to one ESM file (with `better-sqlite3` external — it is
 native and electron-builder rebuilds it for Electron's ABI) and main/preload to CJS. Installers are
 built in CI, not locally: pushing a `v*` tag runs `.github/workflows/build.yml`, which builds the
-macOS `.dmg` and Windows NSIS installer, attaches build provenance, and publishes a release.
+macOS `.dmg` and Windows NSIS installer, attaches build provenance (public repos only — the step
+is gated on `!github.event.repository.private`), and publishes a release.
 Shipping = bump the root `package.json` version, commit, then tag.
 
 The app is not Apple-signed (only ad-hoc signed via `scripts/afterSign.cjs`), which is why the

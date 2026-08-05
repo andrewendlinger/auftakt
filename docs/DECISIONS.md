@@ -15,8 +15,9 @@ updater cannot verify a signature on the package it downloads. A real fix needs 
 code-signing certificate.
 
 What stands in for it: the sha512 published in `latest.yml`, fetched over HTTPS, plus the build
-provenance attestation on every release artifact. Documented as a known limitation in
-`SECURITY.md` rather than hidden. Revisit if a certificate is bought.
+provenance attestation carried by every release artifact from v0.5.0 onward (attestation needs a
+public repository, so it was skipped while this repo was private). Documented as a known
+limitation in `SECURITY.md` rather than hidden. Revisit if a certificate is bought.
 
 **`win.publisherName` stays unset (2026-08-04, WP-27).** It is the obvious-looking follow-up when
 naming the publisher, and it is the wrong knob. Nothing user-visible reads it while the installer

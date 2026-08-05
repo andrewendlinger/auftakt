@@ -69,9 +69,15 @@ Ergebnis und baut better-sqlite3 für Electrons ABI neu.
 
 ## CI
 
-`.github/workflows/build.yml` baut auf `macos-latest` **und** `windows-latest`
-automatisch `.dmg` + NSIS-Installer — bei einem Tag `v*` oder manuell
-(`workflow_dispatch`). Artefakte landen als Workflow-Uploads.
+`.github/workflows/build.yml` hat drei Jobs:
+
+- **`checks`** — bei jedem Push, jedem Pull Request und jedem Tag: `npm run
+  typecheck` und `npm run check` auf `ubuntu-latest`.
+- **`build`** — nur bei einem Tag `v*` oder manuell (`workflow_dispatch`): baut
+  `.dmg` auf `macos-latest` und den NSIS-Installer auf `windows-latest`.
+- **`release`** — nur bei einem Tag `v*`: veröffentlicht beide Installer samt
+  `latest.yml` auf der
+  [Releases-Seite](https://github.com/andrewendlinger/auftakt/releases).
 
 ## macOS: „Auftakt.app ist beschädigt"
 
@@ -89,13 +95,18 @@ Danach startet die App normal (sie ist Ad-hoc-signiert, läuft also auf Apple
 Silicon). Alternativ: Rechtsklick auf die App → **Öffnen**. Für einen warnungsfreien
 Download-Start wäre Apple-Signierung + Notarisierung nötig (Developer-Account).
 
+**Nur Apple Silicon:** CI baut auf `macos-latest`, das Ergebnis heißt
+`Auftakt-<version>-arm64.dmg`. Für Intel-Macs gibt es derzeit keinen Build.
+
 ## Struktur
 
 ```
 server/   Express + better-sqlite3: db.ts (Schema), seed.ts, routes/, lib/
 client/   React-App: pages/, components/, api/, lib/ (linkify, dates, colors)
 electron/ main.ts, preload.ts, menu.ts, backup.ts
+shared/   time.ts — die Zeitstempel-Konvention, von Server und Electron geteilt
 scripts/  build.mjs (esbuild-Bündel) + die check-*.mjs-Gates
+build/    App-Icons für electron-builder (icon.png, icon.icns)
 docs/     Architektur, Entscheidungen, Test-Checklisten
 ```
 
@@ -125,14 +136,17 @@ docs/     Architektur, Entscheidungen, Test-Checklisten
 
 - `.ics`-Export / Google-Calendar-Sync (Termine sind zeitzonenbewusst als
   Europe/Berlin gespeichert)
-- „Neue Saison“: frische DB + Künstler/Kontakte aus der letzten Saison importieren
 - Mehrbenutzer: derselbe Server auf einem geteilten Rechner
 
 ## Sicherheit
 
-Alle Daten bleiben lokal; die App sendet nichts an einen Server. Die Installer
-auf der [Releases-Seite](https://github.com/andrewendlinger/auftakt/releases)
-werden von GitHub Actions aus diesem Quellcode gebaut und tragen eine
+Alle Festivaldaten bleiben lokal — die App überträgt sie nirgendwohin. Die
+einzige ausgehende Verbindung ist eine automatische Update-Prüfung beim Start:
+sie fragt bei GitHub die neueste veröffentlichte Versionsnummer ab und sendet
+dabei keine Daten ([`electron/updateCheck.ts`](electron/updateCheck.ts)).
+
+Die Installer auf der [Releases-Seite](https://github.com/andrewendlinger/auftakt/releases)
+werden von GitHub Actions aus diesem Quellcode gebaut und tragen ab v0.5.0 eine
 Build-Provenance-Attestierung — prüfbar mit `gh attestation verify`. Details und
 Meldeweg für Sicherheitsprobleme: [SECURITY.md](SECURITY.md).
 

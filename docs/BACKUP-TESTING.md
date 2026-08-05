@@ -104,7 +104,7 @@ that season's settings.
   cause was never platform-specific.
 - **Installer metadata (Windows, WP-27).** While a Windows machine is at hand, check the two
   places that only a real install shows: *Einstellungen → Apps → Installierte Apps → Auftakt
-  0.4.0* must list **Herausgeber: Andre Wendlinger**, and right-click → *Eigenschaften → Details*
+  `<version>`* must list **Herausgeber: Andre Wendlinger**, and right-click → *Eigenschaften → Details*
   on both `Auftakt Setup <version>.exe` and the installed `Auftakt.exe` must show **Firma: Andre
   Wendlinger** and **Copyright: © 2026 Andre Wendlinger**. SmartScreen's „Unbekannter Herausgeber"
   on first run is **expected and unrelated** — that one needs the certificate deferred in

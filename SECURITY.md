@@ -1,8 +1,13 @@
 # Security
 
 Auftakt is a local desktop application. It stores all data in a SQLite file on
-your own machine and does not send anything to a server. The bundled Express
-server listens on localhost only, for the app's own frontend.
+your own machine and never transmits it. The bundled Express server listens on
+localhost only, for the app's own frontend.
+
+The app makes exactly one outbound request: an automatic update check on
+startup, which asks the GitHub Releases API for the latest published version
+number. It sends no data of yours — see
+[`electron/updateCheck.ts`](electron/updateCheck.ts) for the whole of it.
 
 ## Reporting a vulnerability
 
@@ -19,8 +24,10 @@ within a few days rather than a few hours.
 
 Installers on the [Releases page](https://github.com/andrewendlinger/auftakt/releases)
 are built by GitHub Actions from this repository's source — not uploaded from a
-private machine. Each release artifact carries a build provenance attestation
-that ties it to the exact commit and workflow run that produced it.
+private machine. From v0.5.0 onward, each release artifact carries a build
+provenance attestation that ties it to the exact commit and workflow run that
+produced it. (Attestation requires a public repository, so releases cut while
+this repo was private do not have one.)
 
 Verify a download before installing it:
 
@@ -51,7 +58,7 @@ build can claim any name, and nothing checks it. It is not a signature, and it i
 not what SmartScreen reads; SmartScreen still reports an unknown publisher.
 
 What the update does check is the sha512 hash published in `latest.yml` in the
-GitHub Release, fetched over HTTPS, and every release artifact carries the build
+GitHub Release, fetched over HTTPS, and release artifacts carry the build
 provenance attestation described above. So an update is only as trustworthy as
 this repository's GitHub Releases: anyone able to replace both the installer and
 its `latest.yml` entry there could have the updater install it.
