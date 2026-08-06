@@ -6,9 +6,15 @@ on:
       - main
     tags:
       - 'v*'
+  # Every pull request, whatever it targets. The `branches: [main]` filter that used to be here
+  # looked harmless — every PR targets main eventually — but it meant a PR opened against any
+  # other branch got no CI at all, and `main` requires the `checks` context to merge. A stacked
+  # PR was therefore unmergeable by construction: no run could ever report, and retargeting it
+  # to main when the base branch merged did not fire the workflow retroactively either.
+  #
+  # `push` stays filtered to main and tags, so a topic branch is checked once via its PR rather
+  # than twice.
   pull_request:
-    branches:
-      - main
   workflow_dispatch:
 
 # Superseded runs of the same branch are wasted work, so cancel them — except on a tag.
