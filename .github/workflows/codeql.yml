@@ -14,9 +14,10 @@ on:
   push:
     branches:
       - main
+  # Unfiltered, for the same reason as build.yml: a `branches: [main]` filter here would skip
+  # any PR that does not target main, and a finding is worth having before the merge rather
+  # than after it.
   pull_request:
-    branches:
-      - main
   # CodeQL ships new queries; a repo that only scans on push stops learning about the code
   # it already has. Monday early, so a finding is waiting at the start of the week.
   schedule:
