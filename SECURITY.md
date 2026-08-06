@@ -24,10 +24,14 @@ within a few days rather than a few hours.
 
 Installers on the [Releases page](https://github.com/andrewendlinger/auftakt/releases)
 are built by GitHub Actions from this repository's source — not uploaded from a
-private machine. From v0.5.0 onward, each release artifact carries a build
-provenance attestation that ties it to the exact commit and workflow run that
-produced it. (Attestation requires a public repository, so releases cut while
-this repo was private do not have one.)
+private machine. From v0.5.0 onward, each installer carries a build provenance
+attestation that ties it to the exact commit and workflow run that produced it.
+(Attestation requires a public repository, so releases cut while this repo was
+private do not have one.)
+
+In v0.5.0 the attestation covers the installers only. From v0.6.0 onward it
+covers every published file, including `latest.yml` and the blockmaps — see
+"Windows installer and in-app updates" below for why that distinction matters.
 
 Verify a download before installing it:
 
@@ -58,9 +62,11 @@ build can claim any name, and nothing checks it. It is not a signature, and it i
 not what SmartScreen reads; SmartScreen still reports an unknown publisher.
 
 What the update does check is the sha512 hash published in `latest.yml` in the
-GitHub Release, fetched over HTTPS. Every published file carries a build
-provenance attestation — the installer, its blockmap, and `latest.yml` itself,
-which is the file that names the binary the updater will execute.
+GitHub Release, fetched over HTTPS. From v0.6.0 onward every published file
+carries a build provenance attestation — the installer, its blockmap, and
+`latest.yml` itself, which is the file that names the binary the updater will
+execute. In v0.5.0 only the installers were attested, so `latest.yml` from that
+release cannot be verified this way.
 
 **Attestation does not make the update path verify itself.** electron-updater
 does not check attestations; it checks the sha512 in `latest.yml` against what it
