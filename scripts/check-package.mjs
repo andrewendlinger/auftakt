@@ -72,7 +72,12 @@ const require = createRequire(join(root, 'package.json'));
 let entries = [];
 try {
   const { listPackage } = require('@electron/asar');
-  entries = listPackage(asar).map((/** @type {string} */ e) => e.replace(/\\/g, '/'));
+  // `{ isPack: false }` is optional at runtime but required by the type. Passing it explicitly
+  // rather than casting the call away: `isPack: true` would annotate each entry with its offset
+  // and size, which is not what the assertions below compare against.
+  entries = listPackage(asar, { isPack: false }).map((/** @type {string} */ e) =>
+    e.replace(/\\/g, '/'),
+  );
 } catch (err) {
   console.error(`FAIL  app.asar liess sich nicht lesen: ${err instanceof Error ? err.message : err}`);
   process.exit(1);
