@@ -96,6 +96,30 @@ jobs:
       - name: Build installers (dmg on macOS, NSIS on Windows)
         run: npm run build && npx electron-builder --publish never
 
+      # The Windows updater resolves what to install through `latest.yml`, so a name in there
+      # that does not match the uploaded asset is a silent, total update failure — it shipped
+      # once (v0.5.0) and was invisible until someone tried to update. electron-builder writes
+      # the *GitHub-safe* spelling into `latest.yml` (space→`-`) while GitHub renames the upload
+      # itself (space→`.`); `artifactName` in electron-builder.yml removes the spaces so the two
+      # agree. This asserts they still do, before the artifact can reach a release.
+      - name: Verify latest.yml points at a file that exists
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          named=$(grep -E '^path:' release/latest.yml | sed 's/^path:[[:space:]]*//')
+          echo "latest.yml path: $named"
+          if [ ! -f "release/$named" ]; then
+            echo "::error::latest.yml names '$named' but release/ has no such file:"
+            ls -1 release/
+            exit 1
+          fi
+          case "$named" in
+            *[!0-9A-Za-z._-]*)
+              echo "::error::'$named' has characters GitHub will rename on upload; the updater will 404."
+              exit 1 ;;
+          esac
+          echo "ok — $named exists and survives upload unrenamed"
+
       # The app is not signed with an Apple Developer ID, so users have no way to
       # tell where a downloaded installer came from. This signs a statement tying
       # each artifact to this commit and workflow run; verify a download with
