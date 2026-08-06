@@ -11,6 +11,10 @@
     "directory": "server"
   },
   "type": "module",
+  "engines": {
+    "node": "^24",
+    "npm": "^11"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",

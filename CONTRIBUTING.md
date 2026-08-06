@@ -36,7 +36,7 @@ Security problems go through [SECURITY.md](SECURITY.md) instead, privately.
 ## Running it locally
 
 ```bash
-node --version    # must match .nvmrc (22) — see below
+node --version    # must match .nvmrc (24) — enforced, see below
 npm run setup     # root, server and client — three separate installs, no workspaces
 npm run demo      # build the demo database and start against it → localhost:5317
 ```
@@ -45,6 +45,16 @@ npm run demo      # build the demo database and start against it → localhost:5
 that does not match its resolution exactly, and different npm majors resolve optional
 transitive dependencies differently. Regenerating a lockfile on another Node version
 produces one that fails in CI without failing locally.
+
+This is enforced rather than requested: `engines` in all three `package.json` files pins
+Node 24 and npm 11, and the repository's `.npmrc` sets `engine-strict=true`, so a mismatched
+install stops with `EBADENGINE` instead of quietly writing a lockfile CI will reject. It had
+to be enforced — the advisory version of this paragraph was already here when a lockfile
+written under npm 11 broke `main` against CI's npm 10.
+
+If `npm run setup` refuses, your Node is the problem, not the lockfile. Install Node 24 —
+with [fnm](https://github.com/Schniz/fnm) (`fnm use`) or [nvm](https://github.com/nvm-sh/nvm)
+(`nvm use`), both of which read `.nvmrc`.
 
 `npm run demo` writes only to `./.demo/`. It cannot touch a real database in `./.data/`
 — `demo.ts` pins its own data directory before the first connection is opened. Prefer

@@ -57,7 +57,12 @@ client/dist/
 *.pfx
 *.cer
 *.mobileprovision
+# Ignored everywhere, because an `.npmrc` is where a registry auth token ends up. The one
+# exception is the repository root, which is committed and holds a single line —
+# `engine-strict=true`. The negation is anchored with a leading slash so it applies to that
+# file alone: an `.npmrc` appearing in server/ or client/ is still ignored.
 .npmrc
+!/.npmrc
 
 # logs / os
 *.log
