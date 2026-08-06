@@ -36,7 +36,7 @@ Security problems go through [SECURITY.md](SECURITY.md) instead, privately.
 ## Running it locally
 
 ```bash
-node --version    # must match .nvmrc (24) — enforced, see below
+node --version    # must match .nvmrc (24.19.0) — enforced, see below
 npm run setup     # root, server and client — three separate installs, no workspaces
 npm run demo      # build the demo database and start against it → localhost:5317
 ```
@@ -56,12 +56,18 @@ If `npm run setup` refuses, your Node is the problem, not the lockfile. Install 
 with [fnm](https://github.com/Schniz/fnm) (`fnm use`) or [nvm](https://github.com/nvm-sh/nvm)
 (`nvm use`), both of which read `.nvmrc`.
 
-**The npm floor is not decoration.** `>=11.17` is what Node 24 ships. npm 11.6, which Node 25
-happens to bundle, resolves a *smaller* tree — it prunes optional platform entries like
+**The npm floor is not decoration.** `>=11.17` is what Node 24.19.0 ships. npm 11.6, which Node
+25 happens to bundle, resolves a *smaller* tree — it prunes optional platform entries like
 `@tailwindcss/oxide-wasm32-wasi`'s dependencies that a Linux `npm ci` then reports as
 `Missing … from lock file`. That is the same failure as 2026-08-05, and it comes back whenever
 a lockfile is regenerated under the wrong npm. If you have to touch a lockfile, do it under
 the `.nvmrc` Node.
+
+**`.nvmrc` pins a full version, not a major.** A bare `24` lets `actions/setup-node` install
+whichever 24.x it has cached — it served 24.18.0 (npm 11.16.0) while this machine had 24.19.0
+(npm 11.17.0), which is the same npm-version drift one level up. The cost is bumping this file
+by hand when a new 24.x matters; the benefit is that "matches CI" is a fact rather than a hope.
+Bump `engines.npm` alongside it.
 
 `npm run demo` writes only to `./.demo/`. It cannot touch a real database in `./.data/`
 — `demo.ts` pins its own data directory before the first connection is opened. Prefer
