@@ -1,0 +1,54 @@
+name: CodeQL
+
+# Static analysis over the TypeScript. This catches a different class of defect than
+# `npm run check`: the check scripts assert that the server behaves correctly on the paths
+# they drive, CodeQL looks for the paths nobody drove — unsanitised input reaching a sink,
+# a path join that escapes its root, a regex that backtracks. Auftakt reads user-supplied
+# SQLite files and CSVs and renders user-authored Markdown, so those sinks are real.
+#
+# Separate workflow rather than a job in build.yml: it has nothing to do with producing an
+# installer, needs `security-events: write` (which build.yml's jobs should not carry), and
+# runs on a schedule, which build.yml does not.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  # CodeQL ships new queries; a repo that only scans on push stops learning about the code
+  # it already has. Monday early, so a finding is waiting at the start of the week.
+  schedule:
+    - cron: '17 5 * * 1'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze TypeScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # No build step. `javascript-typescript` extracts from source, so this never needs
+      # `npm ci`, a native better-sqlite3 compile, or the Python pin that build.yml needs.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@c4dd10e44af883a891fe31ced449bcb4a6728b9b # v3
+        with:
+          languages: javascript-typescript
+          # `security-extended` over the default: this ships to end users as a desktop app
+          # with filesystem access, and the extra precision costs a few minutes a week.
+          queries: security-extended
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@c4dd10e44af883a891fe31ced449bcb4a6728b9b # v3
+        with:
+          category: /language:javascript-typescript
