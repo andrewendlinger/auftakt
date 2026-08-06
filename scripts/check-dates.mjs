@@ -250,6 +250,7 @@ process.exit(failures === 0 ? 0 : 1);
  * `check-backup.mjs`: a leaked server from an earlier run answers happily against its own
  * (long-deleted) data dir, and the failures that follow read as product bugs.
  */
+/** @returns {Promise<void>} */
 function assertPortFree(port) {
   return new Promise((res, rej) => {
     const s = createConnection({ port, host: '127.0.0.1' });

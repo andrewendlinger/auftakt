@@ -15,7 +15,10 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const demoDir = resolve(root, '.demo');
 const env = { ...process.env, AUFTAKT_DATA_DIR: demoDir };
 
-/** Run an npm script to completion; reject on a non-zero exit so we don't start a broken app. */
+/**
+ * Run an npm script to completion; reject on a non-zero exit so we don't start a broken app.
+ * @returns {Promise<void>}
+ */
 function run(args) {
   return new Promise((resolveRun, reject) => {
     const child = spawn('npm', args, { cwd: root, env, stdio: 'inherit', shell: true });
