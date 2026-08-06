@@ -11,6 +11,13 @@ on:
       - main
   workflow_dispatch:
 
+# Superseded runs of the same branch are wasted work, so cancel them — except on a tag.
+# A tag run publishes a release; cancelling one halfway leaves a partial set of installers
+# attached to a version that already exists, which cannot be re-cut without moving the tag.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   # Runs on every push, PR and tag — the installers below only build on a tag, so
   # without this job the repo's correctness gates would run at release time only and a
@@ -22,16 +29,28 @@ jobs:
   # false failure there would block releases, since `build` needs this job.
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Nothing here needs to write. Stated rather than inherited so that raising the
+    # repository default cannot silently widen this job's token.
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.11'
 
-      - uses: actions/setup-node@v5
+      # No workspaces — three independent installs, so every lockfile has to be named
+      # or the cache key misses the two that do most of the work.
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+            client/package-lock.json
 
       - name: Install dependencies
         run: |
@@ -47,6 +66,21 @@ jobs:
       - name: Checks
         run: npm run check
 
+      # Reporting, not gating — for now. There is a standing backlog of advisories (mostly
+      # the node-gyp/tar build-time chain), and failing every PR on it would train everyone
+      # to ignore this step. Read the summary, work the backlog down, then drop
+      # `continue-on-error` so a *new* advisory blocks the merge.
+      - name: Audit dependencies
+        continue-on-error: true
+        run: |
+          rc=0
+          for dir in . server client; do
+            echo "::group::npm audit ($dir)"
+            npm --prefix "$dir" audit --audit-level=high || rc=1
+            echo "::endgroup::"
+          done
+          exit $rc
+
   build:
     needs: checks
     # The installers are the expensive half — two runners, a native rebuild of
@@ -57,24 +91,30 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     # id-token + attestations are needed to sign the build provenance below.
     permissions:
       contents: read
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       # better-sqlite3 has no prebuilt binary for every Node/arch combo and falls
       # back to node-gyp, which needs `distutils`. The runners ship Python 3.14
       # (distutils removed in 3.12), so pin 3.11 for a reliable native compile.
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.11'
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+            client/package-lock.json
 
       # `ci`, not `install`: the lockfiles are committed, and a provenance attestation
       # that says "this binary came from this source" is worth little if the dependency
@@ -130,7 +170,7 @@ jobs:
       # Making the repo public re-enables provenance on its own, with no edit here.
       - name: Attest build provenance
         if: ${{ !github.event.repository.private }}
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
           subject-path: release/*.${{ matrix.os == 'windows-latest' && 'exe' || 'dmg' }}
 
@@ -139,7 +179,7 @@ jobs:
       # blockmap enables differential downloads. macOS has no auto-update (unsigned),
       # so no latest-mac.yml is built or shipped.
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: auftakt-${{ matrix.os }}
           path: |
@@ -155,16 +195,20 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
       - name: Download built installers
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: installers
 
-      # Pinned to a commit, not the mutable `v3` tag: this is the only third-party action
-      # in the repo and it runs with `contents: write`. (= v3)
+      # Every action here is pinned to a commit rather than a mutable tag. A tag can be
+      # repointed by whoever owns the action; this job runs with `contents: write` and the
+      # `build` job holds `attestations: write`, so a moved tag would be a supply-chain
+      # write into the artifacts users install. Dependabot updates these like any other
+      # dependency — the `# vN` comment is what it reads to know which tag a SHA tracks.
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
