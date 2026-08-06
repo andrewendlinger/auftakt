@@ -169,12 +169,34 @@ jobs:
       # Requires the repository to be public (or GitHub Advanced Security), so it is
       # skipped while this repo is private — otherwise it would fail here, before the
       # upload step, and take the whole release down with it (`release` needs `build`).
-      # Making the repo public re-enables provenance on its own, with no edit here.
-      - name: Attest build provenance
-        if: ${{ !github.event.repository.private }}
+      #
+      # Every published file is a subject, not just the installer. `latest.yml` is the
+      # highest-value target in the release: it names the binary the Windows updater will
+      # download and execute, and carries the sha512 that is the *only* integrity check
+      # standing in for a code signature. Attesting the .exe while leaving the file that
+      # points at it unattested covers the wrong half. Split per OS because the file sets
+      # differ and a glob matching nothing is an error — macOS ships no latest.yml, having
+      # no auto-update path without an Apple Developer ID.
+      #
+      # This does not close the gap, and SECURITY.md says so: electron-updater does not
+      # verify attestations, so this makes tampering *detectable by someone who checks*,
+      # not *rejected at install*. Code signing is what would do that.
+      - name: Attest build provenance (Windows)
+        if: ${{ !github.event.repository.private && matrix.os == 'windows-latest' }}
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
-          subject-path: release/*.${{ matrix.os == 'windows-latest' && 'exe' || 'dmg' }}
+          subject-path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+
+      - name: Attest build provenance (macOS)
+        if: ${{ !github.event.repository.private && matrix.os == 'macos-latest' }}
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        with:
+          subject-path: |
+            release/*.dmg
+            release/*.blockmap
 
       # latest.yml + *.blockmap belong in the release next to the .exe: the in-app
       # Windows updater (electron-updater) resolves updates via latest.yml, and the
@@ -211,9 +233,19 @@ jobs:
       # `build` job holds `attestations: write`, so a moved tag would be a supply-chain
       # write into the artifacts users install. Dependabot updates these like any other
       # dependency — the `# vN` comment is what it reads to know which tag a SHA tracks.
+      # draft: true — the tag publishes a release nobody can download yet. Until this,
+      # pushing a tag put installers in front of users with no step in between, so the
+      # first person to find a bad build was a user. A draft is the smoke-test window:
+      # download both installers, run docs/BACKUP-TESTING.md against them, then publish
+      # from the Releases page.
+      #
+      # It also makes a bad release recoverable. Deleting a draft costs nothing; a
+      # published release has already been fetched by update checks, and the tag cannot be
+      # moved (see the release skill — fix forward with a new patch, never re-tag).
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
+          draft: true
           files: |
             installers/**/*.dmg
             installers/**/*.exe
