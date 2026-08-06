@@ -138,6 +138,14 @@ jobs:
       - name: Build installers (dmg on macOS, NSIS on Windows)
         run: npm run build && npx electron-builder --publish never
 
+      # What `typecheck` and `npm run check` structurally cannot see: both read source, and
+      # neither looks at what electron-builder actually put inside the app. A `files` glob that
+      # stops matching, or a better-sqlite3 packed into the asar instead of unpacked, produces a
+      # green build and an app that dies for the user. Runs on both runners — the packing differs
+      # per platform, so a check on one says nothing about the other.
+      - name: Verify the packaged app
+        run: npm run check:package
+
       # The Windows updater resolves what to install through `latest.yml`, so a name in there
       # that does not match the uploaded asset is a silent, total update failure — it shipped
       # once (v0.5.0) and was invisible until someone tried to update. electron-builder writes
@@ -202,6 +210,21 @@ jobs:
       # Windows updater (electron-updater) resolves updates via latest.yml, and the
       # blockmap enables differential downloads. macOS has no auto-update (unsigned),
       # so no latest-mac.yml is built or shipped.
+      # One SBOM per platform, because the trees genuinely differ — better-sqlite3 is rebuilt per
+      # ABI and the optional platform packages that broke `npm ci` twice resolve differently on
+      # each runner. A single SBOM would describe neither installer accurately.
+      #
+      # Worth having for a product that is sold: it is what turns "is Auftakt affected by this
+      # CVE?" from an archaeology exercise across three lockfiles into a lookup, and what a
+      # customer's IT department asks for before installing anything.
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          artifact-name: auftakt-sbom-${{ matrix.os }}.spdx.json
+          output-file: release/auftakt-sbom-${{ matrix.os }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
       - name: Upload artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -211,6 +234,7 @@ jobs:
             release/*.exe
             release/*.blockmap
             release/latest.yml
+            release/*.spdx.json
           if-no-files-found: ignore
 
   # On a version tag (v1.2.3), gather both installers and publish a GitHub Release
@@ -251,4 +275,5 @@ jobs:
             installers/**/*.exe
             installers/**/*.blockmap
             installers/**/latest.yml
+            installers/**/*.spdx.json
           generate_release_notes: true
