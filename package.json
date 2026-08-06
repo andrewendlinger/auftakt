@@ -16,7 +16,7 @@
   "main": "electron/dist/main.cjs",
   "engines": {
     "node": "^24",
-    "npm": "^11"
+    "npm": ">=11.17"
   },
   "scripts": {
     "setup": "npm install && npm --prefix server install && npm --prefix client install",

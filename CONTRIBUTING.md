@@ -56,6 +56,13 @@ If `npm run setup` refuses, your Node is the problem, not the lockfile. Install 
 with [fnm](https://github.com/Schniz/fnm) (`fnm use`) or [nvm](https://github.com/nvm-sh/nvm)
 (`nvm use`), both of which read `.nvmrc`.
 
+**The npm floor is not decoration.** `>=11.17` is what Node 24 ships. npm 11.6, which Node 25
+happens to bundle, resolves a *smaller* tree — it prunes optional platform entries like
+`@tailwindcss/oxide-wasm32-wasi`'s dependencies that a Linux `npm ci` then reports as
+`Missing … from lock file`. That is the same failure as 2026-08-05, and it comes back whenever
+a lockfile is regenerated under the wrong npm. If you have to touch a lockfile, do it under
+the `.nvmrc` Node.
+
 `npm run demo` writes only to `./.demo/`. It cannot touch a real database in `./.data/`
 — `demo.ts` pins its own data directory before the first connection is opened. Prefer
 it over `npm run seed`, which is unconditionally destructive.
