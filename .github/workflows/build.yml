@@ -62,7 +62,9 @@ jobs:
         run: npm run typecheck
 
       # backup/import, the naive-local-time convention, server data invariants and the
-      # Markdown round-trip. There is no test framework by design (docs/DECISIONS.md).
+      # Markdown round-trip — four scripts that boot the real server and drive it. The
+      # load-bearing gate; see docs/DECISIONS.md for what is being added alongside it
+      # and why that is a reversal rather than a default.
       - name: Checks
         run: npm run check
 

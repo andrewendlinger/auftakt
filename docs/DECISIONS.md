@@ -122,6 +122,54 @@ Phone numbers render as plain text — which is what they always rendered, since
 matched one. A `tel:` branch would mean widening `openExternal`'s allowlist, which stays
 http/https/mailto and remains the single place that decides what may open.
 
+## No test framework — REVERSED (decided ~2026-07-31, reversed 2026-08-06)
+
+This entry was cited by `CLAUDE.md`, `CONTRIBUTING.md` and `.github/workflows/build.yml` for a
+week before it existed. Three files said "there is no test framework and no linter — that is a
+decision, see `docs/DECISIONS.md`", and the reasoning was never written down here. It is
+reconstructed below, then reversed, because a decision nobody recorded is not one anybody can
+weigh.
+
+**The original reasoning, as the code shows it.** A framework was never the point; the four
+`check:*` scripts are. Each boots the real server and drives the real API, and nearly every one
+of their ~153 assertions names a finding ID from the 2026-07 review — they are regression guards
+for defects that actually happened, not coverage for its own sake. A framework would have added a
+dependency, a config file and a watch mode without adding an assertion. The browser-free rule was
+narrower still and had a specific cause: `docs/VERIFYING.md` lists thirteen Playwright traps, each
+of which produced a *wrong* result at least once — a check that passed against a defect, or failed
+against working code. Committing a suite built on that footing would have institutionalised
+false confidence. Verifying by hand against `npm run demo` was the honest option.
+
+**The new information: the product is going commercial.** `docs/DECISIONS.md` asks for new
+information rather than a fresh opinion, and this clears that bar in two ways the original
+reasoning could not have priced.
+
+The first is exposure. The check scripts are 100% server and persistence layer. `client/src` is
+15,002 lines across 75 files with no automated coverage at all beyond the Markdown round-trip,
+and `electron/` has none. That was survivable when the only user was the developer and a wrong
+render cost a re-render. It is not survivable when a stranger's festival data is behind it and
+the feedback path is a support request.
+
+The second is that hand-verification does not survive contact with a release cadence. It is a
+person, on two operating systems, before every release, remembering thirteen traps. It worked
+because releases were rare and the person who wrote the traps was the one running them.
+
+**What changes.** Vitest over the pure modules — `client/src/lib/{taskSort,taskTree,taskStats,
+dragReorder,sections,colors,arrays,url,routeParams,selectOptions}.ts` and `shared/time.ts` —
+plus a committed Playwright suite in CI. `docs/VERIFYING.md` stops being a field guide for
+throwaway scripts and becomes the specification for the committed ones: its traps are the list of
+assertions that would otherwise be wrong.
+
+**What does not change.** The four `check:*` scripts stay exactly as they are. They are the best
+thing in the repository and nothing here replaces them; Vitest covers what they structurally
+cannot reach, and does not re-cover what they already hold. The no-linter half of the original
+decision also stands — it was always a separate question, and nothing above bears on it.
+
+**The trap that comes with this.** `server/src/demo.ts` builds its dates relative to today, on
+purpose, so the demo never goes stale. That is right for eyeballing and wrong for assertions. An
+e2e suite must pin a clock or assert only relatively; absolute-date expectations will pass for
+some weeks and then fail for reasons that have nothing to do with the code.
+
 ---
 
 ## Known sharp edges with no owner

@@ -62,8 +62,10 @@ it over `npm run seed`, which is unconditionally destructive.
 
 ## Gates
 
-There is no test framework and no linter. That is a decision, not an oversight — see
-[docs/DECISIONS.md](docs/DECISIONS.md). What exists instead:
+There is no linter. That is a decision, not an oversight — see
+[docs/DECISIONS.md](docs/DECISIONS.md). Nor was there a test framework, until going
+commercial reversed that half; the same file records the reversal and what it does and
+does not change.
 
 ```bash
 npm run typecheck   # server + client + electron
@@ -71,9 +73,13 @@ npm run check       # backup/import, timezones, API invariants, Markdown round-t
 ```
 
 Both run in CI on every push and pull request. The four `check:*` scripts are plain
-`.mjs` files that boot the real server and assert against it; they are deliberately
-browser-free. UI behaviour is verified by hand — [docs/VERIFYING.md](docs/VERIFYING.md)
-lists the traps that have produced a wrong result at least once.
+`.mjs` files that boot the real server and assert against it. They are the load-bearing
+gate and nothing replaces them — what is being added alongside covers the client, which
+they never reached.
+
+[docs/VERIFYING.md](docs/VERIFYING.md) lists the traps that have produced a wrong result
+at least once. It is worth reading before writing any check that drives a browser: every
+entry is an assertion that would otherwise have been wrong.
 
 Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before changing anything that
 crosses the REST boundary.
