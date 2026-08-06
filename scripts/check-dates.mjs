@@ -167,6 +167,12 @@ server.stderr.on('data', (b) => (serverLog += b));
 try {
   await waitForServer();
 
+  /**
+   * `Response.json()` is typed `Promise<unknown>` and every assertion below reads a field off the
+   * result; narrowing each would mean restating the API's response shape inside the script whose
+   * job is to catch the server disagreeing with it.
+   * @returns {Promise<any>}
+   */
   const api = async (method, path, body) => {
     const r = await fetch(`http://localhost:${PORT}/api${path}`, {
       method,

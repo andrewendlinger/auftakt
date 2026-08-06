@@ -35,10 +35,12 @@ const api = (p) => `http://localhost:${PORT}/api/${p}`;
 async function requireFreePort() {
   const probe = createServer();
   try {
-    await new Promise((res, rej) => {
-      probe.once('error', rej);
-      probe.listen(PORT, '127.0.0.1', res);
-    });
+    await /** @type {Promise<void>} */ (
+      new Promise((res, rej) => {
+        probe.once('error', rej);
+        probe.listen(PORT, '127.0.0.1', () => res());
+      })
+    );
   } catch (err) {
     if (err?.code !== 'EADDRINUSE') throw err;
     console.error(
@@ -65,6 +67,12 @@ function check(name, ok, detail = '') {
   if (!ok) failures++;
 }
 
+/**
+ * `Response.json()` is typed `Promise<unknown>` and every assertion below reads a field off the
+ * result; narrowing each would mean restating the API's response shape inside the script whose
+ * job is to catch the server disagreeing with it.
+ * @returns {Promise<{ status: number, body: any }>}
+ */
 async function post(path, body) {
   const r = await fetch(api(path), {
     method: 'POST',
@@ -184,7 +192,7 @@ const point = backup.body.dir;
 check('backup writes a dated restore point', existsSync(point ?? ''), point);
 check('restore point holds seasons.json', existsSync(join(point, 'seasons.json')));
 
-const seasons = (await (await fetch(api('seasons'))).json()).seasons;
+const seasons = /** @type {any} */ (await (await fetch(api('seasons'))).json()).seasons;
 check('restore point holds every season', seasons.every((s) => existsSync(join(point, s.file))), `${seasons.length} Saisons`);
 for (const s of seasons) {
   const n = rows(join(point, s.file), 'artists');

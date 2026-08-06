@@ -1,0 +1,40 @@
+{
+  // The gate scripts, which nothing was typechecking.
+  //
+  // `npm run typecheck` runs three projects — server (`include: ["src"]`), client
+  // (`["src", "vite.config.ts"]`) and electron (`["*.ts"]`). None of their `include` globs
+  // reaches `scripts/`, so the ~1,231 lines that decide whether a release ships were the only
+  // significant code in the repository with no static analysis at all. A typo in a branch that
+  // only runs on failure would surface as a check that silently stopped checking.
+  //
+  // `checkJs` because these are `.mjs`, not TypeScript: no annotations, but every inference,
+  // arity and property access still gets checked, which is what catches the class of mistake
+  // that matters here.
+  //
+  // Deliberately not `strict`. Under full strict these four files produce 213 errors, ~200 of
+  // them `implicitly has an 'any' type` on callback parameters — annotating all of that would be
+  // a large rewrite of working, load-bearing scripts in exchange for no defect found. The
+  // settings below are the ones that catch *mistakes* rather than demand *annotations*: calling
+  // something that is not a function, reading a property that cannot exist, passing the wrong
+  // number of arguments, falling through a switch, forgetting a return on one branch.
+  //
+  // If these files are ever converted to TypeScript, turn `strict` on with them.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": false,
+    "noImplicitAny": false,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "allowJs": true,
+    "checkJs": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["scripts/**/*.mjs", "client/scripts/**/*.ts"]
+}
