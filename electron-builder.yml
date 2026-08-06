@@ -46,7 +46,17 @@ mac:
 win:
   target: nsis
 
+# `artifactName` is load-bearing, not cosmetic. The default is `${productName} Setup
+# ${version}.${ext}` — with spaces — and electron-builder writes `latest.yml` using its own
+# space→`-` normalisation, because its GitHub publisher would rename the asset to match on
+# upload. CI bypasses that publisher (`--publish never`, and the `release` job uploads), so
+# GitHub applies *its* normalisation instead: space→`.`. The asset landed as
+# `Auftakt.Setup.0.5.0.exe` while `latest.yml` pointed at `Auftakt-Setup-0.5.0.exe`, and
+# electron-updater's own `.replace(/ /g, "-")` made it request the 404. Every in-app Windows
+# update failed at download. Naming the artifact without spaces removes the disagreement:
+# nothing renames anything, so all three spellings are the same string.
 nsis:
+  artifactName: ${productName}-Setup-${version}.${ext}
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true

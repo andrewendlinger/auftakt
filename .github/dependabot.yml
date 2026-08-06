@@ -1,0 +1,72 @@
+# Auftakt has no workspaces — the root, `server/` and `client/` each carry their own
+# package.json and lockfile, and Dependabot needs one entry per directory or it silently
+# watches only the root. That is how Electron sat eight majors past end-of-life without
+# anything saying so.
+#
+# Grouped, weekly, and capped: this is a single-developer repo, and a Dependabot that opens
+# fifteen PRs a week gets muted, which is the same as not having one. Minor and patch bumps
+# arrive as one PR per directory; majors come separately because they need reading.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # electron + electron-builder + electron-updater move together and are verified
+      # together (a packaged build, plus docs/BACKUP-TESTING.md on both platforms).
+      # Splitting them across PRs would mean doing that pass once per PR.
+      electron:
+        patterns:
+          - electron
+          - electron-builder
+          - electron-updater
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: 'Bump'
+
+  - package-ecosystem: npm
+    directory: /server
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: 'Bump'
+
+  - package-ecosystem: npm
+    directory: /client
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: 'Bump'
+
+  # The workflow pins actions by commit SHA. Dependabot reads the trailing `# vN` comment
+  # to know which tag each SHA tracks, and rewrites both together — so pinning costs
+  # nothing in maintenance once this entry exists.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - '*'
+    commit-message:
+      prefix: 'Bump'

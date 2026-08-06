@@ -36,7 +36,7 @@ Security problems go through [SECURITY.md](SECURITY.md) instead, privately.
 ## Running it locally
 
 ```bash
-node --version    # must match .nvmrc (22) — see below
+node --version    # must match .nvmrc (24.19.0) — enforced, see below
 npm run setup     # root, server and client — three separate installs, no workspaces
 npm run demo      # build the demo database and start against it → localhost:5317
 ```
@@ -46,14 +46,39 @@ that does not match its resolution exactly, and different npm majors resolve opt
 transitive dependencies differently. Regenerating a lockfile on another Node version
 produces one that fails in CI without failing locally.
 
+This is enforced rather than requested: `engines` in all three `package.json` files pins
+Node 24 and npm 11, and the repository's `.npmrc` sets `engine-strict=true`, so a mismatched
+install stops with `EBADENGINE` instead of quietly writing a lockfile CI will reject. It had
+to be enforced — the advisory version of this paragraph was already here when a lockfile
+written under npm 11 broke `main` against CI's npm 10.
+
+If `npm run setup` refuses, your Node is the problem, not the lockfile. Install Node 24 —
+with [fnm](https://github.com/Schniz/fnm) (`fnm use`) or [nvm](https://github.com/nvm-sh/nvm)
+(`nvm use`), both of which read `.nvmrc`.
+
+**The npm floor is not decoration.** `>=11.17` is what Node 24.19.0 ships. npm 11.6, which Node
+25 happens to bundle, resolves a *smaller* tree — it prunes optional platform entries like
+`@tailwindcss/oxide-wasm32-wasi`'s dependencies that a Linux `npm ci` then reports as
+`Missing … from lock file`. That is the same failure as 2026-08-05, and it comes back whenever
+a lockfile is regenerated under the wrong npm. If you have to touch a lockfile, do it under
+the `.nvmrc` Node.
+
+**`.nvmrc` pins a full version, not a major.** A bare `24` lets `actions/setup-node` install
+whichever 24.x it has cached — it served 24.18.0 (npm 11.16.0) while this machine had 24.19.0
+(npm 11.17.0), which is the same npm-version drift one level up. The cost is bumping this file
+by hand when a new 24.x matters; the benefit is that "matches CI" is a fact rather than a hope.
+Bump `engines.npm` alongside it.
+
 `npm run demo` writes only to `./.demo/`. It cannot touch a real database in `./.data/`
 — `demo.ts` pins its own data directory before the first connection is opened. Prefer
 it over `npm run seed`, which is unconditionally destructive.
 
 ## Gates
 
-There is no test framework and no linter. That is a decision, not an oversight — see
-[docs/DECISIONS.md](docs/DECISIONS.md). What exists instead:
+There is no linter. That is a decision, not an oversight — see
+[docs/DECISIONS.md](docs/DECISIONS.md). Nor was there a test framework, until going
+commercial reversed that half; the same file records the reversal and what it does and
+does not change.
 
 ```bash
 npm run typecheck   # server + client + electron
@@ -61,9 +86,13 @@ npm run check       # backup/import, timezones, API invariants, Markdown round-t
 ```
 
 Both run in CI on every push and pull request. The four `check:*` scripts are plain
-`.mjs` files that boot the real server and assert against it; they are deliberately
-browser-free. UI behaviour is verified by hand — [docs/VERIFYING.md](docs/VERIFYING.md)
-lists the traps that have produced a wrong result at least once.
+`.mjs` files that boot the real server and assert against it. They are the load-bearing
+gate and nothing replaces them — what is being added alongside covers the client, which
+they never reached.
+
+[docs/VERIFYING.md](docs/VERIFYING.md) lists the traps that have produced a wrong result
+at least once. It is worth reading before writing any check that drives a browser: every
+entry is an assertion that would otherwise have been wrong.
 
 Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before changing anything that
 crosses the REST boundary.

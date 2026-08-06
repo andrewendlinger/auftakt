@@ -58,14 +58,24 @@ build can claim any name, and nothing checks it. It is not a signature, and it i
 not what SmartScreen reads; SmartScreen still reports an unknown publisher.
 
 What the update does check is the sha512 hash published in `latest.yml` in the
-GitHub Release, fetched over HTTPS, and release artifacts carry the build
-provenance attestation described above. So an update is only as trustworthy as
-this repository's GitHub Releases: anyone able to replace both the installer and
-its `latest.yml` entry there could have the updater install it.
+GitHub Release, fetched over HTTPS. Every published file carries a build
+provenance attestation — the installer, its blockmap, and `latest.yml` itself,
+which is the file that names the binary the updater will execute.
+
+**Attestation does not make the update path verify itself.** electron-updater
+does not check attestations; it checks the sha512 in `latest.yml` against what it
+downloaded. Attesting `latest.yml` therefore makes tampering *detectable by
+someone who looks*, not *rejected at install*. Only a code signature would do the
+latter.
+
+So an update is only as trustworthy as this repository's GitHub Releases: anyone
+able to replace both the installer and its `latest.yml` entry there could have
+the updater install it. Publishing to a release is what that trust rests on.
 
 If you would rather not rely on that, skip the in-app update: download the
 installer from the Releases page yourself and verify it with
-`gh attestation verify` before running it.
+`gh attestation verify` before running it. That check is the one that reads the
+attestation, which is why it is worth doing even though the updater cannot.
 
 Signing needs a paid code-signing certificate, so this stays a known limitation
 for now.

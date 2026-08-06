@@ -2,6 +2,7 @@
 // The React client is built separately via `vite build` (client/dist).
 import { build } from 'esbuild';
 
+/** @type {import('esbuild').BuildOptions} */
 const common = { bundle: true, platform: 'node', target: 'node20', logLevel: 'info' };
 
 // Server → single ESM file. better-sqlite3 stays external (native, rebuilt by

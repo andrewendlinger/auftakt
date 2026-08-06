@@ -14,6 +14,10 @@
     "url": "https://github.com/andrewendlinger/auftakt/issues"
   },
   "main": "electron/dist/main.cjs",
+  "engines": {
+    "node": "^24",
+    "npm": ">=11.17"
+  },
   "scripts": {
     "setup": "npm install && npm --prefix server install && npm --prefix client install",
     "install:server": "npm --prefix server install",
@@ -24,12 +28,14 @@
     "seed": "npm --prefix server run seed",
     "demo": "node scripts/demo.mjs",
     "demo:seed": "npm --prefix server run demo",
-    "typecheck": "npm --prefix server run typecheck && npm --prefix client run typecheck && tsc -p electron/tsconfig.json",
-    "check": "npm run check:backup && npm run check:dates && npm run check:api && npm run check:markdown",
+    "typecheck": "npm --prefix server run typecheck && npm --prefix client run typecheck && tsc -p electron/tsconfig.json && tsc -p tsconfig.scripts.json",
+    "check": "npm run check:unit && npm run check:backup && npm run check:dates && npm run check:api && npm run check:markdown",
+    "check:unit": "npm --prefix client run test",
     "check:backup": "node scripts/check-backup.mjs",
     "check:dates": "node scripts/check-dates.mjs",
     "check:api": "node scripts/check-api.mjs",
     "check:markdown": "npm --prefix client run check:markdown",
+    "check:package": "node scripts/check-package.mjs",
     "build:client": "npm --prefix client run build",
     "build:bundles": "node scripts/build.mjs",
     "build": "npm run build:client && npm run build:bundles",

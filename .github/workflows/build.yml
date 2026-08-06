@@ -11,6 +11,13 @@ on:
       - main
   workflow_dispatch:
 
+# Superseded runs of the same branch are wasted work, so cancel them — except on a tag.
+# A tag run publishes a release; cancelling one halfway leaves a partial set of installers
+# attached to a version that already exists, which cannot be re-cut without moving the tag.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   # Runs on every push, PR and tag — the installers below only build on a tag, so
   # without this job the repo's correctness gates would run at release time only and a
@@ -22,16 +29,28 @@ jobs:
   # false failure there would block releases, since `build` needs this job.
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Nothing here needs to write. Stated rather than inherited so that raising the
+    # repository default cannot silently widen this job's token.
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.11'
 
-      - uses: actions/setup-node@v5
+      # No workspaces — three independent installs, so every lockfile has to be named
+      # or the cache key misses the two that do most of the work.
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+            client/package-lock.json
 
       - name: Install dependencies
         run: |
@@ -43,9 +62,26 @@ jobs:
         run: npm run typecheck
 
       # backup/import, the naive-local-time convention, server data invariants and the
-      # Markdown round-trip. There is no test framework by design (docs/DECISIONS.md).
+      # Markdown round-trip — four scripts that boot the real server and drive it. The
+      # load-bearing gate; see docs/DECISIONS.md for what is being added alongside it
+      # and why that is a reversal rather than a default.
       - name: Checks
         run: npm run check
+
+      # Reporting, not gating — for now. There is a standing backlog of advisories (mostly
+      # the node-gyp/tar build-time chain), and failing every PR on it would train everyone
+      # to ignore this step. Read the summary, work the backlog down, then drop
+      # `continue-on-error` so a *new* advisory blocks the merge.
+      - name: Audit dependencies
+        continue-on-error: true
+        run: |
+          rc=0
+          for dir in . server client; do
+            echo "::group::npm audit ($dir)"
+            npm --prefix "$dir" audit --audit-level=high || rc=1
+            echo "::endgroup::"
+          done
+          exit $rc
 
   build:
     needs: checks
@@ -57,24 +93,30 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     # id-token + attestations are needed to sign the build provenance below.
     permissions:
       contents: read
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       # better-sqlite3 has no prebuilt binary for every Node/arch combo and falls
       # back to node-gyp, which needs `distutils`. The runners ship Python 3.14
       # (distutils removed in 3.12), so pin 3.11 for a reliable native compile.
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.11'
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+            client/package-lock.json
 
       # `ci`, not `install`: the lockfiles are committed, and a provenance attestation
       # that says "this binary came from this source" is worth little if the dependency
@@ -96,6 +138,38 @@ jobs:
       - name: Build installers (dmg on macOS, NSIS on Windows)
         run: npm run build && npx electron-builder --publish never
 
+      # What `typecheck` and `npm run check` structurally cannot see: both read source, and
+      # neither looks at what electron-builder actually put inside the app. A `files` glob that
+      # stops matching, or a better-sqlite3 packed into the asar instead of unpacked, produces a
+      # green build and an app that dies for the user. Runs on both runners — the packing differs
+      # per platform, so a check on one says nothing about the other.
+      - name: Verify the packaged app
+        run: npm run check:package
+
+      # The Windows updater resolves what to install through `latest.yml`, so a name in there
+      # that does not match the uploaded asset is a silent, total update failure — it shipped
+      # once (v0.5.0) and was invisible until someone tried to update. electron-builder writes
+      # the *GitHub-safe* spelling into `latest.yml` (space→`-`) while GitHub renames the upload
+      # itself (space→`.`); `artifactName` in electron-builder.yml removes the spaces so the two
+      # agree. This asserts they still do, before the artifact can reach a release.
+      - name: Verify latest.yml points at a file that exists
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          named=$(grep -E '^path:' release/latest.yml | sed 's/^path:[[:space:]]*//')
+          echo "latest.yml path: $named"
+          if [ ! -f "release/$named" ]; then
+            echo "::error::latest.yml names '$named' but release/ has no such file:"
+            ls -1 release/
+            exit 1
+          fi
+          case "$named" in
+            *[!0-9A-Za-z._-]*)
+              echo "::error::'$named' has characters GitHub will rename on upload; the updater will 404."
+              exit 1 ;;
+          esac
+          echo "ok — $named exists and survives upload unrenamed"
+
       # The app is not signed with an Apple Developer ID, so users have no way to
       # tell where a downloaded installer came from. This signs a statement tying
       # each artifact to this commit and workflow run; verify a download with
@@ -103,19 +177,56 @@ jobs:
       # Requires the repository to be public (or GitHub Advanced Security), so it is
       # skipped while this repo is private — otherwise it would fail here, before the
       # upload step, and take the whole release down with it (`release` needs `build`).
-      # Making the repo public re-enables provenance on its own, with no edit here.
-      - name: Attest build provenance
-        if: ${{ !github.event.repository.private }}
-        uses: actions/attest-build-provenance@v4
+      #
+      # Every published file is a subject, not just the installer. `latest.yml` is the
+      # highest-value target in the release: it names the binary the Windows updater will
+      # download and execute, and carries the sha512 that is the *only* integrity check
+      # standing in for a code signature. Attesting the .exe while leaving the file that
+      # points at it unattested covers the wrong half. Split per OS because the file sets
+      # differ and a glob matching nothing is an error — macOS ships no latest.yml, having
+      # no auto-update path without an Apple Developer ID.
+      #
+      # This does not close the gap, and SECURITY.md says so: electron-updater does not
+      # verify attestations, so this makes tampering *detectable by someone who checks*,
+      # not *rejected at install*. Code signing is what would do that.
+      - name: Attest build provenance (Windows)
+        if: ${{ !github.event.repository.private && matrix.os == 'windows-latest' }}
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
-          subject-path: release/*.${{ matrix.os == 'windows-latest' && 'exe' || 'dmg' }}
+          subject-path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+
+      - name: Attest build provenance (macOS)
+        if: ${{ !github.event.repository.private && matrix.os == 'macos-latest' }}
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        with:
+          subject-path: |
+            release/*.dmg
+            release/*.blockmap
 
       # latest.yml + *.blockmap belong in the release next to the .exe: the in-app
       # Windows updater (electron-updater) resolves updates via latest.yml, and the
       # blockmap enables differential downloads. macOS has no auto-update (unsigned),
       # so no latest-mac.yml is built or shipped.
+      # One SBOM per platform, because the trees genuinely differ — better-sqlite3 is rebuilt per
+      # ABI and the optional platform packages that broke `npm ci` twice resolve differently on
+      # each runner. A single SBOM would describe neither installer accurately.
+      #
+      # Worth having for a product that is sold: it is what turns "is Auftakt affected by this
+      # CVE?" from an archaeology exercise across three lockfiles into a lookup, and what a
+      # customer's IT department asks for before installing anything.
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          artifact-name: auftakt-sbom-${{ matrix.os }}.spdx.json
+          output-file: release/auftakt-sbom-${{ matrix.os }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: auftakt-${{ matrix.os }}
           path: |
@@ -123,6 +234,7 @@ jobs:
             release/*.exe
             release/*.blockmap
             release/latest.yml
+            release/*.spdx.json
           if-no-files-found: ignore
 
   # On a version tag (v1.2.3), gather both installers and publish a GitHub Release
@@ -131,22 +243,37 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
       - name: Download built installers
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: installers
 
-      # Pinned to a commit, not the mutable `v3` tag: this is the only third-party action
-      # in the repo and it runs with `contents: write`. (= v3)
+      # Every action here is pinned to a commit rather than a mutable tag. A tag can be
+      # repointed by whoever owns the action; this job runs with `contents: write` and the
+      # `build` job holds `attestations: write`, so a moved tag would be a supply-chain
+      # write into the artifacts users install. Dependabot updates these like any other
+      # dependency — the `# vN` comment is what it reads to know which tag a SHA tracks.
+      # draft: true — the tag publishes a release nobody can download yet. Until this,
+      # pushing a tag put installers in front of users with no step in between, so the
+      # first person to find a bad build was a user. A draft is the smoke-test window:
+      # download both installers, run docs/BACKUP-TESTING.md against them, then publish
+      # from the Releases page.
+      #
+      # It also makes a bad release recoverable. Deleting a draft costs nothing; a
+      # published release has already been fetched by update checks, and the tag cannot be
+      # moved (see the release skill — fix forward with a new patch, never re-tag).
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
+          draft: true
           files: |
             installers/**/*.dmg
             installers/**/*.exe
             installers/**/*.blockmap
             installers/**/latest.yml
+            installers/**/*.spdx.json
           generate_release_notes: true

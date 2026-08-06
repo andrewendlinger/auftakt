@@ -43,10 +43,12 @@ function check(name, ok, detail = '') {
 async function requireFreePort() {
   const probe = createServer();
   try {
-    await new Promise((res, rej) => {
-      probe.once('error', rej);
-      probe.listen(PORT, '127.0.0.1', res);
-    });
+    await /** @type {Promise<void>} */ (
+      new Promise((res, rej) => {
+        probe.once('error', rej);
+        probe.listen(PORT, '127.0.0.1', () => res());
+      })
+    );
   } catch (err) {
     if (err?.code !== 'EADDRINUSE') throw err;
     console.error(
@@ -100,7 +102,14 @@ async function stopServer() {
   server = null;
 }
 
-/** Raw request: returns status and parsed body, and never throws on a non-2xx. */
+/**
+ * Raw request: returns status and parsed body, and never throws on a non-2xx.
+ *
+ * `body` is `any` on purpose. `Response.json()` is typed `Promise<unknown>`, and every assertion
+ * below reads a field off it — narrowing each one would mean restating the API's whole response
+ * shape in a check script whose job is to catch the server disagreeing with that shape.
+ * @returns {Promise<{ status: number, body: any }>}
+ */
 async function req(method, path, body) {
   const r = await fetch(API + path, {
     method,
@@ -110,7 +119,10 @@ async function req(method, path, body) {
   return { status: r.status, body: await r.json().catch(() => null) };
 }
 
-/** …and the same, asserting success, for fixture setup where a failure is not the point. */
+/**
+ * …and the same, asserting success, for fixture setup where a failure is not the point.
+ * @returns {Promise<any>}
+ */
 async function ok(method, path, body) {
   const r = await req(method, path, body);
   if (r.status >= 400) throw new Error(`${method} ${path} → ${r.status} ${JSON.stringify(r.body)}`);
@@ -122,6 +134,12 @@ const seasonFile = (name) => join(dataDir, name);
 /** Carried across the stop/start boundary, where the purge and the on-disk checks run. */
 let copyTarget = null;
 let projectCopyTarget = null;
+/**
+ * Row ids the purge section plants before the restart and asserts on after it. Typed as a bag
+ * because it is filled across two statements — `{ parentId, kidId }` then `.loneId` — and
+ * inference from the first assignment alone would make the second one an error.
+ * @type {Record<string, number>}
+ */
 let purge = {};
 let deepTree = [];
 
