@@ -53,6 +53,13 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # GHSA-qwww-vcr4-c8h2 is an RSC-mode CSRF bypass. This client is a HashRouter SPA with
+      # no RSC, no data router and no loaders, so the path does not exist here — and the only
+      # update npm can resolve downgrades react-router-dom from 7.18.2 to 0.0.0, which is why
+      # the security update failed twice on 2026-08-06. Reasoning in docs/DECISIONS.md.
+      # Remove this once react-router-dom depends on a patched react-router.
+      - dependency-name: react-router
     commit-message:
       prefix: 'Bump'
 

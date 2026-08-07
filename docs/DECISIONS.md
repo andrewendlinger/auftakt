@@ -15,9 +15,10 @@ updater cannot verify a signature on the package it downloads. A real fix needs 
 code-signing certificate.
 
 What stands in for it: the sha512 published in `latest.yml`, fetched over HTTPS, plus the build
-provenance attestation carried by every release artifact from v0.5.0 onward (attestation needs a
-public repository, so it was skipped while this repo was private). Documented as a known
-limitation in `SECURITY.md` rather than hidden. Revisit if a certificate is bought.
+provenance attestation carried by the installers from v0.5.0 onward and by *every* published file
+— blockmaps and `latest.yml` included — from v0.6.0 onward (attestation needs a public repository,
+so it was skipped while this repo was private). Documented as a known limitation in `SECURITY.md`
+rather than hidden. Revisit if a certificate is bought.
 
 **`win.publisherName` stays unset (2026-08-04, WP-27).** It is the obvious-looking follow-up when
 naming the publisher, and it is the wrong knob. Nothing user-visible reads it while the installer
@@ -169,6 +170,35 @@ decision also stands — it was always a separate question, and nothing above be
 purpose, so the demo never goes stale. That is right for eyeballing and wrong for assertions. An
 e2e suite must pin a clock or assert only relatively; absolute-date expectations will pass for
 some weeks and then fail for reasons that have nothing to do with the code.
+
+---
+
+## react-router GHSA-qwww-vcr4-c8h2 — not applicable, not upgradable (2026-08-06)
+
+`npm audit` reports a **high** on `react-router` in `client/`, and it will keep reporting it. It
+is not being fixed, for two independent reasons.
+
+**The vulnerability cannot occur here.** It is an RSC-mode CSRF bypass: a React Server Components
+request can execute a server action before the framework returns its 400. Auftakt imports
+`HashRouter`, `Routes`, `Route`, `Navigate`, `Link`, `NavLink`, `Outlet` and `useNavigate` — that
+is all of it, across `client/src/main.tsx` and about ten components. There is no RSC, no data
+router, no `loader` or `action`, and no server rendering; the client is a static Vite bundle that
+talks to Express over REST. The vulnerable code path is not reachable, and adopting it would be a
+deliberate architecture change, not an accident.
+
+**There is no upgrade to take.** The patched `react-router` has no corresponding `react-router-dom`
+release yet, so the only path npm can resolve downgrades `react-router-dom` from 7.18.2 to 0.0.0.
+Dependabot tried twice on 2026-08-06 and failed both times with exactly that. Forcing it via
+`npm audit fix --force` would install `react-router-dom@7.11.0` — a real, breaking downgrade of the
+router in exchange for closing a hole the app does not have.
+
+So: `react-router` is ignored for `/client` in `.github/dependabot.yml`, which stops the failing
+security update from re-running. `npm audit` is unaffected and still reports it — that is
+deliberate, and harmless, because the audit step in `.github/workflows/build.yml` is
+`continue-on-error: true` and reports without gating the build.
+
+**Remove the ignore when** `react-router-dom` ships a release that depends on a patched
+`react-router`. At that point this becomes an ordinary bump.
 
 ---
 
