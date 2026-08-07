@@ -42,7 +42,7 @@ jobs:
       # No build step. `javascript-typescript` extracts from source, so this never needs
       # `npm ci`, a native better-sqlite3 compile, or the Python pin that build.yml needs.
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@d1ba80a13dd99fba24a470575428917156a28b43 # v4.37.5
+        uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
         with:
           languages: javascript-typescript
           # `security-extended` over the default: this ships to end users as a desktop app
@@ -50,6 +50,6 @@ jobs:
           queries: security-extended
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@d1ba80a13dd99fba24a470575428917156a28b43 # v4.37.5
+        uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
         with:
           category: /language:javascript-typescript
