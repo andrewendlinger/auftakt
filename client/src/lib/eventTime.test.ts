@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { eventTimeProblem, fieldsFromEvent, whenFromFields, type EventFields } from './eventTime';
+import {
+  eventTimeProblem,
+  fieldsFromEvent,
+  fieldsTouched,
+  untouchedWhen,
+  whenFromFields,
+  type EventFields,
+} from './eventTime';
 import { formatEventWhen } from './dates';
 
 /**
@@ -58,17 +65,14 @@ describe('whenFromFields', () => {
     });
   });
 
-  it('stores a timed event as sixteen characters with all_day 0', () => {
+  it('stores a timed event as sixteen characters, the end inheriting the start date', () => {
+    // 19:30–21:15 on the same evening is the common case; without the inherited date it costs a
+    // second date entry.
     expect(whenFromFields(F('2026-09-04', '19:30', '', '21:15'))).toEqual({
       start_at: '2026-09-04T19:30',
       end_at: '2026-09-04T21:15',
       all_day: 0,
     });
-  });
-
-  it('lets the end inherit the start date when only a time is given', () => {
-    // 19:30–21:15 on the same evening is the common case; without this it costs a second date.
-    expect(whenFromFields(F('2026-09-04', '19:30', '', '21:15')).end_at).toBe('2026-09-04T21:15');
   });
 
   it('keeps an explicit end date across midnight', () => {
@@ -158,19 +162,20 @@ describe('whenFromFields', () => {
   });
 });
 
-describe('round-trip', () => {
-  // The three shapes the demo ships (events 1, 2 and 8 in `server/src/demo.ts`) plus a
-  // multi-day range: opening an event and saving it untouched must be a byte-for-byte no-op,
-  // which is the whole „the package changes the form, not the data" claim.
-  const stored = [
-    { start_at: '2026-09-04T19:30', end_at: '2026-09-04T21:15', all_day: 0 as const },
-    { start_at: '2026-08-25', end_at: null, all_day: 1 as const },
-    // Demo event 8, byte for byte: `all_day` is 0 on a date-less row, both there and out of the
-    // CSV importer. This fixture said 1 and passed while the shape that actually ships did not.
-    { start_at: null, end_at: null, all_day: 0 as const },
-    { start_at: '2026-08-31', end_at: '2026-09-02', all_day: 1 as const },
-  ];
+// The three shapes the demo ships (events 1, 2 and 8 in `server/src/demo.ts`) plus a multi-day
+// range: opening an event and saving it untouched must be a byte-for-byte no-op, which is the
+// whole „the package changes the form, not the data" claim. Read by both describes below —
+// `round-trip` derives them, `untouchedWhen` refuses to.
+const stored = [
+  { start_at: '2026-09-04T19:30', end_at: '2026-09-04T21:15', all_day: 0 as const },
+  { start_at: '2026-08-25', end_at: null, all_day: 1 as const },
+  // Demo event 8, byte for byte: `all_day` is 0 on a date-less row, both there and out of the
+  // CSV importer. This fixture said 1 and passed while the shape that actually ships did not.
+  { start_at: null, end_at: null, all_day: 0 as const },
+  { start_at: '2026-08-31', end_at: '2026-09-02', all_day: 1 as const },
+];
 
+describe('round-trip', () => {
   it('reproduces every stored shape exactly', () => {
     for (const ev of stored) {
       expect(whenFromFields(fieldsFromEvent(ev))).toEqual(ev);
@@ -192,7 +197,7 @@ describe('round-trip', () => {
   it('cannot reproduce seconds, which is why an untouched row is not derived over', () => {
     // `toIsoLocal` (server/src/seed.ts) only swaps the space for a T, so an imported cell can be
     // nineteen characters. The boxes hold HH:mm and nothing finer, so deriving truncates —
-    // `EventEditor` writes the stored value back verbatim when the boxes were never touched.
+    // `untouchedWhen` returns the stored value verbatim when the boxes were never touched.
     const ev = { start_at: '2026-09-04T19:30:45', end_at: null, all_day: 0 as const };
     expect(whenFromFields(fieldsFromEvent(ev)).start_at).toBe('2026-09-04T19:30');
   });
@@ -201,6 +206,63 @@ describe('round-trip', () => {
     for (const ev of stored) {
       expect(formatEventWhen(whenFromFields(fieldsFromEvent(ev)))).toBe(formatEventWhen(ev));
     }
+  });
+});
+
+describe('untouchedWhen', () => {
+  // The guard the two tests above measure the need for: what the boxes cannot reproduce is not
+  // derived at all. It used to live in `EventEditor`, where no gate reaches it — the derivation
+  // was extracted into this module precisely because the component has no test (issue #7), and
+  // this is the branch that silently truncates real data when it goes wrong.
+
+  it('returns the stored row verbatim while the boxes still hold what it put there', () => {
+    for (const ev of stored) {
+      expect(untouchedWhen(ev, fieldsFromEvent(ev))).toEqual(ev);
+    }
+  });
+
+  it('keeps the seconds a CSV import left on a timestamp', () => {
+    // `toIsoLocal` (server/src/seed.ts) only swaps the space for a T, so an imported cell can be
+    // nineteen characters — three more than the boxes can hold.
+    const ev = { start_at: '2026-09-04T19:30:45', end_at: null, all_day: 0 };
+    expect(untouchedWhen(ev, fieldsFromEvent(ev))?.start_at).toBe('2026-09-04T19:30:45');
+  });
+
+  it('keeps a start and end whose shapes disagree, which the dialog refuses to be typed', () => {
+    const ev = { start_at: '2026-09-04T19:30', end_at: '2026-09-06', all_day: 0 };
+    const f = fieldsFromEvent(ev);
+    expect(untouchedWhen(ev, f)).toEqual(ev);
+    // …and the refusal that would otherwise lock the user out of the title and the notes is the
+    // caller's to skip, which a non-null answer here is what tells it to do.
+    expect(eventTimeProblem(f)).toMatch(/beide eine Uhrzeit/);
+  });
+
+  it('normalises `all_day` to 0 or 1 without touching the timestamps', () => {
+    expect(untouchedWhen({ start_at: '2026-08-25', end_at: null, all_day: true }, F('2026-08-25')))
+      .toEqual({ start_at: '2026-08-25', end_at: null, all_day: 1 });
+  });
+
+  it('derives instead as soon as one box is edited', () => {
+    const ev = { start_at: '2026-09-04T19:30:45', end_at: null, all_day: 0 };
+    const f = { ...fieldsFromEvent(ev), endTime: '21:15' };
+    expect(untouchedWhen(ev, f)).toBeNull();
+  });
+
+  it('derives for a new event, whose empty boxes match no stored row', () => {
+    expect(untouchedWhen(null, F(''))).toBeNull();
+    expect(untouchedWhen(undefined, F('2026-09-04'))).toBeNull();
+  });
+});
+
+describe('fieldsTouched', () => {
+  it('is false only while all four boxes match the baseline', () => {
+    const base = F('2026-09-04', '19:30', '2026-09-04', '21:15');
+    expect(fieldsTouched({ ...base }, base)).toBe(false);
+    // One per box: a key left out of the comparison is how the untouched-row guard stops working.
+    expect(fieldsTouched({ ...base, startDate: '2026-09-05' }, base)).toBe(true);
+    expect(fieldsTouched({ ...base, startTime: '20:00' }, base)).toBe(true);
+    expect(fieldsTouched({ ...base, endDate: '' }, base)).toBe(true);
+    expect(fieldsTouched({ ...base, endTime: '' }, base)).toBe(true);
   });
 });
 

@@ -16,14 +16,16 @@
  *
  * These functions describe what the *boxes* mean, which is not everything the table can hold: a
  * CSV import can leave seconds on a timestamp, and `seed.ts` derives `all_day` from the start
- * cell alone, so an imported start and end can disagree about carrying a clock time. `EventEditor`
- * writes a row whose boxes were never touched back verbatim rather than deriving over it — see
- * the comment on `stored` there.
+ * cell alone, so an imported start and end can disagree about carrying a clock time. A row whose
+ * boxes were never touched is therefore written back verbatim rather than derived over, which is
+ * `untouchedWhen`'s job below.
  *
  * No `Date` is constructed anywhere here, deliberately — `nextDay` included. Every value is a
  * naive local string and comparing/slicing them as strings is exactly right; a `Date` round-trip
  * is how the convention gets broken (see the header of `dates.ts` and `scripts/check-dates.mjs`).
  */
+
+import type { EventLike } from './dates';
 
 /** The four boxes, each `''` when empty. */
 export interface EventFields {
@@ -33,16 +35,19 @@ export interface EventFields {
   endTime: string;
 }
 
-/** The three stored columns. */
-export interface EventWhen {
+const FIELD_KEYS = ['startDate', 'startTime', 'endDate', 'endTime'] as const;
+
+/**
+ * The three stored columns, narrowed to what this module writes.
+ *
+ * `extends EventLike` is the compiler-checked half of „the summary cannot describe something
+ * other than what gets stored": `EventEditor` renders the very object it is about to send
+ * through `formatEventWhen`, and that only stays true while the payload is one of these.
+ */
+export interface EventWhen extends EventLike {
   start_at: string | null;
   end_at: string | null;
   all_day: 0 | 1;
-}
-
-interface StoredWhen {
-  start_at?: string | null;
-  end_at?: string | null;
 }
 
 /** `"YYYY-MM-DD"` / `"YYYY-MM-DDTHH:mm"` → `[date, time]`; anything falsy → two empty strings. */
@@ -88,10 +93,38 @@ function nextDay(date: string): string {
  * old `withTime` did. A row whose `all_day` disagrees with its length (only reachable through a
  * direct API write) is read by its length and repaired on the next save.
  */
-export function fieldsFromEvent(ev: StoredWhen | null | undefined): EventFields {
+export function fieldsFromEvent(ev: EventLike | null | undefined): EventFields {
   const [startDate, startTime] = split(ev?.start_at);
   const [endDate, endTime] = split(ev?.end_at);
   return { startDate, startTime, endDate, endTime };
+}
+
+/** True once any of the four boxes differs from the ones it is compared against. */
+export function fieldsTouched(f: EventFields, baseline: EventFields): boolean {
+  return FIELD_KEYS.some((k) => f[k] !== baseline[k]);
+}
+
+/**
+ * The stored columns of a row whose four boxes were never touched — written back exactly as they
+ * were read — or null when the boxes decide, which is every new event and every edited one.
+ *
+ * The boxes cannot express everything the table holds: the CSV importer leaves the seconds on
+ * `2026-09-04T19:30:45` and derives `all_day` from the start cell alone, so an imported start and
+ * end can disagree about carrying a clock time, and `all_day` is unconstrained on a row with no
+ * date at all. Deriving over such a row rewrites data the user never touched — and refusing it
+ * (`eventTimeProblem`) would lock them out of the title and the notes too, for a shape they did
+ * not create and cannot see. Nothing read back unchanged can be wrong, so there is also nothing
+ * left to refuse: a non-null answer here is both the payload *and* „skip the checks".
+ *
+ * The baseline is derived from the same row the values come from, for the reason `EventEditor`'s
+ * `initial` exists (TTU-17): a comparison and a value read from two sources drift apart.
+ */
+export function untouchedWhen(
+  ev: EventLike | null | undefined,
+  f: EventFields,
+): EventWhen | null {
+  if (!ev || fieldsTouched(f, fieldsFromEvent(ev))) return null;
+  return { start_at: ev.start_at, end_at: ev.end_at ?? null, all_day: ev.all_day ? 1 : 0 };
 }
 
 /**
@@ -113,7 +146,7 @@ export function fieldsFromEvent(ev: StoredWhen | null | undefined): EventFields 
  * sixteen — never the eleven-character stub a missing end time used to produce. A *mixed* pair
  * (16-character start, 10-character end) is well-formed but means „19:30–00:00" to
  * `formatEventWhen`, so `eventTimeProblem` refuses to let one be typed; the only mixed pairs in
- * the table came from the CSV importer, and `EventEditor` writes those back untouched.
+ * the table came from the CSV importer, and `untouchedWhen` writes those back as they were.
  *
  * `all_day` is derived from the start alone, as everywhere else in the app.
  */
@@ -153,7 +186,7 @@ export function whenFromFields(f: EventFields): EventWhen {
  *
  * Only ever ask this about boxes the user has touched. Data that was merely *read* can hold
  * shapes the boxes cannot express, and refusing those locks the user out of the title and the
- * notes as well — `EventEditor` skips the check for an untouched row and writes it back verbatim.
+ * notes as well — ask `untouchedWhen` first and skip this entirely when it answers.
  */
 export function eventTimeProblem(f: EventFields): string | null {
   if (!f.startDate) {

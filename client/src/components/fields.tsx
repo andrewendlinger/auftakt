@@ -170,23 +170,42 @@ export function TextInput({
 }
 
 /**
+ * Inputs whose native picker reports `value === ''` for anything it considers incomplete, so
+ * Enter pressed halfway through typing submits the empty string rather than the digits on
+ * screen — in the event dialog that wrote „Datum offen" over a stored date and dropped both
+ * clock times (WP-40).
+ */
+const NO_ENTER_TYPES = new Set(['date', 'time', 'datetime-local', 'month', 'week']);
+
+/**
  * „Enter saves" for a single-line input: `onKeyDown={onEnterKey(submit)}`.
  *
  * Per input, never on the dialog or the grid around it — a `RichTextEditor` reads Enter as a
  * paragraph, and `PillSelect`/`PillsField` re-implement the keyboard contract of the `<select>`
  * they replaced, Enter included (RTE-11). Neither may see it.
  *
- * **Never on `type="date"` or `type="time"`.** A native picker reports `value === ''` for
- * anything it considers incomplete, so Enter pressed halfway through typing a date submits the
- * empty string, not the digits on screen — in the event dialog that wrote „Datum offen" over a
- * stored date and dropped both clock times (WP-40).
+ * The picker types above are excluded here rather than at each call site: the rule is about the
+ * input, the input knows its own type, and `e.currentTarget.type` reads `'text'` for one with no
+ * `type` attribute. A caller that has to remember the exclusion is a caller that can forget it.
  */
 export function onEnterKey(run: () => void) {
   return (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key !== 'Enter') return;
+    if (e.key !== 'Enter' || NO_ENTER_TYPES.has(e.currentTarget.type)) return;
     e.preventDefault();
     run();
   };
+}
+
+/**
+ * The reason a disabled primary button cannot be clicked, in the footer's left slot.
+ *
+ * In the footer and not next to the field it is about: the dialog body scrolls, so with a long
+ * form open that line is off screen and the button is greyed out with no reason given anywhere —
+ * the RTE-10 symptom this exists to prevent. Shared so the wording and the placement cannot
+ * drift between the dialogs that block a save.
+ */
+export function FooterHint({ children }: { children: ReactNode }) {
+  return <p className="mr-auto self-center text-xs text-neutral-500">{children}</p>;
 }
 
 export function Select({
@@ -454,9 +473,7 @@ export function RecordFormModal({
       footer={
         <>
           {missing.length > 0 && (
-            <p className="mr-auto self-center text-xs text-neutral-500">
-              Bitte ausfüllen: {missing.map((f) => f.label).join(', ')}
-            </p>
+            <FooterHint>Bitte ausfüllen: {missing.map((f) => f.label).join(', ')}</FooterHint>
           )}
           <Btn onClick={onClose}>Abbrechen</Btn>
           <Btn variant="primary" onClick={submit} disabled={busy || missing.length > 0}>
@@ -520,9 +537,9 @@ export function RecordFormModal({
                 value={vals[f.name]}
                 invalid={invalid(f)}
                 onBlur={() => markTouched(f.name)}
-                // Every entity dialog gets the event dialog's Enter-to-save, from one place —
-                // except on a `date` field, where a half-typed value reads as empty.
-                onKeyDown={f.type === 'date' ? undefined : onEnterKey(submit)}
+                // Every entity dialog gets the event dialog's Enter-to-save, from one place.
+                // `onEnterKey` sits out the picker types itself, so `date` needs no carve-out.
+                onKeyDown={onEnterKey(submit)}
                 onChange={(e) => set(f.name, e.target.value)}
                 placeholder={f.placeholder}
               />
