@@ -105,15 +105,18 @@ function waitForServer(timeoutMs = 10000): Promise<void> {
 }
 
 /**
- * PATCH a setting and treat a non-OK response as the failure it is (ELP-04): a
- * silently dropped `backup_dir` save leaves the user believing backups are set up
- * while no startup backup ever runs again.
+ * Save the backup folder and treat a non-OK response as the failure it is (ELP-04): a
+ * silently dropped save leaves the user believing backups are set up while no startup
+ * backup ever runs again.
+ *
+ * Its own endpoint rather than a settings PATCH (WP-39) — the folder lives in the registry
+ * now, so it is season-independent and one choice covers every season.
  */
-async function patchSettings(patch: Record<string, unknown>): Promise<void> {
-  const r = await fetch(`http://localhost:${PORT}/api/settings`, {
-    method: 'PATCH',
+async function saveBackupDir(dir: string): Promise<void> {
+  const r = await fetch(`http://localhost:${PORT}/api/backup/dir`, {
+    method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(patch),
+    body: JSON.stringify({ dir }),
   });
   if (!r.ok) {
     const { error } = (await r.json().catch(() => ({}))) as { error?: string };
@@ -158,7 +161,7 @@ async function chooseBackupDir(): Promise<void> {
   const dir = await promptForDirectory();
   if (!dir) return;
   try {
-    await patchSettings({ backup_dir: dir });
+    await saveBackupDir(dir);
   } catch (err) {
     // Reloading here would show the old (or empty) folder as if nothing had happened.
     await dialog.showMessageBox({
@@ -293,7 +296,7 @@ async function ensureBackupDir(): Promise<string> {
 
   const chosen = await promptForDirectory();
   if (!chosen) return '';
-  await patchSettings({ backup_dir: chosen });
+  await saveBackupDir(chosen);
   await post('backup/prompted', {});
   return chosen;
 }

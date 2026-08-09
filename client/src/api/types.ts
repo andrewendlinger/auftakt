@@ -475,8 +475,6 @@ export interface TaskSortRule {
  */
 export interface WritableSettings {
   saison: string;
-  backup_dir: string | null;
-  first_run_done: string;
   /**
    * Coloured options `{ value, label, color }[]` (WP-I). Existing seasons still hold the legacy
    * plain `string[]`, hence the union — always read through `normalizeSelectOptions`
@@ -524,6 +522,12 @@ export interface WritableSettings {
  * server-side with no error anywhere (CCL-22).
  */
 export interface Settings extends WritableSettings {
+  /**
+   * The configured backup folder, `''` while none is set. Read-only here: it lives in
+   * seasons.json rather than any season's settings table (WP-39), and is saved through the
+   * `chooseBackupDir` IPC path → `POST /api/backup/dir`, never through `patchSettings`.
+   */
+  backup_dir: string;
   /**
    * Server retention constants (`ARCHIVE_AFTER_DAYS` / `PURGE_AFTER_DAYS`, server/src/db.ts),
    * spliced into the response so the German copy can state the policy in force rather than

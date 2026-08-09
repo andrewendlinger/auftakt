@@ -10,7 +10,16 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -173,11 +182,7 @@ await waitForServer();
 console.log('\nBackup & Import\n');
 
 // --- fixtures: two seasons, both with data, the active one written via the API ---
-await fetch(api('settings'), {
-  method: 'PATCH',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ backup_dir: backupDir }),
-});
+await post('backup/dir', { dir: backupDir });
 await post('artists', { name: 'Aktive Saison Künstlerin' });
 const second = (await post('seasons', { label: 'Zweite Saison' })).body;
 {
@@ -197,6 +202,26 @@ check('restore point holds every season', seasons.every((s) => existsSync(join(p
 for (const s of seasons) {
   const n = rows(join(point, s.file), 'artists');
   check(`  ${s.file} contains rows (WAL captured)`, n > 0, `${n} artists`);
+}
+
+// --- [1b] the backup folder is season-independent (WP-39) ---
+// It used to live in the active season's settings table, so switching season left an empty
+// backup_dir behind: no backup, and — where an older build had already marked first_run_done
+// on that season — no prompt and no error either. That is how a real installation ran for two
+// days with backups silently off. Switching must change nothing about the folder.
+{
+  await post('backup/prompted'); // what Electron does once the first-run prompt was answered
+  await post(`seasons/${second.id}/activate`);
+  const status = /** @type {any} */ (await (await fetch(api('backup/status'))).json());
+  check('a season switch keeps the backup folder', status.backupDir === backupDir, status.backupDir);
+  check('a season switch keeps the prompt answered', status.prompted === true);
+  const fromOtherSeason = await post('backup', {}); // no dir in the body: the server must find it
+  check(
+    'a backup still runs from the other season',
+    fromOtherSeason.status === 200 && existsSync(fromOtherSeason.body.dir ?? ''),
+    fromOtherSeason.body.error ?? fromOtherSeason.body.dir,
+  );
+  await post('seasons/1/activate');
 }
 
 // --- import validation: nothing is destroyed by a bad file ---
@@ -280,15 +305,13 @@ check(
 if (process.platform === 'win32' || process.getuid?.() === 0) {
   console.log('  ..   failing-copy case skipped (needs POSIX permissions as a non-root user)');
 } else {
-  // The imported database brought its own (empty) settings, so restore backup_dir: the
-  // pre-import snapshot must land in the writable backup folder, otherwise the run fails
-  // there and never reaches the copy this case is about. Doubles as the request that
-  // leaves the server holding an open connection before the chmod.
-  await fetch(api('settings'), {
-    method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ backup_dir: backupDir }),
-  });
+  // The import above replaced the active season with a database carrying its own (empty)
+  // settings. Before WP-39 that wiped backup_dir and the pre-import snapshot had nowhere to
+  // go, so this case had to restore it first; the folder lives in the registry now, which an
+  // import does not touch. Assert that rather than re-setting it — and it doubles as the
+  // request that leaves the server holding an open connection before the chmod.
+  const survived = /** @type {any} */ (await (await fetch(api('backup/status'))).json()).backupDir;
+  check('an import leaves the backup folder configured', survived === backupDir, survived);
   const intact = rows(activePath, 'artists');
   chmodSync(dataDir, 0o500);
   let failed;
@@ -332,6 +355,85 @@ check('pruning caps restore points at 30', kept.length === 30, `${kept.length} �
 check('pruning drops the oldest first', !kept.includes('auftakt-2020-01-01-00-00-00'));
 check('pruning keeps the newest', kept.includes(kept.slice().sort().reverse()[0]));
 check('legacy flat backups are left alone', existsSync(legacy));
+
+/* ---------- the WP-39 adoption migration, without a server ---------- */
+
+/**
+ * Run a snippet against `server/src/db.ts` in its own data dir, the way check-dates.mjs drives
+ * the stamp migration. No server: the adoption is a pure registry/database operation, and the
+ * states worth testing are ones only an *older* build could produce.
+ *
+ * A .mts file, not `tsx -e`: the inline form compiles to CJS and rejects top-level await.
+ */
+function runAgainstDb(body) {
+  const dir = mkdtempSync(join(tmpdir(), 'auftakt-adopt-'));
+  const scriptPath = join(dir, 'adopt.mts');
+  const importPath = join(root, 'server/src/db.ts');
+  writeFileSync(
+    scriptPath,
+    `process.env.AUFTAKT_DATA_DIR = ${JSON.stringify(dir)};\n` +
+      `const db = await import(${JSON.stringify(importPath)});\n` +
+      `const { getDb, closeDb, setSetting, createSeason, activateSeason, adoptLegacyBackupConfig, getBackupConfig, setBackupDir } = db;\n` +
+      `${body}\n`,
+  );
+  const out = spawnSync(join(root, 'server/node_modules/.bin/tsx'), [scriptPath], {
+    encoding: 'utf8',
+    env: process.env,
+    cwd: join(root, 'server'),
+  });
+  const line = (out.stdout || '').split('\n').find((l) => l.startsWith('@@'));
+  rmSync(dir, { recursive: true, force: true });
+  return line ? JSON.parse(line.slice(2)) : { harnessError: (out.stderr || out.stdout || '').slice(-400) };
+}
+
+// The exact state a real installation was found in: the folder was set while season 1 was
+// active, then a second season became active carrying first_run_done from a pre-ELP-05 build.
+// No folder, no prompt, no error — and no backup since.
+{
+  const r = runAgainstDb(`
+    setSetting(getDb(), 'backup_dir', '/tmp/kunden-backups');
+    closeDb();
+    const s = createSeason('Allgemein');
+    activateSeason(s.id);
+    setSetting(getDb(), 'first_run_done', '1');   // pre-ELP-05: marked without a folder saved
+    closeDb();
+    const broken = getBackupConfig();
+    adoptLegacyBackupConfig();
+    const repaired = getBackupConfig();
+    setBackupDir('/tmp/spaeter-geaendert');       // a later user choice must survive
+    adoptLegacyBackupConfig();
+    const stable = getBackupConfig();
+    console.log('@@' + JSON.stringify({ broken, repaired, stable }));
+  `);
+  if (r.harnessError) {
+    check('adoption harness ran', false, r.harnessError);
+  } else {
+    check('before adoption the folder is invisible', r.broken.dir === '', r.broken.dir);
+    check(
+      'adoption lifts the folder out of the inactive season',
+      r.repaired.dir === '/tmp/kunden-backups',
+      r.repaired.dir,
+    );
+    check('adoption marks the prompt as answered', r.repaired.prompted === true);
+    check('adoption does not re-run over a later choice', r.stable.dir === '/tmp/spaeter-geaendert', r.stable.dir);
+  }
+}
+
+// The other half of the same bug: prompted, but no folder in any season. Carrying that flag
+// over would leave the prompt dead forever, so it is re-derived from what was actually adopted.
+{
+  const r = runAgainstDb(`
+    setSetting(getDb(), 'first_run_done', '1');   // marked, but nothing was ever saved
+    closeDb();
+    adoptLegacyBackupConfig();
+    console.log('@@' + JSON.stringify({ cfg: getBackupConfig() }));
+  `);
+  if (r.harnessError) {
+    check('dead-prompt harness ran', false, r.harnessError);
+  } else {
+    check('a prompt marked without a folder is reset', r.cfg.prompted === false && r.cfg.dir === '', JSON.stringify(r.cfg));
+  }
+}
 
 console.log(`\n${failures === 0 ? 'alles ok' : `${failures} fehlgeschlagen`}\n`);
 await shutdown(failures === 0 ? 0 : 1);

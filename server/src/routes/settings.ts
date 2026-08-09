@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type Database from 'better-sqlite3';
-import { ARCHIVE_AFTER_DAYS, PURGE_AFTER_DAYS, getDb, setActiveSeasonLabel } from '../db';
+import { ARCHIVE_AFTER_DAYS, PURGE_AFTER_DAYS, getBackupConfig, getDb, setActiveSeasonLabel } from '../db';
 
 /** Settings stored as JSON arrays; returned parsed, accepted as arrays. */
 const ARRAY_KEYS = new Set([
@@ -24,22 +24,7 @@ const ARRAY_KEYS = new Set([
  * key/value table can never be turned into arbitrary storage — same idea as the
  * `writable` allowlist in lib/crud.ts. Add new settings here when you introduce them.
  */
-const WRITABLE_SETTINGS = new Set<string>([
-  ...ARRAY_KEYS,
-  'saison',
-  'backup_dir',
-  'first_run_done',
-  'attention_window_days',
-]);
-
-/**
- * Privileged keys are host-side filesystem paths the Electron main process consumes at
- * startup (`backup_dir` drives runBackup's mkdir/copy/rm). Only trusted no-Origin local
- * callers (Electron main, check-backup) may set them — a browser renderer, including an
- * XSS, always carries a browser-forced Origin and so is refused. See the X-01 guard in
- * index.ts for the "absent Origin = trusted local caller" model this reuses.
- */
-const PRIVILEGED_SETTINGS = new Set<string>(['backup_dir']);
+const WRITABLE_SETTINGS = new Set<string>([...ARRAY_KEYS, 'saison', 'attention_window_days']);
 
 function safeParse(s: string): unknown {
   try {
@@ -66,6 +51,11 @@ function getAllSettings(db: Database.Database): Record<string, unknown> {
   // object that is missing them.
   out.archive_after_days = ARCHIVE_AFTER_DAYS;
   out.purge_after_days = PURGE_AFTER_DAYS;
+  // The backup folder moved to the registry (WP-39) but the Settings card still reads it from
+  // here, so publish it the same read-only way: written last, absent from WRITABLE_SETTINGS,
+  // so a leftover per-season `backup_dir` row from before the move cannot shadow the real value
+  // and the PATCH cannot write it. Saving goes through POST /api/backup/dir.
+  out.backup_dir = getBackupConfig().dir;
   return out;
 }
 
@@ -92,16 +82,6 @@ settingsRouter.patch('/', (req, res) => {
   for (const [k, v] of Object.entries(body)) {
     if (ARRAY_KEYS.has(k) && !Array.isArray(v)) {
       return res.status(400).json({ error: `${k} muss eine Liste sein` });
-    }
-  }
-
-  // A browser renderer (incl. an XSS) always sends an Origin it cannot forge away, so
-  // refuse privileged filesystem-path keys from any Origin-bearing caller. The real UI
-  // never PATCHes backup_dir — it goes through the chooseBackupDir IPC path — so this
-  // only ever trips a hostile request.
-  if (req.headers.origin !== undefined) {
-    for (const k of Object.keys(body)) {
-      if (PRIVILEGED_SETTINGS.has(k)) return res.status(403).json({ error: 'Forbidden' });
     }
   }
 

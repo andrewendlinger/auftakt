@@ -79,6 +79,17 @@ interface Registry {
   landing?: Partial<LandingContent>;
   /** App-global, not landing content: the header switcher shows it on every page. */
   terms?: SeasonTerms;
+  /**
+   * Backup target and first-run state. These lived in the *active season's* settings table
+   * until WP-39, which made switching season silently disable backups: `ensureBackupDir` saw
+   * an empty `backup_dir` on the new season and — where a pre-ELP-05 build had already set
+   * `first_run_done` there — no prompt either, so the app ran on with no backup, no prompt and
+   * no error. Season-independent by nature, so they belong here, next to `landing`.
+   *
+   * `undefined` means "not yet adopted from the season DBs" — see adoptLegacyBackupConfig.
+   */
+  backupDir?: string;
+  backupPrompted?: boolean;
 }
 
 const DEFAULT_SEASON_LABEL = 'Festival 2026';
@@ -340,6 +351,79 @@ export function setSeasonTerms(patch: { season?: string | null; seasonPlural?: s
   saveRegistry(reg);
 }
 
+export interface BackupConfig {
+  dir: string;
+  prompted: boolean;
+}
+
+export function getBackupConfig(): BackupConfig {
+  const reg = readRegistry();
+  return { dir: reg.backupDir ?? '', prompted: reg.backupPrompted === true };
+}
+
+export function setBackupDir(dir: string): void {
+  const reg = readRegistry();
+  reg.backupDir = dir;
+  saveRegistry(reg);
+}
+
+export function setBackupPrompted(): void {
+  const reg = readRegistry();
+  reg.backupPrompted = true;
+  saveRegistry(reg);
+}
+
+/**
+ * Lift `backup_dir`/`first_run_done` out of the season DBs into the registry, once (WP-39).
+ *
+ * Self-detecting rather than marker-gated (the house rule in docs/ARCHITECTURE.md): an absent
+ * `backupDir` key *is* the "not yet adopted" signal, and adopting twice is harmless anyway.
+ *
+ * It is a repair, not just a move. `prompted` is re-derived as "a folder was actually adopted"
+ * instead of being carried over, because the state this fixes is precisely a season marked
+ * prompted with no folder to show for it — a pre-ELP-05 build set the flag before the cancel
+ * guard, which killed the prompt for good. Re-deriving it brings the prompt back for anyone
+ * stuck that way, and costs nothing for anyone who already has a folder.
+ *
+ * Called once from the server bootstrap, not from readRegistry(): every getDb() reads the
+ * registry, and this opens every season file.
+ */
+export function adoptLegacyBackupConfig(): void {
+  const reg = readRegistry();
+  if (reg.backupDir !== undefined) return;
+
+  // Active season first: where more than one season carries a folder, the one the user last
+  // configured through the UI is the one they mean.
+  const ordered = [...reg.seasons].sort((a, b) =>
+    a.id === reg.activeId ? -1 : b.id === reg.activeId ? 1 : 0,
+  );
+  let dir = '';
+  for (const s of ordered) {
+    const active = s.id === reg.activeId;
+    const path = join(dataDir(), s.file);
+    if (!active && !existsSync(path)) continue;
+    let db: Database.Database | null = null;
+    try {
+      // Same raw open as seasonStats: inactive seasons never ran a migration, so the read is
+      // wrapped and a legacy or unreadable file simply contributes nothing.
+      db = active ? getDb() : new Database(path);
+      const found = (getSetting(db, 'backup_dir') ?? '').trim();
+      if (found) {
+        dir = found;
+        break;
+      }
+    } catch {
+      /* legacy schema / unreadable file — skip it */
+    } finally {
+      if (db && !active) db.close();
+    }
+  }
+
+  reg.backupDir = dir;
+  reg.backupPrompted = dir !== '';
+  saveRegistry(reg);
+}
+
 export function getLanding(): LandingContent {
   const reg = readRegistry();
   return {
@@ -563,8 +647,9 @@ export interface SeasonCopyOptions {
 }
 
 /**
- * Settings a copy must not carry: the new season names itself, and the other two
- * describe this machine rather than the season.
+ * Settings a copy must not carry: the new season names itself. The other two moved to the
+ * registry in WP-39 and are no longer written to any season, but old databases still hold
+ * their rows — and a copied `backup_dir` would be a stale path from before the move.
  */
 const SETTINGS_NOT_COPIED = new Set(['saison', 'backup_dir', 'first_run_done']);
 
@@ -997,8 +1082,6 @@ export const DEFAULT_TASK_SORT = [
 
 const DEFAULT_SETTINGS: Record<string, string> = {
   saison: 'Festival 2026',
-  backup_dir: '',
-  first_run_done: '0',
   event_types: JSON.stringify(DEFAULT_EVENT_TYPES),
   project_statuses: JSON.stringify(DEFAULT_PROJECT_STATUSES),
   task_sort: JSON.stringify(DEFAULT_TASK_SORT),
