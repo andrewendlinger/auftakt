@@ -104,7 +104,12 @@ that season's settings.
 
 ### 7 · Restore
 
-- [ ] Quit. Copy a `auftakt-<stamp>/` folder's contents over the data dir (`.db` files + `seasons.json`).
+- [ ] **Quit first, then delete any `*.db-wal` / `*.db-shm` left in the data dir.** A backup folder
+      holds only `.db` files and `seasons.json`, so a sidecar from the *previous* database survives
+      the copy and is replayed into the restored file on the next launch — the same
+      `database disk image is malformed` crash the import path unlinks them to avoid. Restoring
+      under a *running* app is worse still: the open handle never re-reads the file.
+- [ ] Copy a `auftakt-<stamp>/` folder's contents over the data dir (`.db` files + `seasons.json`).
 - [ ] Launch → all seasons are present, the season switcher lists them, data matches that timestamp.
 - [ ] Settings still names the backup folder — it rides along in `seasons.json` (WP-39).
 - [ ] A season restored from before the local-time conversion carries UTC stamps until it is
@@ -123,7 +128,8 @@ that season's settings.
 - **Installer metadata (Windows, WP-27).** While a Windows machine is at hand, check the two
   places that only a real install shows: *Einstellungen → Apps → Installierte Apps → Auftakt
   `<version>`* must list **Herausgeber: Andre Wendlinger**, and right-click → *Eigenschaften → Details*
-  on both `Auftakt Setup <version>.exe` and the installed `Auftakt.exe` must show **Firma: Andre
-  Wendlinger** and **Copyright: © 2026 Andre Wendlinger**. SmartScreen's „Unbekannter Herausgeber"
+  on both `Auftakt-Setup-<version>.exe` (dashes — the v0.6.0 rename, see `electron-builder.yml`;
+  the old `Auftakt Setup <version>.exe` no longer exists) and the installed `Auftakt.exe` must show
+  **Firma: Andre Wendlinger** and **Copyright: © 2026 Andre Wendlinger**. SmartScreen's „Unbekannter Herausgeber"
   on first run is **expected and unrelated** — that one needs the certificate deferred in
   `DECISIONS.md`, not a metadata field.
