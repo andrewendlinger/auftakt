@@ -76,6 +76,11 @@ TODO.md
 TODone.md
 TODO-security.md
 
+# Session-Notizen für einen manuellen Testlauf — ephemer, nicht die Checkliste selbst.
+# Was sich davon als dauerhaft herausstellt, gehört nach docs/BACKUP-TESTING.md, nicht hierher.
+MACOS-SESSION.md
+WINDOWS-SESSION.md
+
 # agent tooling (local only)
 CLAUDE.md
 .claude/

@@ -33,6 +33,15 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   server leaves it holding a deleted file. Restart through `npm run demo`.
 - Kill stray servers by port, never with a broad `pkill`:
   `lsof -ti tcp:4317 tcp:5317 | xargs kill`.
+- **A running dev server hijacks a *packaged* app started next to it**, which matters when working
+  through `BACKUP-TESTING.md`. `waitForServer()` polls `/api/health` on 4317 and the dev server
+  answers 200, so the gate passes, the window loads against `.data`, and a `--user-data-dir` meant
+  to isolate the run is silently void — every result after that describes the wrong database. The
+  packaged server's own `EADDRINUSE` surfaces separately, as a generic Electron error dialog at
+  unrelated timing, which reads as a different bug. Kill dev servers first, and run only one
+  Auftakt at a time. `AUFTAKT_PORT=4417` moves the packaged app if you truly need both;
+  `AUFTAKT_DATA_DIR` will *not* move it, because `electron/main.ts` overwrites that variable
+  before the server is imported.
 
 ## Playwright traps
 

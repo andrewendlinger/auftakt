@@ -84,7 +84,11 @@ that season's settings.
 - [ ] The dialog names where the previous database was backed up.
 - [ ] App relaunches **and opens** — no crash, no error on startup.
 - [ ] The imported data is visible (not the old data — a silent no-op is the other half of the bug).
-- [ ] Check the data dir: **no `-wal` / `-shm` left next to the active season's `.db`**.
+- [ ] **Quit, then** check the data dir: **no `-wal` / `-shm` left next to the active season's
+      `.db`**. While the app runs they are supposed to be there — the connection is open — so
+      checking too early reads the normal state as the failure. On macOS closing the window is not
+      quitting (`window-all-closed` only calls `quit()` off darwin), so confirm with
+      `lsof -ti tcp:4317` before believing the result.
 - [ ] Open the named pre-import backup → it contains the *previous* data and is not empty.
 - [ ] Now add a season, switch to it, and import a second database from there. Quit, relaunch.
       **This is the exact crash repro — it must open cleanly.**
