@@ -217,9 +217,12 @@ The derivation lives in `client/src/lib/eventTime.ts`, not in `EventEditor` — 
 test and the client has no browser-level coverage yet (issue #7), so the part that can actually be
 wrong sits where `check:unit` reaches it.
 
-**Two inputs are refused rather than interpreted**, and both are states the old single
-`datetime-local` could not express:
+**Three inputs are refused rather than interpreted**, all of them states the old single
+`datetime-local` could not express. Each is input that would otherwise be discarded on save with
+the boxes still showing it — the split fields make it much easier to leave one of them behind:
 
+- *Anything next to an empty start date.* „Datum offen" stores `NULL` and nothing else, so an end
+  date, an end time or a start time typed there does not survive Speichern.
 - *One clock time without the other.* `end_at` is NULL or sixteen characters and nothing between,
   so an end date without an end time would mean inventing a time or silently discarding the date
   the user just typed.
@@ -227,9 +230,24 @@ wrong sits where `check:unit` reaches it.
   easier to produce than the old control did, and every reader would render the nonsense
   faithfully. An end *equal* to the start stays legal — a zero-length marker is not a mistake.
 
+An end time **earlier in the clock** than the start is not that third case: with no explicit end
+date, `23:00–01:00` inherits the day *after* the start. A festival's late-night events are the
+common case, and refusing them as „end before start" pointed at a date box the user had left
+empty on purpose.
+
 The storage form is untouched: `NULL` / 10 characters / 16 characters, `all_day` still `1` for the
 date-only shape. `all_day` and a NULL `start_at` remain orthogonal, as before; nothing reads the
-flag in that state.
+flag in that state — the derivation writes the `0` that `demo.ts` and the CSV importer already
+store there, so that a date-less row is not rewritten just for being opened.
+
+**A row whose four boxes were never touched is written back verbatim, not derived.** The boxes
+describe what the *dialog* can express, which is less than the table holds: the CSV importer
+leaves seconds on a timestamp (`toIsoLocal` only swaps the space for a `T`) and reads `all_day`
+off the start cell alone, so an imported start and end can disagree about carrying a clock time.
+Deriving over such a row rewrites data nobody touched, and refusing it — the rule above would —
+locks the user out of the title and the notes for a shape they did not create and cannot see.
+Reading a value back unchanged cannot be wrong, so in that state there is nothing to refuse
+either. Repair happens when the user edits the times, not when they open the dialog.
 
 ---
 

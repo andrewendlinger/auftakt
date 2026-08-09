@@ -169,6 +169,26 @@ export function TextInput({
   );
 }
 
+/**
+ * „Enter saves" for a single-line input: `onKeyDown={onEnterKey(submit)}`.
+ *
+ * Per input, never on the dialog or the grid around it — a `RichTextEditor` reads Enter as a
+ * paragraph, and `PillSelect`/`PillsField` re-implement the keyboard contract of the `<select>`
+ * they replaced, Enter included (RTE-11). Neither may see it.
+ *
+ * **Never on `type="date"` or `type="time"`.** A native picker reports `value === ''` for
+ * anything it considers incomplete, so Enter pressed halfway through typing a date submits the
+ * empty string, not the digits on screen — in the event dialog that wrote „Datum offen" over a
+ * stored date and dropped both clock times (WP-40).
+ */
+export function onEnterKey(run: () => void) {
+  return (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    run();
+  };
+}
+
 export function Select({
   children,
   invalid,
@@ -500,6 +520,9 @@ export function RecordFormModal({
                 value={vals[f.name]}
                 invalid={invalid(f)}
                 onBlur={() => markTouched(f.name)}
+                // Every entity dialog gets the event dialog's Enter-to-save, from one place —
+                // except on a `date` field, where a half-typed value reads as empty.
+                onKeyDown={f.type === 'date' ? undefined : onEnterKey(submit)}
                 onChange={(e) => set(f.name, e.target.value)}
                 placeholder={f.placeholder}
               />

@@ -1,12 +1,18 @@
-import { useState, type KeyboardEvent } from 'react';
-import { Label, Modal, TextInput } from './fields';
+import { useState } from 'react';
+import { Label, Modal, TextInput, onEnterKey } from './fields';
 import { PillSelect } from './PillSelect';
 import { RichTextEditor } from './RichTextEditor';
 import { Btn } from './ui';
 import { api } from '../api/client';
 import type { CustomColumnOption, EventItem } from '../api/types';
 import { formatEventWhen } from '../lib/dates';
-import { eventTimeProblem, fieldsFromEvent, whenFromFields, type EventFields } from '../lib/eventTime';
+import {
+  eventTimeProblem,
+  fieldsFromEvent,
+  whenFromFields,
+  type EventFields,
+  type EventWhen,
+} from '../lib/eventTime';
 import { useGuardedAction, useInvalidateAll, useUndoablePatch } from '../hooks';
 
 export interface EventParent {
@@ -66,8 +72,8 @@ export function EventEditor({
   // state, so users concluded the dialog was broken and left via Abbrechen or Escape — losing
   // everything they had typed, rich-text notes included (RTE-10).
   const missingTitle = !title.trim();
-  // The second blocking reason, shown next to the fields it is about rather than in the footer.
-  const timeProblem = eventTimeProblem(fields);
+
+  const timesTouched = FIELD_KEYS.some((k) => fields[k] !== initial.when[k]);
 
   // A stray backdrop click used to discard the whole dialog; it asks first once anything has
   // been entered (TTU-17). Compared against what the dialog opened with, not against defaults.
@@ -76,11 +82,28 @@ export function EventEditor({
     title !== initial.title ||
     location !== initial.location ||
     notes !== initial.notes ||
-    FIELD_KEYS.some((k) => fields[k] !== initial.when[k]);
+    timesTouched;
 
-  // Exactly what „Speichern" would write, so the summary below the fields cannot describe
-  // something other than what lands in the database.
-  const when = whenFromFields(fields);
+  /**
+   * The three date columns as „Speichern" would write them — also what the summary below the
+   * fields renders, so it cannot describe something other than what lands in the database.
+   *
+   * A row whose four boxes are untouched is written back exactly as it was read, rather than
+   * derived. The boxes cannot express everything the table holds: the CSV importer leaves the
+   * seconds on `2026-09-04T19:30:45` and derives `all_day` from the start cell alone, so an
+   * imported start and end can disagree about carrying a clock time, and `all_day` is
+   * unconstrained on a row with no date at all. Deriving over such a row rewrites data the user
+   * never touched — and refusing it (`eventTimeProblem`) would lock them out of the title and
+   * the notes too, for a shape they did not create and cannot see. Nothing read back unchanged
+   * can be wrong, so there is also nothing left to refuse.
+   */
+  const stored: EventWhen | null =
+    event && !timesTouched
+      ? { start_at: event.start_at, end_at: event.end_at, all_day: event.all_day ? 1 : 0 }
+      : null;
+  const when = stored ?? whenFromFields(fields);
+  // The second blocking reason, shown next to the fields it is about *and* in the footer.
+  const timeProblem = stored ? null : eventTimeProblem(fields);
 
   const submit = async () => {
     if (missingTitle || timeProblem || busy) return;
@@ -109,16 +132,15 @@ export function EventEditor({
     }
   };
 
-  /**
-   * Enter saves. Attached to each single-line input rather than to the grid, on purpose: the
-   * notes are a `RichTextEditor` where Enter is a paragraph, and `PillSelect` re-implements the
-   * keyboard contract of the `<select>` it replaced, Enter included (RTE-11). Neither may see it.
-   */
-  const onEnter = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key !== 'Enter') return;
-    e.preventDefault();
-    void submit();
-  };
+  // Enter saves — the shared handler, on the two text boxes only. See `onEnterKey` for why the
+  // date and time boxes are not among them and why this is not on the grid.
+  const onEnter = onEnterKey(submit);
+
+  // Both blocking reasons reach the footer. The time problem is also shown in red next to the
+  // boxes, but the dialog body scrolls: with a few paragraphs of Notizen open, that line is off
+  // screen and Speichern is greyed out with no reason given anywhere — the RTE-10 symptom the
+  // footer hint exists to prevent.
+  const blocker = missingTitle ? 'Bitte ausfüllen: Titel' : timeProblem;
 
   return (
     <Modal
@@ -128,9 +150,7 @@ export function EventEditor({
       dirty={dirty}
       footer={
         <>
-          {missingTitle && (
-            <p className="mr-auto self-center text-xs text-neutral-500">Bitte ausfüllen: Titel</p>
-          )}
+          {blocker && <p className="mr-auto self-center text-xs text-neutral-500">{blocker}</p>}
           <Btn onClick={onClose}>Abbrechen</Btn>
           <Btn variant="primary" onClick={submit} disabled={busy || missingTitle || !!timeProblem}>
             Speichern
@@ -174,7 +194,6 @@ export function EventEditor({
                 type="date"
                 aria-label={`${row.label} — Datum`}
                 value={fields[row.date]}
-                onKeyDown={onEnter}
                 onChange={setField(row.date)}
               />
             </div>
@@ -184,7 +203,6 @@ export function EventEditor({
                 type="time"
                 aria-label={`${row.label} — Uhrzeit`}
                 value={fields[row.time]}
-                onKeyDown={onEnter}
                 onChange={setField(row.time)}
               />
             </div>

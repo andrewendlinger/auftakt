@@ -10,13 +10,19 @@
  * The stored form is unchanged and must stay that way (`dates.ts`):
  *   start_at  NULL | "YYYY-MM-DD" | "YYYY-MM-DDTHH:mm"
  *   end_at    same
- *   all_day   1 for the date-only form, 0 for the timed one
+ *   all_day   1 for the date-only form, 0 for the timed one and for a row with no date at all
  * `EventList`, `Dashboard`, `PrintSheet`, `GlobalSearch` and `formatEventWhen` all read it; this
  * package changed the form, not the data.
  *
- * No `Date` is constructed anywhere here, deliberately. Every value is a naive local string and
- * comparing/slicing them as strings is exactly right — a `Date` round-trip is how the convention
- * gets broken (see the header of `dates.ts` and `scripts/check-dates.mjs`).
+ * These functions describe what the *boxes* mean, which is not everything the table can hold: a
+ * CSV import can leave seconds on a timestamp, and `seed.ts` derives `all_day` from the start
+ * cell alone, so an imported start and end can disagree about carrying a clock time. `EventEditor`
+ * writes a row whose boxes were never touched back verbatim rather than deriving over it — see
+ * the comment on `stored` there.
+ *
+ * No `Date` is constructed anywhere here, deliberately — `nextDay` included. Every value is a
+ * naive local string and comparing/slicing them as strings is exactly right; a `Date` round-trip
+ * is how the convention gets broken (see the header of `dates.ts` and `scripts/check-dates.mjs`).
  */
 
 /** The four boxes, each `''` when empty. */
@@ -45,6 +51,35 @@ function split(stored: string | null | undefined): [string, string] {
   return [stored.slice(0, 10), stored.slice(11, 16)];
 }
 
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+const pad = (n: number): string => String(n).padStart(2, '0');
+
+/**
+ * `"YYYY-MM-DD"` + one calendar day.
+ *
+ * Integer arithmetic on the three components, not `new Date(...).setDate(+1)`: this file's whole
+ * premise is that a naive local date never becomes a `Date`, and a calendar day is small enough
+ * to add by hand. Only reached for the inherited end date below, where the input is a date the
+ * browser's own picker produced.
+ */
+function nextDay(date: string): string {
+  let y = Number(date.slice(0, 4));
+  let mo = Number(date.slice(5, 7));
+  let d = Number(date.slice(8, 10)) + 1;
+  const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+  const last = mo === 2 && leap ? 29 : (DAYS_IN_MONTH[mo - 1] ?? 31);
+  if (d > last) {
+    d = 1;
+    mo += 1;
+  }
+  if (mo > 12) {
+    mo = 1;
+    y += 1;
+  }
+  return `${y}-${pad(mo)}-${pad(d)}`;
+}
+
 /**
  * Stored form → the four boxes.
  *
@@ -62,50 +97,70 @@ export function fieldsFromEvent(ev: StoredWhen | null | undefined): EventFields 
 /**
  * The four boxes → the stored form. The rules, in the order they are applied:
  *
- *   no start date          → „Datum offen": everything NULL. A time typed without a date is
- *                            dropped, and `all_day` stays 1 so the dropped time cannot leak
- *                            into the flag. (`all_day` and a NULL `start_at` are orthogonal;
- *                            nothing reads the flag in that state.)
+ *   no start date          → „Datum offen": everything NULL. Nothing else can be stored without
+ *                            it, which is why `eventTimeProblem` refuses to save the other boxes
+ *                            with something in them rather than dropping it here.
  *   no start time          → all-day, `start_at` ten characters.
  *   start time             → timed, `start_at` sixteen characters.
- *   end time, no end date  → the end inherits the start's date. This is 19:30–21:15 on the same
- *                            evening, which otherwise costs a second date entry for one event.
+ *   end time, no end date  → the end inherits the start's date — the *next* day when the end is
+ *                            earlier in the clock than the start, because 23:00–01:00 is one
+ *                            evening and not an end before its beginning. This is the common
+ *                            case (19:30–21:15) and otherwise costs a second date entry.
  *   no end at all          → `end_at` NULL. „timed, open end" is a shape `formatEventWhen`
  *                            already renders.
  *
- * The end always takes the same shape as the start, so a mixed pair (16-character start with a
- * 10-character end, which `formatEventWhen` would render as „19:30–00:00") cannot be produced.
- * `eventTimeProblem` blocks the input that would ask for one.
+ * Each end takes the shape of its own boxes, so a value is always NULL, ten characters or
+ * sixteen — never the eleven-character stub a missing end time used to produce. A *mixed* pair
+ * (16-character start, 10-character end) is well-formed but means „19:30–00:00" to
+ * `formatEventWhen`, so `eventTimeProblem` refuses to let one be typed; the only mixed pairs in
+ * the table came from the CSV importer, and `EventEditor` writes those back untouched.
+ *
+ * `all_day` is derived from the start alone, as everywhere else in the app.
  */
 export function whenFromFields(f: EventFields): EventWhen {
-  if (!f.startDate) return { start_at: null, end_at: null, all_day: 1 };
+  // `all_day` is unconstrained with no date — nothing reads the flag while `start_at` is NULL —
+  // so it takes the 0 that `demo.ts` and the CSV importer already write for a date-less row.
+  // A 1 here would fork every such row on the first save that touched anything else.
+  if (!f.startDate) return { start_at: null, end_at: null, all_day: 0 };
 
-  const allDay = !f.startTime;
-  const start_at = allDay ? f.startDate : `${f.startDate}T${f.startTime}`;
+  const start_at = f.startTime ? `${f.startDate}T${f.startTime}` : f.startDate;
 
-  const endDate = f.endDate || (f.endTime ? f.startDate : '');
-  const end_at = !endDate ? null : allDay ? endDate : `${endDate}T${f.endTime}`;
+  const inherited = f.endTime && f.endTime < f.startTime ? nextDay(f.startDate) : f.startDate;
+  const endDate = f.endDate || (f.endTime ? inherited : '');
+  const end_at = !endDate ? null : f.endTime ? `${endDate}T${f.endTime}` : endDate;
 
-  return { start_at, end_at, all_day: allDay ? 1 : 0 };
+  return { start_at, end_at, all_day: f.startTime ? 0 : 1 };
 }
 
 /**
  * The blocking reason not to save, or null — the same role `missingTitle` plays for the title,
  * and shown through the same footer hint plus disabled „Speichern" (RTE-10).
  *
- * Only two things are refused, both of them states the old dialog could not express at all:
+ * Three things are refused, all of them states the old dialog could not express at all. Each one
+ * is input that would otherwise be *thrown away* on save with the boxes still showing it:
  *
+ *  - **Anything without a start date.** „Datum offen" stores NULL and nothing else, so an end —
+ *    or a start time — typed next to an empty start date does not survive Speichern.
  *  - **One clock time without the other.** The stored form offers `end_at` as NULL or sixteen
  *    characters and nothing in between, so an end date without an end time would have to either
  *    invent a time or silently discard the date the user just typed. Asking is better than both.
- *  - **An end before its start.** Separate date and time boxes plus the inherited end date make
- *    this much easier to produce than the old single control did, and every reader — the list,
- *    the dashboard, the print sheets — would render the nonsense faithfully.
+ *  - **An end before its start.** Separate date and time boxes make this much easier to produce
+ *    than the old single control did, and every reader — the list, the dashboard, the print
+ *    sheets — would render the nonsense faithfully. An end time that is merely earlier in the
+ *    *clock* than the start is not this case: it rolls over midnight, see `whenFromFields`.
  *
  * An end *equal* to its start is allowed: a zero-length appointment is a legitimate marker.
+ *
+ * Only ever ask this about boxes the user has touched. Data that was merely *read* can hold
+ * shapes the boxes cannot express, and refusing those locks the user out of the title and the
+ * notes as well — `EventEditor` skips the check for an untouched row and writes it back verbatim.
  */
 export function eventTimeProblem(f: EventFields): string | null {
-  if (!f.startDate) return null; // „Datum offen" — nothing else is stored, so nothing can clash.
+  if (!f.startDate) {
+    if (f.endDate || f.endTime) return 'Ein Ende ohne Beginn kann nicht gespeichert werden.';
+    if (f.startTime) return 'Eine Uhrzeit ohne Datum kann nicht gespeichert werden.';
+    return null; // „Datum offen" — nothing is stored, so nothing can clash.
+  }
 
   const hasEnd = !!(f.endDate || f.endTime);
   if (hasEnd && !f.startTime !== !f.endTime) {
