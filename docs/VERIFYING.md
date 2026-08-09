@@ -32,7 +32,10 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **`npm run demo:seed` `rmSync`s the whole `.demo` directory**, so re-seeding under a running
   server leaves it holding a deleted file. Restart through `npm run demo`.
 - Kill stray servers by port, never with a broad `pkill`:
-  `lsof -ti tcp:4317 tcp:5317 | xargs kill`.
+  `lsof -ti tcp:4317 -ti tcp:5317 | xargs kill`. **The `-i` must be repeated.** macOS ships
+  lsof 4.91, which reads the second `tcp:…` as a *filename*, prints its usage block to stderr and
+  exits non-zero having matched nothing — so `lsof -ti tcp:4317 tcp:5317` kills neither server
+  while looking like it did, and the next run then talks to the leaked one.
 - **A running dev server hijacks a *packaged* app started next to it**, which matters when working
   through `BACKUP-TESTING.md`. `waitForServer()` polls `/api/health` on 4317 and the dev server
   answers 200, so the gate passes, the window loads against `.data`, and a `--user-data-dir` meant
@@ -52,9 +55,14 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **Labels and table headers are CSS-uppercased.** `innerText` returns `DEADLINE` and
   `PRUNE-TEST`; a case-sensitive match finds nothing. Match case-insensitively.
 - **`Label` is a bare `<label>` with no `htmlFor`**, so `getByLabel` finds nothing. Address modal
-  fields by placeholder.
+  fields by placeholder — except in the event dialog, whose fields have none. Its four date/time
+  inputs carry an explicit `aria-label` (`Beginn — Datum`, `Beginn — Uhrzeit`,
+  `Ende (optional) — Datum`, `Ende (optional) — Uhrzeit`) and are the one place `getByLabel`
+  does work. Title, Ort and Notizen there still have to be addressed positionally.
 - **`TextInput` renders no `type` attribute** unless one is passed, so `input[type="text"]` misses
-  every EventEditor field. Use `input:not([type])`.
+  every untyped field. In the event dialog `input:not([type])` matches exactly two — Titel and
+  Ort — because Beginn and Ende are now four `type="date"`/`type="time"` inputs (WP-40). It used
+  to match the same two out of four; the selector is unchanged, any count around it is not.
 - **`InlineInput` autofocuses and React sets `value` as a *property***, so `input[value="…"]` never
   matches. Use `input:focus`.
 - **Setting `input[type=color].value` directly is deduped by React's value tracker.** Use the

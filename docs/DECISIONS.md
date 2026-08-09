@@ -200,6 +200,37 @@ deliberate, and harmless, because the audit step in `.github/workflows/build.yml
 **Remove the ignore when** `react-router-dom` ships a release that depends on a patched
 `react-router`. At that point this becomes an ordinary bump.
 
+## The event dialog derives its mode; the checkboxes do not come back (2026-08-10, WP-40)
+
+„Mit Uhrzeit" and „Datum offen (TBD)" are gone, and neither is a candidate for restoration. Both
+described a state the fields already carried: an empty date field wrote `start_at = NULL` long
+before the TBD box existed (`forStorage('')` returned `null`), and „ganztägig" is simply the
+absence of a clock time. The boxes were a second way to say the same thing, and being able to
+disagree with the fields is the only thing they added.
+
+What replaced them is a **live summary** under the date rows, rendered from the payload
+„Speichern" would send through the same `formatEventWhen` the list and the print sheets use. It
+cannot describe something other than what gets stored, which is what a label above a checkbox
+could never promise.
+
+The derivation lives in `client/src/lib/eventTime.ts`, not in `EventEditor` — the component has no
+test and the client has no browser-level coverage yet (issue #7), so the part that can actually be
+wrong sits where `check:unit` reaches it.
+
+**Two inputs are refused rather than interpreted**, and both are states the old single
+`datetime-local` could not express:
+
+- *One clock time without the other.* `end_at` is NULL or sixteen characters and nothing between,
+  so an end date without an end time would mean inventing a time or silently discarding the date
+  the user just typed.
+- *An end before its start.* Split fields plus an end date that inherits the start's make this far
+  easier to produce than the old control did, and every reader would render the nonsense
+  faithfully. An end *equal* to the start stays legal — a zero-length marker is not a mistake.
+
+The storage form is untouched: `NULL` / 10 characters / 16 characters, `all_day` still `1` for the
+date-only shape. `all_day` and a NULL `start_at` remain orthogonal, as before; nothing reads the
+flag in that state.
+
 ---
 
 ## Known sharp edges with no owner
