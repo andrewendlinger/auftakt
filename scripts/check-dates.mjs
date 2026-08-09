@@ -151,6 +151,47 @@ function localStampOf(iso) {
   return `${localDay(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+/* ---------- 2b. copying out of a season that was never migrated ---------- */
+
+// `erledigt_am` is the one stamp column COPY_COLS carries. Copy it out of a season that has
+// never been active — so never ran the conversion — and it lands in a target createSeason has
+// already marked `stamps_localtime = '1'`, where the migration will never look at it again.
+// A permanently 2h-wrong „erledigt am", with nothing left to repair it.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'auftakt-tz-copy-'));
+  const script = `
+    process.env.AUFTAKT_DATA_DIR = ${JSON.stringify(dir)};
+    const { getDb, closeDb, createSeason, copySeasonData, activateSeason } =
+      await import('${join(REPO, 'server/src/db.ts')}');
+    const db = getDb();
+    db.prepare("INSERT INTO tasks (title, status, erledigt_am) VALUES ('t','done','2026-03-04 23:30:00')").run();
+    db.prepare("DELETE FROM settings WHERE key = 'stamps_localtime'").run();  // never migrated
+    closeDb();                                                                // and never re-opened
+    const s = createSeason('Zweite');
+    copySeasonData(s.id, 1, { artists: false, contacts: false, events: false, projects: false, tasks: true, columns: true, settings: false });
+    activateSeason(s.id);
+    const copied = getDb().prepare('SELECT erledigt_am FROM tasks').get();
+    closeDb();
+    console.log('@@' + JSON.stringify({ copied }));
+  `;
+  const scriptPath = join(dir, 'copy.mts');
+  writeFileSync(scriptPath, script);
+  const out = spawnSync(join(REPO, 'server/node_modules/.bin/tsx'), [scriptPath], { encoding: 'utf8', env: process.env, cwd: join(REPO, 'server') });
+  const line = (out.stdout || '').split('\n').find((l) => l.startsWith('@@'));
+  if (!line) {
+    check('copy-from-unmigrated harness ran', false, (out.stderr || out.stdout || '').slice(-400));
+  } else {
+    const r = JSON.parse(line.slice(2));
+    const expected = localStampOf('2026-03-04T23:30:00Z');
+    check(
+      'erledigt_am copied out of an unmigrated season is converted',
+      r.copied.erledigt_am === expected,
+      `${r.copied.erledigt_am} (erwartet ${expected})`,
+    );
+  }
+  rmSync(dir, { recursive: true, force: true });
+}
+
 /* ---------- 3. the live API ---------- */
 
 const dataDir = mkdtempSync(join(tmpdir(), 'auftakt-tz-api-'));

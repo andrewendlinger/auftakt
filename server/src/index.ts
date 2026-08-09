@@ -2,7 +2,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getDb, purgeExpired } from './db';
+import { adoptLegacyBackupConfig, getDb, purgeExpired } from './db';
 import { HttpError } from './lib/query';
 import {
   artistsRouter,
@@ -33,6 +33,14 @@ try {
   purgeExpired(db);
 } catch (err) {
   console.error('purgeExpired failed (continuing without purge):', err);
+}
+// Lift the backup folder out of the season DBs into the registry (WP-39). Here rather than in
+// initDb because it reads *every* season file, and never fatal: without it the app still runs,
+// it just has no backup folder — which is the state this repairs, so do not make it fatal.
+try {
+  adoptLegacyBackupConfig();
+} catch (err) {
+  console.error('adoptLegacyBackupConfig failed (continuing):', err);
 }
 
 const app = express();

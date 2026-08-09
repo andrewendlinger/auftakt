@@ -4,13 +4,14 @@ import { basename, join } from 'node:path';
 import {
   BACKUP_KEEP,
   backupStamp,
+  getBackupConfig,
   getDb,
-  getSetting,
   importIntoActiveSeason,
   registryPath,
   resolveDbPath,
   seasonFiles,
-  setSetting,
+  setBackupDir,
+  setBackupPrompted,
   snapshotDb,
   validateImportCandidate,
 } from '../db';
@@ -96,23 +97,38 @@ export const backupRouter = Router();
  * `prompted` keeps the first-launch dialog from reappearing once a folder has been
  * chosen; Electron sets it only after the choice was saved, so a cancelled prompt
  * comes back on the next launch instead of disabling backups for good (ELP-05).
+ *
+ * Both come from the registry, not the active season (WP-39) — a backup folder that only
+ * applied to whichever season happened to be open is how backups stopped without a word.
+ * `hasData` stays per-season on purpose: it asks whether there is anything worth protecting
+ * *now*, and the folder it leads to is global once chosen.
  */
 backupRouter.get('/status', (_req, res) => {
-  const db = getDb();
-  res.json({
-    backupDir: getSetting(db, 'backup_dir') ?? '',
-    hasData: hasData(),
-    prompted: getSetting(db, 'first_run_done') === '1',
-  });
+  const cfg = getBackupConfig();
+  res.json({ backupDir: cfg.dir, hasData: hasData(), prompted: cfg.prompted });
 });
 
 backupRouter.post('/prompted', (_req, res) => {
-  setSetting(getDb(), 'first_run_done', '1');
+  setBackupPrompted();
   res.json({ ok: true });
 });
 
+/**
+ * Save the backup folder. Privileged: it is a host-side path the Electron main process
+ * later hands to mkdir/copy/rm, so only a trusted no-Origin local caller may set it — a
+ * browser renderer, including an XSS, always carries an Origin it cannot forge away. Same
+ * model as PRIVILEGED_SETTINGS in routes/settings.ts, which this replaced.
+ */
+backupRouter.post('/dir', (req, res) => {
+  if (req.headers.origin !== undefined) return res.status(403).json({ error: 'Forbidden' });
+  const dir = String((req.body as { dir?: unknown })?.dir ?? '').trim();
+  if (!dir) return res.status(400).json({ error: 'Kein Backup-Ordner angegeben.' });
+  setBackupDir(dir);
+  res.json({ ok: true, dir });
+});
+
 backupRouter.post('/', (req, res) => {
-  const dir = String((req.body as { dir?: unknown })?.dir ?? getSetting(getDb(), 'backup_dir') ?? '').trim();
+  const dir = String((req.body as { dir?: unknown })?.dir ?? getBackupConfig().dir).trim();
   if (!dir) return res.status(400).json({ error: 'Kein Backup-Ordner konfiguriert.' });
   try {
     res.json(runBackup(dir));
@@ -145,7 +161,7 @@ backupRouter.post('/import', (req, res) => {
   const path = String((req.body as { path?: unknown })?.path ?? '').trim();
   if (!path) return res.status(400).json({ error: 'Keine Datei angegeben.' });
   try {
-    const backupDir = getSetting(getDb(), 'backup_dir') ?? '';
+    const backupDir = getBackupConfig().dir;
     res.json(importIntoActiveSeason(path, backupDir));
   } catch (err) {
     res.status(400).json({ error: (err as Error).message });
