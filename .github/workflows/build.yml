@@ -242,9 +242,20 @@ jobs:
             release/latest.yml
             release/*.spdx.json
           if-no-files-found: ignore
+          # On a tag this artifact is only the hand-off to the `release` job below, which
+          # attaches the same files to the Release — where they live permanently and off
+          # the Actions storage meter. Without this key the upload inherits the 90-day
+          # default and every release parks a second ~225 MB copy for three months, which
+          # is what took the account to 90% of its 0.5 GB storage allowance. A dispatch
+          # build has no `release` job, so there the artifact *is* the deliverable: keep
+          # it long enough to install and test by hand.
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/v') && 1 || 7 }}
 
   # On a version tag (v1.2.3), gather both installers and publish a GitHub Release
   # so they can be downloaded from the repo's Releases page (not just the Actions run).
+  # This is also what makes the 1-day artifact retention above safe: the Release, not the
+  # workflow artifact, is the durable copy. Do not start relying on the artifact outliving
+  # the run.
   release:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
