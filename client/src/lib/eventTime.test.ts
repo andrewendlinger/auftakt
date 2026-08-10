@@ -1,0 +1,358 @@
+import { describe, expect, it } from 'vitest';
+import {
+  eventTimeProblem,
+  fieldsFromEvent,
+  fieldsTouched,
+  untouchedWhen,
+  whenFromFields,
+  withStartDate,
+  type EventFields,
+} from './eventTime';
+import { formatEventWhen } from './dates';
+
+/**
+ * WP-40 replaced the event dialog's two checkboxes with four date/time boxes, so the event's mode
+ * is now derived rather than toggled. That derivation is the whole risk of the package: every
+ * reader of `events` — the list, the dashboard, both print sheets, the global search — expects
+ * `start_at`/`end_at` as NULL, ten characters or sixteen, and none of them were touched.
+ *
+ * `EventEditor` itself has no test (no browser-level coverage exists yet, issue #7), which is
+ * precisely why the derivation lives in a module of its own instead of inside the component.
+ *
+ * Nothing here constructs a `Date`. That is the point — these are naive local strings and the
+ * timezone gate (`check:dates`) never needs to see this code.
+ */
+
+const F = (
+  startDate: string,
+  startTime = '',
+  endDate = '',
+  endTime = '',
+): EventFields => ({ startDate, startTime, endDate, endTime });
+
+describe('fieldsFromEvent', () => {
+  it('splits a timed event into date and time', () => {
+    expect(fieldsFromEvent({ start_at: '2026-09-04T19:30', end_at: '2026-09-04T21:15' })).toEqual(
+      F('2026-09-04', '19:30', '2026-09-04', '21:15'),
+    );
+  });
+
+  it('leaves the time box empty for an all-day event', () => {
+    // The old `withTime` widened a ten-character value with a hardcoded 09:00, so opening an
+    // all-day event showed a clock time nobody had entered — and saving wrote it back.
+    expect(fieldsFromEvent({ start_at: '2026-09-04', end_at: '2026-09-06' })).toEqual(
+      F('2026-09-04', '', '2026-09-06', ''),
+    );
+  });
+
+  it('gives „Datum offen" and a brand-new event four empty boxes', () => {
+    expect(fieldsFromEvent({ start_at: null, end_at: null })).toEqual(F(''));
+    expect(fieldsFromEvent(null)).toEqual(F(''));
+  });
+
+  it('reads each end independently — a start without an end is not an empty form', () => {
+    expect(fieldsFromEvent({ start_at: '2026-09-04T19:30', end_at: null })).toEqual(
+      F('2026-09-04', '19:30'),
+    );
+  });
+});
+
+describe('whenFromFields', () => {
+  it('stores an all-day event as ten characters with all_day 1', () => {
+    expect(whenFromFields(F('2026-09-04'))).toEqual({
+      start_at: '2026-09-04',
+      end_at: null,
+      all_day: 1,
+    });
+  });
+
+  it('stores a timed event as sixteen characters, the end inheriting the start date', () => {
+    // 19:30–21:15 on the same evening is the common case; without the inherited date it costs a
+    // second date entry.
+    expect(whenFromFields(F('2026-09-04', '19:30', '', '21:15'))).toEqual({
+      start_at: '2026-09-04T19:30',
+      end_at: '2026-09-04T21:15',
+      all_day: 0,
+    });
+  });
+
+  it('keeps an explicit end date across midnight', () => {
+    expect(whenFromFields(F('2026-09-04', '23:25', '2026-09-05', '01:00')).end_at).toBe(
+      '2026-09-05T01:00',
+    );
+  });
+
+  it('rolls the inherited end date over midnight when the end is earlier in the clock', () => {
+    // 23:00–01:00 with no second date is one evening. Inheriting the *start's* date instead made
+    // the commonest late-night shape unsaveable: it came back as „Das Ende liegt vor dem Beginn."
+    expect(whenFromFields(F('2026-09-04', '23:00', '', '01:00')).end_at).toBe('2026-09-05T01:00');
+    expect(eventTimeProblem(F('2026-09-04', '23:00', '', '01:00'))).toBeNull();
+  });
+
+  it('rolls over month, year and leap-day boundaries', () => {
+    const endOf = (startDate: string) => whenFromFields(F(startDate, '23:00', '', '01:00')).end_at;
+    expect(endOf('2026-08-31')).toBe('2026-09-01T01:00');
+    expect(endOf('2026-12-31')).toBe('2027-01-01T01:00');
+    expect(endOf('2026-02-28')).toBe('2026-03-01T01:00');
+    expect(endOf('2028-02-28')).toBe('2028-02-29T01:00'); // 2028 is a leap year
+    expect(endOf('2100-02-28')).toBe('2100-03-01T01:00'); // …2100 is not
+  });
+
+  it('leaves an equal end time on the start date rather than a day later', () => {
+    // Only *earlier* rolls over; equal is the zero-length marker `eventTimeProblem` allows.
+    expect(whenFromFields(F('2026-09-04', '19:30', '', '19:30')).end_at).toBe('2026-09-04T19:30');
+  });
+
+  it('stores a multi-day all-day range as two ten-character values', () => {
+    expect(whenFromFields(F('2026-09-04', '', '2026-09-06'))).toEqual({
+      start_at: '2026-09-04',
+      end_at: '2026-09-06',
+      all_day: 1,
+    });
+  });
+
+  it('stores nothing at all without a start date, with the all_day the rest of the app writes', () => {
+    // Nobody reads `all_day` while `start_at` is NULL, so the value is free — and it has to be
+    // the 0 that `demo.ts` and the CSV importer write, or every „Datum offen" row in the
+    // database would flip the first time anything else in the dialog was saved.
+    expect(whenFromFields(F('', '19:30', '2026-09-04', '21:15'))).toEqual({
+      start_at: null,
+      end_at: null,
+      all_day: 0,
+    });
+    // The boxes are not silently emptied on the way, though — this input is refused.
+    expect(eventTimeProblem(F('', '19:30', '2026-09-04', '21:15'))).not.toBeNull();
+  });
+
+  it('gives each end the shape of its own boxes rather than an eleven-character stub', () => {
+    // Refused input (`eventTimeProblem` blocks a mixed pair), but the function is exported on its
+    // own: an end date without an end time used to come back as the unparseable '2026-09-05T'.
+    expect(whenFromFields(F('2026-09-04', '19:30', '2026-09-05')).end_at).toBe('2026-09-05');
+    expect(whenFromFields(F('2026-09-04', '', '2026-09-05', '21:15')).end_at).toBe(
+      '2026-09-05T21:15',
+    );
+  });
+
+  it('leaves the end open when no end is given', () => {
+    expect(whenFromFields(F('2026-09-04', '19:30')).end_at).toBeNull();
+  });
+
+  it('only ever writes NULL, ten characters or sixteen', () => {
+    // Refused shapes included: the guarantee is the function's own, not one `EventEditor` grants
+    // it by checking `eventTimeProblem` first.
+    const inputs = [
+      F(''),
+      F('', '19:30'),
+      F('', '', '2026-09-04', '21:15'),
+      F('2026-09-04'),
+      F('2026-09-04', '19:30'),
+      F('2026-09-04', '', '2026-09-06'),
+      F('2026-09-04', '19:30', '', '21:15'),
+      F('2026-09-04', '19:30', '', '01:00'),
+      F('2026-09-04', '19:30', '2026-09-05', '01:00'),
+      F('2026-09-04', '19:30', '2026-09-05'),
+      F('2026-09-04', '', '2026-09-05', '21:15'),
+    ];
+    for (const f of inputs) {
+      const w = whenFromFields(f);
+      for (const v of [w.start_at, w.end_at]) {
+        expect(v === null || v.length === 10 || v.length === 16, JSON.stringify({ f, v })).toBe(true);
+      }
+      expect(w.all_day === 0 || w.all_day === 1).toBe(true);
+    }
+  });
+});
+
+describe('withStartDate', () => {
+  it('takes an end on the start’s own day along', () => {
+    expect(withStartDate(F('2026-09-04', '19:30', '2026-09-04', '21:15'), '2026-09-06')).toEqual(
+      F('2026-09-06', '19:30', '2026-09-06', '21:15'),
+    );
+  });
+
+  it('keeps an event that was rolled over midnight overnight', () => {
+    // The defect this exists for, end to end: 23:00–01:00 saved with no end date at all comes
+    // back with the *next* day in the Ende box, so moving the event one day forward left
+    // 05.09. 23:00 → 05.09. 01:00 and „Speichern" refused what it had just accepted.
+    const stored = whenFromFields(F('2026-09-04', '23:00', '', '01:00'));
+    const reopened = fieldsFromEvent(stored);
+    expect(reopened).toEqual(F('2026-09-04', '23:00', '2026-09-05', '01:00'));
+
+    const moved = withStartDate(reopened, '2026-09-05');
+    expect(moved).toEqual(F('2026-09-05', '23:00', '2026-09-06', '01:00'));
+    expect(eventTimeProblem(moved)).toBeNull();
+    expect(whenFromFields(moved).end_at).toBe('2026-09-06T01:00');
+  });
+
+  it('rolls the carried end date over month and year boundaries', () => {
+    const overnight = F('2026-12-30', '23:00', '2026-12-31', '01:00');
+    expect(withStartDate(overnight, '2026-12-31').endDate).toBe('2027-01-01');
+  });
+
+  it('leaves a range the user dated on both ends where it is', () => {
+    // Two hand-picked dates are a decision, not a derivation — and moving the start past the end
+    // is then the ordinary refusal, with both boxes on screen to correct.
+    const range = F('2026-09-10', '', '2026-09-12');
+    expect(withStartDate(range, '2026-09-11')).toEqual(F('2026-09-11', '', '2026-09-12'));
+    expect(eventTimeProblem(withStartDate(range, '2026-09-13'))).toMatch(/vor dem Beginn/);
+  });
+
+  it('leaves an empty end box, a first date and a cleared one alone', () => {
+    expect(withStartDate(F('2026-09-04', '19:30'), '2026-09-06')).toEqual(F('2026-09-06', '19:30'));
+    expect(withStartDate(F(''), '2026-09-04')).toEqual(F('2026-09-04'));
+    // Clearing the start is „Datum offen"; the other boxes stay until the user (or the button)
+    // clears them, so the refusal can still name what is in the way.
+    expect(withStartDate(F('2026-09-04', '19:30', '2026-09-04', '21:15'), '')).toEqual(
+      F('', '19:30', '2026-09-04', '21:15'),
+    );
+  });
+});
+
+// The three shapes the demo ships (events 1, 2 and 8 in `server/src/demo.ts`) plus a multi-day
+// range: opening an event and saving it untouched must be a byte-for-byte no-op, which is the
+// whole „the package changes the form, not the data" claim. Read by both describes below —
+// `round-trip` derives them, `untouchedWhen` refuses to.
+const stored = [
+  { start_at: '2026-09-04T19:30', end_at: '2026-09-04T21:15', all_day: 0 as const },
+  { start_at: '2026-08-25', end_at: null, all_day: 1 as const },
+  // Demo event 8, byte for byte: `all_day` is 0 on a date-less row, both there and out of the
+  // CSV importer. This fixture said 1 and passed while the shape that actually ships did not.
+  { start_at: null, end_at: null, all_day: 0 as const },
+  { start_at: '2026-08-31', end_at: '2026-09-02', all_day: 1 as const },
+];
+
+describe('round-trip', () => {
+  it('reproduces every stored shape exactly', () => {
+    for (const ev of stored) {
+      expect(whenFromFields(fieldsFromEvent(ev))).toEqual(ev);
+    }
+  });
+
+  it('reproduces a start and end whose shapes disagree', () => {
+    // Not producible in the dialog — `eventTimeProblem` refuses to let one be typed — but the
+    // CSV importer writes them: `seed.ts` reads all_day off the start cell and passes the end
+    // through under that same branch. Editing such an event must not rewrite its times.
+    for (const ev of [
+      { start_at: '2026-09-04T19:30', end_at: '2026-09-06', all_day: 0 as const },
+      { start_at: '2026-09-04', end_at: '2026-09-06T22:00', all_day: 1 as const },
+    ]) {
+      expect(whenFromFields(fieldsFromEvent(ev))).toEqual(ev);
+    }
+  });
+
+  it('cannot reproduce seconds, which is why an untouched row is not derived over', () => {
+    // `toIsoLocal` (server/src/seed.ts) only swaps the space for a T, so an imported cell can be
+    // nineteen characters. The boxes hold HH:mm and nothing finer, so deriving truncates —
+    // `untouchedWhen` returns the stored value verbatim when the boxes were never touched.
+    const ev = { start_at: '2026-09-04T19:30:45', end_at: null, all_day: 0 as const };
+    expect(whenFromFields(fieldsFromEvent(ev)).start_at).toBe('2026-09-04T19:30');
+  });
+
+  it('keeps what the list, dashboard and print sheets render', () => {
+    for (const ev of stored) {
+      expect(formatEventWhen(whenFromFields(fieldsFromEvent(ev)))).toBe(formatEventWhen(ev));
+    }
+  });
+});
+
+describe('untouchedWhen', () => {
+  // The guard the two tests above measure the need for: what the boxes cannot reproduce is not
+  // derived at all. It used to live in `EventEditor`, where no gate reaches it — the derivation
+  // was extracted into this module precisely because the component has no test (issue #7), and
+  // this is the branch that silently truncates real data when it goes wrong.
+
+  it('returns the stored row verbatim while the boxes still hold what it put there', () => {
+    for (const ev of stored) {
+      expect(untouchedWhen(ev, fieldsFromEvent(ev))).toEqual(ev);
+    }
+  });
+
+  it('keeps the seconds a CSV import left on a timestamp', () => {
+    // `toIsoLocal` (server/src/seed.ts) only swaps the space for a T, so an imported cell can be
+    // nineteen characters — three more than the boxes can hold.
+    const ev = { start_at: '2026-09-04T19:30:45', end_at: null, all_day: 0 };
+    expect(untouchedWhen(ev, fieldsFromEvent(ev))?.start_at).toBe('2026-09-04T19:30:45');
+  });
+
+  it('keeps a start and end whose shapes disagree, which the dialog refuses to be typed', () => {
+    const ev = { start_at: '2026-09-04T19:30', end_at: '2026-09-06', all_day: 0 };
+    const f = fieldsFromEvent(ev);
+    expect(untouchedWhen(ev, f)).toEqual(ev);
+    // …and the refusal that would otherwise lock the user out of the title and the notes is the
+    // caller's to skip, which a non-null answer here is what tells it to do.
+    expect(eventTimeProblem(f)).toMatch(/beide eine Uhrzeit/);
+  });
+
+  it('normalises `all_day` to 0 or 1 without touching the timestamps', () => {
+    expect(untouchedWhen({ start_at: '2026-08-25', end_at: null, all_day: true }, F('2026-08-25')))
+      .toEqual({ start_at: '2026-08-25', end_at: null, all_day: 1 });
+  });
+
+  it('derives instead as soon as one box is edited', () => {
+    const ev = { start_at: '2026-09-04T19:30:45', end_at: null, all_day: 0 };
+    const f = { ...fieldsFromEvent(ev), endTime: '21:15' };
+    expect(untouchedWhen(ev, f)).toBeNull();
+  });
+
+  it('derives for a new event, whose empty boxes match no stored row', () => {
+    expect(untouchedWhen(null, F(''))).toBeNull();
+    expect(untouchedWhen(undefined, F('2026-09-04'))).toBeNull();
+  });
+});
+
+describe('fieldsTouched', () => {
+  it('is false only while all four boxes match the baseline', () => {
+    const base = F('2026-09-04', '19:30', '2026-09-04', '21:15');
+    expect(fieldsTouched({ ...base }, base)).toBe(false);
+    // One per box: a key left out of the comparison is how the untouched-row guard stops working.
+    expect(fieldsTouched({ ...base, startDate: '2026-09-05' }, base)).toBe(true);
+    expect(fieldsTouched({ ...base, startTime: '20:00' }, base)).toBe(true);
+    expect(fieldsTouched({ ...base, endDate: '' }, base)).toBe(true);
+    expect(fieldsTouched({ ...base, endTime: '' }, base)).toBe(true);
+  });
+});
+
+describe('eventTimeProblem', () => {
+  it('accepts an event with no date at all', () => {
+    expect(eventTimeProblem(F(''))).toBeNull();
+  });
+
+  it('refuses the other boxes when the start date is empty', () => {
+    // „Datum offen" stores NULL and nothing else, so these are thrown away on save — with the
+    // dialog still showing them, and with no way to get them back.
+    expect(eventTimeProblem(F('', '', '2026-09-05', '21:15'))).toMatch(/Ende ohne Beginn/);
+    expect(eventTimeProblem(F('', '', '2026-09-05'))).toMatch(/Ende ohne Beginn/);
+    expect(eventTimeProblem(F('', '19:30'))).toMatch(/Uhrzeit ohne Datum/);
+  });
+
+  it('accepts the four well-formed shapes', () => {
+    expect(eventTimeProblem(F('2026-09-04'))).toBeNull();
+    expect(eventTimeProblem(F('2026-09-04', '19:30'))).toBeNull(); // timed, open end
+    expect(eventTimeProblem(F('2026-09-04', '19:30', '', '21:15'))).toBeNull();
+    expect(eventTimeProblem(F('2026-09-04', '', '2026-09-06'))).toBeNull();
+  });
+
+  it('refuses one clock time without the other', () => {
+    // `end_at` is NULL or sixteen characters and nothing in between, so an end date without an
+    // end time would mean inventing a time or discarding the date the user just typed.
+    expect(eventTimeProblem(F('2026-09-04', '19:30', '2026-09-05'))).toMatch(/beide eine Uhrzeit/);
+    expect(eventTimeProblem(F('2026-09-04', '', '2026-09-05', '21:15'))).toMatch(/beide eine Uhrzeit/);
+  });
+
+  it('refuses an end before its start', () => {
+    expect(eventTimeProblem(F('2026-09-04', '', '2026-09-03'))).toMatch(/vor dem Beginn/);
+    expect(eventTimeProblem(F('2026-09-04', '19:30', '2026-09-03', '21:15'))).toMatch(/vor dem Beginn/);
+    // Only with a date to compare: an end time alone that is earlier in the clock is the
+    // overnight case, and rolls to the next day instead of being refused.
+    expect(eventTimeProblem(F('2026-09-04', '19:30', '2026-09-04', '18:00'))).toMatch(
+      /vor dem Beginn/,
+    );
+    expect(eventTimeProblem(F('2026-09-04', '19:30', '', '18:00'))).toBeNull();
+  });
+
+  it('allows an end equal to its start', () => {
+    // A zero-length appointment is a marker, not a mistake.
+    expect(eventTimeProblem(F('2026-09-04', '19:30', '2026-09-04', '19:30'))).toBeNull();
+    expect(eventTimeProblem(F('2026-09-04', '', '2026-09-04'))).toBeNull();
+  });
+});

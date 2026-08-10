@@ -200,6 +200,65 @@ deliberate, and harmless, because the audit step in `.github/workflows/build.yml
 **Remove the ignore when** `react-router-dom` ships a release that depends on a patched
 `react-router`. At that point this becomes an ordinary bump.
 
+## The event dialog derives its mode; the checkboxes do not come back (2026-08-10, WP-40)
+
+„Mit Uhrzeit" and „Datum offen (TBD)" are gone, and neither is a candidate for restoration. Both
+described a state the fields already carried: an empty date field wrote `start_at = NULL` long
+before the TBD box existed (`forStorage('')` returned `null`), and „ganztägig" is simply the
+absence of a clock time. The boxes were a second way to say the same thing, and being able to
+disagree with the fields is the only thing they added.
+
+What replaced them is a **live summary** under the date rows, rendered from the payload
+„Speichern" would send through the same `formatEventWhen` the list and the print sheets use. It
+cannot describe something other than what gets stored, which is what a label above a checkbox
+could never promise.
+
+The derivation lives in `client/src/lib/eventTime.ts`, not in `EventEditor` — the component has no
+test and the client has no browser-level coverage yet (issue #7), so the part that can actually be
+wrong sits where `check:unit` reaches it.
+
+**Three inputs are refused rather than interpreted**, all of them states the old single
+`datetime-local` could not express. Each is input that would otherwise be discarded on save with
+the boxes still showing it — the split fields make it much easier to leave one of them behind:
+
+- *Anything next to an empty start date.* „Datum offen" stores `NULL` and nothing else, so an end
+  date, an end time or a start time typed there does not survive Speichern.
+- *One clock time without the other.* `end_at` is NULL or sixteen characters and nothing between,
+  so an end date without an end time would mean inventing a time or silently discarding the date
+  the user just typed.
+- *An end before its start.* Split fields plus an end date that inherits the start's make this far
+  easier to produce than the old control did, and every reader would render the nonsense
+  faithfully. An end *equal* to the start stays legal — a zero-length marker is not a mistake.
+
+An end time **earlier in the clock** than the start is not that third case: with no explicit end
+date, `23:00–01:00` inherits the day *after* the start. A festival's late-night events are the
+common case, and refusing them as „end before start" pointed at a date box the user had left
+empty on purpose. That inherited date comes back in the Ende box on the next open, so moving the
+event carries it along (`withStartDate`) — an end on the start's own day, or the one rolled past
+midnight, follows „Beginn — Datum". Without that, a shape the dialog had just derived became one
+it refused. A range dated by hand on **both** ends is a decision rather than a derivation and
+stays where it is.
+
+„Datum offen" survives as an *action*, not a mode: one button, next to the summary, that empties
+all four boxes. The state it names is those empty boxes — nothing is stored for it and nothing
+reads it back — but emptying them one at a time passes through „Ein Ende ohne Beginn kann nicht
+gespeichert werden", a refusal about a box the user had not reached yet. The button is the one
+gesture the checkbox used to be, without being a second place the mode can be stated.
+
+The storage form is untouched: `NULL` / 10 characters / 16 characters, `all_day` still `1` for the
+date-only shape. `all_day` and a NULL `start_at` remain orthogonal, as before; nothing reads the
+flag in that state — the derivation writes the `0` that `demo.ts` and the CSV importer already
+store there, so that a date-less row is not rewritten just for being opened.
+
+**A row whose four boxes were never touched is written back verbatim, not derived.** The boxes
+describe what the *dialog* can express, which is less than the table holds: the CSV importer
+leaves seconds on a timestamp (`toIsoLocal` only swaps the space for a `T`) and reads `all_day`
+off the start cell alone, so an imported start and end can disagree about carrying a clock time.
+Deriving over such a row rewrites data nobody touched, and refusing it — the rule above would —
+locks the user out of the title and the notes for a shape they did not create and cannot see.
+Reading a value back unchanged cannot be wrong, so in that state there is nothing to refuse
+either. Repair happens when the user edits the times, not when they open the dialog.
+
 ---
 
 ## Known sharp edges with no owner

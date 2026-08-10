@@ -32,7 +32,10 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **`npm run demo:seed` `rmSync`s the whole `.demo` directory**, so re-seeding under a running
   server leaves it holding a deleted file. Restart through `npm run demo`.
 - Kill stray servers by port, never with a broad `pkill`:
-  `lsof -ti tcp:4317 tcp:5317 | xargs kill`.
+  `lsof -ti tcp:4317 -ti tcp:5317 | xargs kill`. **The `-i` must be repeated.** macOS ships
+  lsof 4.91, which reads the second `tcp:…` as a *filename*, prints its usage block to stderr and
+  exits non-zero having matched nothing — so `lsof -ti tcp:4317 tcp:5317` kills neither server
+  while looking like it did, and the next run then talks to the leaked one.
 - **A running dev server hijacks a *packaged* app started next to it**, which matters when working
   through `BACKUP-TESTING.md`. `waitForServer()` polls `/api/health` on 4317 and the dev server
   answers 200, so the gate passes, the window loads against `.data`, and a `--user-data-dir` meant
@@ -52,9 +55,41 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **Labels and table headers are CSS-uppercased.** `innerText` returns `DEADLINE` and
   `PRUNE-TEST`; a case-sensitive match finds nothing. Match case-insensitively.
 - **`Label` is a bare `<label>` with no `htmlFor`**, so `getByLabel` finds nothing. Address modal
-  fields by placeholder.
+  fields by placeholder — except in the event dialog, whose fields have none. Its four date/time
+  inputs carry an explicit `aria-label` (`Beginn — Datum`, `Beginn — Uhrzeit`,
+  `Ende (optional) — Datum`, `Ende (optional) — Uhrzeit`) and are the one place `getByLabel`
+  does work. Title, Ort and Notizen there still have to be addressed positionally.
 - **`TextInput` renders no `type` attribute** unless one is passed, so `input[type="text"]` misses
-  every EventEditor field. Use `input:not([type])`.
+  every untyped field. In the event dialog `input:not([type])` matches Titel and Ort — two, but
+  only while the Notizen link bar is closed: `RichTextEditor` mounts `Link-Text` and
+  `Link-Adresse` on demand and those are untyped too, so the same selector counts four with the
+  bar open. Beginn and Ende are four `type="date"`/`type="time"` inputs (WP-40); they used to be
+  two of the untyped matches. The selector is unchanged, any count around it is not.
+  In a `RecordFormModal` the text branch passes `type="text"` explicitly, so `input:not([type])`
+  is **not** empty there either: `type: 'color'` renders its hex box through `ColorField`, which
+  builds its own untyped `TextInput`. The Artist and the Projekt dialog therefore hold exactly one
+  untyped input each — the one next to the colour swatch — and only Kontakt, Link and Dokument
+  have none at all.
+- **Scope modal selectors to the dialog**, not the page: `input:not([type])` also matches boxes on
+  the page behind it, so `.first()` silently addresses the wrong field and the dialog looks
+  unresponsive. `div.max-h-\[calc\(100vh-5rem\)\]` is `Modal`'s own card; `.last()` of those is
+  the topmost dialog.
+- **An event row is `li.group` and its ✎ is `[title="Bearbeiten"]` — neither is unique to events.**
+  Contact rows are `li.group` too, and the same `[title="Bearbeiten"]` button sits on every
+  contact, link and document row, so on an artist page an unscoped selector picks whichever card
+  the layout puts first. Scope to the section: `[data-section="termine"] li.group` (the arranger
+  stamps `data-section` outside arrange mode as well). Clicking the title text does nothing — only
+  the button opens the editor. „Neuer Termin" is reached through the `+ Termin` button in the
+  „Wichtige Termine" card, not a global one.
+- **A `type="date"` or `type="time"` box is three tab stops, not one** — the native picker tabs
+  through its own segments. Getting from Titel to the Notizen text in the event dialog takes 17
+  presses, so a fixed-length tab walk silently ends up *inside* a picker and reads as a broken tab
+  order. Walk until the expected element has focus instead of counting. The rich-text toolbar is
+  `tabIndex={-1}` and deliberately never appears in that walk; address its buttons by `title`.
+- **`Modal` traps Tab**, so a walk that expects to reach the page behind an open dialog loops
+  inside it forever. `PillSelect`'s option menu is the exception the trap makes: it portals to
+  `document.body`, so while it is open `document.activeElement` is *outside* the dialog card and
+  moves with ↑/↓, not Tab.
 - **`InlineInput` autofocuses and React sets `value` as a *property***, so `input[value="…"]` never
   matches. Use `input:focus`.
 - **Setting `input[type=color].value` directly is deduped by React's value tracker.** Use the
