@@ -197,7 +197,7 @@ jobs:
       # not *rejected at install*. Code signing is what would do that.
       - name: Attest build provenance (Windows)
         if: ${{ !github.event.repository.private && matrix.os == 'windows-latest' }}
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: |
             release/*.exe
@@ -206,7 +206,7 @@ jobs:
 
       - name: Attest build provenance (macOS)
         if: ${{ !github.event.repository.private && matrix.os == 'macos-latest' }}
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: |
             release/*.dmg
