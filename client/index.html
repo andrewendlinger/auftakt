@@ -33,11 +33,28 @@
     </script>
 
     <style>
-      /* The Auftakt gesture: a conductor's preparatory beat, played once while the
-         bundle parses and React mounts underneath. Pure SVG + CSS in the app's own
-         colours — it starts on its own, the script at the end of <body> only skips
-         and removes it. Timings are the "Attacca" choreography: 2700 ms total,
-         ictus (wordmark) at 1880 ms, hand fading from 2410 ms. */
+      /* The Auftakt gesture: a conductor's preparatory beat, played once on a cold start.
+         Pure SVG + CSS in the app's own colours. Timings are the "Attacca" choreography:
+         2700 ms total, ictus (wordmark) at 1880 ms, hand fading from 2410 ms.
+
+         It is played in two phases, and the split is the whole point. The overlay used to
+         start its keyframes the instant it painted — which is the instant the renderer
+         starts fetching, parsing and compiling a 1.3 MB bundle and mounting React. Its
+         frames competed with the app's startup by construction, and almost none of this
+         can be handed to the compositor to escape that: traced, bootMotion reports
+         compositeFailed 8320 (`offset-distance`) and the two trail strokes report 8224
+         (`stroke-dashoffset`). Five of the twelve animations here are drawn by the
+         renderer's main thread, every frame.
+
+         So phase A holds a still, empty frame — flat colour, nothing moving, indefinitely
+         and harmlessly — until the app signals that it is mounted and the main thread is
+         idle. Only then does phase B release the animation, onto a thread with nothing
+         left to do. Everything below is `animation-play-state: paused` until
+         `html.boot-play` says otherwise; the script at the end of <body> owns that class.
+
+         Pausing rather than withholding the `animation` shorthand is deliberate: adding
+         the shorthand later would construct the animations at that moment and re-run
+         style and layout for them, at precisely the frame that has to be cheap. */
       #boot-overlay {
         --T: 2700; /* total */
         --ti: 1880; /* ictus */
@@ -52,12 +69,43 @@
         /* Matches body and the Electron window's backgroundColor, so window → overlay
            → app is seamless. */
         background: #f6f6f4;
-        animation: bootOut 370ms linear calc((var(--ti) + 350) * 1ms) both;
+        /* Two animations. bootOut is the reveal and waits for phase B like everything
+           else; bootBail is a dead man's switch that never waits for anything.
+
+           Before the phases, the overlay's fade was pure CSS and would run whether or not
+           this file's script did — a script that threw left a transparent node and a
+           usable app. Pausing everything took that away: a throw would now leave an
+           opaque cream rectangle over a working app, with no reload affordance in a
+           packaged window. So bootBail runs unconditionally, well past the latest reveal
+           any live script can produce (1200 ms deadline + 3070 ms gesture + 400 ms
+           failsafe = 4670 ms), and ends on visibility: hidden so the corpse stops
+           swallowing clicks too — which the old opacity-only fade never did. */
+        animation:
+          bootOut 370ms linear calc((var(--ti) + 350) * 1ms) both,
+          bootBail 400ms linear 6000ms both;
       }
-      /* A click anywhere cuts it short. Separate keyframes, so the fade starts from
-         a full opacity instead of inheriting the long fade's progress. */
-      #boot-overlay.boot-skip {
-        animation: bootSkip 150ms linear both;
+      /* Nothing runs until phase B — except the bail, which is why the play-state is a
+         list rather than a single value. The universal selector is the point: a list of
+         animated selectors here would silently miss the next one added below. */
+      #boot-overlay {
+        animation-play-state: paused, running;
+      }
+      #boot-overlay * {
+        animation-play-state: paused;
+      }
+      html.boot-play #boot-overlay {
+        animation-play-state: running, running;
+      }
+      html.boot-play #boot-overlay * {
+        animation-play-state: running;
+      }
+      /* The reveal when the gesture does not play: too slow to earn it, or the user
+         clicked. Its own keyframes so it starts from full opacity rather than inheriting
+         whatever progress a long fade had made — the same reason the old .boot-skip
+         existed, which this replaces. */
+      #boot-overlay.boot-cross {
+        animation: bootCross 200ms linear both;
+        animation-play-state: running;
       }
       html.no-boot #boot-overlay {
         display: none;
@@ -72,6 +120,26 @@
         display: block;
         width: min(720px, 70vw);
         height: auto;
+        /* Phase A shows nothing at all. Not the parked hand, and above all not the
+           wordmark: the gesture's entire payload is the wordmark *landing* on the ictus,
+           and a wordmark already on screen makes that land on nothing. A blank coloured
+           rectangle also reads as a window that has not drawn yet rather than as a stall,
+           which is what it should read as — it may be on screen for a while. */
+        visibility: hidden;
+      }
+      html.boot-play #boot-overlay svg {
+        visibility: visible;
+      }
+
+      /* React mounts and lays out underneath during phase A, and its paint would
+         otherwise be recorded, rastered and then painted over — occlusion culling works
+         on composited layers, and neither of these is guaranteed one. `visibility` skips
+         the painting but still runs layout, including text measurement, so the reveal is
+         instant and none of that work is wasted. `content-visibility: hidden` would skip
+         layout too and hand the whole first layout to the reveal frame, which is the one
+         frame that must not hitch. */
+      html.boot-hold #root {
+        visibility: hidden;
       }
 
       /* Wordmark: one centred text element landing as a block on the ictus — bold and
@@ -90,6 +158,12 @@
         letter-spacing: 9px;
       }
       #boot-overlay .lt {
+        /* Its visible state comes entirely from bootLetterIn's backwards fill, so the
+           base has to hide it. Otherwise cancelling that animation — which the frame
+           watchdog does when it aborts — reverts to base style and snaps the wordmark to
+           full opacity, in the middle of a fade. .mover, .ripple and .trailg already
+           carry opacity: 0 for the same reason. */
+        opacity: 0;
         animation: bootLetterIn 380ms cubic-bezier(0.2, 0.9, 0.3, 1) calc(var(--ti) * 1ms) both;
       }
 
@@ -381,12 +455,27 @@
           opacity: 0;
         }
       }
-      @keyframes bootSkip {
+      @keyframes bootCross {
         from {
           opacity: 1;
         }
         to {
           opacity: 0;
+        }
+      }
+      /* Only ever seen if the script above died. visibility is not interpolated, it flips
+         at the final keyframe, which is what takes the node out of hit-testing. */
+      @keyframes bootBail {
+        from {
+          opacity: 1;
+        }
+        99% {
+          opacity: 0;
+          visibility: visible;
+        }
+        to {
+          opacity: 0;
+          visibility: hidden;
         }
       }
     </style>
@@ -433,11 +522,44 @@
         var overlay = document.getElementById('boot-overlay');
         if (!overlay) return;
         var root = document.getElementById('root');
+        var html = document.documentElement;
+        var t0 = performance.now();
+
+        /* Past this, the gesture is forfeit and the reveal is a plain cross-fade. It
+           looks harsh next to the 2700 ms it guards, and it is meant to: hold plus
+           gesture plus fade is already ~4.3 s of splash at this deadline. At the 2.5 s
+           that felt natural it would be 5.6 s, which is worse than never animating. The
+           gesture is a reward for a fast boot, never a tax on a slow one. */
+        var GESTURE_DEADLINE = 1200;
+        /* Reveal no matter what — a bundle that 404s, a signal that never comes. */
+        var HOLD_MAX = 3500;
+        var CROSS_MS = 200;
+        /* The envelope plus bootOut's 370 ms fade. */
+        var GESTURE_MS = 2700 + 370;
+
         var gone = false;
-        var fading = false;
+        var playing = false;
+        var crossing = false;
+        var gestureAllowed = true;
+        var mounted = false;
+        var failsafe = 0;
+
+        /* One rearmable timer, not the fixed 4000 ms this replaces. That constant was
+           armed at parse and sized for an animation that began at parse; now a gesture
+           starting at the 1200 ms deadline ends at 4270 ms, so a fixed 4 s failsafe would
+           cut off the very thing it exists to protect — one frame from the end, on slow
+           machines only, intermittently. */
+        function armFailsafe(ms) {
+          clearTimeout(failsafe);
+          failsafe = setTimeout(remove, ms);
+        }
+
         function remove() {
           if (gone) return;
           gone = true;
+          clearTimeout(failsafe);
+          html.classList.remove('boot-hold', 'boot-play');
+          html.dataset.boot = 'done';
           overlay.remove();
           if (root) root.inert = false;
           // The single exit of every path, so the one honest place to say "the boot
@@ -454,7 +576,7 @@
         // The two cases where nothing plays: hidden by CSS above, so drop the node
         // rather than leave an invisible one lying in the DOM.
         if (
-          document.documentElement.classList.contains('no-boot') ||
+          html.classList.contains('no-boot') ||
           matchMedia('(prefers-reduced-motion: reduce)').matches
         ) {
           remove();
@@ -469,23 +591,77 @@
         // in the markup: there it would outlive a script that failed to run, and the app
         // would be permanently unusable rather than merely un-animated.
         if (root) root.inert = true;
+
+        // ---- phase A: hold ----------------------------------------------------------
+        html.classList.add('boot-hold');
+        html.dataset.boot = 'hold';
+        armFailsafe(HOLD_MAX);
+        setTimeout(function () {
+          gestureAllowed = false;
+        }, GESTURE_DEADLINE);
+
         // Descendant animations bubble their animationend too — only the overlay's
-        // own fade ends the show.
+        // own fade, or the cross-fade, ends the show.
         overlay.addEventListener('animationend', function (e) {
           if (e.target === overlay) remove();
         });
-        // The fade begins after its delay; from then on a click would only make the
-        // overlay jump back to full opacity, so it stops skipping.
-        overlay.addEventListener('animationstart', function (e) {
-          if (e.target === overlay) fading = true;
-        });
-        // Click to skip. The overlay keeps its pointer events until it is removed, so
-        // nothing behind it can be hit by accident mid-gesture.
+
+        /* Someone clicking during the hold wants the app, not the choreography. Reveal
+           if there is anything to reveal — a spinner beats a blank rectangle for a user
+           who is actively poking at it — and otherwise just forfeit the gesture and keep
+           holding, because a half-mounted tree is not worth showing. During the gesture
+           this is the old click-to-skip. */
         overlay.addEventListener('pointerdown', function () {
-          if (!fading) overlay.classList.add('boot-skip');
+          gestureAllowed = false;
+          if (playing || mounted) crossFade();
         });
-        // Failsafe: animations can be off entirely, or an event can go missing.
-        setTimeout(remove, 4000);
+
+        // ---- the handshake ----------------------------------------------------------
+        document.addEventListener('auftakt:mounted', function () {
+          mounted = true;
+        });
+        document.addEventListener('auftakt:ready', onReady, { once: true });
+        /* Race insurance. It cannot currently fire — this script runs during parse and
+           the bundle is a deferred module — but that stops being true the day someone
+           adds `async`, and the failure would be a permanently held boot screen. */
+        if (html.dataset.appReady) onReady();
+
+        function onReady() {
+          if (gone || playing || crossing) return;
+          /* Unhide #root first and let it paint. It is still behind an opaque overlay,
+             so nothing is visible yet — but this moves the largest paint of the whole
+             boot to *before* the first gesture frame instead of during it. Two frames,
+             because the first only schedules the paint. */
+          html.classList.remove('boot-hold');
+          requestAnimationFrame(function () {
+            requestAnimationFrame(function () {
+              /* An idle callback does not run while the main thread is busy, which is
+                 exactly the precondition. The timeout keeps "wait for a free thread"
+                 from becoming "wait forever". */
+              if (window.requestIdleCallback) requestIdleCallback(start, { timeout: 200 });
+              else setTimeout(start, 0);
+            });
+          });
+        }
+
+        function start() {
+          if (gone || playing || crossing) return;
+          if (!gestureAllowed || performance.now() - t0 > GESTURE_DEADLINE) return crossFade();
+          playing = true;
+          html.dataset.boot = 'play';
+          html.classList.add('boot-play');
+          armFailsafe(GESTURE_MS + 400);
+        }
+
+        // ---- the reveal without a gesture -------------------------------------------
+        function crossFade() {
+          if (gone || crossing) return;
+          crossing = true;
+          html.dataset.boot = 'cross';
+          html.classList.remove('boot-hold', 'boot-play');
+          overlay.classList.add('boot-cross');
+          armFailsafe(CROSS_MS + 200);
+        }
       })();
     </script>
 
