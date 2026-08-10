@@ -261,6 +261,42 @@ either. Repair happens when the user edits the times, not when they open the dia
 
 ---
 
+## The Übersicht shows every upcoming event (2026-08-10, WP-33)
+
+The dashboard used to ask for two lists — the next 14 days, plus the first six events beyond that —
+and render the second one only in the `else` of „the first is empty". The customer read it as a
+limit of six; it was worse than a limit, because one event this week hid every later one. Four
+things were decided in fixing it, and each is easy to undo by accident later.
+
+**Past events stay off this list.** It answers „was kommt". The full history is on the artist and
+project pages, which list every event of their parent, and the print sheets take it from there.
+Putting the past back here is a decision to re-make, not an oversight to fix. The one thing that
+must keep working is the *running* multi-day event: `upcomingEvents` tests
+`COALESCE(end_at, start_at)`, not `start_at`, and a client-side `daysUntil >= 0` filter added on
+top of that would delete exactly those rows.
+
+**Nothing is capped server-side, ever again.** `LIMIT 6` was the reported bug: the app withheld
+data the user had entered, with nothing on screen to say so. The only shortening left is
+`PREVIEW_ROWS` in the „Danach" block, and it exists only because it is paired with
+„+ N weitere anzeigen". A cap without an affordance that opens it is data loss with extra steps.
+The response is therefore unbounded in the event dimension — as it already was for `tasks` — and
+that is the intended shape, not an oversight awaiting a `LIMIT`.
+
+**The window is split client-side**, in `client/src/lib/eventGroups.ts`, for the reason the WP-40
+entry above gives for `eventTime.ts`: `check:unit` reaches `lib/`, and nothing reaches the page.
+The consequence is deliberate and worth stating, because it looks like lost coverage — the +14
+edge is no longer a `check:dates` property. The *today* edge still is, and that is where SDL-10
+actually sits: a bare `date('now')` gets it wrong in both directions, which is what the two
+25-hours-apart zones exist to catch.
+
+**The window is a setting; the heading default is not.** `event_window_days` follows
+`attention_window_days` exactly — scalar string, clamped on the client, one line of server
+allowlist. `'dash.events'` drops „· 14 Tage" so that a default heading cannot contradict a setting,
+and so that it cannot claim a boundary that no longer withholds anything. Renamed headings are
+overrides and survive untouched.
+
+---
+
 ## Known sharp edges with no owner
 
 Real, understood, and deliberately not scheduled. Each carries a comment at its own site; none is
