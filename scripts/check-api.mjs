@@ -350,14 +350,21 @@ try {
     check('restoring a row that no longer exists is a 404', missing.status === 404, String(missing.status));
   }
 
-  // ------------------------------------------------------------------ priority order (TTU-11)
-  // The server's CASE is generated from the configured Priorität option order (priorityValues),
-  // so renaming the categories must not drop every task into ELSE while the client ranks them.
-  console.log('\n== task order follows renamed priority options (TTU-11)');
+  // ------------------------------------------------------- the baseline order (WP-32, was TTU-11)
+  // What the API returns when no sort rule is in effect is what the client keeps: `sortTasks`
+  // short-circuits on an empty rule list. So the ORDER BY may rank by nothing the user cannot see
+  // — priority used to be in it while the Priorität column ships hidden. TTU-11 guarded the
+  // priority CASE against renamed options; the invariant that outlived it is that this ordering
+  // and `SERVER_DEFAULT_RULES` (TaskTable.tsx) describe the same thing, or `canDrop` refuses
+  // drops the server considers ties (TTU-07). The renamed options stay: they prove priority is
+  // ignored by name, not merely by its factory value order.
+  console.log('\n== the baseline order is the manual order (WP-32, was TTU-11)');
   {
     const artist = await ok('POST', '/artists', { name: 'Reihenfolge' });
     const cols = await ok('GET', '/custom-columns');
     const priority = cols.find((c) => c.key === 'priority');
+    const status = cols.find((c) => c.key === 'status');
+    const doneValue = JSON.parse(status.options).find((o) => o.done).value;
     const renamed = [
       { value: 'A-dringend', label: 'A dringend' },
       { value: 'B-normal', label: 'B normal' },
@@ -366,16 +373,118 @@ try {
     await ok('PATCH', `/custom-columns/${priority.id}`, { options: JSON.stringify(renamed) });
     await ok('PATCH', '/settings', { task_sort: [] });
 
-    // Created in reverse, so any ordering that ignores priority returns them in insertion order.
-    for (const p of ['C-später', 'B-normal', 'A-dringend']) {
-      await ok('POST', '/tasks', { title: `Prio ${p}`, artist_id: artist.id, priority: p });
+    // Created in configured priority order, so an ORDER BY that still ranks by priority hands
+    // them back unchanged. Each create leads its list, so the expected answer is the reverse.
+    const made = [];
+    for (const p of ['A-dringend', 'B-normal', 'C-später']) {
+      made.push(await ok('POST', '/tasks', { title: `Prio ${p}`, artist_id: artist.id, priority: p }));
     }
-    const tasks = (await ok('GET', `/tasks?artist_id=${artist.id}`)).map((t) => t.priority);
+    const prios = (await ok('GET', `/tasks?artist_id=${artist.id}`)).map((t) => t.priority);
     check(
-      'renamed priority options still rank in their configured order',
-      JSON.stringify(tasks) === JSON.stringify(['A-dringend', 'B-normal', 'C-später']),
-      tasks.join(' < '),
+      'priority no longer orders the list — the newest task is first',
+      JSON.stringify(prios) === JSON.stringify(['C-später', 'B-normal', 'A-dringend']),
+      prios.join(' < '),
     );
+
+    // The one ORDER BY key that must not go: with no rules in effect it is the only thing
+    // sinking finished rows, and compareByRules relies on it on the client side.
+    const newest = made[made.length - 1];
+    await ok('PATCH', `/tasks/${newest.id}`, { status: doneValue });
+    const afterDone = await ok('GET', `/tasks?artist_id=${artist.id}`);
+    check(
+      '…and a done task still sinks to the bottom',
+      afterDone[afterDone.length - 1].id === newest.id,
+      afterDone.map((t) => t.title).join(' < '),
+    );
+  }
+
+  // ------------------------------------------------------------ a new task lands on top (WP-32)
+  // The complaint the package came from: a new task appeared at position 2 or 3. It carried the
+  // column default sort_order 0, tied with every never-dragged sibling, and the id tiebreak —
+  // highest — put it last. The transform now stamps it below its scope's minimum.
+  console.log('\n== a new task lands on top (WP-32)');
+  {
+    const artist = await ok('POST', '/artists', { name: 'Obenauf' });
+    const project = await ok('POST', '/projects', {
+      code: 'OBEN',
+      name: 'Obenauf-Projekt',
+      artist_id: artist.id,
+    });
+    const titles = () =>
+      ok('GET', `/tasks?project_id=${project.id}`).then((ts) => ts.map((t) => t.title));
+
+    const first = await ok('POST', '/tasks', { title: 'A', project_id: project.id });
+    check('the first task of an empty list gets 0', first.sort_order === 0, String(first.sort_order));
+
+    const second = await ok('POST', '/tasks', { title: 'B', project_id: project.id });
+    const third = await ok('POST', '/tasks', { title: 'C', project_id: project.id });
+    check(
+      'each further task takes the lowest ordinal',
+      third.sort_order < second.sort_order && second.sort_order < first.sort_order,
+      [first, second, third].map((t) => t.sort_order).join(' > '),
+    );
+    check(
+      '…so the list comes back newest-first',
+      JSON.stringify(await titles()) === JSON.stringify(['C', 'B', 'A']),
+      (await titles()).join(' < '),
+    );
+
+    const explicit = await ok('POST', '/tasks', { title: 'D', project_id: project.id, sort_order: 99 });
+    check('a client-sent sort_order is not overwritten', explicit.sort_order === 99, String(explicit.sort_order));
+
+    // The scope is the artist/project pair: another list's ordinals must not drag this one down.
+    const elsewhere = await ok('POST', '/tasks', { title: 'woanders', artist_id: artist.id });
+    check('a task in another scope starts at 0', elsewhere.sort_order === 0, String(elsewhere.sort_order));
+    // `project_id = NULL` is NULL, not true — with `=` instead of `IS` every festival todo would
+    // tie at 0 and the id tiebreak would put the newest one last again.
+    const general1 = await ok('POST', '/tasks', { title: 'Festival 1' });
+    const general2 = await ok('POST', '/tasks', { title: 'Festival 2' });
+    check(
+      'season-wide todos are their own scope, matched with IS',
+      general1.sort_order === 0 && general2.sort_order === -1,
+      `${general1.sort_order} / ${general2.sort_order}`,
+    );
+
+    // A trashed row keeps its ordinal and gets it back on restore, so it has to count.
+    await ok('DELETE', `/tasks/${third.id}`);
+    const afterDelete = await ok('POST', '/tasks', { title: 'E', project_id: project.id });
+    await ok('POST', `/tasks/${third.id}/restore`);
+    check(
+      'a soft-deleted sibling still counts, so a restore cannot tie the new task',
+      afterDelete.sort_order < third.sort_order,
+      `${afterDelete.sort_order} vs restored ${third.sort_order}`,
+    );
+
+    // Same for an archived one: erledigt_am + the done status is the pair acceptsErledigtAm takes.
+    const cols = await ok('GET', '/custom-columns');
+    const doneValue = JSON.parse(cols.find((c) => c.key === 'status').options).find((o) => o.done).value;
+    const aged = await ok('POST', '/tasks', { title: 'archiviert', project_id: project.id });
+    await ok('PATCH', `/tasks/${aged.id}`, { status: doneValue, erledigt_am: '2020-01-01 12:00:00' });
+    const afterArchive = await ok('POST', '/tasks', { title: 'F', project_id: project.id });
+    check(
+      'an archived sibling still counts',
+      afterArchive.sort_order < aged.sort_order,
+      `${afterArchive.sort_order} vs archived ${aged.sort_order}`,
+    );
+
+    // Subtasks: the parent's scope, so the newest child leads its own list too.
+    const kid1 = await ok('POST', '/tasks', { title: 'Kind 1', project_id: project.id, parent_id: first.id });
+    const kid2 = await ok('POST', '/tasks', { title: 'Kind 2', project_id: project.id, parent_id: first.id });
+    check('a new subtask leads its siblings', kid2.sort_order < kid1.sort_order, `${kid2.sort_order} < ${kid1.sort_order}`);
+
+    // A drag renumbers a group back to 0..n-1, which is what keeps the negatives from mattering.
+    const ids = (await ok('GET', `/tasks?project_id=${project.id}`)).filter((t) => !t.parent_id).map((t) => t.id);
+    await ok('POST', '/tasks/reorder', { ids });
+    const reordered = await ok('GET', `/tasks?project_id=${project.id}`);
+    const tops = reordered.filter((t) => !t.parent_id);
+    check(
+      'a reorder renumbers the group to 0..n-1',
+      tops.every((t, i) => t.sort_order === i) && JSON.stringify(tops.map((t) => t.id)) === JSON.stringify(ids),
+      tops.map((t) => t.sort_order).join(','),
+    );
+
+    const bare = await ok('POST', '/tasks', { title: 'ohne Priorität', project_id: project.id });
+    check('a create without priority takes the column default', bare.priority === 'mittel', String(bare.priority));
   }
 
   // ------------------------------------------------------------------ season copy (DBW-06)

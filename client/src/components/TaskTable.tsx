@@ -13,7 +13,13 @@ import type { CustomColumn, CustomColumnOption, Task, TaskSortRule, TaskUpdate }
 import { compareColumns, customValueOf, doneValueOf, parseColumnOptions } from '../api/types';
 import { formatDate } from '../lib/dates';
 import { withAlpha } from '../lib/colors';
-import { MANUAL_SORT_ID, SORTABLE_TASK_COLUMNS } from '../lib/taskSort';
+import {
+  MANUAL_SORT_ID,
+  SORTABLE_TASK_COLUMNS,
+  activeSortRules,
+  colId,
+  customColId,
+} from '../lib/taskSort';
 import { arrayMoveTo } from '../lib/arrays';
 import { useDragReorder } from '../lib/dragReorder';
 import { descendantsOf } from '../lib/taskTree';
@@ -93,29 +99,6 @@ function useTaskTableApi(): TaskTableApi {
   const api = useContext(TaskTableCtx);
   if (!api) throw new Error('TaskTable cell rendered outside TaskTableCtx');
   return api;
-}
-
-/**
- * Stable column id: built-ins use their `key`, custom columns `custom:<id>`.
- *
- * The delimiter is the point. With customs encoded as `c<id>` the two namespaces overlapped —
- * `BUILTIN_COLUMNS` holds `comment` and `created` — so the built-in Kommentar key decoded as
- * "custom column number `omment`": `Number('omment')` is NaN, `customValueOf` returns '', and
- * that level of the sort hierarchy silently compared every task equal. Only `comment`'s absence
- * from SORTABLE_TASK_COLUMNS kept it unreachable, and a hand-edited or imported `task_sort` does
- * not respect that list (TTU-31). `:` cannot appear in a built-in key.
- */
-const CUSTOM_PREFIX = 'custom:';
-
-function colId(col: CustomColumn): string {
-  return col.kind === 'builtin' && col.key ? col.key : `${CUSTOM_PREFIX}${col.id}`;
-}
-
-/** The inverse of `colId` — the custom column's id, or null for a built-in key. */
-function customColId(id: string): number | null {
-  if (!id.startsWith(CUSTOM_PREFIX)) return null;
-  const n = Number(id.slice(CUSTOM_PREFIX.length));
-  return Number.isInteger(n) ? n : null;
 }
 
 function findBuiltin(cols: CustomColumn[], key: string): CustomColumn | undefined {
@@ -206,32 +189,30 @@ function compareByRules(
 }
 
 /**
- * The server's own ORDER BY (`taskOrder` in server/src/lib/queries.ts) expressed as rules — the
+ * The server's own ORDER BY (`TASK_ORDER` in server/src/lib/queries.ts) expressed as rules — the
  * ordering actually in effect when the user has configured none. Keep the two in step.
  *
- * They now agree on priority: the server ranks by the configured Priorität option order, as this
- * side always has, rather than by a hardcoded hoch/mittel/niedrig ladder that put every renamed
- * category into one bucket and made `canDrop` refuse drops the server considered ties.
+ * Since WP-32 the server ranks by nothing but `sort_order`, so this is one rule. It ranked by
+ * priority and due date before, and both are hidden columns ab Werk: an ordering nobody can see
+ * or switch off, reachable through exactly the gap this constant describes.
  *
  * "No rules" is not "no constraints": with an empty hierarchy `sortTasks` short-circuits and the
- * list keeps the server order, which ranks priority and due date above sort_order. Testing drops
- * against the empty list therefore accepted every one of them, `reorder` renumbered the whole
- * sibling list, and the refetch put the row straight back where it came from — the drag looked
- * like it did nothing while having silently rewritten every sibling's sort_order (TTU-07).
- * `compareByRules` already sinks done rows, so that leading key is not repeated here.
+ * list keeps the server order. Testing drops against the empty list therefore accepted every one
+ * of them, `reorder` renumbered the whole sibling list, and the refetch put the row straight back
+ * where it came from — the drag looked like it did nothing while having silently rewritten every
+ * sibling's sort_order (TTU-07). That is now *correct* rather than merely consistent: with the
+ * ordering being `sort_order` itself, every same-doneness pair really is a tie and the renumber
+ * really does put the row where it was dropped. `compareByRules` already sinks done rows, so that
+ * leading key is not repeated here.
  */
-const SERVER_DEFAULT_RULES: TaskSortRule[] = [
-  { id: 'priority', dir: 'asc' },
-  { id: 'due', dir: 'asc' },
-  { id: MANUAL_SORT_ID, dir: 'asc' },
-];
+const SERVER_DEFAULT_RULES: TaskSortRule[] = [{ id: MANUAL_SORT_ID, dir: 'asc' }];
 
 /**
  * Order tasks by a multi-key hierarchy (Settings → Automatische Sortierung, or a single
  * header-click override), reading each key via a precomputed `getValue` accessor. Ties fall
  * through to the manual drag order (`sort_order`) — relying on the sort being stable would
- * instead preserve the *server's* order, which ranks priority and due date above sort_order.
- * An empty rule list leaves the server order (priority → due, done last) untouched.
+ * instead preserve the *server's* order. An empty rule list leaves that order (manual, done
+ * last) untouched, which since WP-32 is the same thing by a shorter route.
  */
 function sortTasks(
   tasks: Task[],
@@ -265,7 +246,15 @@ export function TaskTable({
   const [sort, setSort] = useState<SortState>(null);
   // Effective ordering: a header click (`sort`) is a temporary single-key override; otherwise
   // follow the configured automatic hierarchy from Settings (empty → leave server order).
-  const activeRules = useMemo(() => (sort ? [sort] : sortRules), [sort, sortRules]);
+  //
+  // Filtered through `activeSortRules`, because a rule whose column is hidden or gone must not
+  // order the table (WP-32) — ab Werk that is two of the three shipped rules. The override goes
+  // through it as well: a header only exists for a visible column, so the filter cannot bite
+  // there, and an invariant with no exception is the cheaper one to keep.
+  const activeRules = useMemo(
+    () => activeSortRules(sort ? [sort] : sortRules, customColumns),
+    [sort, sortRules, customColumns],
+  );
   // Subtask UI state: collapsed parents, the parent currently getting a new subtask,
   // and the parent awaiting a delete-with-children confirmation.
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
@@ -368,8 +357,10 @@ export function TaskTable({
   // (TTU-33). Truncating also drops `manual` itself, which as the tiebreaker differs for every
   // pair and would forbid every drop.
   //
-  // With no rules configured at all the *effective* ordering is still the server's, so that is
-  // what a drop is measured against — see SERVER_DEFAULT_RULES.
+  // With no rules *in effect* — none configured, or every one of them pointing at a hidden
+  // column — the ordering is still the server's, so that is what a drop is measured against; see
+  // SERVER_DEFAULT_RULES, which since WP-32 is the manual order and therefore allows every drop
+  // between two rows of the same doneness.
   const rankRules = useMemo(() => {
     const effective = activeRules.length > 0 ? activeRules : SERVER_DEFAULT_RULES;
     const manualAt = effective.findIndex((r) => r.id === MANUAL_SORT_ID);
@@ -551,9 +542,15 @@ export function TaskTable({
   // renamed (replacing hoch/mittel/niedrig with A/B/C is enough, since normalizeOptions derives
   // the value from the label). PillSelect then rendered the grey placeholder instead of a pill
   // and makeSortValue ranked the task at priorityRank.size, sorting every new task to the
-  // bottom of the priority key with no indication why (TTU-11). No `done` notion here, so the
-  // first option is the right default.
-  const defaultPriority = priorityOptions[0]?.value ?? 'mittel';
+  // bottom of the priority key with no indication why (TTU-11).
+  //
+  // The *middle* option, not the first: taking the first meant every new task claimed the top
+  // rank — „hoch" ab Werk — which nobody had said and which the user only discovers the day the
+  // Priorität column is shown (WP-32). Rounding down never picks the top once there is a choice
+  // (3 options → the middle, 2 → the lower, 1 → the only one), and it stays a configured value,
+  // which is the half of TTU-11 that still matters.
+  const defaultPriority =
+    priorityOptions[Math.floor(priorityOptions.length / 2)]?.value ?? 'mittel';
 
   return (
     <TaskTableCtx.Provider value={cellApi}>

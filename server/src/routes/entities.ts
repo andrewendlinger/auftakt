@@ -271,6 +271,13 @@ export const tasksRouter = crudRouter({
     if (mode === 'update' && 'status' in body && !body.status) {
       throw new HttpError(400, 'Status darf nicht leer sein.');
     }
+    // „Eine neue Aufgabe steht ganz oben." Without this the row keeps the column default 0, ties
+    // with every other never-dragged sibling, and the `id` tiebreak — highest — puts the newest
+    // one *last* (WP-32). Server-side because the client knows only its rendered siblings: it
+    // never sees archived rows and cannot see the trash at all.
+    if (mode === 'create' && body.sort_order == null) {
+      body.sort_order = leadingSortOrder(getDb(), body.artist_id, body.project_id);
+    }
     if ('erledigt_am' in body || 'status' in body) {
       const done = doneStatusValue(getDb());
       // An accepted erledigt_am wins over the derivation: that is the undo path restoring a
@@ -311,6 +318,45 @@ export const tasksRouter = crudRouter({
     );
   },
 });
+
+/**
+ * One below the lowest `sort_order` in the list this task will appear in — so a created task
+ * leads it (WP-32). Empty scope: 0.
+ *
+ * **The scope is the `(artist_id, project_id)` pair, and deliberately not `parent_id` as well.**
+ * The obvious "exact sibling list" version has a reachable tie: a subtask whose parent is
+ * soft-deleted is *promoted* into the top-level list by the client (TTU-14) while still carrying
+ * `parent_id`, so a `parent_id IS NULL` minimum cannot see the very row the new task renders
+ * above — and the `id` tiebreak then hands the orphan the top. The pair is a lower bound over
+ * every row that can render in that table, which is what "always on top" actually needs. The
+ * tasks CHECK allows at most one of the two, so the pair is effectively one scope id.
+ *
+ * **`IS`, never `=`.** `project_id = NULL` is NULL rather than true, so `=` matches nothing for
+ * the season-wide „Festival" todos, hands every one of them the same ordinal and lets `id`
+ * decide — i.e. it reproduces exactly the bug this fixes, for exactly one list.
+ *
+ * **No `deleted_at` and no archive filter.** A trashed row returns with its old ordinal via
+ * `/restore`, an archived one the moment its status is reopened; counting them is what stops
+ * either from coming back tied with the new task. Every row in the scope counts.
+ *
+ * Repeated creates walk the ordinals negative. That is fine — `/reorder` renumbers a dragged
+ * group back to 0..n-1, the column is a 64-bit integer, and nothing reads the value itself.
+ */
+function leadingSortOrder(
+  db: ReturnType<typeof getDb>,
+  artistId: unknown,
+  projectId: unknown,
+): number {
+  const id = (v: unknown): number | null => {
+    if (v == null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const row = db
+    .prepare('SELECT MIN(sort_order) AS m FROM tasks WHERE artist_id IS ? AND project_id IS ?')
+    .get(id(artistId), id(projectId)) as { m: number | null };
+  return row.m == null ? 0 : row.m - 1;
+}
 
 /* ---------- subtree operations ---------- */
 

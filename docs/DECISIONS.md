@@ -313,6 +313,48 @@ overrides and survive untouched.
 
 ---
 
+## A column you cannot see does not order the table (2026-08-10, WP-32)
+
+The complaint was that a new task lands at position 2 or 3 instead of on top. The reason was
+invisible: `task_sort` shipped `[status, priority, due]` while the Priorität and Fällig columns ship
+`enabled: 0`, so the table was ordered by two columns that render nowhere.
+
+**The general rule replaces the specific fix.** A sort rule is in effect only while its column is
+visible — hidden *or* deleted makes it inert (`activeSortRules`, `client/src/lib/taskSort.ts`).
+`manual` is exempt; it is `sort_order`, not a column.
+
+That is what makes the shipped default's change to `[status]` need **no migration**, and the
+migration is the part deliberately not built. TODO.md planned a self-detecting one that rewrites
+`task_sort` only when the stored value equals the old default. It would have had to guess: a stored
+`[status, priority, due]` is indistinguishable from a hierarchy the user assembled by hand to be
+identical, and rewriting it would take priority ordering away from the one user who *did* show the
+column and wants it sorted by it. The filter fixes both cases with no write at all, and because the
+rule is filtered rather than removed, showing the column brings its ordering back.
+
+The rejected alternative for the ordering itself: **temporarily pinning** the new row to the top
+until the next navigation. A row that sticks and then jumps explains itself to nobody.
+
+## The server's baseline order is the manual order (2026-08-10, WP-32)
+
+`TASK_ORDER` (`server/src/lib/queries.ts`) ranks by `sort_order` and nothing else, with done rows
+sinking. It ranked by priority and due date before, and the client keeps the server's order verbatim
+whenever no rule is in effect (`sortTasks` short-circuits) — so those keys were rules nobody could
+see in Settings and nobody could switch off, reachable from the same gap WP-32 is about. The
+consequence is accepted deliberately: the print sheets, the .xlsx export and the archive page render
+in server order and therefore now group by hand order rather than by priority. `priorityValues()`
+died with the priority `CASE`; the client still ranks by the configured option order, where the
+column is visible. TTU-11's check case was re-aimed at the new invariant, not deleted.
+
+**A created task is stamped server-side** (`leadingSortOrder`, `routes/entities.ts`): the client
+knows only its rendered siblings, never sees archived rows and cannot see the trash at all. Two
+things it deliberately does not do — the scope is the `(artist_id, project_id)` pair and *not*
+`parent_id`, because a promoted orphan renders in a list a `parent_id` minimum cannot see; and
+`POST /tasks/:id/move` does **not** re-stamp `sort_order`, because every field it writes is one the
+caller passes back, which is what makes the same call its own undo. A moved task keeping its ordinal
+and landing on top of its new list is the right outcome anyway.
+
+---
+
 ## Known sharp edges with no owner
 
 Real, understood, and deliberately not scheduled. Each carries a comment at its own site; none is
