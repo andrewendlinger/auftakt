@@ -109,22 +109,33 @@
         animation: bootRipple2 620ms calc((var(--ti) + 110) * 1ms) both;
       }
 
-      /* The ink trace behind the baton tip: a soft blurred stroke and a fine core,
-         drawn as sliding dash windows (200 / 110 path units) along the same path the
-         hand travels. Their keyframes share bootMotion's percentages and easings, so
-         tip and ink stay synchronized by construction. pathLength pins the browser's
-         arc-length arithmetic to the value the offsets were computed against. The
-         base stroke-dashoffset parks the window before the path start, so with
-         animations off nothing shows until the 4 s failsafe removes the overlay. */
+      /* The ink trace behind the baton tip: a soft wide halo and a fine core, drawn as
+         sliding dash windows (200 / 110 path units) along the same path the hand
+         travels. Their keyframes share bootMotion's percentages and easings, so tip and
+         ink stay synchronized by construction. pathLength pins the browser's arc-length
+         arithmetic to the value the offsets were computed against. The base
+         stroke-dashoffset parks the window before the path start, so with animations
+         off nothing shows until the failsafe removes the overlay.
+
+         The halo is a wide, very faint stroke rather than a narrower blurred one, which
+         is why its width and opacity look untuned (14 at 5.5 % against the core's 3 at
+         45 %): they were picked so a hard-edged stroke reads as diffuse. `filter: blur()`
+         here was by far the most expensive thing on screen. stroke-dashoffset is a paint
+         property, so Chromium cannot composite it — traced, it reports
+         `compositeFailed: 8224, unsupportedProperties: ['stroke-dashoffset']` — and the
+         blur then re-rastered that repainted region at device pixel ratio every frame.
+         Measured over the gesture: 204 ms of renderer paint+raster with the blur against
+         79 ms without, 163 ms of it in RasterTask alone versus 43 ms. The trail's own
+         cost is only ~16 ms of that. All of it lands on the one thread the hand's motion
+         also needs, which likewise cannot composite (`offset-distance`). */
       #boot-overlay .trail {
         fill: none;
         stroke: #3c3c3b;
         stroke-linecap: round;
       }
       #boot-overlay .trail.soft {
-        stroke-width: 9;
-        opacity: 0.1;
-        filter: blur(2px);
+        stroke-width: 14;
+        opacity: 0.055;
         stroke-dashoffset: 200;
         animation: bootDashSoft calc(var(--T) * 1ms) both;
       }
