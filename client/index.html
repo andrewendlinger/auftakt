@@ -665,21 +665,17 @@
            abort smooth animations whenever something unrelated occupies the main thread.
            docs/DECISIONS.md records that condition. */
         var WATCH_MS = 200;
+        /* One visibly dropped run of frames, as an absolute: three frames at 60 Hz, six
+           at 120. Deliberately not expressed as a multiple of the measured period — the
+           period estimate is only trustworthy once the window has some samples, and a
+           hitch has to be catchable on the very first one. */
+        var HITCH_MS = 50;
 
         function watchFrames() {
           var first = -1;
           var prev = -1;
-          var frames = 0;
-          var drops = 0;
-          /* Never hardcode 16.67: this runs at 120 Hz on ProMotion, 60 on a typical
-             Windows panel, 144 or 165 elsewhere. The fastest delta observed is the best
-             available estimate of the panel's period — a frame cannot arrive sooner than
-             vsync. The 4 ms floor rejects the double-fire that follows a missed vsync,
-             and the clamp bounds the estimate to panels that exist. Estimated here rather
-             than during phase A, where every sample would be taken while the bundle is
-             compiling. */
-          var nominal = 1000 / 60;
-          var minDelta = Infinity;
+          var judged = 0;
+          var deltas = [];
 
           function tick(now) {
             if (gone || crossing || !playing) return;
@@ -689,28 +685,54 @@
             }
             var d = now - prev;
             prev = now;
-            frames++;
-            if (d > 4 && d < minDelta) {
-              minDelta = d;
-              nominal = Math.max(6, Math.min(20, minDelta));
-            }
             /* The first measured frame carries the cost of promoting layers for
-               animations that have just started, which is expected rather than
-               perceived — judging it would abort healthy runs. */
-            if (frames > 1) {
-              // One visible hitch is enough: 4x nominal is 33 ms at 120 Hz, 67 at 60.
-              if (d >= 4 * nominal) return abort('hitch');
-              drops += Math.max(0, Math.round(d / nominal) - 1);
-              // ~25 ms of lost motion at 60 Hz — the floor of what reads as stutter on a
-              // fast lateral move, which is exactly what bootMotion does at 62-70 %.
-              if (drops >= 3) return abort('drops');
-            }
+               animations that have only just started. Expected rather than perceived, and
+               judging it aborts healthy runs — so it is neither tested nor recorded, since
+               recording it would drag the period estimate below. */
+            if (judged++ < 1) return requestAnimationFrame(tick);
+            deltas.push(d);
+            if (d >= HITCH_MS) return abort('hitch');
             var elapsed = now - first;
             if (elapsed < WATCH_MS) return requestAnimationFrame(tick);
+
+            /* Verdict, taken once at the end of the window so that the frame period can
+               be a *median* rather than a running minimum.
+
+               The minimum is the tempting estimator — a frame cannot arrive sooner than
+               vsync, so the fastest delta looks like the period. It is also fragile in
+               exactly the wrong direction: one anomalously early callback pins the
+               estimate low, and every ordinary frame afterwards then scores as a dropped
+               one. That mis-fired here on otherwise healthy runs. The median cannot be
+               moved by a single outlier, and irregular cadence — long frames scattered
+               among normal ones — is what a main-thread-bound animation actually degrades
+               into, so it is what these two tests should measure against. */
+            var sorted = deltas.slice().sort(function (a, b) {
+              return a - b;
+            });
+            var nominal = sorted[sorted.length >> 1];
+            /* Uniformly slow cadence, which the two tests below are structurally blind
+               to: they compare frames against a period derived from the frames
+               themselves, so a run where *every* frame takes 22 ms scores a perfect
+               median, no drops, and a frame count exactly matching its own expectation.
+               An absolute limit is available because every panel this ships to is 60 Hz
+               or faster — a median slower than ~45 fps is degraded on any of them.
+               Caught real sustained contention that the relative tests waved through. */
+            if (nominal > 22) return abort('slow');
+            var drops = 0;
+            for (var i = 0; i < deltas.length; i++) {
+              drops += Math.max(0, Math.round(deltas[i] / nominal) - 1);
+            }
+            /* One frame in five lost. A rate, not a count: a count of N gets *stricter*
+               the faster the panel, because a 120 Hz panel delivers twice the frames in
+               the same window and so twice the opportunities to score a drop — which is
+               backwards, since dropping one frame in five matters less at 120 Hz, not
+               more. Measured as a count this mis-fired on healthy runs. */
+            if (drops >= 0.2 * (deltas.length + drops)) return abort('drops');
             /* The test the other two structurally cannot make. If the thread is blocked
-               for the whole window, tick runs twice and both deltas look fine against
-               the seed; only comparing frame *count* to elapsed time sees it. */
-            if (frames < 0.6 * (elapsed / nominal)) return abort('starved');
+               for most of the window, only a couple of callbacks run, and each of their
+               deltas can still look unremarkable next to the others; comparing frame
+               *count* against elapsed time is the only thing that sees it. */
+            if (deltas.length < 0.6 * (elapsed / nominal)) return abort('starved');
           }
           requestAnimationFrame(tick);
         }

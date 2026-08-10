@@ -93,7 +93,8 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   - `play` → the gesture is running; ~3.1 s from here to `done`.
   - `cross` → a 200 ms fade instead of the gesture. Three ways in: readiness arrived past the
     1200 ms deadline, the user clicked, or the frame watchdog aborted. `#boot-overlay[data-abort]`
-    distinguishes the last one and names the reason (`hitch` / `drops` / `starved`).
+    distinguishes the last one and names the reason (`hitch` — one frame over 50 ms; `slow` — a
+    median under ~45 fps; `drops` — a fifth of frames lost; `starved` — too few frames delivered).
   - `done` → the node is gone and `#root` is no longer `inert`.
 - **`document.getAnimations()` returns `[]` during the hold**, because everything is
   `animation-play-state: paused` until phase B. A script that assumes otherwise concludes the
