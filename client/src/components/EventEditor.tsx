@@ -12,6 +12,7 @@ import {
   fieldsTouched,
   untouchedWhen,
   whenFromFields,
+  withStartDate,
   type EventFields,
 } from '../lib/eventTime';
 import { useGuardedAction, useInvalidateAll, useUndoablePatch } from '../hooks';
@@ -62,9 +63,35 @@ export function EventEditor({
   const [fields, setFields] = useState<EventFields>(initial.when);
   const [busy, setBusy] = useState(false);
   const [titleTouched, setTitleTouched] = useState(false);
+  /**
+   * The boxes a native picker considers half-typed, which is not a state their `value` can show.
+   *
+   * An incomplete date or time reads as `''` — „20" in the Uhrzeit box is not a start time, it is
+   * an empty one, and empty means all-day: clicking Speichern there rewrote a 19:30 event as
+   * „ganztägig" and dropped the clock time the box was still showing. `onEnterKey` sits the
+   * picker types out for the same reason, but the button and the footer had no equivalent guard.
+   *
+   * `validity.badInput` is the only way to see it, and blur is the only moment worth reading it:
+   * the picker fires no change event while the value stays incomplete, and every route to
+   * Speichern leaves the box first.
+   */
+  const [halfTyped, setHalfTyped] = useState<Partial<Record<keyof EventFields, boolean>>>({});
 
-  const setField = (k: keyof EventFields) => (e: { target: { value: string } }) =>
-    setFields((f) => ({ ...f, [k]: e.target.value }));
+  const edit =
+    (k: keyof EventFields, next: (f: EventFields, v: string) => EventFields) =>
+    (e: { target: { value: string } }) => {
+      setFields((f) => next(f, e.target.value));
+      setHalfTyped((h) => (h[k] ? { ...h, [k]: false } : h));
+    };
+  const setField = (k: keyof EventFields) => edit(k, (f, v) => ({ ...f, [k]: v }));
+  const checkComplete = (k: keyof EventFields) => (e: React.FocusEvent<HTMLInputElement>) => {
+    const bad = e.currentTarget.validity.badInput;
+    setHalfTyped((h) => (!!h[k] === bad ? h : { ...h, [k]: bad }));
+  };
+  const clearWhen = () => {
+    setFields({ startDate: '', startTime: '', endDate: '', endTime: '' });
+    setHalfTyped({});
+  };
 
   // The only required-field check used to be an invisible `return` in `submit`, with Speichern
   // still enabled and „Titel *" unmarked: clicking it did nothing at all, not even a busy
@@ -89,8 +116,14 @@ export function EventEditor({
   // and nothing about it is refused; `untouchedWhen` carries the why.
   const stored = untouchedWhen(event, fields);
   const when = stored ?? whenFromFields(fields);
-  // The second blocking reason, shown next to the fields it is about *and* in the footer.
-  const timeProblem = stored ? null : eventTimeProblem(fields);
+  // The second blocking reason, shown next to the fields it is about *and* in the footer. A
+  // half-typed box comes first: its value is `''`, so every rule below it — and the summary —
+  // would describe an event without the date or time the box is visibly showing.
+  const timeProblem = Object.values(halfTyped).some(Boolean)
+    ? 'Datum oder Uhrzeit ist unvollständig — bitte vervollständigen oder das Feld leeren.'
+    : stored
+      ? null
+      : eventTimeProblem(fields);
 
   // Both blocking reasons reach the footer, and both reach `submit` and „Speichern" through this
   // one value: three spellings of „cannot save" are three things a fourth reason has to be added
@@ -100,6 +133,10 @@ export function EventEditor({
   const blocker = missingTitle ? 'Bitte ausfüllen: Titel' : timeProblem;
 
   const submit = async () => {
+    // Marked here and not only on blur: Enter saves from the Titel box itself, so a blocked
+    // attempt from a field the user never left would otherwise change nothing on screen at all —
+    // the footer hint was already there — and the dialog reads as broken (RTE-10).
+    if (missingTitle) setTitleTouched(true);
     if (blocker || busy) return;
     setBusy(true);
     const payload = {
@@ -177,12 +214,16 @@ export function EventEditor({
               <Label>{row.label}</Label>
               {/* `Label` has no `htmlFor` and these fields carry no placeholder, so the
                   aria-label is what makes them addressable — for screen readers and for the
-                  Playwright checks in docs/VERIFYING.md, which otherwise count inputs. */}
+                  Playwright checks in docs/VERIFYING.md, which otherwise count inputs.
+                  Moving the *start* date takes a derived end date with it (`withStartDate`). */}
               <TextInput
                 type="date"
                 aria-label={`${row.label} — Datum`}
                 value={fields[row.date]}
-                onChange={setField(row.date)}
+                onBlur={checkComplete(row.date)}
+                onChange={
+                  row.date === 'startDate' ? edit('startDate', withStartDate) : setField(row.date)
+                }
               />
             </div>
             <div className="w-full sm:w-32">
@@ -191,6 +232,7 @@ export function EventEditor({
                 type="time"
                 aria-label={`${row.label} — Uhrzeit`}
                 value={fields[row.time]}
+                onBlur={checkComplete(row.time)}
                 onChange={setField(row.time)}
               />
             </div>
@@ -199,7 +241,7 @@ export function EventEditor({
 
         {/* What the two checkboxes used to say, said by the dialog instead: rendered from the
             payload above through the same `formatEventWhen` the list and the print sheets use. */}
-        <div className="col-span-2 -mt-1">
+        <div className="col-span-2 -mt-1 flex items-start justify-between gap-3">
           {timeProblem ? (
             <p className="text-xs text-red-600">{timeProblem}</p>
           ) : (
@@ -210,6 +252,19 @@ export function EventEditor({
                   ? `Ganztägig · ${formatEventWhen(when)}`
                   : formatEventWhen(when)}
             </p>
+          )}
+          {/* „Datum offen" as an *action*, not the checkbox it replaced: the state is four empty
+              boxes, and emptying them one at a time goes through „Ein Ende ohne Beginn kann nicht
+              gespeichert werden" — a refusal about a box the user had not reached yet (WP-40). */}
+          {(fields.startDate || fields.startTime || fields.endDate || fields.endTime) && (
+            <button
+              type="button"
+              onClick={clearWhen}
+              title="Alle Datums- und Zeitfelder leeren"
+              className="shrink-0 text-xs text-neutral-400 transition hover:text-neutral-700"
+            >
+              Datum offen
+            </button>
           )}
         </div>
 

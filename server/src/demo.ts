@@ -188,6 +188,9 @@ const EVENTS = [
   { id: 7, artist_id: null, project_id: 8, type: 'Termin', title: 'Meisterkurs Tag 1', start_at: days(21), end_at: null, all_day: 1, location: 'Probenraum 2' },
   // start_at NULL = "Datum offen" (TBD) — renders as its own block above the dated events.
   { id: 8, artist_id: null, project_id: 7, type: 'Termin', title: 'Nachholtermin Solo-Rezital', start_at: null, end_at: null, all_day: 0, location: null },
+  // Crosses midnight: the shape the event dialog *derives* (23:00–01:00 with no end date typed)
+  // and the one `withStartDate` has to keep overnight when the event is moved (WP-40).
+  { id: 10, artist_id: null, project_id: 1, type: 'Auftritt', title: 'Aftershow-Set', start_at: at(14, '23:00'), end_at: at(15, '01:00'), all_day: 0, location: 'Club' },
   // Soft-deleted event — a leaf in the trash.
   { id: 9, artist_id: null, project_id: 3, type: 'Termin', title: 'Abgesagter Soundcheck', start_at: days(9), end_at: null, all_day: 1, location: null, deleted_at: stamp(-8) },
 ];

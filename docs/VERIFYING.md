@@ -65,16 +65,31 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   `Link-Adresse` on demand and those are untyped too, so the same selector counts four with the
   bar open. Beginn and Ende are four `type="date"`/`type="time"` inputs (WP-40); they used to be
   two of the untyped matches. The selector is unchanged, any count around it is not.
-  **Only the event dialog is untyped**: every `RecordFormModal` field (Kontakt, Projekt, Artist,
-  Link) goes through one branch that passes `type="text"` explicitly, so there `input:not([type])`
-  matches nothing and `input[type="text"]` is right.
+  In a `RecordFormModal` the text branch passes `type="text"` explicitly, so `input:not([type])`
+  is **not** empty there either: `type: 'color'` renders its hex box through `ColorField`, which
+  builds its own untyped `TextInput`. The Artist and the Projekt dialog therefore hold exactly one
+  untyped input each — the one next to the colour swatch — and only Kontakt, Link and Dokument
+  have none at all.
 - **Scope modal selectors to the dialog**, not the page: `input:not([type])` also matches boxes on
   the page behind it, so `.first()` silently addresses the wrong field and the dialog looks
   unresponsive. `div.max-h-\[calc\(100vh-5rem\)\]` is `Modal`'s own card; `.last()` of those is
   the topmost dialog.
-- **An event row is `li.group`, and its ✎ is `[title="Bearbeiten"]`.** Clicking the title text does
-  nothing — only the button opens the editor. „Neuer Termin" is reached through the `+ Termin`
-  button in the „Wichtige Termine" card, not a global one.
+- **An event row is `li.group` and its ✎ is `[title="Bearbeiten"]` — neither is unique to events.**
+  Contact rows are `li.group` too, and the same `[title="Bearbeiten"]` button sits on every
+  contact, link and document row, so on an artist page an unscoped selector picks whichever card
+  the layout puts first. Scope to the section: `[data-section="termine"] li.group` (the arranger
+  stamps `data-section` outside arrange mode as well). Clicking the title text does nothing — only
+  the button opens the editor. „Neuer Termin" is reached through the `+ Termin` button in the
+  „Wichtige Termine" card, not a global one.
+- **A `type="date"` or `type="time"` box is three tab stops, not one** — the native picker tabs
+  through its own segments. Getting from Titel to the Notizen text in the event dialog takes 17
+  presses, so a fixed-length tab walk silently ends up *inside* a picker and reads as a broken tab
+  order. Walk until the expected element has focus instead of counting. The rich-text toolbar is
+  `tabIndex={-1}` and deliberately never appears in that walk; address its buttons by `title`.
+- **`Modal` traps Tab**, so a walk that expects to reach the page behind an open dialog loops
+  inside it forever. `PillSelect`'s option menu is the exception the trap makes: it portals to
+  `document.body`, so while it is open `document.activeElement` is *outside* the dialog card and
+  moves with ↑/↓, not Tab.
 - **`InlineInput` autofocuses and React sets `value` as a *property***, so `input[value="…"]` never
   matches. Use `input:focus`.
 - **Setting `input[type=color].value` directly is deduped by React's value tracker.** Use the

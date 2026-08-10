@@ -505,6 +505,13 @@ function Btn({
       title={title}
       aria-label={title}
       aria-pressed={on}
+      // Out of the tab order: Tab through „Neuer Termin" used to stop at every one of these
+      // (B, I, U, list, link, headings, table, emoji — a dozen in the roomy toolbar) between the
+      // Typ field and the Notizen text itself, so reaching the field you were tabbing towards
+      // meant pressing Tab a dozen more times. The buttons stay clickable, and the formatting
+      // that has a keyboard route keeps it — ⌘B/⌘I/⌘U are the editor's own shortcuts, handled
+      // inside the text where the caret already is.
+      tabIndex={-1}
       // Keep focus in the editor so an onBlur-to-save never fires on a toolbar click.
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}

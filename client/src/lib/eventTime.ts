@@ -128,6 +128,27 @@ export function untouchedWhen(
 }
 
 /**
+ * The four boxes with „Beginn — Datum" set to `startDate`, carrying an end date the *dialog*
+ * derived rather than the user typed.
+ *
+ * Moving the start used to leave the end where it was, which the create path never produces: a
+ * 23:00–01:00 evening is stored with the next day in `end_at`, so reopening that event and moving
+ * it one day forward left an end before its start — „Speichern" then refused, over an end box the
+ * user had not touched, a shape it had accepted a minute earlier when the box was still empty.
+ *
+ * Only the two spans this dialog derives follow the start: an end on the start's own day, and one
+ * rolled over midnight. A range dated by hand on both ends (10.09.–12.09.) is the user's, so it
+ * stays put — moving its start past its end is the ordinary „Ende liegt vor dem Beginn" refusal,
+ * with both dates on screen to correct.
+ */
+export function withStartDate(f: EventFields, startDate: string): EventFields {
+  if (!startDate || !f.startDate || !f.endDate) return { ...f, startDate };
+  if (f.endDate === f.startDate) return { ...f, startDate, endDate: startDate };
+  if (f.endDate === nextDay(f.startDate)) return { ...f, startDate, endDate: nextDay(startDate) };
+  return { ...f, startDate };
+}
+
+/**
  * The four boxes → the stored form. The rules, in the order they are applied:
  *
  *   no start date          → „Datum offen": everything NULL. Nothing else can be stored without
@@ -190,8 +211,15 @@ export function whenFromFields(f: EventFields): EventWhen {
  */
 export function eventTimeProblem(f: EventFields): string | null {
   if (!f.startDate) {
-    if (f.endDate || f.endTime) return 'Ein Ende ohne Beginn kann nicht gespeichert werden.';
-    if (f.startTime) return 'Eine Uhrzeit ohne Datum kann nicht gespeichert werden.';
+    // Both name the way out. „Datum offen" is no longer a checkbox that leaves the other boxes
+    // filled — it is the *empty* boxes — so a user who cleared the start date to say it was
+    // otherwise told only that an untouched end box was in the way (WP-40).
+    if (f.endDate || f.endTime) {
+      return 'Ein Ende ohne Beginn kann nicht gespeichert werden — Beginn setzen oder „Datum offen" wählen.';
+    }
+    if (f.startTime) {
+      return 'Eine Uhrzeit ohne Datum kann nicht gespeichert werden — Datum setzen oder „Datum offen" wählen.';
+    }
     return null; // „Datum offen" — nothing is stored, so nothing can clash.
   }
 

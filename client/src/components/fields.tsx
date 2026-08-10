@@ -28,6 +28,28 @@ const ModalDepthCtx = createContext(0);
 /** Depth of every mounted Modal, keyed by instance token. Read at keydown time, not render. */
 const openModals = new Map<object, number>();
 
+const FOCUSABLE = 'a[href], button, input, select, textarea, [contenteditable="true"], [tabindex]';
+
+/**
+ * What Tab can reach inside `root`, in tab order — DOM order, since nothing here uses a positive
+ * `tabIndex`.
+ *
+ * `tabIndex >= 0` is what drops the rich-text toolbar (its buttons opt out with `-1`), `[inert]`
+ * drops the whole form while „Änderungen verwerfen?" is up, and `getClientRects()` drops what is
+ * rendered but not shown. A disabled „Speichern" has to go too, or the cycle would wrap one
+ * element early while a save is blocked.
+ */
+function tabbables(root: HTMLElement | null): HTMLElement[] {
+  if (!root) return [];
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (el) =>
+      el.tabIndex >= 0 &&
+      !el.hasAttribute('disabled') &&
+      !el.closest('[inert]') &&
+      el.getClientRects().length > 0,
+  );
+}
+
 export function Modal({
   title,
   children,
@@ -51,6 +73,8 @@ export function Modal({
   const width = MODAL_WIDTH[size ?? (wide ? 'xl' : 'md')];
   const depth = useContext(ModalDepthCtx) + 1;
   const [confirming, setConfirming] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   // mousedown and mouseup must *both* land on the backdrop. A drag that starts on the dialog's
   // own text and ends outside it is a text selection, not a dismissal (TTU-17).
   const downOnBackdrop = useRef(false);
@@ -84,6 +108,51 @@ export function Modal({
     return () => window.removeEventListener('keydown', h);
   }, [onClose, depth]);
 
+  /**
+   * Tab cycles inside the dialog instead of walking out the back of it.
+   *
+   * Without this, Tab past „Speichern" left the dialog entirely and landed on whatever was behind
+   * the backdrop — a link on the artist page, a button in a card the user cannot even see, with
+   * the modal still open over it. From there Tab wandered the whole page and the form was only
+   * reachable again with the mouse.
+   *
+   * The forward wrap goes to the first field of the *body*, not to the ✕ above it: after
+   * „Speichern" the next thing anyone wants is the first field again. ✕ keeps its place in the
+   * natural order — Shift+Tab from the first field still reaches it — and it is the third way out
+   * anyway, next to Abbrechen and Escape.
+   *
+   * Only the topmost dialog cycles (`depth`, as with Escape), and only while focus is in this
+   * card or nowhere: `PillSelect`'s option menu portals to `document.body` and runs its own
+   * arrow-key contract (RTE-11), so pulling focus back out of it would break the field it serves.
+   */
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || e.defaultPrevented) return;
+      let top = 0;
+      for (const d of openModals.values()) top = Math.max(top, d);
+      if (depth !== top) return;
+      const card = cardRef.current;
+      const active = document.activeElement as HTMLElement | null;
+      const loose = !active || active === document.body;
+      if (!card || (!loose && !card.contains(active))) return;
+      const items = tabbables(card);
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (!first || !last) return;
+      // While the confirm question is up the body is `inert`, so this falls back to its buttons.
+      const start = tabbables(bodyRef.current)[0] ?? first;
+      // Focus dropped to the body — the emoji picker and the link bar both leave it there when
+      // they close (RTE-02). Tab should come back into the dialog, not start at the top of the
+      // page behind it.
+      if (loose || (e.shiftKey ? active === first : active === last)) {
+        e.preventDefault();
+        (e.shiftKey ? last : start).focus();
+      }
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [depth]);
+
   const requestClose = () => {
     if (dirty) setConfirming(true);
     else onClose();
@@ -103,9 +172,17 @@ export function Modal({
       {/* Column layout with a scrolling body: height used to be unbounded and the *overlay*
           scrolled, which pushed a long form's own footer off-screen. py-10 above = 5rem. */}
       <div
+        ref={cardRef}
         className={`relative ${width} flex max-h-[calc(100vh-5rem)] flex-col rounded-2xl bg-white text-neutral-800 shadow-xl`}
       >
-        <div className="flex shrink-0 items-center justify-between border-b border-neutral-100 px-5 py-3">
+        {/* `inert` while the question is up, on all three sections: the overlay below covers the
+            card but is not a focus trap, so without this the caret stays in the field the user
+            was typing in — and „Enter saves" then answered „Änderungen verwerfen?" by saving the
+            record the user had just asked to throw away (WP-40). */}
+        <div
+          inert={confirming}
+          className="flex shrink-0 items-center justify-between border-b border-neutral-100 px-5 py-3"
+        >
           <h3 className="font-semibold text-neutral-800">{title}</h3>
           {/* ✕ and the footer's Abbrechen are deliberate exits and never confirm. */}
           <IconButton onClick={onClose} title="Schließen" aria-label="Schließen" className="-mr-1">
@@ -113,10 +190,15 @@ export function Modal({
           </IconButton>
         </div>
         <ModalDepthCtx.Provider value={depth}>
-          <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+          <div ref={bodyRef} inert={confirming} className="flex-1 overflow-y-auto px-5 py-4">
+            {children}
+          </div>
         </ModalDepthCtx.Provider>
         {footer && (
-          <div className="flex shrink-0 justify-end gap-2 border-t border-neutral-100 px-5 py-3">
+          <div
+            inert={confirming}
+            className="flex shrink-0 justify-end gap-2 border-t border-neutral-100 px-5 py-3"
+          >
             {footer}
           </div>
         )}
@@ -130,7 +212,11 @@ export function Modal({
                 Die eingegebenen Daten gehen verloren.
               </p>
               <div className="mt-4 flex justify-end gap-2">
-                <Btn onClick={() => setConfirming(false)}>Weiter bearbeiten</Btn>
+                {/* Focused, so the keystroke that reaches the question answers *it* — and the
+                    safe answer is the one Enter and Space land on. */}
+                <Btn autoFocus onClick={() => setConfirming(false)}>
+                  Weiter bearbeiten
+                </Btn>
                 <Btn variant="danger" onClick={onClose}>
                   Verwerfen
                 </Btn>
@@ -191,6 +277,9 @@ const NO_ENTER_TYPES = new Set(['date', 'time', 'datetime-local', 'month', 'week
 export function onEnterKey(run: () => void) {
   return (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== 'Enter' || NO_ENTER_TYPES.has(e.currentTarget.type)) return;
+    // While an input method is composing, Enter *confirms the candidate* and means nothing to the
+    // form: saving there stores the half-composed text and swallows the confirmation.
+    if (e.nativeEvent.isComposing) return;
     e.preventDefault();
     run();
   };
@@ -346,12 +435,15 @@ function ImageField({ value, onChange }: { value: string; onChange: (v: string) 
 function ColorField({
   value,
   onChange,
+  onEnter,
   fallback,
   hint,
   placeholder,
 }: {
   value: string;
   onChange: (v: string) => void;
+  /** „Enter saves", same as every other text box in the dialog — this one renders its own. */
+  onEnter?: () => void;
   fallback?: string;
   hint?: string;
   placeholder?: string;
@@ -371,6 +463,7 @@ function ColorField({
         <TextInput
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onKeyDown={onEnter && onEnterKey(onEnter)}
           placeholder={(inherited ? fallback : null) ?? placeholder ?? '#RRGGBB'}
         />
       </div>
@@ -435,6 +528,11 @@ export function RecordFormModal({
   }, [fields, initial]);
   const [vals, setVals] = useState<Values>(initialVals);
   const [busy, setBusy] = useState(false);
+  // The in-flight guard is a *ref*, not the `busy` state below it: „Enter saves" reaches `submit`
+  // directly, and a burst of repeat-key events inside one tick all read the same stale `false`.
+  // The disabled Speichern button used to be the only way in, which is what made the state
+  // enough — the sibling forms (`useTaskComposer`, `AddColumnForm.add`) all gate this way (TTU-24).
+  const inFlight = useRef(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const guard = useGuardedAction();
   const set = (k: string, val: string) => setVals((s) => ({ ...s, [k]: val }));
@@ -446,7 +544,15 @@ export function RecordFormModal({
   const missing = fields.filter((f) => f.required && !vals[f.name]?.trim());
 
   const submit = async () => {
-    if (missing.length) return;
+    if (missing.length) {
+      // Marked here and not only on blur: Enter reaches this from a field the user never left, so
+      // without it a blocked save changes nothing on screen at all — the footer hint was already
+      // there — and the dialog reads as broken (TTU-27).
+      setTouched((t) => ({ ...t, ...Object.fromEntries(missing.map((f) => [f.name, true])) }));
+      return;
+    }
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     const out: Record<string, string | null> = {};
     for (const f of fields) {
@@ -458,6 +564,7 @@ export function RecordFormModal({
         onClose();
       }
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };
@@ -527,6 +634,7 @@ export function RecordFormModal({
               <ColorField
                 value={vals[f.name] ?? ''}
                 onChange={(v) => set(f.name, v)}
+                onEnter={submit}
                 fallback={f.fallback}
                 hint={f.fallbackHint}
                 placeholder={f.placeholder}

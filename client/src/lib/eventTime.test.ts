@@ -5,6 +5,7 @@ import {
   fieldsTouched,
   untouchedWhen,
   whenFromFields,
+  withStartDate,
   type EventFields,
 } from './eventTime';
 import { formatEventWhen } from './dates';
@@ -159,6 +160,51 @@ describe('whenFromFields', () => {
       }
       expect(w.all_day === 0 || w.all_day === 1).toBe(true);
     }
+  });
+});
+
+describe('withStartDate', () => {
+  it('takes an end on the start’s own day along', () => {
+    expect(withStartDate(F('2026-09-04', '19:30', '2026-09-04', '21:15'), '2026-09-06')).toEqual(
+      F('2026-09-06', '19:30', '2026-09-06', '21:15'),
+    );
+  });
+
+  it('keeps an event that was rolled over midnight overnight', () => {
+    // The defect this exists for, end to end: 23:00–01:00 saved with no end date at all comes
+    // back with the *next* day in the Ende box, so moving the event one day forward left
+    // 05.09. 23:00 → 05.09. 01:00 and „Speichern" refused what it had just accepted.
+    const stored = whenFromFields(F('2026-09-04', '23:00', '', '01:00'));
+    const reopened = fieldsFromEvent(stored);
+    expect(reopened).toEqual(F('2026-09-04', '23:00', '2026-09-05', '01:00'));
+
+    const moved = withStartDate(reopened, '2026-09-05');
+    expect(moved).toEqual(F('2026-09-05', '23:00', '2026-09-06', '01:00'));
+    expect(eventTimeProblem(moved)).toBeNull();
+    expect(whenFromFields(moved).end_at).toBe('2026-09-06T01:00');
+  });
+
+  it('rolls the carried end date over month and year boundaries', () => {
+    const overnight = F('2026-12-30', '23:00', '2026-12-31', '01:00');
+    expect(withStartDate(overnight, '2026-12-31').endDate).toBe('2027-01-01');
+  });
+
+  it('leaves a range the user dated on both ends where it is', () => {
+    // Two hand-picked dates are a decision, not a derivation — and moving the start past the end
+    // is then the ordinary refusal, with both boxes on screen to correct.
+    const range = F('2026-09-10', '', '2026-09-12');
+    expect(withStartDate(range, '2026-09-11')).toEqual(F('2026-09-11', '', '2026-09-12'));
+    expect(eventTimeProblem(withStartDate(range, '2026-09-13'))).toMatch(/vor dem Beginn/);
+  });
+
+  it('leaves an empty end box, a first date and a cleared one alone', () => {
+    expect(withStartDate(F('2026-09-04', '19:30'), '2026-09-06')).toEqual(F('2026-09-06', '19:30'));
+    expect(withStartDate(F(''), '2026-09-04')).toEqual(F('2026-09-04'));
+    // Clearing the start is „Datum offen"; the other boxes stay until the user (or the button)
+    // clears them, so the refusal can still name what is in the way.
+    expect(withStartDate(F('2026-09-04', '19:30', '2026-09-04', '21:15'), '')).toEqual(
+      F('', '19:30', '2026-09-04', '21:15'),
+    );
   });
 });
 

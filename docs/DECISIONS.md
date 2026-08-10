@@ -233,7 +233,17 @@ the boxes still showing it — the split fields make it much easier to leave one
 An end time **earlier in the clock** than the start is not that third case: with no explicit end
 date, `23:00–01:00` inherits the day *after* the start. A festival's late-night events are the
 common case, and refusing them as „end before start" pointed at a date box the user had left
-empty on purpose.
+empty on purpose. That inherited date comes back in the Ende box on the next open, so moving the
+event carries it along (`withStartDate`) — an end on the start's own day, or the one rolled past
+midnight, follows „Beginn — Datum". Without that, a shape the dialog had just derived became one
+it refused. A range dated by hand on **both** ends is a decision rather than a derivation and
+stays where it is.
+
+„Datum offen" survives as an *action*, not a mode: one button, next to the summary, that empties
+all four boxes. The state it names is those empty boxes — nothing is stored for it and nothing
+reads it back — but emptying them one at a time passes through „Ein Ende ohne Beginn kann nicht
+gespeichert werden", a refusal about a box the user had not reached yet. The button is the one
+gesture the checkbox used to be, without being a second place the mode can be stated.
 
 The storage form is untouched: `NULL` / 10 characters / 16 characters, `all_day` still `1` for the
 date-only shape. `all_day` and a NULL `start_at` remain orthogonal, as before; nothing reads the
