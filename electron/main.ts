@@ -346,6 +346,39 @@ async function ensureBackupDir(): Promise<string> {
   return chosen;
 }
 
+let choresRan = false;
+
+/**
+ * The startup backup and the update check, held until the boot screen has gone.
+ *
+ * Still not awaited (ELP-08) — the window must not wait on disk I/O — but "not awaited"
+ * was never the same as "not blocking". runStartupBackup POSTs to the bundled server,
+ * and that server is imported into *this* process, so its VACUUM INTO per season runs
+ * synchronously on this event loop: a saturated core, a hammered disk, and no input
+ * routing, which is why click-to-skip went dead during the gesture. ensureBackupDir can
+ * also open a modal folder picker over the animation.
+ *
+ * The timing was as bad as it could be, and deterministically so rather than by luck.
+ * createWindow() awaits loadURL, which resolves on did-finish-load — after the 1.3 MB
+ * bundle has been fetched *and executed* — so this block used to fire at the moment
+ * React had just mounted, inside the gesture's first second, on every launch.
+ *
+ * Idempotent because it has three callers: the renderer's signal, the 8 s fallback, and
+ * a renderer that reloads itself (a season switch, or the reload after saving a backup
+ * folder) and signals a second time.
+ */
+function runStartupChores(): void {
+  if (choresRan || isDev) return;
+  choresRan = true;
+  void (async () => {
+    const backupDir = await ensureBackupDir();
+    if (backupDir) await runStartupBackup(PORT, backupDir);
+  })().catch(reportBackupProblem);
+
+  // Silent update check; the result surfaces as a hint in the Settings card.
+  startSilentStartupCheck();
+}
+
 /**
  * One Auftakt at a time. Without the lock a second launch — a double-clicked Windows
  * shortcut, the usual way this happens — did not fail cleanly: waitForServer() polls
@@ -395,20 +428,9 @@ app.whenReady().then(async () => {
   );
   await createWindow();
 
-  // Deliberately not awaited (ELP-08): the startup backup VACUUMs every season and
-  // prunes the restore points — real disk I/O the window does not depend on, which on
-  // a large festival database left the user staring at a blank dock icon. Running it
-  // after the window is up also means the first-run folder prompt appears over the app
-  // instead of over an empty desktop.
-  if (!isDev) {
-    void (async () => {
-      const backupDir = await ensureBackupDir();
-      if (backupDir) await runStartupBackup(PORT, backupDir);
-    })().catch(reportBackupProblem);
-
-    // Silent update check; the result surfaces as a hint in the Settings card.
-    startSilentStartupCheck();
-  }
+  // The renderer normally releases these (see runStartupChores). It might not: a crashed
+  // or wedged renderer must not cost the user their backup for the launch.
+  if (!isDev) setTimeout(runStartupChores, 8000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();
@@ -427,3 +449,5 @@ ipcMain.handle('choose-backup-dir', () => chooseBackupDir());
 ipcMain.handle('get-version', () => app.getVersion());
 ipcMain.handle('check-updates', (_e, refresh: boolean) => checkForUpdates(refresh));
 ipcMain.handle('install-update', () => downloadAndInstallUpdate());
+// Sent from the boot overlay's single exit path, not from React — see runStartupChores.
+ipcMain.handle('boot-settled', () => runStartupChores());

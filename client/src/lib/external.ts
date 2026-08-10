@@ -25,6 +25,12 @@ declare global {
       /** refresh=false → cached silent startup check (null if it failed); true → fresh check, may reject. */
       checkForUpdates?: (refresh: boolean) => Promise<UpdateStatus | null>;
       installUpdate?: () => Promise<void>;
+      /**
+       * "The boot screen is gone." Called from the overlay's single exit path in
+       * `client/index.html`, not from React — React never learns the overlay existed.
+       * Releases the startup chores the main process is holding back (see main.ts).
+       */
+      bootSettled?: () => Promise<void>;
       platform?: string;
     };
   }

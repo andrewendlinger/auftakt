@@ -440,6 +440,16 @@
           gone = true;
           overlay.remove();
           if (root) root.inert = false;
+          // The single exit of every path, so the one honest place to say "the boot
+          // screen is gone" — it fires on the reveal, on a skip, on the failsafe, and
+          // on the early return when nothing plays at all. Electron holds its startup
+          // backup and update check until it hears this. Optional-chained twice: there
+          // is no bridge on the dev server or in a plain browser.
+          try {
+            window.auftakt && window.auftakt.bootSettled && window.auftakt.bootSettled();
+          } catch (e) {
+            /* the chores have their own timeout; never let this break the reveal */
+          }
         }
         // The two cases where nothing plays: hidden by CSS above, so drop the node
         // rather than leave an invisible one lying in the DOM.
