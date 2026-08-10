@@ -9,6 +9,13 @@ already taken — and deliberately not revisited — are in [DECISIONS.md](DECIS
 bridge (`client/src/lib/external.ts`), which degrades to plain browser behaviour when the bridge
 is absent — that is what lets the whole app run in a browser during development.
 
+One entry on that bridge is not called by React at all: `bootSettled` is called by the boot
+overlay's inline script in `client/index.html`, which lives outside the bundle because it has to
+paint before any of it exists. It reports that the boot screen is gone, and the main process holds
+its startup backup and update check until it hears so — those run synchronously on the main
+process's own event loop, so left where they were they stalled the very frames the gesture needed.
+See `docs/DECISIONS.md` for why the gesture is sequenced the way it is.
+
 - `server/` — Express 5 + better-sqlite3, ESM, run via `tsx`. Owns all business logic.
 - `client/` — React 19 + Vite + Tailwind v4 + TanStack Query/Table. Dev server proxies
   `/api` → `:4317`; in the packaged app the same Express process serves `client/dist`, so the

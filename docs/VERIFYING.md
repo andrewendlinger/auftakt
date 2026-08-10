@@ -70,23 +70,49 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 
 ## Playwright traps
 
+- **Wait for `html[data-app-ready]`, not for `networkidle`.** It is set once React has committed,
+  painted, and its bootstrap queries have settled — or given up after 700 ms, so it also arrives
+  when a query 500s or hangs, which is exactly when `networkidle` does not. `html[data-app-mounted]`
+  is the weaker one: committed and painted, data or no data. Both work on the dev server too, where
+  no overlay exists, which makes them the right handle for scenarios that have nothing to do with
+  booting. Set by `client/src/boot.ts`; there are matching `auftakt:ready` / `auftakt:mounted`
+  events on `document` if you would rather listen than poll.
 - **The boot animation never plays on the dev server**, and that is the point. `#boot-overlay` in
   `client/index.html` is gated on `'%PROD%' !== 'true'` — Vite's HTML env replacement, applied by
   the dev middleware as well as the build — so against `npm run demo` on `:5317` the node is
   removed before React mounts and a driving script can ignore it entirely. Everything below applies
   only when you verify against a **built** bundle: `npm run build`, then the server on `:4317`.
-  There, the overlay covers the viewport for ~2.6 s and keeps its pointer events the whole time, so
-  it swallows the first interaction of a run — `locator.click()` rides it out through actionability
-  retries, but a raw `mouse.click()` at coordinates only skips the animation. `#root` carries
-  `inert` for the same interval, so a keyboard-driven script finds nothing focusable until the
-  reveal. And even on `:4317` it plays on a **cold** boot only: the inline head script sets
-  `sessionStorage['auftakt-booted']`, so every `reload()` in the same context comes up without it.
-  Both directions read as a bug — the overlay being absent after a reload is correct, and a script
-  that opens a context per scenario pays the 2.6 s each time. `newContext({ reducedMotion:
-  'reduce' })` removes it outright; to look at a single frame,
-  `document.getAnimations().forEach(a => { a.pause(); a.currentTime = ms })` (seeking past ~2600 ms
-  fires the fade's `animationend`, which removes the node — that *is* the reveal, not a lost
-  overlay).
+- **The overlay has no fixed duration any more, and it is no longer a property of the build.** It
+  holds a still frame until the app is ready, then decides at runtime whether to play the gesture,
+  based on measured frame health. So a `waitForTimeout(2600)` is wrong in both directions, and the
+  same build legitimately produces different outcomes on the same machine — a boot-screen
+  screenshot diff is not reproducible by construction. Read `html[data-boot]` instead, which walks
+  `hold` → (`play` | `cross`) → `done`:
+  - `hold` → phase A, a flat `#f6f6f4` rectangle. Typically ~95 ms; up to 3500 ms, then it reveals
+    regardless.
+  - `play` → the gesture is running; ~3.1 s from here to `done`.
+  - `cross` → a 200 ms fade instead of the gesture. Three ways in: readiness arrived past the
+    1200 ms deadline, the user clicked, or the frame watchdog aborted. `#boot-overlay[data-abort]`
+    distinguishes the last one and names the reason (`hitch` / `drops` / `starved`).
+  - `done` → the node is gone and `#root` is no longer `inert`.
+- **`document.getAnimations()` returns `[]` during the hold**, because everything is
+  `animation-play-state: paused` until phase B. A script that assumes otherwise concludes the
+  overlay is broken. To look at a single frame, wait for `[data-boot="play"]` *first*, then
+  `document.getAnimations().forEach(a => { a.pause(); a.currentTime = ms })` — and note the clock
+  now starts at phase B, not at navigation. Seeking past the end fires the fade's `animationend`,
+  which removes the node: that *is* the reveal, not a lost overlay.
+- **A blocked main thread makes the gesture abort, so do not block it and then blame the overlay.**
+  Injecting a busy-loop to simulate load, or attaching a debugger, trips the watchdog and you get
+  `cross` instead of `play`. That is the feature working.
+- **The overlay swallows the first interaction while it is up**, whatever phase it is in, because
+  it keeps its pointer events until removal. `locator.click()` rides that out through actionability
+  retries; a raw `mouse.click()` at coordinates only reveals the app. `#root` carries `inert` for
+  the same interval, so a keyboard-driven script finds nothing focusable until `done`.
+- **It plays on a **cold** boot only.** The inline head script sets
+  `sessionStorage['auftakt-booted']`, so every `reload()` in the same context comes up without it —
+  correct, though it reads as a bug — while a script that opens a context per scenario pays the
+  full boot each time. `newContext({ reducedMotion: 'reduce' })` removes it outright and stays the
+  cheapest way to get it out of the way.
 - **`page.goto` to the same hash is a no-op** under `HashRouter`, so a dialog left open by the
   previous scenario silently eats every click. Call `reload()` after `goto`.
 - **`locator.isVisible()` does not wait** — it samples immediately, so it reads the state before an

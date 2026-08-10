@@ -313,6 +313,61 @@ overrides and survive untouched.
 
 ---
 
+## The boot gesture is conditional, and the condition is measured (2026-08-11, PR #35)
+
+The obvious-looking question about `client/index.html` is why the animation does not simply start
+when the overlay paints, the way it did when #32 shipped it. Because that is the worst possible
+moment: the overlay paints exactly when the renderer begins fetching, parsing and compiling a
+1.3 MB bundle and mounting React, so the gesture's frames competed with the app's own startup on
+every launch.
+
+**It cannot be composited out of that competition.** This was measured, not assumed — the
+`Animation` trace events in `disabled-by-default-devtools.timeline` carry Chromium's own verdict.
+`bootMotion` reports `compositeFailed: 8320, unsupportedProperties: ['offset-distance']`, the two
+trail strokes report `8224` for `stroke-dashoffset`, the hand's fade reports `128` because its
+element carries `offset-path`, and the trail group's stacked opacity pair reports `64`. Five of
+twelve animations are drawn by the renderer's main thread, including the hand travelling the path,
+which is the gesture. Rewriting them to be compositable is not available: the motion *is* the path
+and the trace *is* the dash.
+
+So the gesture waits instead. Phase A holds a still, flat frame until the app reports mounted and
+the main thread yields an idle callback; phase B releases the animation onto a thread with nothing
+left to do. Three consequences that look like arbitrary choices and are not:
+
+**Phase A shows nothing — not the parked hand, and above all not the wordmark.** The gesture's
+entire payload is the wordmark *landing* on the ictus. A wordmark already on screen makes it land
+on nothing. An empty coloured rectangle also reads as a window that has not drawn yet rather than
+as a stall, which matters because it may be on screen for a while.
+
+**Past 1200 ms the gesture is forfeit.** The deadline looks harsh beside the 2700 ms it guards.
+Hold plus gesture plus fade is already ~4.3 s of splash at that deadline; at the 2.5 s that feels
+natural it would be 5.6 s, which is worse than never animating. The gesture is a reward for a fast
+boot, never a tax on a slow one. Measured cost when the app is fast: reveal moved from 2630 ms to
+~2713 ms, so the hold buys the guarantee for ~85 ms.
+
+**The frame watchdog is only valid while the gesture is main-thread-bound.** It judges rAF cadence,
+which is a fair proxy for what the user sees *because* the frames are drawn by the thread rAF runs
+on. If the trail is ever removed and `offset-distance` becomes compositable, this inverts: the
+watchdog would abort a perfectly smooth animation whenever something unrelated occupied the main
+thread. Re-run the trace check before assuming it still earns its place, and delete it if it does
+not.
+
+**The startup backup moved behind an IPC signal but kept an 8 s fallback.** ELP-08 already took it
+off the awaited path; that was never the same as taking it off the *thread*. `runStartupBackup`
+POSTs to a server imported into the main process, so its `VACUUM INTO` per season is synchronous
+there — no input routing, which is why click-to-skip went dead mid-gesture — and `await loadURL`
+resolving on `did-finish-load` timed it to land exactly when React had mounted. It now waits for
+the overlay's own exit path. The fallback is not optional: a renderer that crashes before the
+reveal must not cost the user their backup for that launch.
+
+**Reduced motion still removes the overlay outright rather than getting phase A.** A static hold
+would arguably suit those users better than the app popping in mid-mount. But
+`newContext({ reducedMotion: 'reduce' })` is the documented escape hatch that every driving script
+in `docs/VERIFYING.md` relies on, and quietly turning it into „hold, then reveal" would break them
+all. Worth revisiting only behind a separate opt-out that Playwright can use first.
+
+---
+
 ## Known sharp edges with no owner
 
 Real, understood, and deliberately not scheduled. Each carries a comment at its own site; none is
