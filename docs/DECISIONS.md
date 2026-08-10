@@ -339,3 +339,11 @@ finding one does not read as a discovery.
 - **`first_run_done` is close to redundant.** `ensureBackupDir` returns early whenever `backupDir`
   is set, so the flag now means „a folder was chosen at least once" and only matters if
   `backup_dir` were later cleared. Left as a guard.
+- **The Übersicht's event blocks are split at fetch time, not at midnight.** `groupUpcomingEvents`
+  takes „today" from its default `fromUtcMs`, read once inside a `useMemo` keyed on the list and
+  the window, and the query sets `refetchOnWindowFocus: false` — so an Electron window left open
+  overnight keeps yesterday's boundary until some write invalidates `['dashboard']`, and an event
+  that became „heute" stays under „Danach". Not a regression from WP-33 moving the split off the
+  server: that same window did not re-fetch before either, so it showed a stale split then too. A
+  rollover timer or a focus refetch would close it; both cost more than one stale heading buys on
+  a desktop app that is usually reopened, not left running.

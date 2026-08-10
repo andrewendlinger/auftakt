@@ -98,6 +98,11 @@ export function Dashboard() {
 
   // Above the early returns, where every hook has to sit. The server sends one unsliced list; the
   // three blocks the section renders are cut here.
+  //
+  // The default `fromUtcMs` reads the clock once, when this memo runs, and the deps do not include
+  // the date — so a window left open past midnight keeps yesterday's boundary until a write
+  // invalidates ['dashboard']. Known and accepted, not an oversight: see „Known sharp edges" in
+  // docs/DECISIONS.md.
   const { undated, within, beyond } = useMemo(
     () => groupUpcomingEvents(data?.upcoming ?? [], eventWindowDays),
     [data?.upcoming, eventWindowDays],
