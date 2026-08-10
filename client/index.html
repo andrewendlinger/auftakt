@@ -651,6 +651,79 @@
           html.dataset.boot = 'play';
           html.classList.add('boot-play');
           armFailsafe(GESTURE_MS + 400);
+          watchFrames();
+        }
+
+        /* Frame-health watchdog: the promise that a stuttering gesture stops being a
+           gesture. Everything above only makes stutter unlikely — an idle thread, a
+           deadline, no blurred raster — and "unlikely" is not what was asked for.
+
+           It is only meaningful because this animation is main-thread-bound; rAF cadence
+           is a fair proxy for what the user sees precisely because the frames are drawn
+           by the thread rAF runs on. If the gesture ever becomes fully composited — the
+           trail removed, offset-distance made compositable — this must go, or it will
+           abort smooth animations whenever something unrelated occupies the main thread.
+           docs/DECISIONS.md records that condition. */
+        var WATCH_MS = 200;
+
+        function watchFrames() {
+          var first = -1;
+          var prev = -1;
+          var frames = 0;
+          var drops = 0;
+          /* Never hardcode 16.67: this runs at 120 Hz on ProMotion, 60 on a typical
+             Windows panel, 144 or 165 elsewhere. The fastest delta observed is the best
+             available estimate of the panel's period — a frame cannot arrive sooner than
+             vsync. The 4 ms floor rejects the double-fire that follows a missed vsync,
+             and the clamp bounds the estimate to panels that exist. Estimated here rather
+             than during phase A, where every sample would be taken while the bundle is
+             compiling. */
+          var nominal = 1000 / 60;
+          var minDelta = Infinity;
+
+          function tick(now) {
+            if (gone || crossing || !playing) return;
+            if (first < 0) {
+              first = prev = now;
+              return requestAnimationFrame(tick);
+            }
+            var d = now - prev;
+            prev = now;
+            frames++;
+            if (d > 4 && d < minDelta) {
+              minDelta = d;
+              nominal = Math.max(6, Math.min(20, minDelta));
+            }
+            /* The first measured frame carries the cost of promoting layers for
+               animations that have just started, which is expected rather than
+               perceived — judging it would abort healthy runs. */
+            if (frames > 1) {
+              // One visible hitch is enough: 4x nominal is 33 ms at 120 Hz, 67 at 60.
+              if (d >= 4 * nominal) return abort('hitch');
+              drops += Math.max(0, Math.round(d / nominal) - 1);
+              // ~25 ms of lost motion at 60 Hz — the floor of what reads as stutter on a
+              // fast lateral move, which is exactly what bootMotion does at 62-70 %.
+              if (drops >= 3) return abort('drops');
+            }
+            var elapsed = now - first;
+            if (elapsed < WATCH_MS) return requestAnimationFrame(tick);
+            /* The test the other two structurally cannot make. If the thread is blocked
+               for the whole window, tick runs twice and both deltas look fine against
+               the seed; only comparing frame *count* to elapsed time sees it. */
+            if (frames < 0.6 * (elapsed / nominal)) return abort('starved');
+          }
+          requestAnimationFrame(tick);
+        }
+
+        /* No cancelling of animations, and so none of the ways that goes wrong — a
+           document-wide getAnimations() sweep would take the overlay's own fade with it
+           and strand the overlay forever. crossFade drops .boot-play, which reverts every
+           descendant to the paused base rule: the gesture freezes on the frame it had
+           reached and fades out from there. A held frame reads as deliberate; stopping
+           mid-swing and cutting reads as a crash. */
+        function abort(reason) {
+          overlay.dataset.abort = reason;
+          crossFade();
         }
 
         // ---- the reveal without a gesture -------------------------------------------
