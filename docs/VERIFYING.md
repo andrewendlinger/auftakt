@@ -128,6 +128,13 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 
 - **The default `task_sort` is `[status, priority, due]`, not empty.** A „keine Regel" repro needs
   `PATCH /api/settings {"task_sort": []}` first.
+- **The dashboard's „Nächste Termine" has three blocks, and which one a row is in is the
+  assertion**: event 8 under „Datum offen", then 2/5/1 inside the 14 days, then 4/3/7 under
+  „Danach" (which stays uncollapsed — „+ N weitere anzeigen" needs more than 8 rows past the
+  window). Event 6 is nine days past and event 9 is soft-deleted; **both must be absent**, and
+  either one appearing is a real bug, not a fixture quirk. Assert on block membership, not on a
+  total — the event fixtures grow. And every offset is relative to the **seed day**, so a `.demo`
+  built days ago drifts rows across the window boundary; rebuild with `npm run demo` first.
 - **The project and artist pages ship `defaultHidden={['stats', …]}`**, so the „Fortschritt" tile
   is *not on screen* until a layout that names it is written. The dashboard's is.
 - **Artist 2 and project 3 ship their own `layout`; artists 1/3/4 and every other project are

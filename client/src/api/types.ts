@@ -563,8 +563,12 @@ export type SettingsArrayValue<K extends SettingsArrayKey> = NonNullable<Writabl
 
 export interface Dashboard {
   artists: ArtistCard[];
-  upcoming14: EventItem[];
-  nextUp: EventItem[];
+  /**
+   * Every event from today onwards, dateless ones first — the server applies no window and no
+   * limit (WP-33). Where „Danach" starts is decided here, by `groupUpcomingEvents` in
+   * `lib/eventGroups.ts`.
+   */
+  upcoming: EventItem[];
   tasks: Task[];
 }
 

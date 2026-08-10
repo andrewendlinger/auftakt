@@ -244,19 +244,30 @@ try {
   check('erledigt_am lands on the local calendar day (SDL-07)', done.erledigt_am.slice(0, 10) === localDay(), done.erledigt_am);
   check('the .xlsx "Erledigt am" slice agrees', done.erledigt_am.slice(0, 10) === localDay());
 
-  // the dashboard's 14-day window (SDL-10)
-  const mk = (title, day) => api('POST', '/events', { artist_id: artist.id, type: 'Auftritt', title, start_at: day, all_day: 1 });
+  // the dashboard's upcoming list (SDL-10)
+  //
+  // The 14-day split moved to the client (client/src/lib/eventGroups.ts, covered by check:unit), so
+  // the server computes no offset here any more and the +14/+15 edge is no longer its property.
+  // What it still owns is the *today* edge — „from today onwards, running multi-day events
+  // included" — and that is exactly the comparison a bare date('now') gets wrong, in both
+  // directions: Kiritimati (UTC+14) would let „gestern" in, Midway (UTC-11) would drop „heute".
+  const mk = (title, start_at, end_at = null) =>
+    api('POST', '/events', { artist_id: artist.id, type: 'Auftritt', title, start_at, end_at, all_day: 1 });
   await mk('heute', dayOffset(0));
-  await mk('rand', dayOffset(14));
-  await mk('ausserhalb', dayOffset(15));
   await mk('gestern', dayOffset(-1));
+  await mk('laeuft', dayOffset(-2), dayOffset(2));
+  await mk('vorbei', dayOffset(-3), dayOffset(-1));
+  await mk('spaet', dayOffset(400));
+  // „Datum offen" carries no date and therefore no all_day either (lib/eventTime.ts).
+  await api('POST', '/events', { artist_id: artist.id, type: 'Auftritt', title: 'offen', start_at: null, all_day: 0 });
   const dash = await api('GET', '/dashboard');
-  const titles = dash.upcoming14.map((e) => e.title);
-  check('the window includes an event starting today', titles.includes('heute'), titles.join(', '));
-  check('the window includes the +14 edge', titles.includes('rand'));
-  check('the window excludes +15', !titles.includes('ausserhalb'));
-  check('the window excludes yesterday', !titles.includes('gestern'));
-  check('+15 shows up under "nextUp" instead', dash.nextUp.map((e) => e.title).includes('ausserhalb'));
+  const titles = dash.upcoming.map((e) => e.title);
+  check('the list includes an event starting today (SDL-10)', titles.includes('heute'), titles.join(', '));
+  check('the list excludes yesterday (SDL-10)', !titles.includes('gestern'), titles.join(', '));
+  check('a multi-day event running across today stays in (SDL-10)', titles.includes('laeuft'), titles.join(', '));
+  check('a multi-day event that ended yesterday is gone', !titles.includes('vorbei'), titles.join(', '));
+  check('„Datum offen" is listed, and first', titles[0] === 'offen', titles.join(', '));
+  check('nothing is capped — an event 400 days out is listed', titles.includes('spaet'), titles.join(', '));
 
   // deleted_at + the purge countdown (PGS-12)
   await api('DELETE', `/tasks/${task.id}`);
