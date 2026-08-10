@@ -252,12 +252,19 @@ async function importDatabase(): Promise<void> {
 }
 
 async function createWindow(): Promise<void> {
-  mainWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1024,
     minHeight: 680,
     title: 'Auftakt',
+    // Created hidden. A window shown at construction is on screen before loadURL has
+    // fetched anything, so the user gets an empty rectangle for the whole renderer boot
+    // — the bundle fetch, a 1.3 MB parse and React's first mount. backgroundColor keeps
+    // that rectangle from being white, but cream-coloured nothing is still nothing.
+    // ready-to-show waits until the renderer has a frame to present, which is the boot
+    // screen's first frame, so window and boot screen appear together.
+    show: false,
     backgroundColor: '#f6f6f4',
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
@@ -265,17 +272,32 @@ async function createWindow(): Promise<void> {
       nodeIntegration: false,
     },
   });
+  mainWindow = win;
+
+  win.once('ready-to-show', () => win.show());
+  // ready-to-show never fires if the load fails, and a window that stays hidden is worse
+  // than one that flashes empty: app.on('activate') counts hidden windows too, so it
+  // would not create a replacement, and the app would sit with a dock icon and no way
+  // back. Show it regardless once it is clear no frame is coming.
+  const showAnyway = setTimeout(() => {
+    if (!win.isDestroyed() && !win.isVisible()) win.show();
+  }, 3000);
+  win.on('closed', () => {
+    clearTimeout(showAnyway);
+    mainWindow = null;
+  });
+
   // Never spawn a child BrowserWindow (a child would not inherit the preload,
   // but denying is the safe default); route allowlisted schemes out to the OS
   // through the same guard as the bridge (X-02 / Q1).
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  win.webContents.setWindowOpenHandler(({ url }) => {
     openExternalSafely(url);
     return { action: 'deny' };
   });
   // Keep the renderer pinned to the app origin; any in-page navigation to an
   // off-origin URL is handed to the OS (if allowlisted) instead of loading in
   // the window.
-  mainWindow.webContents.on('will-navigate', (e, url) => {
+  win.webContents.on('will-navigate', (e, url) => {
     const appOrigin = isDev ? DEV_URL : ORIGIN;
     if (!isAppOrigin(url, appOrigin)) {
       e.preventDefault();
@@ -283,10 +305,20 @@ async function createWindow(): Promise<void> {
     }
   });
 
-  await mainWindow.loadURL(isDev ? DEV_URL : ORIGIN);
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
+  // Awaited outside whenReady's try/catch until now, so a rejection here was an
+  // unhandled rejection and a permanently blank window with nothing said about it —
+  // the same silent failure ELP-06 fixed one step earlier, for the server.
+  try {
+    await win.loadURL(isDev ? DEV_URL : ORIGIN);
+  } catch (err) {
+    if (win.isDestroyed()) return;
+    win.show();
+    await dialog.showMessageBox(win, {
+      type: 'error',
+      message: 'Die Oberfläche konnte nicht geladen werden.',
+      detail: `${(err as Error).message}\n\nBitte die App erneut öffnen. Bleibt der Fehler bestehen, hilft eine Neuinstallation.`,
+    });
+  }
 }
 
 /**
