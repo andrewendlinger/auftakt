@@ -11,6 +11,19 @@ const isDev = !app.isPackaged;
 // then made the server bind an ephemeral port while main polled localhost:0 until the
 // health check timed out and no window ever opened (ELP-07).
 const PORT = Number(process.env.AUFTAKT_PORT) || 4317;
+/**
+ * Reach the bundled server by address, never by name. It binds 127.0.0.1 explicitly
+ * (`server/src/index.ts`), but `localhost` resolves ::1 first on Windows, so every
+ * request here opened a doomed IPv6 connection and waited for it to be refused before
+ * retrying over IPv4. Node's autoSelectFamily caps that at 250 ms per connection, which
+ * is cheap only when the stack refuses promptly — behind a firewall that drops instead,
+ * it is a stall on the one code path that gates the window.
+ *
+ * Safe as an origin change: the server already allowlists this exact origin and has
+ * 127.0.0.1 in its loopback set, and `auftakt-booted` — the only web-storage key in the
+ * app — is sessionStorage, so nothing is keyed to the old origin.
+ */
+const ORIGIN = `http://127.0.0.1:${PORT}`;
 const DEV_URL = process.env.AUFTAKT_DEV_URL ?? 'http://localhost:5317';
 
 let mainWindow: BrowserWindow | null = null;
@@ -67,7 +80,7 @@ function dataDir(): string {
  * this process only supplies the paths the user picked in a dialog.
  */
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const r = await fetch(`http://localhost:${PORT}/api/${path}`, {
+  const r = await fetch(`${ORIGIN}/api/${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
@@ -92,7 +105,7 @@ function waitForServer(timeoutMs = 10000): Promise<void> {
   return new Promise((res, rej) => {
     const tick = async () => {
       try {
-        const r = await fetch(`http://localhost:${PORT}/api/health`);
+        const r = await fetch(`${ORIGIN}/api/health`);
         if (r.ok) return res();
       } catch {
         /* not up yet */
@@ -113,7 +126,7 @@ function waitForServer(timeoutMs = 10000): Promise<void> {
  * now, so it is season-independent and one choice covers every season.
  */
 async function saveBackupDir(dir: string): Promise<void> {
-  const r = await fetch(`http://localhost:${PORT}/api/backup/dir`, {
+  const r = await fetch(`${ORIGIN}/api/backup/dir`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ dir }),
@@ -263,14 +276,14 @@ async function createWindow(): Promise<void> {
   // off-origin URL is handed to the OS (if allowlisted) instead of loading in
   // the window.
   mainWindow.webContents.on('will-navigate', (e, url) => {
-    const appOrigin = isDev ? DEV_URL : `http://localhost:${PORT}`;
+    const appOrigin = isDev ? DEV_URL : ORIGIN;
     if (!isAppOrigin(url, appOrigin)) {
       e.preventDefault();
       openExternalSafely(url);
     }
   });
 
-  await mainWindow.loadURL(isDev ? DEV_URL : `http://localhost:${PORT}`);
+  await mainWindow.loadURL(isDev ? DEV_URL : ORIGIN);
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -286,7 +299,7 @@ async function createWindow(): Promise<void> {
  * with no backup and nothing but a hint in a Settings tab to say so.
  */
 async function ensureBackupDir(): Promise<string> {
-  const status = (await (await fetch(`http://localhost:${PORT}/api/backup/status`)).json()) as {
+  const status = (await (await fetch(`${ORIGIN}/api/backup/status`)).json()) as {
     backupDir: string;
     hasData: boolean;
     prompted: boolean;

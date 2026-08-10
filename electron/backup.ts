@@ -31,7 +31,8 @@ export async function runStartupBackup(port: number, backupDir: string): Promise
   const problem = backupDirProblem(backupDir);
   if (problem) throw new Error(problem);
   const dir = resolve(backupDir);
-  const r = await fetch(`http://localhost:${port}/api/backup`, {
+  // By address, not by name — see the ORIGIN comment in main.ts.
+  const r = await fetch(`http://127.0.0.1:${port}/api/backup`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ dir }),
