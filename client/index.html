@@ -109,6 +109,43 @@
         animation: bootRipple2 620ms calc((var(--ti) + 110) * 1ms) both;
       }
 
+      /* The ink trace behind the baton tip: a soft blurred stroke and a fine core,
+         drawn as sliding dash windows (200 / 110 path units) along the same path the
+         hand travels. Their keyframes share bootMotion's percentages and easings, so
+         tip and ink stay synchronized by construction. pathLength pins the browser's
+         arc-length arithmetic to the value the offsets were computed against. The
+         base stroke-dashoffset parks the window before the path start, so with
+         animations off nothing shows until the 4 s failsafe removes the overlay. */
+      #boot-overlay .trail {
+        fill: none;
+        stroke: #3c3c3b;
+        stroke-linecap: round;
+      }
+      #boot-overlay .trail.soft {
+        stroke-width: 9;
+        opacity: 0.1;
+        filter: blur(2px);
+        stroke-dashoffset: 200;
+        animation: bootDashSoft calc(var(--T) * 1ms) both;
+      }
+      #boot-overlay .trail.core {
+        stroke-width: 3;
+        opacity: 0.45;
+        stroke-dashoffset: 110;
+        animation: bootDashCore calc(var(--T) * 1ms) both;
+      }
+      /* The trace appears a blink after the hand's first movement, then runs in sync;
+         after the ictus it dissolves. bootTrailIn fills backwards only, so once it
+         ends, bootTrailFade's backwards fill (opacity 1) carries the group until the
+         fade — and during the first 150 ms the later entry in the list wins, keeping
+         the group at 0. Reordering this list breaks the onset. */
+      #boot-overlay .trailg {
+        opacity: 0;
+        animation:
+          bootTrailFade 300ms calc((var(--ti) + 150) * 1ms) both,
+          bootTrailIn 220ms 150ms backwards;
+      }
+
       #boot-overlay .actor {
         fill: #3c3c3b;
       }
@@ -199,6 +236,88 @@
           transform: rotate(0deg);
         }
       }
+      /* Dash offsets = window width minus the tip's arc position at each phase mark;
+         computed against pathLength 615.32, one set per window width. */
+      @keyframes bootDashSoft {
+        0% {
+          stroke-dashoffset: 200;
+          animation-timing-function: cubic-bezier(0.35, 0, 0.25, 1);
+        }
+        44.444% {
+          stroke-dashoffset: 43.05;
+          animation-timing-function: cubic-bezier(0.4, 0, 0.5, 1);
+        }
+        47.407% {
+          stroke-dashoffset: 37.32;
+          animation-timing-function: cubic-bezier(0.45, 0.05, 0.2, 1);
+        }
+        61.852% {
+          stroke-dashoffset: -144.2;
+          animation-timing-function: cubic-bezier(0.5, 0, 0.85, 0.35);
+        }
+        69.63% {
+          stroke-dashoffset: -319.22;
+          animation-timing-function: cubic-bezier(0, 0.5, 0.35, 1);
+        }
+        77.037% {
+          stroke-dashoffset: -391.29;
+          animation-timing-function: cubic-bezier(0.4, 0, 0.4, 1);
+        }
+        86.296% {
+          stroke-dashoffset: -415.32;
+        }
+        100% {
+          stroke-dashoffset: -415.32;
+        }
+      }
+      @keyframes bootDashCore {
+        0% {
+          stroke-dashoffset: 110;
+          animation-timing-function: cubic-bezier(0.35, 0, 0.25, 1);
+        }
+        44.444% {
+          stroke-dashoffset: -46.95;
+          animation-timing-function: cubic-bezier(0.4, 0, 0.5, 1);
+        }
+        47.407% {
+          stroke-dashoffset: -52.68;
+          animation-timing-function: cubic-bezier(0.45, 0.05, 0.2, 1);
+        }
+        61.852% {
+          stroke-dashoffset: -234.2;
+          animation-timing-function: cubic-bezier(0.5, 0, 0.85, 0.35);
+        }
+        69.63% {
+          stroke-dashoffset: -409.22;
+          animation-timing-function: cubic-bezier(0, 0.5, 0.35, 1);
+        }
+        77.037% {
+          stroke-dashoffset: -481.29;
+          animation-timing-function: cubic-bezier(0.4, 0, 0.4, 1);
+        }
+        86.296% {
+          stroke-dashoffset: -505.32;
+        }
+        100% {
+          stroke-dashoffset: -505.32;
+        }
+      }
+      @keyframes bootTrailIn {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+      @keyframes bootTrailFade {
+        from {
+          opacity: 1;
+        }
+        to {
+          opacity: 0;
+        }
+      }
       @keyframes bootLetterIn {
         from {
           opacity: 0;
@@ -266,6 +385,20 @@
 
     <div id="boot-overlay" aria-hidden="true">
       <svg viewBox="0 0 720 450">
+        <g class="trailg">
+          <path
+            class="trail soft"
+            pathLength="615.32"
+            stroke-dasharray="200 616"
+            d="M280,404 C316,382 352,334 344,270 C343,272 342.6,274.5 342.5,275.5 C333,247 331,165 342,95 C343,150 344,215 344,270 C341,244 342,212 342,198 C342.5,206 343,216 343,222"
+          />
+          <path
+            class="trail core"
+            pathLength="615.32"
+            stroke-dasharray="110 616"
+            d="M280,404 C316,382 352,334 344,270 C343,272 342.6,274.5 342.5,275.5 C333,247 331,165 342,95 C343,150 344,215 344,270 C341,244 342,212 342,198 C342.5,206 343,216 343,222"
+          />
+        </g>
         <circle class="ripple r1" cx="344" cy="270" r="48" />
         <circle class="ripple r2" cx="344" cy="270" r="48" />
         <g class="word">
