@@ -1,0 +1,25 @@
+name: Auftakt
+
+# Query filters, not a query selection: the suite still comes from `queries: security-extended`
+# in codeql.yml, and `query-filters` is applied to whatever that resolves to.
+#
+# `js/missing-rate-limiting` answers a threat this app does not have. The server binds
+# 127.0.0.1 (server/src/index.ts) and 403s any request whose Host is not a loopback name or
+# whose Origin is off-allowlist — the X-01 guard — *before* a route handler runs, so the only
+# caller that reaches one is the user's own UI. The query flags every handler that touches the
+# database, which here is all of them: 18 open alerts across lib/crud.ts, routes/entities.ts,
+# deleted.ts, search.ts, export.ts, settings.ts, usage.ts and dashboard.ts. Any PR touching any
+# handler therefore goes red on a finding that is inert — and a check that is always red is a
+# check nobody reads, the same failure mode the `npm audit` step in build.yml warns about.
+#
+# REVERSE THIS the day the server binds anything but loopback, or serves more than one user.
+# Then the finding is real — and so are auth, sessions and per-tenant routing, which come first.
+# docs/DECISIONS.md carries the full reasoning and why express-rate-limit was declined rather
+# than deferred.
+#
+# Scoped to that one id on purpose. `js/http-to-file-access` stays on: untrusted data reaching a
+# file write is a live class for an app that takes season labels over HTTP and imports
+# user-supplied .db and CSV files.
+query-filters:
+  - exclude:
+      id: js/missing-rate-limiting

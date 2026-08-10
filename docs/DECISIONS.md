@@ -200,6 +200,45 @@ deliberate, and harmless, because the audit step in `.github/workflows/build.yml
 **Remove the ignore when** `react-router-dom` ships a release that depends on a patched
 `react-router`. At that point this becomes an ordinary bump.
 
+## CodeQL's `js/missing-rate-limiting` is filtered out — until the server leaves loopback (2026-08-10)
+
+CodeQL flags every route handler that touches the database as vulnerable to denial of service for
+want of a rate limiter. Here that is *all* of them: 18 open alerts across `server/src/lib/crud.ts`,
+`routes/entities.ts`, `deleted.ts`, `search.ts`, `export.ts`, `settings.ts`, `usage.ts` and
+`dashboard.ts`. `.github/codeql/codeql-config.yml` excludes the query.
+
+**The vector is closed one layer up.** `server/src/index.ts` binds `127.0.0.1` — not `0.0.0.0` —
+and the X-01 middleware 403s any request whose `Host` is not a loopback name or whose `Origin` is
+off the allowlist, before a handler runs. The threat model there is a hostile page in the user's
+browser; the flood CodeQL describes has no way in, and the only caller that reaches a handler is
+the user's own UI. A handler is not exposed merely because it is a handler.
+
+**The alerts were noise with a cost.** The finding is per-handler, so any PR touching any handler
+re-reports a pre-existing alert as „new in code changed by this pull request" — PR 36 hit exactly
+that by editing four lines inside `POST /tasks/:id/move`, which had carried alert #14 since
+2026-08-06. Left alone, the check is red on essentially every PR forever, which is how a check
+stops being read. Same reasoning as the `continue-on-error` on the audit step in `build.yml`,
+one step further: a signal that always fires is not a signal.
+
+**`express-rate-limit` was declined, not deferred.** It would close the alerts legitimately and it
+is cheap — the check scripts issue ~65 requests and the client does not poll, so no gate would
+notice. It is still the wrong thing twice over. On the desktop app every request arrives from
+`127.0.0.1`, so the default per-IP keying is one bucket for the whole application, and a limiter
+that ever fires presents to the user as an app that has frozen — a self-inflicted outage
+protecting against nothing. And it would not be the middleware a shared deployment needs anyway:
+that wants a shared store rather than the in-memory one, plus `trust proxy` so the key is the
+caller and not the reverse proxy. Rate limiting is also the *smallest* item on that list, well
+behind auth, sessions, per-tenant database routing and TLS. Installing it now would buy a green
+check, not a head start.
+
+**Scoped to that one query.** `js/http-to-file-access` (alert #19, the `writeFileSync` in
+`saveRegistry`, `server/src/db.ts`) stays on: untrusted data reaching a file write is live for an
+app that takes season labels over HTTP and imports user-supplied `.db` and CSV files.
+
+**Remove the filter when** the server binds anything but loopback, or serves more than one user.
+That is the change that makes the finding real — and at that point it is the least of what has to
+be built.
+
 ## The event dialog derives its mode; the checkboxes do not come back (2026-08-10, WP-40)
 
 „Mit Uhrzeit" and „Datum offen (TBD)" are gone, and neither is a candidate for restoration. Both
