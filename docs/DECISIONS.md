@@ -277,10 +277,17 @@ top of that would delete exactly those rows.
 
 **Nothing is capped server-side, ever again.** `LIMIT 6` was the reported bug: the app withheld
 data the user had entered, with nothing on screen to say so. The only shortening left is
-`PREVIEW_ROWS` in the „Danach" block, and it exists only because it is paired with
-„+ N weitere anzeigen". A cap without an affordance that opens it is data loss with extra steps.
-The response is therefore unbounded in the event dimension — as it already was for `tasks` — and
-that is the intended shape, not an oversight awaiting a `LIMIT`.
+`PREVIEW_ROWS`, which all three blocks pass to `UpcomingList`, and it exists only because it is
+paired with „+ N weitere anzeigen". A cap without an affordance that opens it is data loss with
+extra steps. The response is therefore unbounded in the event dimension — as it already was for
+`tasks` — and that is the intended shape, not an oversight awaiting a `LIMIT`.
+
+„Danach" was capped first because it was the obvious offender, but the argument was never specific
+to it: „Datum offen" sits at the *top* of the section, where a Notion import with 40 undated events
+pushes „Aufgaben" and „Braucht Aufmerksamkeit" off the first screen, and the near block becomes the
+same list once `event_window_days` is raised — 365 is legal, and the window then holds the season.
+`UpcomingList`'s `cap` is required rather than optional so that a fourth block cannot be added
+uncapped by leaving the prop off.
 
 **The window is split client-side**, in `client/src/lib/eventGroups.ts`, for the reason the WP-40
 entry above gives for `eventTime.ts`: `check:unit` reaches `lib/`, and nothing reaches the page.

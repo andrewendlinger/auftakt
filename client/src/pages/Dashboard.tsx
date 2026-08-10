@@ -41,10 +41,15 @@ const SECTION_LABEL_KEYS: Record<string, LabelKey> = {
 };
 
 /**
- * Rows „Danach" shows before it collapses the rest behind „+ N weitere anzeigen" — the cap
+ * Rows a block shows before it collapses the rest behind „+ N weitere anzeigen" — the cap
  * `AttentionList` uses, for the same reason (a full season under one heading is a scroll that
  * pushes every section below it off screen). Local rather than imported: it is this list's own
  * presentation choice, not a shared contract.
+ *
+ * All three blocks carry it, not just „Danach". „Datum offen" sits at the *top* of the section, so
+ * an import that leaves 40 events without a date pushes every section below it off the first
+ * screen; and the near block is „Danach"'s own argument once `event_window_days` is raised, since
+ * 365 is a legal setting and the window then holds the season.
  */
 const PREVIEW_ROWS = 8;
 
@@ -144,12 +149,12 @@ export function Dashboard() {
             {undated.length > 0 && (
               <div>
                 <Kicker>Datum offen</Kicker>
-                <UpcomingList events={undated} />
+                <UpcomingList events={undated} cap={PREVIEW_ROWS} />
               </div>
             )}
             {/* No kicker: this is the block the section heading already names, and leaving it bare
                 is the layout EventList uses on the artist and project pages. */}
-            {within.length > 0 && <UpcomingList events={within} />}
+            {within.length > 0 && <UpcomingList events={within} cap={PREVIEW_ROWS} />}
             {beyond.length > 0 && (
               <div>
                 <Kicker>Danach</Kicker>
@@ -248,12 +253,13 @@ function ArtistCard({ artist, tasks }: { artist: ArtistCardT; tasks: Task[] }) {
 /**
  * One block of the events section. `cap` collapses everything past the first `cap` rows behind
  * „+ N weitere anzeigen" — the AttentionList affordance, and the only kind of shortening this
- * section is allowed: a cap without a way to open it is what WP-33 removed. Without `cap` the
- * list is complete and the button never renders.
+ * section is allowed: a cap without a way to open it is what WP-33 removed.
+ *
+ * Required, not optional, so that a fourth block cannot be added uncapped by leaving the prop off.
  */
-function UpcomingList({ events, cap }: { events: EventItem[]; cap?: number }) {
+function UpcomingList({ events, cap }: { events: EventItem[]; cap: number }) {
   const [expanded, setExpanded] = useState(false);
-  const shown = cap != null && !expanded ? events.slice(0, cap) : events;
+  const shown = expanded ? events : events.slice(0, cap);
   const hidden = events.length - shown.length;
   return (
     <ul className="space-y-2">

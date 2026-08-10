@@ -132,7 +132,9 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   assertion**: event 8 under „Datum offen", then 2/5/1/10 inside the 14 days, then 4/3/7 under
   „Danach". Event 10 is the one to check after touching the split: it starts at 23:00 on day 14
   and ends at 01:00 on day 15, and it belongs to the *near* block, because a row is bucketed by
-  its **start** day. Event 6 is nine days past and event 9 is soft-deleted; **both must be
+  its **start** day. All three blocks cap at 8 rows, but **none of them collapses on the demo** —
+  the largest holds four — so „+ N weitere anzeigen" is not reachable here without POSTing more
+  events first. Event 6 is nine days past and event 9 is soft-deleted; **both must be
   absent**, and either one appearing is a real bug, not a fixture quirk. Assert on block
   membership, not on a total — the event fixtures grow. And every offset is relative to the
   **seed day**, so a `.demo` built days ago drifts rows across the window boundary; rebuild with
