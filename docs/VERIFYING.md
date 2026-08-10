@@ -44,6 +44,20 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   lsof 4.91, which reads the second `tcp:…` as a *filename*, prints its usage block to stderr and
   exits non-zero having matched nothing — so `lsof -ti tcp:4317 tcp:5317` kills neither server
   while looking like it did, and the next run then talks to the leaked one.
+- **…but a free port is not proof of a clean machine.** `npm run demo` reaps its own tree now —
+  `scripts/demo.mjs` runs it in its own process group and takes that group down on SIGINT, on
+  SIGTERM, and on finding itself reparented — so Ctrl-C and an ordinary kill both leave nothing
+  behind. What survives is `demo.mjs` itself being `kill -9`ed, and the survivor is then the
+  `tsx watch` parent, which holds **no port**: `lsof` reports the machine clean while a git
+  operation touching `server/src` is enough for that orphan to start a server on 4317 seconds
+  later. Three such stacks were once found in one repo, the oldest three weeks old. When a port is
+  busy and nothing explains it, sweep by process, not by port:
+  `ps -eo pid,lstart,command | grep code/auftakt`, and kill the `concurrently` / `tsx watch` /
+  `vite` parents by pid (`kill -9` for old ones that ignore SIGTERM).
+- **`npm run demo` has no Vite keyboard shortcuts.** Its stdin is deliberately `ignore`d, because a
+  process group that reads the terminal in the background is stopped with SIGTTIN, and the tree
+  runs in its own group so it can be reaped. `r`, `u`, `o`, `c` and `q` therefore do nothing;
+  Ctrl-C is unaffected. `npm run dev` still has them.
 - **A running dev server hijacks a *packaged* app started next to it**, which matters when working
   through `BACKUP-TESTING.md`. `waitForServer()` polls `/api/health` on 4317 and the dev server
   answers 200, so the gate passes, the window loads against `.data`, and a `--user-data-dir` meant
