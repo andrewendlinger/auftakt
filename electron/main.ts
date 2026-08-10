@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron';
+import { enableCompileCache } from 'node:module';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { fileStamp } from '../shared/time';
@@ -7,6 +8,24 @@ import { backupDirProblem, runStartupBackup } from './backup';
 import { checkForUpdates, downloadAndInstallUpdate, startSilentStartupCheck } from './updater';
 
 const isDev = !app.isPackaged;
+
+// Cache V8's compilation of the server bundle across launches. It cannot help this file
+// — main.cjs is already compiling by the time this line runs — but startServer() imports
+// server/dist/index.mjs, 3.4 MB of bundled JS that is parsed and compiled on every single
+// launch, before any window exists. Second and later launches skip that.
+//
+// Best-effort by design: it needs Node 22.1+, and a cold or unwritable cache directory
+// only means the old cost, not a failure worth surfacing.
+try {
+  enableCompileCache(join(app.getPath('userData'), 'v8-cache'));
+} catch {
+  /* older runtime, or nowhere to write — the bundle just compiles from source */
+}
+
+// Windows groups taskbar buttons and attributes notifications by this id; without it
+// Electron guesses from the executable and a packaged build can land under a different
+// button than its own shortcut. Must match electron-builder.yml's appId.
+if (process.platform === 'win32') app.setAppUserModelId('com.auftakt.app');
 // `??` would only catch null/undefined, and Number('') is 0 — an empty AUFTAKT_PORT
 // then made the server bind an ephemeral port while main polled localhost:0 until the
 // health check timed out and no window ever opened (ELP-07).
@@ -100,8 +119,16 @@ async function startServer(): Promise<void> {
   await waitForServer();
 }
 
+/**
+ * Nothing is on screen while this runs — not even a window — so every millisecond here
+ * is dark time. A flat 150 ms interval charged the full 150 ms whenever the server bound
+ * just after a poll was refused, which is the common case: the listen call is a few ticks
+ * behind the import that triggered it. Start tight and back off to the old interval, so
+ * the usual launch pays ~15 ms and a genuinely slow one is polled no harder than before.
+ */
 function waitForServer(timeoutMs = 10000): Promise<void> {
   const start = Date.now();
+  let delay = 15;
   return new Promise((res, rej) => {
     const tick = async () => {
       try {
@@ -111,7 +138,8 @@ function waitForServer(timeoutMs = 10000): Promise<void> {
         /* not up yet */
       }
       if (Date.now() - start > timeoutMs) return rej(new Error('Server-Start Zeitüberschreitung'));
-      setTimeout(tick, 150);
+      setTimeout(tick, delay);
+      delay = Math.min(delay * 2, 150);
     };
     void tick();
   });
