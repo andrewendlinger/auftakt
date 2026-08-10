@@ -31,6 +31,14 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   earlier session cost one full verification run, and the app looked broken rather than the setup.
 - **`npm run demo:seed` `rmSync`s the whole `.demo` directory**, so re-seeding under a running
   server leaves it holding a deleted file. Restart through `npm run demo`.
+- **…and `npm run demo` is not by itself proof that it worked.** With a server already on 4317 from
+  an earlier session, a full `npm run demo` still printed its seed counts *and*
+  „Auftakt server listening on http://localhost:4317", and `activeFile` still read
+  `.demo/auftakt.db` — while `GET /api/dashboard` answered from the pre-reseed database and was
+  missing a row that `sqlite3 .demo/auftakt.db` showed was there. Both documented ways of
+  confirming the target pass in this state. What catches it: `ps -o lstart= -p $(lsof -ti tcp:4317)`
+  against the seed time — a server older than the reseed is answering from a deleted inode — or
+  comparing one API response against the file directly. Kill both ports, then `npm run demo`.
 - Kill stray servers by port, never with a broad `pkill`:
   `lsof -ti tcp:4317 -ti tcp:5317 | xargs kill`. **The `-i` must be repeated.** macOS ships
   lsof 4.91, which reads the second `tcp:…` as a *filename*, prints its usage block to stderr and
