@@ -5,7 +5,9 @@ import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-qu
 import './index.css';
 import { ApiError } from './api/client';
 import { reportError } from './lib/errors';
+import { signalReady } from './boot';
 import { Layout } from './components/Layout';
+import { BootReady } from './components/BootReady';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { GlobalErrorSurface } from './components/GlobalErrorSurface';
 import { ToastProvider } from './components/Toast';
@@ -52,9 +54,26 @@ const queryClient = new QueryClient({
   },
 });
 
+/**
+ * Total collapse. A throw *above* ErrorBoundary — in ToastProvider, UndoProvider,
+ * QueryClientProvider — unwinds the whole tree, so no effect ever runs and BootReady
+ * never gets to speak. React rethrows uncaught render errors to window.onerror, which
+ * makes this the last place the boot screen can be told to come down.
+ *
+ * Revealing a blank window is the right answer here: it is the state the app is actually
+ * in, and it leaves DevTools and the reload affordances reachable. Hiding it behind a
+ * splash that plays out its full choreography would be worse. An error during boot is
+ * also, on its own, a reason not to play a celebratory animation.
+ */
+window.addEventListener('error', () => signalReady(), { once: true });
+window.addEventListener('unhandledrejection', () => signalReady(), { once: true });
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
+      {/* Outside ErrorBoundary on purpose: a route that throws must not unmount the
+          component whose job is to reveal the app. */}
+      <BootReady />
       <ToastProvider>
         <GlobalErrorSurface />
         <UndoProvider>
