@@ -6,13 +6,24 @@
     <link rel="icon" href="./favicon.svg" />
     <title>Auftakt</title>
 
-    <!-- The boot gesture plays on a cold start only, so this has to be decided before
-         the overlay below can paint. sessionStorage survives a reload of the same tab
-         but is empty in a fresh process, which is exactly the distinction wanted:
-         season switch and the post-backup-dir reload skip it, a relaunch plays it. -->
+    <!-- Two conditions, both decided here because the overlay below paints before any
+         other script of ours runs.
+
+         Built bundle only. `%PROD%` is Vite's HTML env replacement, and it is applied by
+         the dev-server middleware and the build alike, so it reads 'false' on :5317 and
+         'true' in client/dist — which is what Electron loads in both of its modes. The
+         overlay covers the viewport and holds its pointer events for ~2.6 s; on the dev
+         server that is the surface docs/VERIFYING.md tells agents to drive, and it would
+         swallow the first interaction of every run. It is quoted rather than compared
+         bare so that a replacement which never happens degrades to „no animation"
+         instead of a syntax error, which would leave the overlay on screen for good.
+
+         Cold start only. sessionStorage survives a reload of the same tab but is empty in
+         a fresh process, which is exactly the distinction wanted: season switch and the
+         post-backup-dir reload skip it, a relaunch plays it. -->
     <script>
       try {
-        if (sessionStorage.getItem('auftakt-booted')) {
+        if ('%PROD%' !== 'true' || sessionStorage.getItem('auftakt-booted')) {
           document.documentElement.classList.add('no-boot');
         }
         sessionStorage.setItem('auftakt-booted', '1');
@@ -277,12 +288,14 @@
       (function () {
         var overlay = document.getElementById('boot-overlay');
         if (!overlay) return;
+        var root = document.getElementById('root');
         var gone = false;
         var fading = false;
         function remove() {
           if (gone) return;
           gone = true;
           overlay.remove();
+          if (root) root.inert = false;
         }
         // The two cases where nothing plays: hidden by CSS above, so drop the node
         // rather than leave an invisible one lying in the DOM.
@@ -293,6 +306,15 @@
           remove();
           return;
         }
+        // The overlay's own pointer events only stop the mouse. Without this, a keyboard
+        // or screen-reader user could Tab into the app underneath and activate controls
+        // they cannot see, during the one interval a mouse user is locked out of — so the
+        // barrier has to be on #root, not on the thing covering it. Set from script and
+        // cleared in remove(), which is the single exit of all three paths (the fade's
+        // animationend, the skip fade, the failsafe below). Deliberately not an attribute
+        // in the markup: there it would outlive a script that failed to run, and the app
+        // would be permanently unusable rather than merely un-animated.
+        if (root) root.inert = true;
         // Descendant animations bubble their animationend too — only the overlay's
         // own fade ends the show.
         overlay.addEventListener('animationend', function (e) {
