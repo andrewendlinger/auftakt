@@ -510,6 +510,11 @@ export interface WritableSettings {
   task_stats?: string[];
   /** „Braucht Aufmerksamkeit“ window in days, stored as a scalar string. */
   attention_window_days?: string;
+  /**
+   * How far „Nächste Termine“ looks ahead before „Danach“ begins, as a scalar string. A divider,
+   * not a filter — nothing is hidden on either side of it (WP-33).
+   */
+  event_window_days?: string;
 }
 
 /**

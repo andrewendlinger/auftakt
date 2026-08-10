@@ -5,7 +5,7 @@ import { api } from '../api/client';
 import type { ArtistCard as ArtistCardT, EventItem, Task } from '../api/types';
 import { withAlpha } from '../lib/colors';
 import { formatEventWhen, weekdayShort } from '../lib/dates';
-import { DEFAULT_EVENT_WINDOW_DAYS, groupUpcomingEvents } from '../lib/eventGroups';
+import { groupUpcomingEvents } from '../lib/eventGroups';
 import { Card, SectionTitle, Spinner, EmptyState, ErrorState } from '../components/ui';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { TaskTable } from '../components/TaskTable';
@@ -24,6 +24,7 @@ import {
 import type { LabelKey } from '../lib/labels';
 import {
   useAllTasks,
+  useEventWindowDays,
   useGlobalColumns,
   useLabel,
   useSettingsArray,
@@ -65,6 +66,7 @@ export function Dashboard() {
     queryFn: () => api.customSections.list({ scope: 'dashboard' }),
   });
   const { windowDays } = useTaskStatsConfig();
+  const eventWindowDays = useEventWindowDays();
   const artistLabel = useLabel()('dash.artists');
   // Still the settings array: there is only one dashboard, so it has nothing to be per-entity
   // about and stays the one page whose layout is a setting (WP-25).
@@ -92,8 +94,8 @@ export function Dashboard() {
   // Above the early returns, where every hook has to sit. The server sends one unsliced list; the
   // three blocks the section renders are cut here.
   const { undated, within, beyond } = useMemo(
-    () => groupUpcomingEvents(data?.upcoming ?? [], DEFAULT_EVENT_WINDOW_DAYS),
-    [data?.upcoming],
+    () => groupUpcomingEvents(data?.upcoming ?? [], eventWindowDays),
+    [data?.upcoming, eventWindowDays],
   );
 
   if (isLoading) return <Spinner />;

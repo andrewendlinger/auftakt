@@ -19,6 +19,7 @@ import type {
 } from './api/types';
 import { doneValueOf } from './api/types';
 import { errorMessage } from './lib/errors';
+import { DEFAULT_EVENT_WINDOW_DAYS } from './lib/eventGroups';
 import { LABEL_DEFAULTS, isLabelKey, type LabelKey } from './lib/labels';
 import { normalizeEventTypeOptions, normalizeSelectOptions } from './lib/selectOptions';
 import {
@@ -280,10 +281,33 @@ export function useTaskStatsConfig(): { metrics: TaskMetric[]; windowDays: numbe
     const metrics = Array.isArray(raw)
       ? (raw as unknown[]).filter((k): k is TaskMetric => typeof k === 'string' && valid.has(k))
       : DEFAULT_METRICS;
-    const n = Number(data?.attention_window_days);
-    const windowDays = Number.isFinite(n) && n >= 1 ? Math.min(Math.round(n), 365) : DEFAULT_ATTENTION_DAYS;
-    return { metrics, windowDays };
+    return { metrics, windowDays: windowDaysOr(data?.attention_window_days, DEFAULT_ATTENTION_DAYS) };
   }, [data?.task_stats, data?.attention_window_days]);
+}
+
+/**
+ * A „Zeitfenster" setting → a usable number. Both windows are stored as scalar strings and both
+ * are clamped to [1, 365] here, so a hand-edited row or a value from an older build cannot escape
+ * at either end. Unset falls back — the server stores no default for either (`Number(undefined)`
+ * is NaN, which takes the same branch).
+ */
+function windowDaysOr(raw: unknown, fallback: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 ? Math.min(Math.round(n), 365) : fallback;
+}
+
+/**
+ * How far „Nächste Termine" looks ahead before the rest collapses under „Danach" — the single
+ * boundary where `event_window_days` is parsed. It decides where the divider falls, not what the
+ * dashboard fetches: nothing is hidden past it (WP-33). Separate from `useTaskStatsConfig` on
+ * purpose — that hook's subject is the task prefs, and the two windows are independent.
+ */
+export function useEventWindowDays(): number {
+  const { data } = useSettings();
+  return useMemo(
+    () => windowDaysOr(data?.event_window_days, DEFAULT_EVENT_WINDOW_DAYS),
+    [data?.event_window_days],
+  );
 }
 
 /**

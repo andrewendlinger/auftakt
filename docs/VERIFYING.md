@@ -171,8 +171,10 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   for them above the text finds nothing.
 - **The project-scoped column manager lists nothing on the demo** (there are no project-scoped
   columns) — drive those cases from Einstellungen instead.
-- **The „Zeitfenster" input is the only `type="number"` in the client**, but its „Speichern" is not
-  the page's only one — scope to the container.
+- **There are two `type="number"` inputs, one per „Zeitfenster"**, and they sit on different
+  Settings tabs: „Braucht Aufmerksamkeit" under `#/einstellungen/aufgaben`, „Termine in der
+  Übersicht" (the „Danach" divider) under `#/einstellungen/kategorien`. Neither tab's „Speichern"
+  is its page's only one — scope to the card.
 - **`paletteFor('Deadline')` is `#fee2e2`, the same colour `LEGACY_EVENT_COLORS` holds for it**, so
   „Deadline" cannot distinguish the two code paths. „Termin" can (legacy `#e2e8f0` vs palette
   `#dcfce7`).

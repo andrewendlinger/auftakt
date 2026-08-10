@@ -24,7 +24,12 @@ const ARRAY_KEYS = new Set([
  * key/value table can never be turned into arbitrary storage — same idea as the
  * `writable` allowlist in lib/crud.ts. Add new settings here when you introduce them.
  */
-const WRITABLE_SETTINGS = new Set<string>([...ARRAY_KEYS, 'saison', 'attention_window_days']);
+const WRITABLE_SETTINGS = new Set<string>([
+  ...ARRAY_KEYS,
+  'saison',
+  'attention_window_days',
+  'event_window_days',
+]);
 
 function safeParse(s: string): unknown {
   try {
