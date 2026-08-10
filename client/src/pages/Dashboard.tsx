@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { ArtistCard as ArtistCardT, EventItem, Task } from '../api/types';
+import type { ArtistCard as ArtistCardT, Task, UpcomingEvent } from '../api/types';
 import { withAlpha } from '../lib/colors';
 import { formatEventWhen, weekdayShort } from '../lib/dates';
 import { groupUpcomingEvents } from '../lib/eventGroups';
@@ -257,7 +257,7 @@ function ArtistCard({ artist, tasks }: { artist: ArtistCardT; tasks: Task[] }) {
  *
  * Required, not optional, so that a fourth block cannot be added uncapped by leaving the prop off.
  */
-function UpcomingList({ events, cap }: { events: EventItem[]; cap: number }) {
+function UpcomingList({ events, cap }: { events: UpcomingEvent[]; cap: number }) {
   const [expanded, setExpanded] = useState(false);
   const shown = expanded ? events : events.slice(0, cap);
   const hidden = events.length - shown.length;

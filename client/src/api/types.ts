@@ -566,6 +566,23 @@ export type SettingsArrayKey =
 /** The array a settings key holds, with the optionality-induced `undefined` stripped. */
 export type SettingsArrayValue<K extends SettingsArrayKey> = NonNullable<WritableSettings[K]>;
 
+/**
+ * A row of the dashboard's „Nächste Termine" — deliberately *not* an `EventItem`.
+ *
+ * `upcomingEvents` (server/src/lib/queries.ts) selects exactly these columns instead of `e.*`,
+ * because `notes` is rich-text HTML this list never renders and the dashboard refetches after
+ * every write. This type is the client half of that contract: widen it only together with the
+ * query, or the extra field is `undefined` at runtime with nothing to say so.
+ */
+export type UpcomingEvent = Pick<
+  EventItem,
+  'id' | 'project_id' | 'title' | 'start_at' | 'end_at' | 'all_day' | 'location'
+> &
+  Pick<
+    Resolved,
+    'resolved_artist_id' | 'artist_name' | 'artist_color' | 'project_code' | 'project_color'
+  >;
+
 export interface Dashboard {
   artists: ArtistCard[];
   /**
@@ -573,7 +590,7 @@ export interface Dashboard {
    * limit (WP-33). Where „Danach" starts is decided here, by `groupUpcomingEvents` in
    * `lib/eventGroups.ts`.
    */
-  upcoming: EventItem[];
+  upcoming: UpcomingEvent[];
   tasks: Task[];
 }
 

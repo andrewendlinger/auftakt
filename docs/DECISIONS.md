@@ -289,6 +289,15 @@ same list once `event_window_days` is raised — 365 is legal, and the window th
 `UpcomingList`'s `cap` is required rather than optional so that a fourth block cannot be added
 uncapped by leaving the prop off.
 
+**Unbounded in rows is not unbounded in columns.** `upcomingEvents` carries its own column list
+rather than `EVENT_SELECT`'s `e.*`, because `notes` is rich-text HTML this list never renders and
+`useInvalidateAll` refetches the dashboard after every write — a season of long notes turned each
+task edit into a several-hundred-KB round trip. That is not the `LIMIT` coming back: no row is
+withheld and nothing on screen changes, which is the whole difference. The cost is a contract in
+two places — the query and `UpcomingEvent` in `client/src/api/types.ts` — so `check:api` asserts
+both halves, `notes` gone and every rendered column present. `typecheck` cannot: the query returns
+`unknown[]`, so restoring `e.*` would compile.
+
 **The window is split client-side**, in `client/src/lib/eventGroups.ts`, for the reason the WP-40
 entry above gives for `eventTime.ts`: `check:unit` reaches `lib/`, and nothing reaches the page.
 The consequence is deliberate and worth stating, because it looks like lost coverage — the +14

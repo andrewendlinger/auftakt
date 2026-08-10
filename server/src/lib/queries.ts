@@ -178,11 +178,28 @@ export function listEvents(db: Database.Database, q: EventQuery = {}): unknown[]
  * shortly after local midnight moved the boundary a day and an event starting today fell out of the
  * list (SDL-10). **If an offset is ever added here it goes after the modifier**
  * (`date('now', 'localtime', '+7 days')`); adding days before the conversion moves the edge again.
+ *
+ * Its own column list rather than `EVENT_SELECT`, which is `e.*`: `notes` is rich-text HTML that
+ * this list never renders, and `useInvalidateAll` refetches the dashboard after every write, so a
+ * season of long notes turned each task edit into a several-hundred-KB round trip. Unbounded in
+ * *rows* — the decision above — says nothing about columns. Keep this in step with `UpcomingEvent`
+ * in `client/src/api/types.ts`; `npm run typecheck` catches a column dropped that the page reads,
+ * and `check:api` asserts `notes` stays gone.
  */
+const UPCOMING_SELECT = `
+  SELECT e.id, e.project_id, e.title, e.start_at, e.end_at, e.all_day, e.location,
+         COALESCE(e.artist_id, p.artist_id) AS resolved_artist_id,
+         a.name  AS artist_name,
+         a.color AS artist_color,
+         p.code  AS project_code,
+         p.color AS project_color
+    FROM events e${parentJoins('e')}
+`;
+
 export function upcomingEvents(db: Database.Database): unknown[] {
   return db
     .prepare(
-      `${EVENT_SELECT}
+      `${UPCOMING_SELECT}
        WHERE e.deleted_at IS NULL AND ${EVENT_PARENT_LIVE}
          AND (e.start_at IS NULL OR date(COALESCE(e.end_at, e.start_at)) >= date('now', 'localtime'))
        ${EVENT_ORDER}`,
