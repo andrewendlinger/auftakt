@@ -346,12 +346,29 @@ died with the priority `CASE`; the client still ranks by the configured option o
 column is visible. TTU-11's check case was re-aimed at the new invariant, not deleted.
 
 **A created task is stamped server-side** (`leadingSortOrder`, `routes/entities.ts`): the client
-knows only its rendered siblings, never sees archived rows and cannot see the trash at all. Two
-things it deliberately does not do — the scope is the `(artist_id, project_id)` pair and *not*
-`parent_id`, because a promoted orphan renders in a list a `parent_id` minimum cannot see; and
-`POST /tasks/:id/move` does **not** re-stamp `sort_order`, because every field it writes is one the
-caller passes back, which is what makes the same call its own undo. A moved task keeping its ordinal
-and landing on top of its new list is the right outcome anyway.
+knows only its rendered siblings, never sees archived rows and cannot see the trash at all. The
+scope is the `(artist_id, project_id)` pair and deliberately *not* `parent_id`, because a promoted
+orphan renders in a list a `parent_id` minimum cannot see.
+
+**`POST /tasks/:id/move` stamps it too, as a fourth placement field.** The first cut left
+`sort_order` alone, reasoning that every field the endpoint writes is one the caller passes back and
+that this symmetry is what makes the same call its own undo. That was wrong on the facts: an ordinal
+means nothing outside its own list, so carrying it across dropped the moved task at an arbitrary
+spot in the destination — below every open row coming from a hand-dragged list, above a
+deliberately-placed first row coming from a composer-only one. The symmetry is kept by *widening*
+the contract instead: a move with no `sort_order` lands the task at the head of its destination like
+a new one, and the undo passes the captured ordinal back to restore the exact slot.
+
+**Readers that are not the task table ask for `order=due`.** The Archiv page, the .xlsx export and
+the print sheets render `listTasks` output verbatim and span several lists at once, where a per-list
+ordinal interleaves them and prints a task due tomorrow below one due in six months. They get
+`TASK_ORDER_DUE` — the pre-WP-32 ordering minus priority, which is a hidden column and stays out
+under the same rule as everywhere else.
+
+**A new and an upgraded season do diverge**, and that is the accepted cost of not migrating: show
+the Fällig column in both and the old season's dormant `due` rule wakes up while the new one has no
+such rule to wake. Both states are visible and editable in Einstellungen, which is the property that
+makes it survivable; a migration that silently rewrote the old season's hierarchy would not be.
 
 ---
 

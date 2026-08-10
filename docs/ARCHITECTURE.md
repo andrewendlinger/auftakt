@@ -191,12 +191,15 @@ custom column `Number('omment')` = NaN and made that sort level compare every ta
 object is asking for a merge whether it means to or not.
 
 Sort order is likewise configurable: the `task_sort` setting holds a rule hierarchy that users edit
-in Settings; clicking a header is a temporary override. `SERVER_DEFAULT_RULES` (TaskTable) restates
-`TASK_ORDER` (`server/src/lib/queries.ts`) so „no rules configured" can be rank-tested against the
-ordering actually in effect; **the two are kept in step by comment only.** Both are now the manual
-order — `ORDER BY (t.status = ?) ASC, t.sort_order ASC, t.id ASC` ≙ `[manual]`. That is not a
-simplification for its own sake: the client short-circuits on an empty rule list and keeps whatever
-came back, so any key the server ranks by is a rule no user can see in Settings or switch off.
+in Settings; clicking a header is a temporary override, and an override whose column is hidden while
+the table stays mounted stops being one — for the ordering and for dragging alike. `TASK_ORDER`
+(`server/src/lib/queries.ts`) is `ORDER BY (t.status = ?) ASC, t.sort_order ASC, t.id ASC`, and
+`rankRules` (TaskTable) measures drops against it with an empty rank list; **the two are kept in
+step by comment only.** The server ranks by nothing else on purpose: the client short-circuits on an
+empty rule list and keeps whatever came back, so any key the server adds is a rule no user can see
+in Settings or switch off. Readers that are *not* the task table — Archiv, the .xlsx export, the
+print sheets — pass `order=due` (`orderParam`, `TASK_ORDER_DUE`), because a per-list ordinal is
+meaningless to a reader that spans several lists.
 
 **A rule whose column is hidden (`enabled: 0`) or gone does not order the table.** `activeSortRules`
 (`client/src/lib/taskSort.ts`) is the one filter, used by `TaskTable` and by `TaskSortEditor`'s

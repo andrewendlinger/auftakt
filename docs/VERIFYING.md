@@ -231,7 +231,14 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   only while the caret is inside a table. A script that clicks the table button and then looks
   for them above the text finds nothing.
 - **The project-scoped column manager lists nothing on the demo** (there are no project-scoped
-  columns) — drive those cases from Einstellungen instead.
+  columns) — drive those cases from Einstellungen instead. That also makes a project-scoped custom
+  column the *only* way to reach „hide the column a header click is sorting by while the table
+  stays mounted": hiding a global one means going to Einstellungen, which unmounts the table and
+  resets the override. Create one with
+  `POST /api/custom-columns {"name":"…","type":"text","scope":"project","project_id":5}`.
+- **A write straight to `/api/custom-columns` does not refetch the client's column list**, and a
+  synthetic `window.focus` event does not either. Toggle through the app's own ⚙ Spalten manager
+  when the case depends on the table re-rendering with the new column set.
 - **There are two `type="number"` inputs, one per „Zeitfenster"**, and they sit on different
   Settings tabs: „Braucht Aufmerksamkeit" under `#/einstellungen/aufgaben`, „Termine in der
   Übersicht" (the „Danach" divider) under `#/einstellungen/kategorien`. Neither tab's „Speichern"

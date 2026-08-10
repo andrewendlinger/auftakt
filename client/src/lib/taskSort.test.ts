@@ -131,8 +131,12 @@ describe('describeSortColumn', () => {
     expect(describeSortColumn('due', renamed)).toEqual({ label: 'Deadline', state: 'active' });
   });
 
+  // A *populated* list that lacks the column is the deletion; `[]` is „not loaded" (below).
   it('falls back to the built-in label when the column is gone', () => {
-    expect(describeSortColumn('due', [])).toEqual({ label: 'Fällig', state: 'gone' });
+    expect(describeSortColumn('due', [builtin('status')])).toEqual({
+      label: 'Fällig',
+      state: 'gone',
+    });
   });
 
   it('names a custom column, and reports it hidden', () => {
@@ -147,5 +151,19 @@ describe('describeSortColumn', () => {
       label: 'Manuelle Reihenfolge',
       state: 'active',
     });
+  });
+
+  it('never shows a raw custom id as a column name', () => {
+    expect(describeSortColumn('custom:9', [custom(1)])).toEqual({
+      label: 'Gelöschte Spalte',
+      state: 'gone',
+    });
+  });
+
+  // `useGlobalColumns()` returns [] while the query is in flight and permanently if it fails.
+  // Reporting 'gone' there told the user their whole hierarchy had been removed.
+  it('says nothing when there is nothing to resolve against', () => {
+    expect(describeSortColumn('status', [])).toEqual({ label: 'Status', state: 'active' });
+    expect(describeSortColumn('priority', [])).toEqual({ label: 'Priorität', state: 'active' });
   });
 });

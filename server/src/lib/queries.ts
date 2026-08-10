@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import { ARCHIVE_AFTER_DAYS, doneStatusValue } from '../db';
-import type { TaskScope } from './query';
+import type { TaskOrder, TaskScope } from './query';
 
 /**
  * The parent joins for any table whose rows hang off a project and/or an artist.
@@ -53,11 +53,27 @@ const TASK_PARENT_LIVE = parentLive('t');
  * landed, which is the whole of WP-32. What is left is `sort_order` — the one ordering the user
  * sets by hand, and the one a newly created task is stamped to lead (routes/entities.ts).
  *
- * `SERVER_DEFAULT_RULES` in TaskTable.tsx restates this as rules so drops can be rank-tested
- * against it; the two are kept in step by comment only. Keep the leading done key: with no rules
- * in effect it is the only thing sinking finished rows.
+ * `rankRules` in TaskTable.tsx measures drops against this — with no rule in effect every
+ * same-doneness pair is a tie — and the two are kept in step by comment only. Keep the leading
+ * done key: with no rules in effect it is the only thing sinking finished rows.
  */
 const TASK_ORDER = 'ORDER BY (t.status = ?) ASC, t.sort_order ASC, t.id ASC';
+
+/**
+ * For the readers that never apply a sort rule and are not the task table: the Archiv page, the
+ * .xlsx export and the print sheets all render `listTasks` output verbatim.
+ *
+ * `sort_order` is meaningful only *inside* one artist/project list — a hand-dragged project holds
+ * 0..n-1 while a composer-only one holds 0, -1, -2 — so a reader that spans several lists gets
+ * them interleaved by position-within-their-own-project. On the artist one-pager and in the export
+ * that put a task due tomorrow below one due in six months. Those readers ask for a deadline order
+ * instead, which is what they had before WP-32 took the due keys out of the baseline.
+ *
+ * Priority stays out: it is a hidden column, and „unsichtbare Spalte sortiert nicht" is the rule
+ * this ordering exists under too.
+ */
+const TASK_ORDER_DUE =
+  'ORDER BY (t.status = ?) ASC, (t.due_date IS NULL) ASC, t.due_date ASC, t.sort_order ASC, t.id ASC';
 
 /** 'localtime' because erledigt_am is a naive local stamp — a UTC cutoff compares two clocks. */
 const archivedCond = (): string =>
@@ -68,6 +84,8 @@ export interface TaskQuery {
   artistId?: unknown;
   resolvedArtistId?: unknown;
   scope?: TaskScope;
+  /** 'table' (default) is the manual order the task table re-sorts; 'due' is by deadline. */
+  order?: TaskOrder;
 }
 
 export function listTasks(db: Database.Database, q: TaskQuery = {}): unknown[] {
@@ -99,9 +117,10 @@ export function listTasks(db: Database.Database, q: TaskQuery = {}): unknown[] {
     where.push(archivedCond());
     params.push(done);
   }
-  // The ORDER BY binds the done value once — keep this aligned with the SQL in TASK_ORDER.
+  // Both orderings bind the done value once and nothing else — keep this aligned with their SQL.
   params.push(done);
-  return db.prepare(`${TASK_SELECT} WHERE ${where.join(' AND ')} ${TASK_ORDER}`).all(...params);
+  const order = q.order === 'due' ? TASK_ORDER_DUE : TASK_ORDER;
+  return db.prepare(`${TASK_SELECT} WHERE ${where.join(' AND ')} ${order}`).all(...params);
 }
 
 /** Same shape as TASK_SELECT, same soft-deleted-parent filter and for the same reason (SDL-03). */

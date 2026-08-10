@@ -18,6 +18,7 @@ import {
   SORTABLE_TASK_COLUMNS,
   activeSortRules,
   colId,
+  sortRuleState,
   customColId,
 } from '../lib/taskSort';
 import { arrayMoveTo } from '../lib/arrays';
@@ -189,25 +190,6 @@ function compareByRules(
 }
 
 /**
- * The server's own ORDER BY (`TASK_ORDER` in server/src/lib/queries.ts) expressed as rules — the
- * ordering actually in effect when the user has configured none. Keep the two in step.
- *
- * Since WP-32 the server ranks by nothing but `sort_order`, so this is one rule. It ranked by
- * priority and due date before, and both are hidden columns ab Werk: an ordering nobody can see
- * or switch off, reachable through exactly the gap this constant describes.
- *
- * "No rules" is not "no constraints": with an empty hierarchy `sortTasks` short-circuits and the
- * list keeps the server order. Testing drops against the empty list therefore accepted every one
- * of them, `reorder` renumbered the whole sibling list, and the refetch put the row straight back
- * where it came from — the drag looked like it did nothing while having silently rewritten every
- * sibling's sort_order (TTU-07). That is now *correct* rather than merely consistent: with the
- * ordering being `sort_order` itself, every same-doneness pair really is a tie and the renumber
- * really does put the row where it was dropped. `compareByRules` already sinks done rows, so that
- * leading key is not repeated here.
- */
-const SERVER_DEFAULT_RULES: TaskSortRule[] = [{ id: MANUAL_SORT_ID, dir: 'asc' }];
-
-/**
  * Order tasks by a multi-key hierarchy (Settings → Automatische Sortierung, or a single
  * header-click override), reading each key via a precomputed `getValue` accessor. Ties fall
  * through to the manual drag order (`sort_order`) — relying on the sort being stable would
@@ -248,12 +230,19 @@ export function TaskTable({
   // follow the configured automatic hierarchy from Settings (empty → leave server order).
   //
   // Filtered through `activeSortRules`, because a rule whose column is hidden or gone must not
-  // order the table (WP-32) — ab Werk that is two of the three shipped rules. The override goes
-  // through it as well: a header only exists for a visible column, so the filter cannot bite
-  // there, and an invariant with no exception is the cheaper one to keep.
+  // order the table (WP-32) — for a season written before it, two of the three stored rules.
+  //
+  // The override is *resolved first* rather than filtered alongside the hierarchy. A header only
+  // exists for a visible column, but the column can be hidden while this table stays mounted (the
+  // „Spalten verwalten" modal sits on the same page), and `sort` outlives it. Filtering it later
+  // left a table that had silently snapped back to the default order while `drag.enabled` still
+  // read `sort !== null` and refused every drop — with the header whose third click clears the
+  // override (TTU-18) no longer rendered, leaving no way out but a navigation. So an override
+  // whose column went away *is* no override, for the ordering and for dragging alike.
+  const override = sort && sortRuleState(sort.id, customColumns) === 'active' ? sort : null;
   const activeRules = useMemo(
-    () => activeSortRules(sort ? [sort] : sortRules, customColumns),
-    [sort, sortRules, customColumns],
+    () => (override ? [override] : activeSortRules(sortRules, customColumns)),
+    [override, sortRules, customColumns],
   );
   // Subtask UI state: collapsed parents, the parent currently getting a new subtask,
   // and the parent awaiting a delete-with-children confirmation.
@@ -357,14 +346,19 @@ export function TaskTable({
   // (TTU-33). Truncating also drops `manual` itself, which as the tiebreaker differs for every
   // pair and would forbid every drop.
   //
-  // With no rules *in effect* — none configured, or every one of them pointing at a hidden
-  // column — the ordering is still the server's, so that is what a drop is measured against; see
-  // SERVER_DEFAULT_RULES, which since WP-32 is the manual order and therefore allows every drop
-  // between two rows of the same doneness.
+  // With no rules *in effect* — none configured, or every one of them pointing at a hidden column
+  // — what remains is the server's own order, and since WP-32 that is `sort_order` itself
+  // (`TASK_ORDER`, server/src/lib/queries.ts). An empty rank list is exactly right for it: every
+  // pair of the same doneness is a tie, so every drop is allowed and the renumber really does put
+  // the row where it was dropped. This used to need a SERVER_DEFAULT_RULES mirror of the server's
+  // priority→due ordering, and getting that mirror wrong is TTU-07: drops accepted against an
+  // ordering the server did not have, `reorder` renumbering the whole sibling list, and the
+  // refetch snapping the row back as if the drag had done nothing — while every sibling's
+  // sort_order had in fact been rewritten. The two orderings are still kept in step by comment
+  // only; there is simply nothing left to restate.
   const rankRules = useMemo(() => {
-    const effective = activeRules.length > 0 ? activeRules : SERVER_DEFAULT_RULES;
-    const manualAt = effective.findIndex((r) => r.id === MANUAL_SORT_ID);
-    return manualAt === -1 ? effective : effective.slice(0, manualAt);
+    const manualAt = activeRules.findIndex((r) => r.id === MANUAL_SORT_ID);
+    return manualAt === -1 ? activeRules : activeRules.slice(0, manualAt);
   }, [activeRules]);
   const byId = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
   const siblingsOf = useCallback(
@@ -381,7 +375,7 @@ export function TaskTable({
     // match the peeked-at order, so clicking „Titel" to eyeball the list alphabetically and then
     // nudging one row permanently replaced a hand-curated order with the alphabetical one — no
     // undo entry, unrecoverable (TTU-04). The third header click (TTU-18) is the way back.
-    enabled: sort === null,
+    enabled: override === null,
     canDrop: (fromId, toId) => {
       const from = byId.get(fromId);
       const to = byId.get(toId);
@@ -652,7 +646,11 @@ export function TaskTable({
                       accentColor={colored ? color : null}
                       onToggle={() => toggleExpand(row.original.id)}
                       dragHandle={
-                        sort ? (
+                        // `override`, not `sort`: an override whose column has been hidden no
+                        // longer orders anything, so a handle explaining itself with „Spalten-
+                        // sortierung aktiv" would point at a header that is not on screen to
+                        // click a third time.
+                        override ? (
                           <DragHandle
                             disabled
                             title="Spaltensortierung aktiv — zum Verschieben die Sortierung zurücksetzen (Spaltenkopf erneut klicken)"

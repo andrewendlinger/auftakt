@@ -43,6 +43,9 @@ exportRouter.get('/tasks.xlsx', async (req, res) => {
     artistId: num(req.query.artist_id),
     resolvedArtistId: num(req.query.resolved_artist_id),
     scope: scopeParam(req.query.scope),
+    // The sheet has a Fällig column and spans every list, so it wants deadlines, not the
+    // per-list drag order the task table is returned in (WP-32).
+    order: 'due',
   }) as TaskRow[];
 
   const globalCols = db

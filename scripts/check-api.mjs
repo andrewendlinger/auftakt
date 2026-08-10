@@ -487,6 +487,82 @@ try {
     check('a create without priority takes the column default', bare.priority === 'mittel', String(bare.priority));
   }
 
+  // ----------------------------------------------- a move re-places the task (WP-32 follow-up)
+  // An ordinal means nothing outside its own list, so carrying it across scopes dropped a moved
+  // task anywhere: the destination is hand-dragged 0..n-1, the source counts downwards from 0.
+  console.log('\n== a move places the task, and undo puts the slot back (WP-32)');
+  {
+    const artist = await ok('POST', '/artists', { name: 'Umzug' });
+    const from = await ok('POST', '/projects', { code: 'VON', name: 'Quelle', artist_id: artist.id });
+    const to = await ok('POST', '/projects', { code: 'NACH', name: 'Ziel', artist_id: artist.id });
+
+    // The destination is renumbered by a drag, so every row there sits at 0..n-1.
+    const a = await ok('POST', '/tasks', { title: 'Ziel A', project_id: to.id });
+    const b = await ok('POST', '/tasks', { title: 'Ziel B', project_id: to.id });
+    await ok('POST', '/tasks/reorder', { ids: [a.id, b.id] });
+
+    // …while the traveller comes from a list that only ever counted downwards.
+    await ok('POST', '/tasks', { title: 'Quelle 1', project_id: from.id });
+    const traveller = await ok('POST', '/tasks', { title: 'Reisende', project_id: from.id });
+    check('the traveller carries a negative ordinal', traveller.sort_order < 0, String(traveller.sort_order));
+
+    const moved = await ok('POST', `/tasks/${traveller.id}/move`, {
+      artist_id: null,
+      project_id: to.id,
+      parent_id: null,
+    });
+    const order = (await ok('GET', `/tasks?project_id=${to.id}`)).map((t) => t.title);
+    check(
+      'a moved task lands at the head of its destination',
+      order[0] === 'Reisende',
+      order.join(' < '),
+    );
+
+    // The endpoint is its own undo: the captured placement has to restore the exact slot.
+    const prior = moved.before.find((r) => r.id === traveller.id);
+    check('the move reports the prior sort_order', prior.sort_order === traveller.sort_order, String(prior.sort_order));
+    await ok('POST', `/tasks/${traveller.id}/move`, {
+      artist_id: prior.artist_id,
+      project_id: prior.project_id,
+      parent_id: prior.parent_id,
+      sort_order: prior.sort_order,
+    });
+    const back = (await ok('GET', `/tasks?project_id=${from.id}`)).find((t) => t.id === traveller.id);
+    check('undo restores the exact ordinal', back.sort_order === traveller.sort_order, String(back.sort_order));
+
+    const bad = await req('POST', `/tasks/${traveller.id}/move`, {
+      artist_id: null,
+      project_id: to.id,
+      parent_id: null,
+      sort_order: 'oben',
+    });
+    check('a non-integer sort_order is refused', bad.status === 400, String(bad.status));
+  }
+
+  // ------------------------------------------- readers that are not the task table (WP-32)
+  // Archiv, .xlsx and the print sheets render listTasks output verbatim and span several lists,
+  // where a per-list ordinal interleaves them by position-within-their-own-project.
+  console.log('\n== ?order=due orders by deadline, not by the per-list ordinal (WP-32)');
+  {
+    const artist = await ok('POST', '/artists', { name: 'Fristen' });
+    const p1 = await ok('POST', '/projects', { code: 'FR1', name: 'Früh', artist_id: artist.id });
+    const p2 = await ok('POST', '/projects', { code: 'FR2', name: 'Spät', artist_id: artist.id });
+    // The later deadline sits in the list whose ordinals are lower, so the two orderings disagree.
+    await ok('POST', '/tasks', { title: 'in sechs Monaten', project_id: p1.id, due_date: '2027-02-01' });
+    await ok('POST', '/tasks', { title: 'morgen', project_id: p2.id, due_date: '2026-08-11' });
+
+    const byDue = (await ok('GET', `/tasks?resolved_artist_id=${artist.id}&order=due`)).map((t) => t.title);
+    check('order=due puts the nearer deadline first', byDue[0] === 'morgen', byDue.join(' < '));
+
+    const undated = await ok('POST', '/tasks', { title: 'ohne Datum', project_id: p1.id });
+    const withNull = (await ok('GET', `/tasks?resolved_artist_id=${artist.id}&order=due`)).map((t) => t.title);
+    check('…and a task without a deadline sorts last', withNull[withNull.length - 1] === 'ohne Datum', withNull.join(' < '));
+    check('the undated task still led its own list on create', undated.sort_order < 0, String(undated.sort_order));
+
+    const bogus = await req('GET', `/tasks?order=erfunden`);
+    check('an unknown order is a 400, not a silent fallback', bogus.status === 400, String(bogus.status));
+  }
+
   // ------------------------------------------------------------------ season copy (DBW-06)
   // Every child row is gated on the parent that *actually arrived*, not on the group flag.
   // `includeEvents` forces artists along (db.ts closes that edge) but NOT projects — so an

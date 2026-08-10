@@ -57,8 +57,10 @@ export type SortRuleState = 'active' | 'hidden' | 'gone';
  * **A column you cannot see does not order the table.** A rule is in effect only while its column
  * is visible; hiding the column (`enabled: 0`) or removing it makes the rule inert.
  *
- * Ab Werk ist genau das der Fall: `DEFAULT_TASK_SORT` nennt Priorität und Fällig, beide Spalten
- * sind `enabled: 0` — die Reihenfolge folgte also zwei Spalten, die nirgends stehen (WP-32).
+ * Every season written before WP-32 stores `[status, priority, due]` while both of those columns
+ * are `enabled: 0` — the order followed two columns that render nowhere, which is the defect this
+ * exists for. A fresh season ships `[status]` (`DEFAULT_TASK_SORT`) and needs no filtering at all;
+ * the filter is what makes the two behave alike without rewriting anyone's setting.
  *
  * The rule is filtered, never rewritten: un-hiding the column wakes it up again, which is why
  * this replaces the migration that would have rewritten `task_sort` (see docs/DECISIONS.md).
@@ -91,12 +93,21 @@ export function activeSortRules(rules: TaskSortRule[], columns: CustomColumn[]):
  * instead meant the sort editor named a column the task table never did — out of the box the
  * `title` built-in ships as „Aufgabe" while this list says „Titel", and renaming „Fällig" to
  * „Deadline" updated the table header and left the rule reading „Fällig" (CCL-18, TTU-20).
+ *
+ * **An empty `columns` means „not loaded", not „all deleted".** `useGlobalColumns()` returns `[]`
+ * while the query is in flight and permanently if it fails, and reporting `'gone'` for every rule
+ * told the user their whole hierarchy had been removed — a claim that was false, alarming and
+ * unactionable. With nothing to resolve against, say nothing.
  */
 export function describeSortColumn(
   id: string,
   columns: CustomColumn[],
 ): { label: string; state: SortRuleState } {
-  const fallback = SORTABLE_TASK_COLUMNS.find((c) => c.id === id)?.label ?? id;
+  // A custom column's id is a wire format („custom:9"), never a name to show a user.
+  const fallback =
+    SORTABLE_TASK_COLUMNS.find((c) => c.id === id)?.label ??
+    (customColId(id) !== null ? 'Gelöschte Spalte' : id);
+  if (columns.length === 0) return { label: fallback, state: 'active' };
   const col = columns.find((c) => colId(c) === id);
   return { label: col?.name || fallback, state: sortRuleState(id, columns) };
 }
