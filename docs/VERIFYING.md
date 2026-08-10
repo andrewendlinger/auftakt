@@ -31,6 +31,14 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   earlier session cost one full verification run, and the app looked broken rather than the setup.
 - **`npm run demo:seed` `rmSync`s the whole `.demo` directory**, so re-seeding under a running
   server leaves it holding a deleted file. Restart through `npm run demo`.
+- **…and `npm run demo` is not by itself proof that it worked.** With a server already on 4317 from
+  an earlier session, a full `npm run demo` still printed its seed counts *and*
+  „Auftakt server listening on http://localhost:4317", and `activeFile` still read
+  `.demo/auftakt.db` — while `GET /api/dashboard` answered from the pre-reseed database and was
+  missing a row that `sqlite3 .demo/auftakt.db` showed was there. Both documented ways of
+  confirming the target pass in this state. What catches it: `ps -o lstart= -p $(lsof -ti tcp:4317)`
+  against the seed time — a server older than the reseed is answering from a deleted inode — or
+  comparing one API response against the file directly. Kill both ports, then `npm run demo`.
 - Kill stray servers by port, never with a broad `pkill`:
   `lsof -ti tcp:4317 -ti tcp:5317 | xargs kill`. **The `-i` must be repeated.** macOS ships
   lsof 4.91, which reads the second `tcp:…` as a *filename*, prints its usage block to stderr and
@@ -139,6 +147,17 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 
 - **The default `task_sort` is `[status, priority, due]`, not empty.** A „keine Regel" repro needs
   `PATCH /api/settings {"task_sort": []}` first.
+- **The dashboard's „Nächste Termine" has three blocks, and which one a row is in is the
+  assertion**: event 8 under „Datum offen", then 2/5/1/10 inside the 14 days, then 4/3/7 under
+  „Danach". Event 10 is the one to check after touching the split: it starts at 23:00 on day 14
+  and ends at 01:00 on day 15, and it belongs to the *near* block, because a row is bucketed by
+  its **start** day. All three blocks cap at 8 rows, but **none of them collapses on the demo** —
+  the largest holds four — so „+ N weitere anzeigen" is not reachable here without POSTing more
+  events first. Event 6 is nine days past and event 9 is soft-deleted; **both must be
+  absent**, and either one appearing is a real bug, not a fixture quirk. Assert on block
+  membership, not on a total — the event fixtures grow. And every offset is relative to the
+  **seed day**, so a `.demo` built days ago drifts rows across the window boundary; rebuild with
+  `npm run demo` first.
 - **The project and artist pages ship `defaultHidden={['stats', …]}`**, so the „Fortschritt" tile
   is *not on screen* until a layout that names it is written. The dashboard's is.
 - **Artist 2 and project 3 ship their own `layout`; artists 1/3/4 and every other project are
@@ -175,8 +194,10 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   for them above the text finds nothing.
 - **The project-scoped column manager lists nothing on the demo** (there are no project-scoped
   columns) — drive those cases from Einstellungen instead.
-- **The „Zeitfenster" input is the only `type="number"` in the client**, but its „Speichern" is not
-  the page's only one — scope to the container.
+- **There are two `type="number"` inputs, one per „Zeitfenster"**, and they sit on different
+  Settings tabs: „Braucht Aufmerksamkeit" under `#/einstellungen/aufgaben`, „Termine in der
+  Übersicht" (the „Danach" divider) under `#/einstellungen/kategorien`. Neither tab's „Speichern"
+  is its page's only one — scope to the card.
 - **`paletteFor('Deadline')` is `#fee2e2`, the same colour `LEGACY_EVENT_COLORS` holds for it**, so
   „Deadline" cannot distinguish the two code paths. „Termin" can (legacy `#e2e8f0` vs palette
   `#dcfce7`).

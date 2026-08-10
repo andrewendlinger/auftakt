@@ -155,33 +155,54 @@ export function listEvents(db: Database.Database, q: EventQuery = {}): unknown[]
 }
 
 /**
- * Events overlapping the window [today, today+days] — includes currently-running multi-day events.
+ * Everything the dashboard may show: no date yet, or not over yet.
  *
- * 'localtime' before the offset: `start_at`/`end_at` are dates the user typed in local terms, so
- * a bare `date('now')` compared them against the UTC day. East of Greenwich, loading the
- * dashboard shortly after local midnight shifted the whole window back a day and moved both
- * edges — an event starting today, or one exactly `days` out, fell out of „Kommende Termine"
- * (SDL-10). Adding the days after the conversion keeps the arithmetic on the local calendar.
+ * **No window and no LIMIT, deliberately.** This used to be two queries — a 14-day window plus the
+ * next six beyond it — and the dashboard rendered the second one only when the first came back
+ * empty. A single event this week therefore hid every later one, and the sixth event beyond the
+ * window was never reachable at all: the app withheld data the user had entered, silently
+ * (WP-33). Any future cap belongs in the UI next to an affordance that opens it, never here.
+ *
+ * `COALESCE(e.end_at, e.start_at)` is what keeps a *running* multi-day event in the list — testing
+ * `start_at` alone dropped a three-day build-up on its second morning. Past events are left out on
+ * purpose: this list answers „was kommt", and the full history is on the artist and project pages,
+ * which list every event of their parent.
+ *
+ * `e.start_at IS NULL` („Datum offen") has to be spelled out, because `date(NULL)` is NULL and
+ * every comparison against it is NULL, not false — that is why dateless events were invisible here
+ * while `EventList` showed them in a block of their own. `EVENT_ORDER` then puts them first (SQLite
+ * sorts NULL first in ASC), which is the order that block already has on the detail pages.
+ *
+ * 'localtime' before anything else: `start_at`/`end_at` are dates the user typed in local terms, so
+ * a bare `date('now')` compares them against the UTC day. East of Greenwich, loading the dashboard
+ * shortly after local midnight moved the boundary a day and an event starting today fell out of the
+ * list (SDL-10). **If an offset is ever added here it goes after the modifier**
+ * (`date('now', 'localtime', '+7 days')`); adding days before the conversion moves the edge again.
+ *
+ * Its own column list rather than `EVENT_SELECT`, which is `e.*`: `notes` is rich-text HTML that
+ * this list never renders, and `useInvalidateAll` refetches the dashboard after every write, so a
+ * season of long notes turned each task edit into a several-hundred-KB round trip. Unbounded in
+ * *rows* — the decision above — says nothing about columns. Keep this in step with `UpcomingEvent`
+ * in `client/src/api/types.ts`; `npm run typecheck` catches a column dropped that the page reads,
+ * and `check:api` asserts `notes` stays gone.
  */
-export function eventsWithin(db: Database.Database, days: number): unknown[] {
+const UPCOMING_SELECT = `
+  SELECT e.id, e.project_id, e.title, e.start_at, e.end_at, e.all_day, e.location,
+         COALESCE(e.artist_id, p.artist_id) AS resolved_artist_id,
+         a.name  AS artist_name,
+         a.color AS artist_color,
+         p.code  AS project_code,
+         p.color AS project_color
+    FROM events e${parentJoins('e')}
+`;
+
+export function upcomingEvents(db: Database.Database): unknown[] {
   return db
     .prepare(
-      `${EVENT_SELECT}
+      `${UPCOMING_SELECT}
        WHERE e.deleted_at IS NULL AND ${EVENT_PARENT_LIVE}
-         AND date(e.start_at) <= date('now', 'localtime', ?)
-         AND date(COALESCE(e.end_at, e.start_at)) >= date('now', 'localtime')
+         AND (e.start_at IS NULL OR date(COALESCE(e.end_at, e.start_at)) >= date('now', 'localtime'))
        ${EVENT_ORDER}`,
     )
-    .all(`+${days} days`);
-}
-
-/** The next few events starting beyond the window — keeps the dashboard useful year-round. */
-export function eventsBeyond(db: Database.Database, days: number, limit: number): unknown[] {
-  return db
-    .prepare(
-      `${EVENT_SELECT}
-       WHERE e.deleted_at IS NULL AND ${EVENT_PARENT_LIVE} AND date(e.start_at) > date('now', 'localtime', ?)
-       ${EVENT_ORDER} LIMIT ?`,
-    )
-    .all(`+${days} days`, limit);
+    .all();
 }

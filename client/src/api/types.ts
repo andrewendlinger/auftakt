@@ -510,6 +510,11 @@ export interface WritableSettings {
   task_stats?: string[];
   /** „Braucht Aufmerksamkeit“ window in days, stored as a scalar string. */
   attention_window_days?: string;
+  /**
+   * How far „Nächste Termine“ looks ahead before „Danach“ begins, as a scalar string. A divider,
+   * not a filter — nothing is hidden on either side of it (WP-33).
+   */
+  event_window_days?: string;
 }
 
 /**
@@ -561,10 +566,31 @@ export type SettingsArrayKey =
 /** The array a settings key holds, with the optionality-induced `undefined` stripped. */
 export type SettingsArrayValue<K extends SettingsArrayKey> = NonNullable<WritableSettings[K]>;
 
+/**
+ * A row of the dashboard's „Nächste Termine" — deliberately *not* an `EventItem`.
+ *
+ * `upcomingEvents` (server/src/lib/queries.ts) selects exactly these columns instead of `e.*`,
+ * because `notes` is rich-text HTML this list never renders and the dashboard refetches after
+ * every write. This type is the client half of that contract: widen it only together with the
+ * query, or the extra field is `undefined` at runtime with nothing to say so.
+ */
+export type UpcomingEvent = Pick<
+  EventItem,
+  'id' | 'project_id' | 'title' | 'start_at' | 'end_at' | 'all_day' | 'location'
+> &
+  Pick<
+    Resolved,
+    'resolved_artist_id' | 'artist_name' | 'artist_color' | 'project_code' | 'project_color'
+  >;
+
 export interface Dashboard {
   artists: ArtistCard[];
-  upcoming14: EventItem[];
-  nextUp: EventItem[];
+  /**
+   * Every event from today onwards, dateless ones first — the server applies no window and no
+   * limit (WP-33). Where „Danach" starts is decided here, by `groupUpcomingEvents` in
+   * `lib/eventGroups.ts`.
+   */
+  upcoming: UpcomingEvent[];
   tasks: Task[];
 }
 

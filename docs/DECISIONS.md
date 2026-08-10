@@ -261,6 +261,58 @@ either. Repair happens when the user edits the times, not when they open the dia
 
 ---
 
+## The Übersicht shows every upcoming event (2026-08-10, WP-33)
+
+The dashboard used to ask for two lists — the next 14 days, plus the first six events beyond that —
+and render the second one only in the `else` of „the first is empty". The customer read it as a
+limit of six; it was worse than a limit, because one event this week hid every later one. Four
+things were decided in fixing it, and each is easy to undo by accident later.
+
+**Past events stay off this list.** It answers „was kommt". The full history is on the artist and
+project pages, which list every event of their parent, and the print sheets take it from there.
+Putting the past back here is a decision to re-make, not an oversight to fix. The one thing that
+must keep working is the *running* multi-day event: `upcomingEvents` tests
+`COALESCE(end_at, start_at)`, not `start_at`, and a client-side `daysUntil >= 0` filter added on
+top of that would delete exactly those rows.
+
+**Nothing is capped server-side, ever again.** `LIMIT 6` was the reported bug: the app withheld
+data the user had entered, with nothing on screen to say so. The only shortening left is
+`PREVIEW_ROWS`, which all three blocks pass to `UpcomingList`, and it exists only because it is
+paired with „+ N weitere anzeigen". A cap without an affordance that opens it is data loss with
+extra steps. The response is therefore unbounded in the event dimension — as it already was for
+`tasks` — and that is the intended shape, not an oversight awaiting a `LIMIT`.
+
+„Danach" was capped first because it was the obvious offender, but the argument was never specific
+to it: „Datum offen" sits at the *top* of the section, where a Notion import with 40 undated events
+pushes „Aufgaben" and „Braucht Aufmerksamkeit" off the first screen, and the near block becomes the
+same list once `event_window_days` is raised — 365 is legal, and the window then holds the season.
+`UpcomingList`'s `cap` is required rather than optional so that a fourth block cannot be added
+uncapped by leaving the prop off.
+
+**Unbounded in rows is not unbounded in columns.** `upcomingEvents` carries its own column list
+rather than `EVENT_SELECT`'s `e.*`, because `notes` is rich-text HTML this list never renders and
+`useInvalidateAll` refetches the dashboard after every write — a season of long notes turned each
+task edit into a several-hundred-KB round trip. That is not the `LIMIT` coming back: no row is
+withheld and nothing on screen changes, which is the whole difference. The cost is a contract in
+two places — the query and `UpcomingEvent` in `client/src/api/types.ts` — so `check:api` asserts
+both halves, `notes` gone and every rendered column present. `typecheck` cannot: the query returns
+`unknown[]`, so restoring `e.*` would compile.
+
+**The window is split client-side**, in `client/src/lib/eventGroups.ts`, for the reason the WP-40
+entry above gives for `eventTime.ts`: `check:unit` reaches `lib/`, and nothing reaches the page.
+The consequence is deliberate and worth stating, because it looks like lost coverage — the +14
+edge is no longer a `check:dates` property. The *today* edge still is, and that is where SDL-10
+actually sits: a bare `date('now')` gets it wrong in both directions, which is what the two
+25-hours-apart zones exist to catch.
+
+**The window is a setting; the heading default is not.** `event_window_days` follows
+`attention_window_days` exactly — scalar string, clamped on the client, one line of server
+allowlist. `'dash.events'` drops „· 14 Tage" so that a default heading cannot contradict a setting,
+and so that it cannot claim a boundary that no longer withholds anything. Renamed headings are
+overrides and survive untouched.
+
+---
+
 ## Known sharp edges with no owner
 
 Real, understood, and deliberately not scheduled. Each carries a comment at its own site; none is
@@ -287,3 +339,11 @@ finding one does not read as a discovery.
 - **`first_run_done` is close to redundant.** `ensureBackupDir` returns early whenever `backupDir`
   is set, so the flag now means „a folder was chosen at least once" and only matters if
   `backup_dir` were later cleared. Left as a guard.
+- **The Übersicht's event blocks are split at fetch time, not at midnight.** `groupUpcomingEvents`
+  takes „today" from its default `fromUtcMs`, read once inside a `useMemo` keyed on the list and
+  the window, and the query sets `refetchOnWindowFocus: false` — so an Electron window left open
+  overnight keeps yesterday's boundary until some write invalidates `['dashboard']`, and an event
+  that became „heute" stays under „Danach". Not a regression from WP-33 moving the split off the
+  server: that same window did not re-fetch before either, so it showed a stale split then too. A
+  rollover timer or a focus refetch would close it; both cost more than one stale heading buys on
+  a desktop app that is usually reopened, not left running.

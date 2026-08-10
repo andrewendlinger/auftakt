@@ -23,6 +23,7 @@ import { openExternal, type UpdateStatus } from '../lib/external';
 import {
   useErrorToast,
   useEventTypeOptions,
+  useEventWindowDays,
   useGlobalColumns,
   useGuardedAction,
   useInvalidateAll,
@@ -211,6 +212,20 @@ export function SettingsCategoriesTab() {
           addLabel="+ Typ"
           onSave={(v) => patch({ event_types: v })}
         />
+      </Card>
+
+      {/* Next to the event types rather than beside the task „Zeitfenster" on the Aufgaben tab:
+          two identically-named windows on one screen is a confusion this card can simply avoid. */}
+      <Card className="p-5">
+        <SectionTitle>Termine in der Übersicht</SectionTitle>
+        <p className="mt-1 mb-3 text-xs text-neutral-400">
+          Wie weit die Übersicht nach vorn schaut. Spätere Termine verschwinden dadurch nicht – sie
+          stehen darunter unter „Danach“, der Rest hinter „weitere anzeigen“. Termine ohne Datum
+          stehen immer ganz oben; Vergangenes steht auf der Künstler- und Projektseite.
+        </p>
+        {/* String(): scalar settings are stored via String(v) server-side, and `useEventWindowDays`
+            parses them back with Number() — same round trip as attention_window_days. */}
+        <EventWindowSetting onSave={(days) => patch({ event_window_days: String(days) })} />
       </Card>
 
       <Card className="p-5">
@@ -569,8 +584,10 @@ function UpdateCard() {
 }
 
 /**
- * The „Zeitfenster" draft as a number, or null while it is empty or unparseable. Clamped to the
- * same [1, 365] `useTaskStatsConfig` clamps on read, so a bad value cannot escape at either end.
+ * A „Zeitfenster" draft as a number, or null while it is empty or unparseable. Shared by both
+ * window editors on this page — „Braucht Aufmerksamkeit" and „Termine in der Übersicht". Clamped
+ * to the same [1, 365] `useTaskStatsConfig` and `useEventWindowDays` clamp on read, so a bad value
+ * cannot escape at either end.
  */
 function parseWindowDays(draft: string): number | null {
   const n = Number(draft.trim());
@@ -657,6 +674,53 @@ function TaskStatsSetting({
           value={windowDraft}
           onChange={(e) => setWindowDraft(e.target.value)}
           onBlur={() => setWindowDraft(String(windowDays ?? cfg.windowDays))}
+        />
+      </div>
+      <div className="flex justify-end">
+        <Btn variant="primary" onClick={save} disabled={busy || !dirty}>
+          Speichern
+        </Btn>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Editor for the „Nächste Termine" window. Same mechanics as the field above and for the same
+ * reason: the draft is a *string*, clamped on blur and on save rather than per keystroke, because
+ * clamping each keystroke wrote `''` back as 1 and appended the next digits to it (PGS-04).
+ */
+function EventWindowSetting({ onSave }: { onSave: (windowDays: number) => Promise<unknown> }) {
+  const current = useEventWindowDays();
+  const [draft, setDraft] = useState<string>(() => String(current));
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setDraft(String(current)), [current]);
+
+  const windowDays = parseWindowDays(draft);
+  const dirty = windowDays !== null && windowDays !== current;
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await onSave(windowDays ?? current);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <Label>Zeitfenster bis „Danach“ (Tage)</Label>
+        <TextInput
+          type="number"
+          min={1}
+          max={365}
+          className="w-24"
+          invalid={windowDays === null}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => setDraft(String(windowDays ?? current))}
         />
       </div>
       <div className="flex justify-end">

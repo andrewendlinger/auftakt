@@ -14,7 +14,9 @@
  */
 export const LABEL_DEFAULTS = {
   'dash.artists': 'Künstler',
-  'dash.events': 'Nächste Termine · 14 Tage',
+  // No day count in the default: the window is a setting now, and everything past it is still on
+  // the page under „Danach" — a heading that states a number would contradict both (WP-33).
+  'dash.events': 'Nächste Termine',
   'dash.tasks': 'Aufgaben',
   'dash.festival': 'Festival-Aufgaben',
   'dash.stats': 'Aufgaben-Statistiken',

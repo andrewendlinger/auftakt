@@ -1,10 +1,11 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { ArtistCard as ArtistCardT, EventItem, Task } from '../api/types';
+import type { ArtistCard as ArtistCardT, Task, UpcomingEvent } from '../api/types';
 import { withAlpha } from '../lib/colors';
 import { formatEventWhen, weekdayShort } from '../lib/dates';
+import { groupUpcomingEvents } from '../lib/eventGroups';
 import { Card, SectionTitle, Spinner, EmptyState, ErrorState } from '../components/ui';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { TaskTable } from '../components/TaskTable';
@@ -23,6 +24,7 @@ import {
 import type { LabelKey } from '../lib/labels';
 import {
   useAllTasks,
+  useEventWindowDays,
   useGlobalColumns,
   useLabel,
   useSettingsArray,
@@ -37,6 +39,19 @@ const SECTION_LABEL_KEYS: Record<string, LabelKey> = {
   tasks: 'dash.tasks',
   aufmerksamkeit: 'dash.aufmerksamkeit',
 };
+
+/**
+ * Rows a block shows before it collapses the rest behind „+ N weitere anzeigen" — the cap
+ * `AttentionList` uses, for the same reason (a full season under one heading is a scroll that
+ * pushes every section below it off screen). Local rather than imported: it is this list's own
+ * presentation choice, not a shared contract.
+ *
+ * All three blocks carry it, not just „Danach". „Datum offen" sits at the *top* of the section, so
+ * an import that leaves 40 events without a date pushes every section below it off the first
+ * screen; and the near block is „Danach"'s own argument once `event_window_days` is raised, since
+ * 365 is a legal setting and the window then holds the season.
+ */
+const PREVIEW_ROWS = 8;
 
 /** Picker group of each optional built-in — everything here is computed, hence „Einblicke". */
 const SECTION_GROUPS: Record<string, SectionGroup> = {
@@ -56,6 +71,7 @@ export function Dashboard() {
     queryFn: () => api.customSections.list({ scope: 'dashboard' }),
   });
   const { windowDays } = useTaskStatsConfig();
+  const eventWindowDays = useEventWindowDays();
   const artistLabel = useLabel()('dash.artists');
   // Still the settings array: there is only one dashboard, so it has nothing to be per-entity
   // about and stays the one page whose layout is a setting (WP-25).
@@ -79,6 +95,18 @@ export function Dashboard() {
     }
     return m;
   }, [allTasks]);
+
+  // Above the early returns, where every hook has to sit. The server sends one unsliced list; the
+  // three blocks the section renders are cut here.
+  //
+  // The default `fromUtcMs` reads the clock once, when this memo runs, and the deps do not include
+  // the date — so a window left open past midnight keeps yesterday's boundary until a write
+  // invalidates ['dashboard']. Known and accepted, not an oversight: see „Known sharp edges" in
+  // docs/DECISIONS.md.
+  const { undated, within, beyond } = useMemo(
+    () => groupUpcomingEvents(data?.upcoming ?? [], eventWindowDays),
+    [data?.upcoming, eventWindowDays],
+  );
 
   if (isLoading) return <Spinner />;
   if (isError || !data) {
@@ -115,18 +143,30 @@ export function Dashboard() {
         <SectionTitle>
           <EditableLabel k="dash.events" />
         </SectionTitle>
-        {data.upcoming14.length === 0 ? (
+        {/* Three blocks, each rendered on its own merits. „Danach" used to sit in the `else` of
+            „nothing in the next 14 days", so a single event this week hid every later one — the
+            bug the customer reported as „es zeigt nur 6 an" (WP-33). Nothing here is conditional
+            on another block being empty. */}
+        {data.upcoming.length === 0 ? (
+          <EmptyState>Keine anstehenden Termine.</EmptyState>
+        ) : (
           <div className="space-y-3">
-            <EmptyState>Keine Termine in den nächsten 14 Tagen.</EmptyState>
-            {data.nextUp.length > 0 && (
+            {undated.length > 0 && (
               <div>
-                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">Danach</div>
-                <UpcomingList events={data.nextUp} />
+                <Kicker>Datum offen</Kicker>
+                <UpcomingList events={undated} cap={PREVIEW_ROWS} />
+              </div>
+            )}
+            {/* No kicker: this is the block the section heading already names, and leaving it bare
+                is the layout EventList uses on the artist and project pages. */}
+            {within.length > 0 && <UpcomingList events={within} cap={PREVIEW_ROWS} />}
+            {beyond.length > 0 && (
+              <div>
+                <Kicker>Danach</Kicker>
+                <UpcomingList events={beyond} cap={PREVIEW_ROWS} />
               </div>
             )}
           </div>
-        ) : (
-          <UpcomingList events={data.upcoming14} />
         )}
       </section>
     ),
@@ -215,10 +255,20 @@ function ArtistCard({ artist, tasks }: { artist: ArtistCardT; tasks: Task[] }) {
   );
 }
 
-function UpcomingList({ events }: { events: EventItem[] }) {
+/**
+ * One block of the events section. `cap` collapses everything past the first `cap` rows behind
+ * „+ N weitere anzeigen" — the AttentionList affordance, and the only kind of shortening this
+ * section is allowed: a cap without a way to open it is what WP-33 removed.
+ *
+ * Required, not optional, so that a fourth block cannot be added uncapped by leaving the prop off.
+ */
+function UpcomingList({ events, cap }: { events: UpcomingEvent[]; cap: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? events : events.slice(0, cap);
+  const hidden = events.length - shown.length;
   return (
     <ul className="space-y-2">
-      {events.map((ev) => {
+      {shown.map((ev) => {
         const to = ev.project_id ? `/project/${ev.project_id}` : `/artist/${ev.resolved_artist_id}`;
         return (
           <li key={ev.id}>
@@ -230,9 +280,20 @@ function UpcomingList({ events }: { events: EventItem[] }) {
                 className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full"
                 style={{ background: ev.artist_color ?? '#999' }}
               />
+              {/* Both formatters answer '' for a null start, so a dateless row would show an
+                  empty 9rem column. The pill is EventList's, verbatim — the two views render one
+                  thing one way. */}
               <div className="w-36 shrink-0 text-xs font-medium text-neutral-500">
-                <span className="mr-1 text-neutral-400">{weekdayShort(ev.start_at)}</span>
-                {formatEventWhen(ev)}
+                {ev.start_at ? (
+                  <>
+                    <span className="mr-1 text-neutral-400">{weekdayShort(ev.start_at)}</span>
+                    {formatEventWhen(ev)}
+                  </>
+                ) : (
+                  <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] font-semibold text-neutral-500">
+                    Datum offen
+                  </span>
+                )}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -255,6 +316,26 @@ function UpcomingList({ events }: { events: EventItem[] }) {
           </li>
         );
       })}
+      {(hidden > 0 || expanded) && (
+        <li>
+          <button
+            type="button"
+            onClick={() => setExpanded((x) => !x)}
+            className="px-3 py-1 text-xs font-medium text-neutral-500 transition hover:text-neutral-800"
+          >
+            {expanded ? 'Weniger anzeigen' : `+ ${hidden} weitere anzeigen`}
+          </button>
+        </li>
+      )}
     </ul>
+  );
+}
+
+/** The small uppercase heading above a block — „Datum offen" and „Danach" wear the same one. */
+function Kicker({ children }: { children: ReactNode }) {
+  return (
+    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+      {children}
+    </div>
   );
 }

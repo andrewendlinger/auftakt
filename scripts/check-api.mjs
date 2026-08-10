@@ -253,6 +253,38 @@ try {
     check('an empty filter means "no filter", not "match 0" (SDL-09)', empty.length >= 1, `${empty.length} rows`);
   }
 
+  // ------------------------------------------------- the dashboard's event columns (WP-33)
+  //
+  // `upcomingEvents` has its own column list instead of `EVENT_SELECT`'s `e.*`, because the
+  // dashboard refetches after every write and `notes` is rich-text HTML it never renders. Nothing
+  // in typecheck can see that: the query returns `unknown[]`, so putting `e.*` back would ship the
+  // notes again and still compile. Asserted here rather than in check:dates, whose 31 properties
+  // per zone are a documented count (docs/ARCHITECTURE.md).
+  console.log('\n== the dashboard ships no event notes (WP-33)');
+  {
+    const artist = await ok('POST', '/artists', { name: 'Dashboard' });
+    await ok('POST', '/events', {
+      artist_id: artist.id,
+      type: 'Auftritt',
+      title: 'Termin mit Notiz',
+      start_at: '2099-09-01',
+      all_day: 1,
+      notes: '<p>lange Notiz</p>',
+    });
+    const dash = await ok('GET', '/dashboard');
+    const row = dash.upcoming.find((e) => e.title === 'Termin mit Notiz');
+    check('the event is on the dashboard', row != null, JSON.stringify(dash.upcoming.map((e) => e.title)));
+    // `in`, not `== null`: a selected-but-NULL column is still a shipped column, and the point
+    // here is that the query stopped asking for it at all.
+    check('no upcoming row carries notes', !dash.upcoming.some((e) => 'notes' in e), JSON.stringify(Object.keys(row ?? {})));
+    // The other half of the contract — UpcomingEvent in client/src/api/types.ts. A column dropped
+    // by accident is a blank cell on the page, and nothing else would catch it.
+    const want = ['id', 'project_id', 'title', 'start_at', 'end_at', 'all_day', 'location',
+      'resolved_artist_id', 'artist_name', 'artist_color', 'project_code', 'project_color'];
+    const missing = want.filter((k) => !(k in (row ?? {})));
+    check('every column the page renders is there', missing.length === 0, missing.join(', '));
+  }
+
   // ------------------------------------------------------------------ settings (SDL-06)
   console.log('\n== settings validation (SDL-06)');
   {

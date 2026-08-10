@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { doneStatusValue, getDb } from '../db';
-import { eventsBeyond, eventsWithin, listTasks } from '../lib/queries';
+import { listTasks, upcomingEvents } from '../lib/queries';
 
 export const dashboardRouter = Router();
 
@@ -40,10 +40,11 @@ dashboardRouter.get('/', (_req, res) => {
     open_task_count: openMap.get(a.id) ?? 0,
   }));
 
+  // One unsliced list, dateless events first. Where „Danach" begins is a presentation decision the
+  // client makes from `event_window_days`; the server no longer has a window to disagree with it.
   res.json({
     artists: cards,
-    upcoming14: eventsWithin(db, 14),
-    nextUp: eventsBeyond(db, 14, 6),
+    upcoming: upcomingEvents(db),
     tasks,
   });
 });
