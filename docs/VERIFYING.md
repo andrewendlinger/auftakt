@@ -45,6 +45,17 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 
 ## Playwright traps
 
+- **A fresh context plays the boot animation**, a stale one does not. `#boot-overlay` in
+  `client/index.html` covers the viewport for ~2.6 s and keeps its pointer events the whole time,
+  so it swallows the first interaction of a run — `locator.click()` rides it out through
+  actionability retries, but a raw `mouse.click()` at coordinates only skips the animation. It
+  plays on a **cold** boot only: the inline head script sets `sessionStorage['auftakt-booted']`, so
+  every `reload()` in the same context comes up without it. Both directions read as a bug — the
+  overlay being absent after a reload is correct, and a script that opens a context per scenario
+  pays the 2.6 s each time. `newContext({ reducedMotion: 'reduce' })` removes it outright; to look
+  at a single frame, `document.getAnimations().forEach(a => { a.pause(); a.currentTime = ms })`
+  (seeking past ~2600 ms fires the fade's `animationend`, which removes the node — that *is* the
+  reveal, not a lost overlay).
 - **`page.goto` to the same hash is a no-op** under `HashRouter`, so a dialog left open by the
   previous scenario silently eats every click. Call `reload()` after `goto`.
 - **`locator.isVisible()` does not wait** — it samples immediately, so it reads the state before an

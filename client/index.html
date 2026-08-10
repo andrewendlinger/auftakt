@@ -5,9 +5,314 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="./favicon.svg" />
     <title>Auftakt</title>
+
+    <!-- The boot gesture plays on a cold start only, so this has to be decided before
+         the overlay below can paint. sessionStorage survives a reload of the same tab
+         but is empty in a fresh process, which is exactly the distinction wanted:
+         season switch and the post-backup-dir reload skip it, a relaunch plays it. -->
+    <script>
+      try {
+        if (sessionStorage.getItem('auftakt-booted')) {
+          document.documentElement.classList.add('no-boot');
+        }
+        sessionStorage.setItem('auftakt-booted', '1');
+      } catch {
+        /* Storage can be unavailable; then the gesture simply plays. */
+      }
+    </script>
+
+    <style>
+      /* The Auftakt gesture: a conductor's preparatory beat, played once while the
+         bundle parses and React mounts underneath. Pure SVG + CSS in the app's own
+         colours — it starts on its own, the script at the end of <body> only skips
+         and removes it. Timings are the "Attacca" choreography: 2700 ms total,
+         ictus (wordmark) at 1880 ms, hand fading from 2410 ms. */
+      #boot-overlay {
+        --T: 2700; /* total */
+        --ti: 1880; /* ictus */
+        --tf: 2410; /* hand fades */
+
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        /* Matches body and the Electron window's backgroundColor, so window → overlay
+           → app is seamless. */
+        background: #f6f6f4;
+        animation: bootOut 370ms linear calc((var(--ti) + 350) * 1ms) both;
+      }
+      /* A click anywhere cuts it short. Separate keyframes, so the fade starts from
+         a full opacity instead of inheriting the long fade's progress. */
+      #boot-overlay.boot-skip {
+        animation: bootSkip 150ms linear both;
+      }
+      html.no-boot #boot-overlay {
+        display: none;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #boot-overlay {
+          display: none;
+        }
+      }
+
+      #boot-overlay svg {
+        display: block;
+        width: min(720px, 70vw);
+        height: auto;
+      }
+
+      /* Wordmark: one centred text element landing as a block on the ictus — bold and
+         gesperrt. The x offset compensates the trailing letter-spacing of the last
+         glyph, so the word sits optically centred. */
+      #boot-overlay .word text {
+        fill: #1c1c1e;
+        font:
+          700 72px 'Inter',
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
+        letter-spacing: 9px;
+      }
+      #boot-overlay .lt {
+        animation: bootLetterIn 380ms cubic-bezier(0.2, 0.9, 0.3, 1) calc(var(--ti) * 1ms) both;
+      }
+
+      #boot-overlay .ripple {
+        transform-box: fill-box;
+        transform-origin: center;
+        fill: none;
+        stroke: #3c3c3b;
+        opacity: 0;
+      }
+      #boot-overlay .ripple.r1 {
+        stroke-width: 1.6;
+        animation: bootRipple1 560ms calc(var(--ti) * 1ms) both;
+      }
+      #boot-overlay .ripple.r2 {
+        stroke-width: 1;
+        animation: bootRipple2 620ms calc((var(--ti) + 110) * 1ms) both;
+      }
+
+      #boot-overlay .actor {
+        fill: #3c3c3b;
+      }
+      /* Wrist pivot = tip of the baton. */
+      #boot-overlay .swing {
+        transform-box: fill-box;
+        transform-origin: 100% 0;
+        animation: bootSwing calc(var(--T) * 1ms) both;
+      }
+      /* The beat plane is vertical at x=344; the path begins and ends on the same
+         point of it, as the pedagogy requires. */
+      #boot-overlay .mover {
+        opacity: 0;
+        offset-rotate: 0deg;
+        offset-path: path(
+          'M280,404 C316,382 352,334 344,270 C343,272 342.6,274.5 342.5,275.5 C333,247 331,165 342,95 C343,150 344,215 344,270 C341,244 342,212 342,198 C342.5,206 343,216 343,222'
+        );
+        animation:
+          bootMotion calc(var(--T) * 1ms) both,
+          bootActorFade 260ms calc(var(--tf) * 1ms) both;
+      }
+
+      /* Arc-length shares of the phases along the 615.32-long path: slow entry into
+         position, anticipation flick, rise, fall → ictus at 84.4 % arc / 69.6 % time,
+         rebound under half a stroke. */
+      @keyframes bootMotion {
+        0% {
+          offset-distance: 0%;
+          animation-timing-function: cubic-bezier(0.35, 0, 0.25, 1);
+        }
+        44.444% {
+          offset-distance: 25.508%;
+          animation-timing-function: cubic-bezier(0.4, 0, 0.5, 1);
+        }
+        47.407% {
+          offset-distance: 26.439%;
+          animation-timing-function: cubic-bezier(0.45, 0.05, 0.2, 1);
+        }
+        61.852% {
+          offset-distance: 55.939%;
+          animation-timing-function: cubic-bezier(0.5, 0, 0.85, 0.35);
+        }
+        69.63% {
+          offset-distance: 84.382%;
+          animation-timing-function: cubic-bezier(0, 0.5, 0.35, 1);
+        }
+        77.037% {
+          offset-distance: 96.096%;
+          animation-timing-function: cubic-bezier(0.4, 0, 0.4, 1);
+        }
+        86.296% {
+          offset-distance: 100%;
+        }
+        100% {
+          offset-distance: 100%;
+        }
+      }
+      /* The wrist trails the arm on the way up and whips through the ictus. */
+      @keyframes bootSwing {
+        0% {
+          transform: rotate(-4deg);
+          animation-timing-function: cubic-bezier(0.35, 0, 0.25, 1);
+        }
+        44.444% {
+          transform: rotate(0deg);
+          animation-timing-function: cubic-bezier(0.4, 0, 0.5, 1);
+        }
+        47.407% {
+          transform: rotate(2.5deg);
+          animation-timing-function: cubic-bezier(0.45, 0.05, 0.2, 1);
+        }
+        61.852% {
+          transform: rotate(-5deg);
+          animation-timing-function: cubic-bezier(0.5, 0, 0.85, 0.35);
+        }
+        69.63% {
+          transform: rotate(6deg);
+          animation-timing-function: cubic-bezier(0, 0.5, 0.35, 1);
+        }
+        77.037% {
+          transform: rotate(-3deg);
+          animation-timing-function: cubic-bezier(0.4, 0, 0.4, 1);
+        }
+        86.296% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(0deg);
+        }
+      }
+      @keyframes bootLetterIn {
+        from {
+          opacity: 0;
+          transform: translateY(16px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      @keyframes bootRipple1 {
+        0% {
+          transform: scale(0.12);
+          opacity: 0;
+        }
+        10% {
+          opacity: 0.5;
+        }
+        100% {
+          transform: scale(1);
+          opacity: 0;
+        }
+      }
+      @keyframes bootRipple2 {
+        0% {
+          transform: scale(0.1);
+          opacity: 0;
+        }
+        12% {
+          opacity: 0.28;
+        }
+        100% {
+          transform: scale(1);
+          opacity: 0;
+        }
+      }
+      @keyframes bootActorFade {
+        from {
+          opacity: 1;
+        }
+        to {
+          opacity: 0;
+        }
+      }
+      @keyframes bootOut {
+        from {
+          opacity: 1;
+        }
+        to {
+          opacity: 0;
+        }
+      }
+      @keyframes bootSkip {
+        from {
+          opacity: 1;
+        }
+        to {
+          opacity: 0;
+        }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+
+    <div id="boot-overlay" aria-hidden="true">
+      <svg viewBox="0 0 720 450">
+        <circle class="ripple r1" cx="344" cy="270" r="48" />
+        <circle class="ripple r2" cx="344" cy="270" r="48" />
+        <g class="word">
+          <text class="lt" x="364.5" y="340" text-anchor="middle">Auftakt</text>
+        </g>
+        <g class="mover">
+          <g class="swing">
+            <polygon class="actor" points="-0.2,-0.9 0.2,0.9 -96.3,27.1 -97.5,22.5" />
+            <path
+              class="actor"
+              fill-rule="evenodd"
+              d="M-87,19.2 C-87,18.3 -85.6,15.9 -86.9,13.5 C-88.2,11.1 -91.5,6.4 -94.8,4.7 C-98.1,3 -103,3 -106.5,3.5 C-110,4 -112.8,5.8 -115.8,7.4 C-118.8,9 -121.8,11.4 -124.6,13.3 C-127.4,15.2 -129.5,17.1 -132.5,18.9 C-135.5,20.7 -139.9,23.1 -142.5,24.3 C-145.1,25.5 -146.6,26.1 -148.1,26.3 C-149.6,26.5 -148.4,25.1 -151.5,25.3 C-154.6,25.5 -163.9,27.2 -166.4,27.6 L-162.4,55.5 L-146.1,50.3 C-145.3,49.9 -143.9,48.3 -141.5,48.1 C-139.1,47.9 -135.3,48.8 -131.9,49.3 C-128.5,49.8 -124.9,51 -121.1,51.1 C-117.3,51.2 -112.9,50.9 -109,50.1 C-105.1,49.4 -100.8,48 -97.5,46.6 C-94.2,45.3 -91.4,44 -89.4,42 C-87.4,40 -86.4,36.8 -85.7,34.3 C-85,31.8 -85.5,28.2 -85.5,27 Z M-91.2,16.4 L-97,11.7 L-96.5,11 L-90.6,15.7 Z M-90.8,32.6 L-90.6,41.4 L-91.6,41.4 L-91.8,32.7 Z M-98.8,35.7 L-98.2,45.9 L-99.2,45.9 L-99.8,35.8 Z M-107.3,41 L-107.1,47.7 L-108,47.7 L-108.2,41 Z M-148,26.1 L-144.1,49.3 L-145.5,49.6 L-149.4,26.3 Z"
+            />
+          </g>
+        </g>
+      </svg>
+    </div>
+
+    <script>
+      (function () {
+        var overlay = document.getElementById('boot-overlay');
+        if (!overlay) return;
+        var gone = false;
+        var fading = false;
+        function remove() {
+          if (gone) return;
+          gone = true;
+          overlay.remove();
+        }
+        // The two cases where nothing plays: hidden by CSS above, so drop the node
+        // rather than leave an invisible one lying in the DOM.
+        if (
+          document.documentElement.classList.contains('no-boot') ||
+          matchMedia('(prefers-reduced-motion: reduce)').matches
+        ) {
+          remove();
+          return;
+        }
+        // Descendant animations bubble their animationend too — only the overlay's
+        // own fade ends the show.
+        overlay.addEventListener('animationend', function (e) {
+          if (e.target === overlay) remove();
+        });
+        // The fade begins after its delay; from then on a click would only make the
+        // overlay jump back to full opacity, so it stops skipping.
+        overlay.addEventListener('animationstart', function (e) {
+          if (e.target === overlay) fading = true;
+        });
+        // Click to skip. The overlay keeps its pointer events until it is removed, so
+        // nothing behind it can be hit by accident mid-gesture.
+        overlay.addEventListener('pointerdown', function () {
+          if (!fading) overlay.classList.add('boot-skip');
+        });
+        // Failsafe: animations can be off entirely, or an event can go missing.
+        setTimeout(remove, 4000);
+      })();
+    </script>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
