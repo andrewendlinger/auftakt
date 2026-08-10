@@ -1,30 +1,21 @@
 import { useMemo, useState } from 'react';
-import type { CustomColumn, TaskSortRule } from '../api/types';
+import type { TaskSortRule } from '../api/types';
 import { arrayMove } from '../lib/arrays';
-import { MANUAL_SORT_ID, SORTABLE_TASK_COLUMNS } from '../lib/taskSort';
+import { SORTABLE_TASK_COLUMNS, describeSortColumn, type SortRuleState } from '../lib/taskSort';
 import { useGlobalColumns } from '../hooks';
 import { Btn, IconButton, ReorderArrows } from './ui';
 
 /**
- * What to call a sortable column, and whether the user has hidden it.
- *
- * The ids in `SORTABLE_TASK_COLUMNS` are built-in column `key`s, and docs/ARCHITECTURE.md makes
- * the `custom_columns` rows the single source of truth for their names — the ✎ in
- * CustomColumnManager renames a built-in like any other column. Reading the hardcoded labels
- * instead meant the sort editor named a column the task table never did: out of the box the
- * `title` built-in ships as „Aufgabe" while this list said „Titel", and renaming „Fällig" to
- * „Deadline" updated the table header and left the rule reading „Fällig" (CCL-18, TTU-20).
- *
- * A disabled column still sorts — the rule survives hiding the column — but it renders nowhere,
- * so say so rather than leave a rule pointing at something invisible.
+ * Why a rule is doing nothing. `describeSortColumn` decides the state and `activeSortRules`
+ * enforces it (`lib/taskSort.ts`) — both live there so the label and the behaviour cannot drift,
+ * which they did: a rule for a *deleted* column read as perfectly normal here while sorting
+ * nothing, and a hidden one was marked „(ausgeblendet)" while still ordering the table (WP-32).
  */
-function describe(id: string, columns: CustomColumn[]): { label: string; hidden: boolean } {
-  const fallback = SORTABLE_TASK_COLUMNS.find((c) => c.id === id)?.label ?? id;
-  // „Manuelle Reihenfolge" is not a column; it has no row to be named or hidden by.
-  if (id === MANUAL_SORT_ID) return { label: fallback, hidden: false };
-  const col = columns.find((c) => c.key === id);
-  return { label: col?.name || fallback, hidden: col?.enabled === 0 };
-}
+const INERT: Record<SortRuleState, string> = {
+  active: '',
+  hidden: '(ausgeblendet – sortiert nicht)',
+  gone: '(entfernt – sortiert nicht)',
+};
 
 /**
  * Editor for the automatic task-ordering hierarchy. The list is applied top-to-bottom as a
@@ -45,7 +36,7 @@ export function TaskSortEditor({
     () =>
       SORTABLE_TASK_COLUMNS.filter((c) => !value.some((r) => r.id === c.id)).map((c) => ({
         id: c.id,
-        ...describe(c.id, columns),
+        ...describeSortColumn(c.id, columns),
       })),
     [value, columns],
   );
@@ -67,12 +58,12 @@ export function TaskSortEditor({
     <div className="space-y-2">
       {value.length === 0 && (
         <p className="rounded-lg bg-neutral-50 px-3 py-2 text-sm text-neutral-400">
-          Keine Regel – Aufgaben behalten die Standard-Reihenfolge (erledigte immer unten).
+          Keine Regel – Aufgaben behalten die selbst gezogene Reihenfolge (erledigte immer unten).
         </p>
       )}
       <ol className="space-y-1">
         {value.map((rule, i) => {
-          const { label, hidden } = describe(rule.id, columns);
+          const { label, state } = describeSortColumn(rule.id, columns);
           return (
             <li
               key={rule.id}
@@ -87,7 +78,9 @@ export function TaskSortEditor({
               <span className="w-4 shrink-0 text-xs font-semibold text-neutral-400">{i + 1}.</span>
               <span className="min-w-0 flex-1 truncate font-medium text-neutral-800">
                 {label}
-                {hidden && <span className="ml-1.5 text-xs font-normal text-neutral-400">(ausgeblendet)</span>}
+                {state !== 'active' && (
+                  <span className="ml-1.5 text-xs font-normal text-neutral-400">{INERT[state]}</span>
+                )}
               </span>
               <div className="inline-flex shrink-0 overflow-hidden rounded-lg border border-neutral-300 text-xs">
                 {(['asc', 'desc'] as const).map((dir) => (
@@ -122,7 +115,7 @@ export function TaskSortEditor({
             <option value="">Spalte wählen…</option>
             {available.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.hidden ? `${c.label} (ausgeblendet)` : c.label}
+                {c.state === 'active' ? c.label : `${c.label} ${INERT[c.state]}`}
               </option>
             ))}
           </select>

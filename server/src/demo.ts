@@ -278,11 +278,16 @@ const TASKS: DemoTask[] = [
   // due date), so every automatic rule ties and only sort_order separates them — the only
   // arrangement in which a row is draggable. The parent below repeats it one level down, and
   // task 45 is the odd rank that must refuse every drop in the block.
+  //
+  // Odd by *status*, not by priority: since WP-32 a hidden column no longer orders the table and
+  // Priorität ships hidden, so a „hoch" among „mittel" is no rank difference at all — under the
+  // default `[status]` the whole block would tie and the fixture would have stopped testing
+  // anything. Status is the one rule that is on by default and visible.
   { id: 41, project_id: 5, title: 'Requisiten sichten', status: 'new', priority: 'mittel' },
   { id: 42, project_id: 5, title: 'Kostüme aussortieren', status: 'new', priority: 'mittel' },
   { id: 43, project_id: 5, title: 'Werkstatt aufräumen', status: 'new', priority: 'mittel' },
   { id: 44, project_id: 5, title: 'Bestandsliste ergänzen', status: 'new', priority: 'mittel' },
-  { id: 45, project_id: 5, title: 'Versicherung prüfen (andere Rangstufe)', status: 'new', priority: 'hoch' },
+  { id: 45, project_id: 5, title: 'Versicherung prüfen (andere Rangstufe)', status: 'active', priority: 'hoch' },
   { id: 46, project_id: 5, parent_id: 41, title: 'Fundus Halle A', status: 'new', priority: 'mittel' },
   { id: 47, project_id: 5, parent_id: 41, title: 'Fundus Halle B', status: 'new', priority: 'mittel' },
   { id: 48, project_id: 5, parent_id: 41, title: 'Fundus Aussenlager', status: 'new', priority: 'mittel' },

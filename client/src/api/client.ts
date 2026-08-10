@@ -121,7 +121,9 @@ export const api = {
      * All three placement fields are explicit and always written, so this same call is also the
      * undo: post back the placement the row had in the response's `before` (TTU-03).
      */
-    move: (id: ID, to: Omit<TaskPlacement, 'id'>) =>
+    // `sort_order` optional on the way in: omitting it lands the task at the head of its
+    // destination, passing the captured one back is how the undo restores the exact slot.
+    move: (id: ID, to: Omit<TaskPlacement, 'id' | 'sort_order'> & { sort_order?: number }) =>
       http<{ ids: ID[]; before: TaskPlacement[] }>('POST', `/tasks/${id}/move`, to),
     /**
      * Soft-delete a task and its whole live subtree in one transaction. Answers with the ids it

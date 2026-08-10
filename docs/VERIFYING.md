@@ -135,6 +135,14 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   native setter.
 - **A status change re-sorts the task table**, so `.first()` addresses a different row afterwards.
   Assert the write, not the label.
+- **`input[placeholder*="Aufgabe"]` matches the global search box, not the task composer** — the
+  search placeholder is „Suchen … (Künstler, Projekte, Aufgaben, Termine, Kontakte)" and it comes
+  first in the DOM, so `.first()` types into the header and the table never changes. Anchor it:
+  `input[placeholder^="Neue Aufgabe"]`, or `^="Neue allgemeine Aufgabe"` on the Übersicht.
+- **The task title cell also carries the subtask counter** („Requisiten sichten\n0/3"), so an
+  `innerText` comparison needs the first line only.
+- **The Einstellungen tabs are links, not buttons** — `getByRole('button', …)` waits for ever.
+  Navigate straight to `#/einstellungen/aufgaben`.
 - **A drag must start on the ⠿, not on the row.** Every reorderer runs `useDragReorder` in
   `mode: 'armed'`, so the item is not `draggable` until a primary-button `pointerdown` lands on
   its handle — `locator.dragTo()` on the row body is a silent no-op that reads as "reordering is
@@ -165,8 +173,18 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 
 ## Fixture facts about the demo
 
-- **The default `task_sort` is `[status, priority, due]`, not empty.** A „keine Regel" repro needs
-  `PATCH /api/settings {"task_sort": []}` first.
+- **The default `task_sort` is `[status]`, and a rule for a hidden column is inert.** A season
+  created before WP-32 still *stores* `[status, priority, due]` and behaves identically — Priorität
+  and Fällig are `enabled: 0`, so `activeSortRules` drops them; there is no migration. A repro that
+  needs a priority or due rule must **show the column first**
+  (`PATCH /api/custom-columns/<id> {"enabled":1}`), or the rule does nothing and the check passes
+  against a defect. A „keine Regel" repro still needs `PATCH /api/settings {"task_sort": []}`.
+- **A newly created task carries a *negative* `sort_order`** — the transform stamps it one below
+  its list's minimum so it lands on top. Assert relative order, never a literal ordinal, and expect
+  the newest row first in any list nothing has been dragged in.
+- **Under the default `[status]`, any two open rows of the same status are draggable.** The tuned
+  same-rank block in `demo.ts` (tasks 41–45) is no longer the only place a drop is accepted; task 45
+  is the odd rank there, and it is odd by *status* now, not by priority.
 - **The dashboard's „Nächste Termine" has three blocks, and which one a row is in is the
   assertion**: event 8 under „Datum offen", then 2/5/1/10 inside the 14 days, then 4/3/7 under
   „Danach". Event 10 is the one to check after touching the split: it starts at 23:00 on day 14
@@ -213,7 +231,14 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   only while the caret is inside a table. A script that clicks the table button and then looks
   for them above the text finds nothing.
 - **The project-scoped column manager lists nothing on the demo** (there are no project-scoped
-  columns) — drive those cases from Einstellungen instead.
+  columns) — drive those cases from Einstellungen instead. That also makes a project-scoped custom
+  column the *only* way to reach „hide the column a header click is sorting by while the table
+  stays mounted": hiding a global one means going to Einstellungen, which unmounts the table and
+  resets the override. Create one with
+  `POST /api/custom-columns {"name":"…","type":"text","scope":"project","project_id":5}`.
+- **A write straight to `/api/custom-columns` does not refetch the client's column list**, and a
+  synthetic `window.focus` event does not either. Toggle through the app's own ⚙ Spalten manager
+  when the case depends on the table re-rendering with the new column set.
 - **There are two `type="number"` inputs, one per „Zeitfenster"**, and they sit on different
   Settings tabs: „Braucht Aufmerksamkeit" under `#/einstellungen/aufgaben`, „Termine in der
   Übersicht" (the „Danach" divider) under `#/einstellungen/kategorien`. Neither tab's „Speichern"

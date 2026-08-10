@@ -50,7 +50,7 @@ export function ArchivePage() {
     refetch: refetchTasks,
   } = useQuery({
     queryKey: ['archive'],
-    queryFn: () => api.tasks.list({ scope: 'archive' }),
+    queryFn: () => api.tasks.list({ scope: 'archive', order: 'due' }),
   });
   // Own loading/error state, not the tasks query's. The two lists are independent requests, and
   // borrowing the other one's gate made this one lie in both directions (PGS-11).

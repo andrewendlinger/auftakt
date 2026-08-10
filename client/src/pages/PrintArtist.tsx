@@ -39,7 +39,7 @@ export function PrintArtist() {
         api.artists.get(artistId),
         api.projects.list({ artist_id: artistId }),
         api.events.list({ resolved_artist_id: artistId }),
-        api.tasks.list({ resolved_artist_id: artistId }),
+        api.tasks.list({ resolved_artist_id: artistId, order: 'due' }),
         api.contacts.list(),
       ]);
       // `projects` holds the live ones, so a contact hanging off a project in the Papierkorb
