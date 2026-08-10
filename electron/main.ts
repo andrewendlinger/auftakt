@@ -346,7 +346,33 @@ async function ensureBackupDir(): Promise<string> {
   return chosen;
 }
 
+/**
+ * One Auftakt at a time. Without the lock a second launch — a double-clicked Windows
+ * shortcut, the usual way this happens — did not fail cleanly: waitForServer() polls
+ * /api/health, the *first* instance answers 200, so the gate passes and a second window
+ * opens against the first instance's database. The second app.listen then emits
+ * EADDRINUSE with nothing awaiting it, long after the import that started it resolved,
+ * so it surfaces as a generic Electron error at unrelated timing. docs/VERIFYING.md
+ * already documents this shape for a dev server colliding with a packaged app; two
+ * packaged copies collide the same way, and the two renderers compete for the CPU during
+ * exactly the seconds the boot screen needs it.
+ *
+ * exit(), not quit(): quit is asynchronous and would let the rest of this module run on
+ * and import the server anyway. The `gotLock` guard on whenReady does not depend on
+ * exit() being immediate.
+ */
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) app.exit(0);
+
+app.on('second-instance', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
+
 app.whenReady().then(async () => {
+  if (!gotLock) return;
   if (!isDev) {
     try {
       await startServer();
