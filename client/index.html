@@ -33,11 +33,29 @@
     </script>
 
     <style>
-      /* The Auftakt gesture: a conductor's preparatory beat, played once while the
-         bundle parses and React mounts underneath. Pure SVG + CSS in the app's own
-         colours — it starts on its own, the script at the end of <body> only skips
-         and removes it. Timings are the "Attacca" choreography: 2700 ms total,
-         ictus (wordmark) at 1880 ms, hand fading from 2410 ms. */
+      /* The Auftakt gesture: a conductor's preparatory beat, played once on a cold start.
+         Pure SVG + CSS in the app's own colours. Timings are the "Attacca" choreography:
+         2700 ms total, ictus (wordmark) at 1880 ms, hand fading from 2410 ms.
+
+         It is played in two phases, and the split is the whole point. The overlay used to
+         start its keyframes the instant it painted — which is the instant the renderer
+         starts fetching, parsing and compiling a 1.3 MB bundle and mounting React. Its
+         frames competed with the app's startup by construction, and almost none of this
+         can be handed to the compositor to escape that: traced, bootMotion reports
+         compositeFailed 8320 (`offset-distance`) and the two trail strokes report 8224
+         (`stroke-dashoffset`). Five of the twelve animations here are drawn by the
+         renderer's main thread, every frame.
+
+         So phase A holds a still, empty frame — flat colour, nothing moving, indefinitely
+         and harmlessly — until the app signals that it is mounted and the main thread is
+         idle. Only then does phase B release the animation, onto a thread with nothing
+         left to do. Everything below is `animation-play-state: paused` until
+         `#boot-overlay.boot-play` says otherwise; the script at the end of <body> owns
+         that class.
+
+         Pausing rather than withholding the `animation` shorthand is deliberate: adding
+         the shorthand later would construct the animations at that moment and re-run
+         style and layout for them, at precisely the frame that has to be cheap. */
       #boot-overlay {
         --T: 2700; /* total */
         --ti: 1880; /* ictus */
@@ -52,12 +70,71 @@
         /* Matches body and the Electron window's backgroundColor, so window → overlay
            → app is seamless. */
         background: #f6f6f4;
-        animation: bootOut 370ms linear calc((var(--ti) + 350) * 1ms) both;
+        /* Two animations. bootOut is the reveal and waits for phase B like everything
+           else; bootBail is a dead man's switch that never waits for anything.
+
+           Before the phases, the overlay's fade was pure CSS and would run whether or not
+           this file's script did — a script that threw left a transparent node and a
+           usable app. Pausing everything took that away: a throw would now leave an
+           opaque cream rectangle over a working app, with no reload affordance in a
+           packaged window. So bootBail runs unconditionally, well past the latest reveal
+           any live script can produce (1200 ms deadline + 2600 ms gesture + 400 ms
+           failsafe = 4200 ms), and ends on visibility: hidden so the corpse stops
+           swallowing clicks too — which the old opacity-only fade never did.
+
+           bootBail fills *forwards*, never `both`, and that is not a detail: an animation
+           still inside its delay counts as in effect when it fills backwards, and the
+           later entry in an `animation` list wins the properties both entries touch. With
+           `both` here, bootBail's `from { opacity: 1 }` applied for its whole 6 s delay
+           and overrode bootOut — the reveal fade never rendered on any successful boot,
+           and every launch ended in a hard cut. Forwards fill contributes nothing before
+           the animation starts, which is exactly the dead man's switch that was wanted. */
+        animation:
+          bootOut 370ms linear calc((var(--ti) + 350) * 1ms) both,
+          bootBail 400ms linear 6000ms forwards;
       }
-      /* A click anywhere cuts it short. Separate keyframes, so the fade starts from
-         a full opacity instead of inheriting the long fade's progress. */
-      #boot-overlay.boot-skip {
-        animation: bootSkip 150ms linear both;
+      /* Nothing runs until phase B — except the bail, which is why the play-state is a
+         list rather than a single value. The universal selector is the point: a list of
+         animated selectors here would silently miss the next one added below.
+
+         `!important` is load-bearing, not a shortcut. Every rule below sets its element's
+         animation with the `animation` shorthand, which resets animation-play-state to
+         `running` — and those rules are both more specific (`#boot-overlay .mover` beats
+         `#boot-overlay *`) and later in source order. Without the flag this gate paused
+         nothing at all: the whole gesture ran from parse, invisibly behind the hidden
+         svg, and phase B unhid a choreography already as far in as the bundle had taken
+         to mount. Measured with a 700 ms hold, the baton appeared a fifth of the way
+         through its stroke. The flag is what makes the universal selector actually
+         universal, which is the only reason to write it that way. */
+      #boot-overlay {
+        animation-play-state: paused, running;
+      }
+      #boot-overlay * {
+        animation-play-state: paused !important;
+      }
+      /* The gate is a class on the overlay, not on <html>, and that is about invalidation
+         rather than taste. A selector whose rightmost compound is `*` gives the engine no
+         feature to build a targeted invalidation set from, so the set is whole-subtree —
+         and on <html> that subtree is the whole document, including the React tree that
+         phase A has just finished mounting and laying out underneath. Toggling the class
+         then re-resolved style for every element in the app, twice per launch, and the
+         first of those two lands inside the gesture's opening frame: the one frame the
+         warm-up exemption means nobody would ever see charged. Scoped here it is eight
+         nodes. Specificity still clears the paused base rules — (1,1,0) over (1,0,0), both
+         flagged — and the svg rule below clears (1,0,1) the same way. */
+      #boot-overlay.boot-play {
+        animation-play-state: running, running;
+      }
+      #boot-overlay.boot-play * {
+        animation-play-state: running !important;
+      }
+      /* The reveal when the gesture does not play: too slow to earn it, or the user
+         clicked. Its own keyframes so it starts from full opacity rather than inheriting
+         whatever progress a long fade had made — the same reason the old .boot-skip
+         existed, which this replaces. */
+      #boot-overlay.boot-cross {
+        animation: bootCross 200ms linear both;
+        animation-play-state: running;
       }
       html.no-boot #boot-overlay {
         display: none;
@@ -72,6 +149,37 @@
         display: block;
         width: min(720px, 70vw);
         height: auto;
+        /* Phase A shows nothing at all. Not the parked hand, and above all not the
+           wordmark: the gesture's entire payload is the wordmark *landing* on the ictus,
+           and a wordmark already on screen makes that land on nothing. A blank coloured
+           rectangle also reads as a window that has not drawn yet rather than as a stall,
+           which is what it should read as — it may be on screen for a while. */
+        visibility: hidden;
+      }
+      #boot-overlay.boot-play svg {
+        visibility: visible;
+      }
+      /* An interrupted gesture — the watchdog aborting, or a click mid-swing — has to
+         keep what it had drawn. crossFade() drops .boot-play, which is what re-pauses
+         every descendant and freezes the frame they had reached; on its own it also
+         revokes the rule above, so the hand and the half-drawn ink vanished in one frame
+         and only the flat rectangle faded. That is the pop the freeze exists to avoid.
+         Set from script and only when the gesture actually started, because a cross-fade
+         from phase A must still show nothing: flashing the parked hand and a wordmark
+         that never lands is worse than the blank rectangle it replaces. */
+      #boot-overlay.boot-froze svg {
+        visibility: visible;
+      }
+
+      /* React mounts and lays out underneath during phase A, and its paint would
+         otherwise be recorded, rastered and then painted over — occlusion culling works
+         on composited layers, and neither of these is guaranteed one. `visibility` skips
+         the painting but still runs layout, including text measurement, so the reveal is
+         instant and none of that work is wasted. `content-visibility: hidden` would skip
+         layout too and hand the whole first layout to the reveal frame, which is the one
+         frame that must not hitch. */
+      html.boot-hold #root {
+        visibility: hidden;
       }
 
       /* Wordmark: one centred text element landing as a block on the ictus — bold and
@@ -90,6 +198,12 @@
         letter-spacing: 9px;
       }
       #boot-overlay .lt {
+        /* Its visible state comes entirely from bootLetterIn's backwards fill, so the
+           base has to hide it. Otherwise cancelling that animation — which the frame
+           watchdog does when it aborts — reverts to base style and snaps the wordmark to
+           full opacity, in the middle of a fade. .mover, .ripple and .trailg already
+           carry opacity: 0 for the same reason. */
+        opacity: 0;
         animation: bootLetterIn 380ms cubic-bezier(0.2, 0.9, 0.3, 1) calc(var(--ti) * 1ms) both;
       }
 
@@ -107,6 +221,62 @@
       #boot-overlay .ripple.r2 {
         stroke-width: 1;
         animation: bootRipple2 620ms calc((var(--ti) + 110) * 1ms) both;
+      }
+
+      /* The ink trace behind the baton tip: a soft wide halo and a fine core, drawn as
+         sliding dash windows (200 / 110 path units) along the same path the hand
+         travels. Their keyframes share bootMotion's percentages and easings, so tip and
+         ink stay synchronized by construction — one table for both strokes, since the two
+         windows slide the same path. pathLength pins the browser's arc-length
+         arithmetic to the value the offsets were computed against. The base
+         stroke-dashoffset parks the window before the path start, so with animations
+         off nothing shows until the failsafe removes the overlay.
+
+         The halo is a wide, very faint stroke rather than a narrower blurred one, which
+         is why its width and opacity look untuned (14 at 5.5 % against the core's 3 at
+         45 %): they were picked so a hard-edged stroke reads as diffuse. `filter: blur()`
+         here was by far the most expensive thing on screen. stroke-dashoffset is a paint
+         property, so Chromium cannot composite it — traced, it reports
+         `compositeFailed: 8224, unsupportedProperties: ['stroke-dashoffset']` — and the
+         blur then re-rastered that repainted region at device pixel ratio every frame.
+         Measured over the gesture: 204 ms of renderer paint+raster with the blur against
+         79 ms without, 163 ms of it in RasterTask alone versus 43 ms. The trail's own
+         cost is only ~16 ms of that. All of it lands on the one thread the hand's motion
+         also needs, which likewise cannot composite (`offset-distance`). */
+      #boot-overlay .trail {
+        fill: none;
+        stroke: #3c3c3b;
+        stroke-linecap: round;
+        /* 616 is one over pathLength: a single dash long enough that the path never
+           shows a second one, whatever the window. */
+        stroke-dasharray: var(--dash-w) 616px;
+        stroke-dashoffset: var(--dash-w);
+        animation: bootDash calc(var(--T) * 1ms) both;
+      }
+      /* --dash-w is the length of ink trailing the tip, and it is the *only* thing that
+         differs between the two strokes' geometry: dash window, parked offset and every
+         keyframe below are all derived from it, so a change to the halo's length is one
+         number rather than eleven. */
+      #boot-overlay .trail.soft {
+        --dash-w: 200px;
+        stroke-width: 14;
+        opacity: 0.055;
+      }
+      #boot-overlay .trail.core {
+        --dash-w: 110px;
+        stroke-width: 3;
+        opacity: 0.45;
+      }
+      /* The trace appears a blink after the hand's first movement, then runs in sync;
+         after the ictus it dissolves. bootTrailIn fills backwards only, so once it
+         ends, bootTrailFade's backwards fill (opacity 1) carries the group until the
+         fade — and during the first 150 ms the later entry in the list wins, keeping
+         the group at 0. Reordering this list breaks the onset. */
+      #boot-overlay .trailg {
+        opacity: 0;
+        animation:
+          bootTrailFade 300ms calc((var(--ti) + 150) * 1ms) both,
+          bootTrailIn 220ms 150ms backwards;
       }
 
       #boot-overlay .actor {
@@ -199,6 +369,63 @@
           transform: rotate(0deg);
         }
       }
+      /* The dash offset is the window width minus the tip's arc position at each phase
+         mark, so the subtrahends below are just bootMotion's offset-distance stops read
+         as arc length against pathLength 615.32 — same percentages, same easings, which
+         is what keeps ink and tip synchronized by construction.
+
+         One table, not one per stroke. Written out per stroke they were two sets of eight
+         numbers that had to stay exactly --dash-w apart at every mark, hand-derived, with
+         nothing to catch a one-sided edit: the halo would simply lead or lag its own core
+         by however much the slip was. */
+      @keyframes bootDash {
+        0% {
+          stroke-dashoffset: var(--dash-w);
+          animation-timing-function: cubic-bezier(0.35, 0, 0.25, 1);
+        }
+        44.444% {
+          stroke-dashoffset: calc(var(--dash-w) - 156.95px);
+          animation-timing-function: cubic-bezier(0.4, 0, 0.5, 1);
+        }
+        47.407% {
+          stroke-dashoffset: calc(var(--dash-w) - 162.68px);
+          animation-timing-function: cubic-bezier(0.45, 0.05, 0.2, 1);
+        }
+        61.852% {
+          stroke-dashoffset: calc(var(--dash-w) - 344.2px);
+          animation-timing-function: cubic-bezier(0.5, 0, 0.85, 0.35);
+        }
+        69.63% {
+          stroke-dashoffset: calc(var(--dash-w) - 519.22px);
+          animation-timing-function: cubic-bezier(0, 0.5, 0.35, 1);
+        }
+        77.037% {
+          stroke-dashoffset: calc(var(--dash-w) - 591.29px);
+          animation-timing-function: cubic-bezier(0.4, 0, 0.4, 1);
+        }
+        86.296% {
+          stroke-dashoffset: calc(var(--dash-w) - 615.32px);
+        }
+        100% {
+          stroke-dashoffset: calc(var(--dash-w) - 615.32px);
+        }
+      }
+      @keyframes bootTrailIn {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+      @keyframes bootTrailFade {
+        from {
+          opacity: 1;
+        }
+        to {
+          opacity: 0;
+        }
+      }
       @keyframes bootLetterIn {
         from {
           opacity: 0;
@@ -251,12 +478,27 @@
           opacity: 0;
         }
       }
-      @keyframes bootSkip {
+      @keyframes bootCross {
         from {
           opacity: 1;
         }
         to {
           opacity: 0;
+        }
+      }
+      /* Only ever seen if the script above died. visibility is not interpolated, it flips
+         at the final keyframe, which is what takes the node out of hit-testing. */
+      @keyframes bootBail {
+        from {
+          opacity: 1;
+        }
+        99% {
+          opacity: 0;
+          visibility: visible;
+        }
+        to {
+          opacity: 0;
+          visibility: hidden;
         }
       }
     </style>
@@ -266,6 +508,18 @@
 
     <div id="boot-overlay" aria-hidden="true">
       <svg viewBox="0 0 720 450">
+        <g class="trailg">
+          <path
+            class="trail soft"
+            pathLength="615.32"
+            d="M280,404 C316,382 352,334 344,270 C343,272 342.6,274.5 342.5,275.5 C333,247 331,165 342,95 C343,150 344,215 344,270 C341,244 342,212 342,198 C342.5,206 343,216 343,222"
+          />
+          <path
+            class="trail core"
+            pathLength="615.32"
+            d="M280,404 C316,382 352,334 344,270 C343,272 342.6,274.5 342.5,275.5 C333,247 331,165 342,95 C343,150 344,215 344,270 C341,244 342,212 342,198 C342.5,206 343,216 343,222"
+          />
+        </g>
         <circle class="ripple r1" cx="344" cy="270" r="48" />
         <circle class="ripple r2" cx="344" cy="270" r="48" />
         <g class="word">
@@ -289,49 +543,504 @@
         var overlay = document.getElementById('boot-overlay');
         if (!overlay) return;
         var root = document.getElementById('root');
+        var html = document.documentElement;
+        var t0 = performance.now();
+
+        /* Past this, the gesture is forfeit and the reveal is a plain cross-fade. It
+           looks harsh next to the 2700 ms it guards, and it is meant to: hold plus
+           gesture plus fade is already ~3.8 s of splash at this deadline. At the 2.5 s
+           that felt natural it would be ~5.1 s, which is worse than never animating. The
+           gesture is a reward for a fast boot, never a tax on a slow one. */
+        var GESTURE_DEADLINE = 1200;
+        /* Reveal no matter what — a bundle that 404s, a signal that never comes. */
+        var HOLD_MAX = 3500;
+        var CROSS_MS = 200;
+        /* Phase B until the overlay is gone. Not the 2700 ms envelope plus the 370 ms
+           fade: bootOut starts at --ti + 350 = 2230 ms, so it *overlaps* the envelope's
+           tail rather than following it, and its animationend — which removes the node —
+           lands at 2600 ms, before the choreography's nominal end. Adding the two gave
+           3070 and inflated everything derived from it by 470 ms. Written as the same
+           three numbers the CSS uses so the next change to --ti has one place to land. */
+        var GESTURE_MS = 1880 + 350 + 370;
+
         var gone = false;
+        var playing = false;
+        var crossing = false;
+        /* bootOut has begun: the app is already showing through and there is nothing
+           left to skip to. Cross-fading from here would swap in bootCross, which starts
+           at opacity 1, and throw the splash back to fully opaque for another 200 ms. */
         var fading = false;
+        /* The click-to-skip half of "should the gesture still play?". The other half is
+           the deadline, and that one is a comparison against t0 rather than a timer: a
+           timer armed here could only ever fire *after* the comparison already answered
+           no, so it decided nothing and kept this whole scope alive until it did. */
+        var gestureAllowed = true;
+        var failsafe = 0;
+
+        /* Diagnostics. A packaged launch used to leave no trace of what the boot did —
+           data-boot and data-abort die with the overlay node — so a stutter reported
+           from an installed build was unfalsifiable. `why` names the door the reveal
+           came through, stamped once at the decision site that chose it; `frames` is
+           what the watchdog measured. remove() folds both into a report for
+           localStorage and the bootSettled bridge. Assembly happens only at teardown:
+           nothing here may add work between start() and the fade. */
+        var why = null;
+        var readyAt = 0;
+        var startAt = 0;
+        var frames = null;
+
+        /* One rearmable timer, not the fixed 4000 ms this replaces. That constant was
+           armed at parse and sized for an animation that began at parse; now a gesture
+           starting at the 1200 ms deadline ends at 3800 ms, so a fixed 4 s failsafe would
+           cut off the very thing it exists to protect — one frame from the end, on slow
+           machines only, intermittently. */
+        function armFailsafe(ms, fn) {
+          clearTimeout(failsafe);
+          failsafe = setTimeout(fn, ms);
+        }
+
+        /* What the failsafe fires into, everywhere except inside the cross-fade itself.
+           Firing remove() straight was a hard cut: during the hold, bootOut is paused
+           inside its own delay and its backwards fill pins the overlay at opacity 1, so
+           `remove()` swapped a solid cream rectangle for the fully laid-out app in a
+           single frame — on exactly the slow machines the failsafe exists to protect,
+           where the old unconditional CSS fade had reached opacity 0 long before the
+           timer and only an invisible node was ever reaped.
+
+           So prefer the graceful exit and keep the guarantee. crossFade() declines once
+           the reveal is already fading (there is nothing left to cross-fade to) and
+           otherwise arms its own removal, which is why this can fall through to remove()
+           on the one path where it declined. */
+        function bailOut() {
+          crossFade();
+          if (!crossing) remove();
+        }
+
         function remove() {
           if (gone) return;
           gone = true;
+          clearTimeout(failsafe);
+          html.classList.remove('boot-hold');
+          html.dataset.boot = 'done';
+          performance.mark('auftakt:done');
           overlay.remove();
           if (root) root.inert = false;
+          // The single exit of every path, so the one honest place to say "the boot
+          // screen is gone" — it fires on the reveal, on a skip, on the failsafe, and
+          // on the early return when nothing plays at all. Electron holds its startup
+          // backup and update check until it hears this. Optional-chained twice: there
+          // is no bridge on the dev server or in a plain browser.
+          //
+          // The report rides both channels. localStorage because it survives the node:
+          // data-boot and data-abort can only be read by polling inside the page before
+          // the overlay is gone, and a packaged launch has nobody polling; the bridge so
+          // the main process can keep a log across launches. Last writer wins in
+          // localStorage — one report per origin, the most recent boot.
+          var report = buildReport();
+          try {
+            localStorage.setItem('auftakt-boot-report', JSON.stringify(report));
+          } catch (e) {
+            /* storage can be unavailable; the bridge copy below still goes out */
+          }
+          try {
+            window.auftakt && window.auftakt.bootSettled && window.auftakt.bootSettled(report);
+          } catch (e) {
+            /* the chores have their own timeout; never let this break the reveal */
+          }
         }
         // The two cases where nothing plays: hidden by CSS above, so drop the node
-        // rather than leave an invisible one lying in the DOM.
+        // rather than leave an invisible one lying in the DOM. The report still files —
+        // a season switch writes `skip / warm`, which is how a log line proves the
+        // reload happened at all. `%PROD%` is quoted for the same degrade-to-no-boot
+        // reason as in the head script; in a built bundle the only other way into
+        // `no-boot` is the warm-session branch.
         if (
-          document.documentElement.classList.contains('no-boot') ||
+          html.classList.contains('no-boot') ||
           matchMedia('(prefers-reduced-motion: reduce)').matches
         ) {
+          why =
+            '%PROD%' !== 'true'
+              ? 'no-prod'
+              : html.classList.contains('no-boot')
+                ? 'warm'
+                : 'reduced-motion';
           remove();
           return;
         }
+        // ---- phase A: hold ----------------------------------------------------------
+        /* Armed first, before anything is hidden, and that order is the point. Everything
+           below makes the app invisible and inert, and only remove() undoes either — no
+           CSS bail can, since `inert` is a DOM property. bootBail can clear the overlay
+           off a dead script but would then leave the user a blank window with a fully
+           laid-out, untabbable app behind it, which is worse than the opaque rectangle it
+           was written to prevent. With the timer already armed, no throw below can reach
+           that state. */
+        armFailsafe(HOLD_MAX, function () {
+          if (!why) why = 'hold-max';
+          bailOut();
+        });
         // The overlay's own pointer events only stop the mouse. Without this, a keyboard
         // or screen-reader user could Tab into the app underneath and activate controls
         // they cannot see, during the one interval a mouse user is locked out of — so the
         // barrier has to be on #root, not on the thing covering it. Set from script and
         // cleared in remove(), which is the single exit of all three paths (the fade's
-        // animationend, the skip fade, the failsafe below). Deliberately not an attribute
+        // animationend, the skip fade, the failsafe above). Deliberately not an attribute
         // in the markup: there it would outlive a script that failed to run, and the app
         // would be permanently unusable rather than merely un-animated.
         if (root) root.inert = true;
+        html.classList.add('boot-hold');
+        html.dataset.boot = 'hold';
+        /* The auftakt:* marks surface in the blink.user_timing trace category, so an
+           AUFTAKT_BOOT_TRACE capture shows the boot's phases on the same timeline as
+           the work that ran through them. */
+        performance.mark('auftakt:hold');
+
         // Descendant animations bubble their animationend too — only the overlay's
-        // own fade ends the show.
+        // own fade, or the cross-fade, ends the show.
         overlay.addEventListener('animationend', function (e) {
           if (e.target === overlay) remove();
         });
-        // The fade begins after its delay; from then on a click would only make the
-        // overlay jump back to full opacity, so it stops skipping.
+        // animationstart fires when an animation leaves its delay, so on the overlay
+        // itself this is the reveal beginning — the moment after which there is nothing
+        // left to skip. Same target test, same reason.
         overlay.addEventListener('animationstart', function (e) {
           if (e.target === overlay) fading = true;
         });
-        // Click to skip. The overlay keeps its pointer events until it is removed, so
-        // nothing behind it can be hit by accident mid-gesture.
+
+        /* Someone clicking during the hold wants the app, not the choreography. Reveal
+           if there is anything to reveal — a spinner beats a blank rectangle for a user
+           who is actively poking at it — and otherwise just forfeit the gesture and keep
+           holding, because a half-mounted tree is not worth showing. During the gesture
+           this is the old click-to-skip. */
         overlay.addEventListener('pointerdown', function () {
-          if (!fading) overlay.classList.add('boot-skip');
+          gestureAllowed = false;
+          if (!why) why = 'click';
+          // The attribute rather than a listener of our own: boot.ts sets it before it
+          // dispatches, so it also answers for a mount that happened before this script
+          // could have subscribed — and it needs no subscription left standing on
+          // `document`, holding the removed overlay and this scope, for the session.
+          if (playing || html.dataset.appMounted) crossFade();
         });
-        // Failsafe: animations can be off entirely, or an event can go missing.
-        setTimeout(remove, 4000);
+
+        // ---- the handshake ----------------------------------------------------------
+        document.addEventListener('auftakt:ready', onReady, { once: true });
+        /* Race insurance. It cannot currently fire — this script runs during parse and
+           the bundle is a deferred module — but that stops being true the day someone
+           adds `async`, and the failure would be a permanently held boot screen. */
+        if (html.dataset.appReady) onReady();
+
+        function onReady() {
+          if (gone || playing || crossing) return;
+          readyAt = performance.now();
+          /* Unhide #root first and let it paint. It is still behind an opaque overlay,
+             so nothing is visible yet — but this moves the largest paint of the whole
+             boot to *before* the first gesture frame instead of during it. Two frames,
+             because the first only schedules the paint. */
+          html.classList.remove('boot-hold');
+          requestAnimationFrame(function () {
+            requestAnimationFrame(function () {
+              /* An idle callback does not run while the main thread is busy, which is
+                 exactly the precondition. The timeout keeps "wait for a free thread"
+                 from becoming "wait forever". */
+              if (window.requestIdleCallback) requestIdleCallback(start, { timeout: 200 });
+              else setTimeout(start, 0);
+            });
+          });
+        }
+
+        function start() {
+          if (gone || playing || crossing) return;
+          if (!gestureAllowed || performance.now() - t0 > GESTURE_DEADLINE) {
+            // `why` may already read 'click': a hold-phase click forfeits the gesture
+            // and lands here through the same `gestureAllowed` it cleared.
+            if (!why) why = 'deadline';
+            return crossFade();
+          }
+          /* The app reached "ready" by collapsing, not by finishing: a throw above the
+             ErrorBoundary, or one it caught. Both reveal through the same signal, because
+             the boot screen has to come down either way — but what is underneath is a
+             blank window or an error card, and playing three seconds of celebration over
+             it is the wrong reading of the moment as well as the wrong wait. */
+          if (html.dataset.appFailed) {
+            if (!why) why = 'app-failed';
+            return crossFade();
+          }
+          playing = true;
+          startAt = performance.now();
+          html.dataset.boot = 'play';
+          performance.mark('auftakt:play');
+          overlay.classList.add('boot-play');
+          armFailsafe(GESTURE_MS + 400, function () {
+            if (!why) why = 'gesture-max';
+            bailOut();
+          });
+          watchFrames();
+        }
+
+        /* Frame-health watchdog: the promise that a stuttering gesture stops being a
+           gesture. Everything above only makes stutter unlikely — an idle thread, a
+           deadline, no blurred raster — and "unlikely" is not what was asked for.
+
+           It is only meaningful because this animation is main-thread-bound; rAF cadence
+           is a fair proxy for what the user sees precisely because the frames are drawn
+           by the thread rAF runs on. If the gesture ever becomes fully composited — the
+           trail removed, offset-distance made compositable — this must go, or it will
+           abort smooth animations whenever something unrelated occupies the main thread.
+           docs/DECISIONS.md records that condition. */
+
+        /* Length of one judging window. Windows repeat for as long as the gesture runs —
+           they are not a warm-up check. Judging only the first 200 ms left ~92 % of a
+           2600 ms animation unmonitored, and the things that stutter it arrive late by
+           nature: a query retry's backoff, a route effect, font or image decode, a GC. */
+        var WATCH_MS = 200;
+        /* One visibly dropped run of frames, as an absolute: three frames at 60 Hz, six
+           at 120. Deliberately not expressed as a multiple of the measured period — the
+           period estimate is only trustworthy once the window has some samples, and a
+           hitch has to be catchable on the very first one. */
+        var HITCH_MS = 50;
+        /* Floor for the uniformly-slow test, ~45 fps, and the allowance over the quickest
+           cadence actually observed. See the test itself for why both are needed. */
+        var SLOW_MS = 22;
+        var SLOW_FACTOR = 1.35;
+
+        function watchFrames() {
+          var prev = -1;
+          var warmed = false;
+          /* Start of the current window: the timestamp of the frame *before* its first
+             recorded delta, so that `elapsed` is exactly the sum of what `deltas` holds.
+             It used to be the timestamp of the very first callback, which left the
+             deliberately unrecorded warm-up frame inside elapsed and nowhere in deltas —
+             so the starved test compared a short count against a long clock and aborted
+             perfectly cadenced runs whenever that one frame was expensive. Around 85 ms
+             of warm-up was enough, which twelve animations starting at once can reach. */
+          var first = -1;
+          var deltas = [];
+          /* Every delta of the whole gesture, not just the current window: the more of it
+             this has seen, the likelier it is to have caught frames that landed on actual
+             vsyncs. Ranked rather than minimised at verdict time — see the slow test. */
+          var seen = [];
+          frames = { seen: seen, tail: [], warm: -1, lead: -1 };
+
+          function tick(now) {
+            /* The loop used to die with `fading`, which kept aborts honest — once
+               bootOut has begun, crossFade() declines, so an abort could no longer
+               change what the user sees, only stamp data-abort on a run that finishes
+               normally and then re-fire per frame over a growing sort. But dying there
+               also left the last ~370 ms — the fade overlapping the envelope's tail —
+               with no record at all, and that is exactly where a late stutter can hide.
+               So only remove() ends the loop now: past `crossing` or `fading` every
+               delta goes to the tail *unjudged*. No abort can fire from there (the
+               judge below is unreachable), nothing is sorted per frame (a push and a
+               return), and data-abort keeps meaning "the watchdog changed the
+               outcome". */
+            if (gone) return;
+            requestAnimationFrame(tick);
+            if (prev < 0) {
+              prev = now;
+              /* First callback after start(): its distance from startAt is the one
+                 stall no delta can carry. The animations' clocks begin at style
+                 application, so a long first presentation — cold GPU and shader caches
+                 doing the svg's first raster — is a gesture that starts already jumped
+                 forward, and until this number it was invisible. */
+              frames.lead = now - startAt;
+              return;
+            }
+            var d = now - prev;
+            prev = now;
+            if (crossing || fading || !playing) {
+              frames.tail.push(d);
+              return;
+            }
+            /* The first measured frame carries the cost of promoting layers for
+               animations that have only just started. Expected rather than perceived,
+               and judging it aborts healthy runs — so it is exempt from every test and
+               from the window's clock, but no longer discarded: the report keeps it,
+               because on a cold first launch this is the frame with the most to say. */
+            if (!warmed) {
+              warmed = true;
+              frames.warm = d;
+              first = now;
+              return;
+            }
+            deltas.push(d);
+            seen.push(d);
+            if (d >= HITCH_MS) return abort('hitch');
+            var elapsed = now - first;
+            if (elapsed < WATCH_MS) return;
+
+            /* Verdict, taken at the end of each window so that the frame period can be a
+               *median* rather than a running minimum.
+
+               The minimum is the tempting estimator — a frame cannot arrive sooner than
+               vsync, so the fastest delta looks like the period. It is also fragile in
+               exactly the wrong direction: one anomalously early callback pins the
+               estimate low, and every ordinary frame afterwards then scores as a dropped
+               one. That mis-fired here on otherwise healthy runs. The median cannot be
+               moved by a single outlier, and irregular cadence — long frames scattered
+               among normal ones — is what a main-thread-bound animation actually degrades
+               into, so it is what these two tests should measure against. */
+            var sorted = deltas.slice().sort(function (a, b) {
+              return a - b;
+            });
+            var nominal = sorted[sorted.length >> 1];
+            /* Uniformly slow cadence, which the two tests below are structurally blind
+               to: they compare frames against a period derived from the frames
+               themselves, so a run where *every* frame takes 22 ms scores a perfect
+               median, no drops, and a frame count exactly matching its own expectation.
+
+               The floor alone was wrong. It read "every panel this ships to is 60 Hz or
+               faster", and that is not true of a 4K panel driven at 30 Hz over HDMI 1.4,
+               nor of a ProMotion display, which idles its refresh rate down over the
+               still frame of phase A and ramps back up over the first frames of the
+               gesture — precisely the frames this measures. Both scored a median past the
+               floor with no individual frame anywhere near a hitch, so a smooth gesture
+               aborted, and a fixed 30 Hz panel could never play one at all. Hence the
+               second term: a median is only damning next to what this display has been
+               seen to deliver. Uniform contention on a 60 Hz panel that never once hits
+               vsync still slips through, which is what the drops and starved tests below
+               are for.
+
+               "Has been seen to deliver" is a low quantile of every delta so far, not the
+               quickest one: the strict minimum is the same fragile estimator rejected for
+               `nominal` above, and worse here, because this is kept for the whole gesture
+               rather than one window. A single coalesced callback would pin it low for the
+               rest of the run, collapse the term below SLOW_MS, and hand the 30 Hz panel
+               back the false abort the term exists to prevent. Third-smallest while the
+               sample is small, the tenth percentile once there is enough to rank. */
+            var ranked = seen.slice().sort(function (a, b) {
+              return a - b;
+            });
+            var rank = Math.max(2, Math.floor(0.1 * ranked.length));
+            var quick = ranked[Math.min(rank, ranked.length - 1)];
+            if (nominal > Math.max(SLOW_MS, quick * SLOW_FACTOR)) return abort('slow');
+            var drops = 0;
+            for (var i = 0; i < deltas.length; i++) {
+              drops += Math.max(0, Math.round(deltas[i] / nominal) - 1);
+            }
+            /* One frame in five lost. A rate, not a count: a count of N gets *stricter*
+               the faster the panel, because a 120 Hz panel delivers twice the frames in
+               the same window and so twice the opportunities to score a drop — which is
+               backwards, since dropping one frame in five matters less at 120 Hz, not
+               more. Measured as a count this mis-fired on healthy runs. */
+            if (drops >= 0.2 * (deltas.length + drops)) return abort('drops');
+            /* The test the other two structurally cannot make. If the thread is blocked
+               for most of the window, only a couple of callbacks run, and each of their
+               deltas can still look unremarkable next to the others; comparing frame
+               *count* against elapsed time is the only thing that sees it. */
+            if (deltas.length < 0.6 * (elapsed / nominal)) return abort('starved');
+
+            // Clean window. Open the next one and keep watching to the last frame.
+            deltas = [];
+            first = now;
+          }
+          requestAnimationFrame(tick);
+        }
+
+        // ---- the boot report ---------------------------------------------------------
+        function r10(x) {
+          return Math.round(x * 10) / 10;
+        }
+        function packed(arr) {
+          if (!arr.length) return null;
+          var s = arr.slice().sort(function (a, b) {
+            return a - b;
+          });
+          return {
+            n: s.length,
+            med: r10(s[s.length >> 1]),
+            p95: r10(s[Math.min(s.length - 1, Math.floor(0.95 * s.length))]),
+            worst: r10(s[s.length - 1]),
+          };
+        }
+        /* Everything the run measured, folded to a handful of numbers. Runs once, in
+           remove(), after the overlay node is gone — the sorts here are the ones the
+           watchdog must never pay per frame. Times are relative to t0, the same clock
+           the deadline reads, so a report's readyMs can be held against
+           GESTURE_DEADLINE directly. The tail verdict reuses the watchdog's own
+           arithmetic but is retrospective and report-only: an abort back there could
+           not have changed what the user saw. */
+        function buildReport() {
+          var report = {
+            v: 1,
+            outcome: crossing ? 'cross' : playing ? 'play' : 'skip',
+            why: why || 'done',
+            readyMs: readyAt ? r10(readyAt - t0) : null,
+            startMs: startAt ? r10(startAt - t0) : null,
+            endMs: r10(performance.now() - t0),
+            frames: null,
+            tail: null,
+            dpr: r10(window.devicePixelRatio || 1),
+            vp: [innerWidth, innerHeight],
+          };
+          if (!frames) return report;
+          var f = packed(frames.seen) || { n: 0, med: null, p95: null, worst: null };
+          f.lead = frames.lead < 0 ? null : r10(frames.lead);
+          f.warm = frames.warm < 0 ? null : r10(frames.warm);
+          f.quick = null;
+          if (frames.seen.length) {
+            var ranked = frames.seen.slice().sort(function (a, b) {
+              return a - b;
+            });
+            var rank = Math.max(2, Math.floor(0.1 * ranked.length));
+            f.quick = r10(ranked[Math.min(rank, ranked.length - 1)]);
+            var drops = 0;
+            for (var i = 0; i < frames.seen.length; i++) {
+              drops += Math.max(0, Math.round(frames.seen[i] / f.med) - 1);
+            }
+            f.drops = drops;
+          }
+          report.frames = f;
+          var tl = packed(frames.tail);
+          if (tl) {
+            tl.verdict =
+              tl.worst >= HITCH_MS
+                ? 'hitch'
+                : f.quick !== null && tl.med > Math.max(SLOW_MS, f.quick * SLOW_FACTOR)
+                  ? 'slow'
+                  : 'ok';
+            report.tail = tl;
+          }
+          return report;
+        }
+
+        /* No cancelling of animations, and so none of the ways that goes wrong — a
+           document-wide getAnimations() sweep would take the overlay's own fade with it
+           and strand the overlay forever. crossFade drops .boot-play, which reverts every
+           descendant to the paused base rule, and pins the svg visible with .boot-froze so
+           that frame is still on screen: the gesture freezes where it stood and fades out
+           from there. A held frame reads as deliberate; stopping mid-swing and cutting
+           reads as a crash. */
+        function abort(reason) {
+          if (!why) why = 'abort:' + reason;
+          performance.mark('auftakt:abort:' + reason);
+          overlay.dataset.abort = reason;
+          crossFade();
+        }
+
+        // ---- the reveal without a gesture -------------------------------------------
+        function crossFade() {
+          if (gone || crossing) return;
+          /* Once bootOut is under way the reveal is already happening and the app is
+             already showing through. bootCross starts from opacity 1, so "skipping" from
+             here would throw the splash back to fully opaque and re-fade it — the exact
+             regression the old animationstart guard existed to prevent. Declining here
+             covers every caller: the click, the watchdog's abort, and the failsafe (which
+             falls through to remove(), see bailOut). */
+          if (fading) return;
+          crossing = true;
+          html.dataset.boot = 'cross';
+          performance.mark('auftakt:cross');
+          /* Before dropping boot-play, if the gesture had started: that class carries the
+             svg's visibility as well as the running play-state, so losing it alone blanked
+             the artwork in one frame and left a flat rectangle to fade. What is wanted is
+             the opposite — the paused base rule freezes every descendant on the frame it
+             had reached, and this keeps that frame on screen to fade out from. */
+          if (playing) overlay.classList.add('boot-froze');
+          html.classList.remove('boot-hold');
+          overlay.classList.remove('boot-play');
+          overlay.classList.add('boot-cross');
+          armFailsafe(CROSS_MS + 200, remove);
+        }
       })();
     </script>
 

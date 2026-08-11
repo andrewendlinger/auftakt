@@ -1,6 +1,6 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { existsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { adoptLegacyBackupConfig, getDb, purgeExpired } from './db';
 import { HttpError } from './lib/query';
@@ -136,6 +136,16 @@ app.use('/api/backup', backupRouter);
 const here = dirname(fileURLToPath(import.meta.url));
 const clientDist = process.env.AUFTAKT_CLIENT_DIST || resolve(here, '../../client/dist');
 if (existsSync(clientDist)) {
+  // Vite content-hashes everything under assets/, so those URLs can never go stale —
+  // pin them for a year and mark them immutable. The point is not the loopback transfer,
+  // which is free; it is that express.static's default (max-age=0 + ETag revalidation)
+  // left Chromium revalidating the 1.3 MB chunk on every launch, which keeps its
+  // compiled-code cache for that script best-effort instead of reliable. Parsing and
+  // compiling it is the largest single cost between the window opening and React
+  // mounting, and it is paid while the boot screen is holding.
+  app.use('/assets', express.static(join(clientDist, 'assets'), { immutable: true, maxAge: '1y' }));
+  // index.html and the favicon carry no hash, so they must keep revalidating — pinned,
+  // an update would never reach an install that already ran once.
   app.use(express.static(clientDist));
 }
 

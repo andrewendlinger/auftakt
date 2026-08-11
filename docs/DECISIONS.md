@@ -409,6 +409,111 @@ the Fällig column in both and the old season's dormant `due` rule wakes up whil
 such rule to wake. Both states are visible and editable in Einstellungen, which is the property that
 makes it survivable; a migration that silently rewrote the old season's hierarchy would not be.
 
+## The boot gesture is conditional, and the condition is measured (2026-08-11, PR #35)
+
+The obvious-looking question about `client/index.html` is why the animation does not simply start
+when the overlay paints, the way it did when #32 shipped it. Because that is the worst possible
+moment: the overlay paints exactly when the renderer begins fetching, parsing and compiling a
+1.3 MB bundle and mounting React, so the gesture's frames competed with the app's own startup on
+every launch.
+
+**It cannot be composited out of that competition.** This was measured, not assumed — the
+`Animation` trace events in `disabled-by-default-devtools.timeline` carry Chromium's own verdict.
+`bootMotion` reports `compositeFailed: 8320, unsupportedProperties: ['offset-distance']`, the two
+trail strokes report `8224` for `stroke-dashoffset`, the hand's fade reports `128` because its
+element carries `offset-path`, and the trail group's stacked opacity pair reports `64`. Five of
+twelve animations are drawn by the renderer's main thread, including the hand travelling the path,
+which is the gesture. Rewriting them to be compositable is not available: the motion *is* the path
+and the trace *is* the dash.
+
+So the gesture waits instead. Phase A holds a still, flat frame until the app reports mounted and
+the main thread yields an idle callback; phase B releases the animation onto a thread with nothing
+left to do. Three consequences that look like arbitrary choices and are not:
+
+**Phase A shows nothing — not the parked hand, and above all not the wordmark.** The gesture's
+entire payload is the wordmark *landing* on the ictus. A wordmark already on screen makes it land
+on nothing. An empty coloured rectangle also reads as a window that has not drawn yet rather than
+as a stall, which matters because it may be on screen for a while.
+
+**Past 1200 ms the gesture is forfeit.** The deadline looks harsh beside the 2700 ms it guards.
+Hold plus gesture plus fade is already ~3.8 s of splash at that deadline; at the 2.5 s that feels
+natural it would be ~5.1 s, which is worse than never animating. The gesture is a reward for a fast
+boot, never a tax on a slow one. Measured cost when the app is fast: reveal moved from 2630 ms to
+~2713 ms, so the hold buys the guarantee for ~85 ms.
+
+Those figures use 2600 ms for the gesture, not 3070. The reveal fade starts at `--ti + 350` =
+2230 ms and runs 370 ms, so it overlaps the 2700 ms envelope's tail instead of following it, and
+the `animationend` that removes the node lands *before* the choreography's nominal end. Adding the
+envelope to the fade was the intuitive reading and it was wrong by 470 ms, in the failsafe, in the
+bail's delay and in two documents.
+
+**The frame watchdog is only valid while the gesture is main-thread-bound.** It judges rAF cadence,
+which is a fair proxy for what the user sees *because* the frames are drawn by the thread rAF runs
+on. If the trail is ever removed and `offset-distance` becomes compositable, this inverts: the
+watchdog would abort a perfectly smooth animation whenever something unrelated occupied the main
+thread. Re-run the trace check before assuming it still earns its place, and delete it if it does
+not.
+
+**It judges the whole gesture, in rolling windows, and it has one deliberate blind spot.** Judging
+once and retiring left ~92 % of the animation unmonitored, which is where the late stutters live —
+a query retry's backoff, a route effect, a decode, a GC. The blind spot is the price of the fix to
+its other half: the „uniformly slow" test used to be a flat 22 ms median, justified as „every panel
+this ships to is 60 Hz or faster". That is not true of a 4K panel on HDMI 1.4 at 30 Hz, and not true
+of a ProMotion display, which idles its refresh rate down over the still frame of phase A and ramps
+back up over exactly the frames the watchdog measures — both aborted smooth gestures, and a fixed
+30 Hz panel could never play one. The limit is now the floor *or* an allowance over the fastest
+frame that display has actually delivered, whichever is larger. What slips through is sustained
+contention so uniform that not one frame in 2.6 s lands on vsync: from inside the page that is
+indistinguishable from a genuinely slower panel. Real contention jitters, and `drops` catches
+jitter.
+
+**Every boot now files a report, because the first field stutter was unfalsifiable.** The first
+launch after a local install visibly hitched once — and left nothing to read: `data-boot` and
+`data-abort` die with the overlay node, so there was no way to tell whether the watchdog had
+aborted, whether the gesture had played at all, or which frame was late. The overlay now folds
+what the watchdog measured into a small JSON report in its single exit path — outcome, the door
+the reveal came through, ready/start/end on the deadline's own clock, frame statistics — and
+writes it to `localStorage['auftakt-boot-report']` and through the `bootSettled` bridge. Three
+recording gaps close with it, and all three stay unjudged: the exempt first frame is kept
+(`frames.warm`); the gap between release and the first rAF callback is kept (`frames.lead` — the
+animations' clocks start at style application, so a long first presentation is a jump no delta
+ever carried); and the reveal-fade tail is recorded instead of abandoned (`tail`, with a
+retrospective verdict). The watchdog's rules are unchanged: recording past `fading` keeps every
+property that made stopping the *judging* there correct, because the judge is unreachable from
+the tail path. The report is also the next thing stored in localStorage after the emoji list
+above — an origin change orphans it, which costs one launch's diagnostics and is accepted.
+
+**A boot that collapsed reveals through a different door.** `signalFailed()` rather than
+`signalReady()` from `window.onerror`, from an unhandled rejection, and from `ErrorBoundary`. Both
+bring the overlay down — that part was never in question — but the failure paths were previously
+indistinguishable from a healthy boot, so the overlay answered a window that had just thrown away
+its whole tree with the full three seconds of celebration and *then* showed the blank. The signal
+is an attribute set before the event, because the consumer is an inline script that knows nothing
+about the bundle.
+
+**The startup backup moved behind an IPC signal but kept an 8 s fallback.** ELP-08 already took it
+off the awaited path; that was never the same as taking it off the *thread*. `runStartupBackup`
+POSTs to a server imported into the main process, so its `VACUUM INTO` per season is synchronous
+there — no input routing, which is why click-to-skip went dead mid-gesture — and `await loadURL`
+resolving on `did-finish-load` timed it to land exactly when React had mounted. It now waits for
+the overlay's own exit path. The fallback is not optional: a renderer that crashes before the
+reveal must not cost the user their backup for that launch.
+
+There are two fallbacks, and the second one is why the first is not enough. The 8 s timer lives in
+the process `app.quit()` destroys, so on Windows and Linux a user who closes a wedged window — or
+just an impatient one, during the hold — took the whole launch's backup and update check down with
+it, silently, which is the exact outcome the fallback exists to prevent. `window-all-closed` now
+releases the chores itself and lets them settle before quitting, capped at 5 s so a wedged server
+cannot turn „close the window" into „the app will not exit". `ensureBackupDir` declines to prompt
+when there is no window left to prompt over: a folder picker on an empty desktop after the user
+quit reads as a hang, and leaving the flag unset means the next launch asks properly.
+
+**Reduced motion still removes the overlay outright rather than getting phase A.** A static hold
+would arguably suit those users better than the app popping in mid-mount. But
+`newContext({ reducedMotion: 'reduce' })` is the documented escape hatch that every driving script
+in `docs/VERIFYING.md` relies on, and quietly turning it into „hold, then reveal" would break them
+all. Worth revisiting only behind a separate opt-out that Playwright can use first.
+
 ---
 
 ## Known sharp edges with no owner
@@ -437,6 +542,14 @@ finding one does not read as a discovery.
 - **`first_run_done` is close to redundant.** `ensureBackupDir` returns early whenever `backupDir`
   is set, so the flag now means „a folder was chosen at least once" and only matters if
   `backup_dir` were later cleared. Left as a guard.
+- **Moving the app origin to `127.0.0.1` empties the emoji picker's „frequently used" list, once.**
+  Chromium buckets web storage per origin, and `http://localhost:4317` and `http://127.0.0.1:4317`
+  are two of them. The audit that cleared the change checked our own code, where the only key is
+  `auftakt-booted` and it really is sessionStorage — but `emoji-picker-react` keeps `epr_suggested`
+  in localStorage, reachable from the notes editor. Upgrading past that build resets it. The old
+  bucket is still on disk and unreachable: there is no supported way to read another origin's
+  localStorage from the main process, and this does not justify inventing one. Recorded because the
+  next thing that lands in localStorage will not be an emoji list.
 - **The Übersicht's event blocks are split at fetch time, not at midnight.** `groupUpcomingEvents`
   takes „today" from its default `fromUtcMs`, read once inside a `useMemo` keyed on the list and
   the window, and the query sets `refetchOnWindowFocus: false` — so an Electron window left open

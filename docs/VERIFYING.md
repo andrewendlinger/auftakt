@@ -70,23 +70,128 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 
 ## Playwright traps
 
+- **Wait for `html[data-app-ready]`, not for `networkidle`.** It is set once React has committed,
+  painted, and its bootstrap queries have settled — or given up after 700 ms, so it also arrives
+  when a query 500s or hangs, which is exactly when `networkidle` does not. `html[data-app-mounted]`
+  is the weaker one: committed and painted, data or no data. Both work on the dev server too, where
+  no overlay exists, which makes them the right handle for scenarios that have nothing to do with
+  booting. Set by `client/src/boot.ts`; there are matching `auftakt:ready` / `auftakt:mounted`
+  events on `document` if you would rather listen than poll.
 - **The boot animation never plays on the dev server**, and that is the point. `#boot-overlay` in
   `client/index.html` is gated on `'%PROD%' !== 'true'` — Vite's HTML env replacement, applied by
   the dev middleware as well as the build — so against `npm run demo` on `:5317` the node is
   removed before React mounts and a driving script can ignore it entirely. Everything below applies
   only when you verify against a **built** bundle: `npm run build`, then the server on `:4317`.
-  There, the overlay covers the viewport for ~2.6 s and keeps its pointer events the whole time, so
-  it swallows the first interaction of a run — `locator.click()` rides it out through actionability
-  retries, but a raw `mouse.click()` at coordinates only skips the animation. `#root` carries
-  `inert` for the same interval, so a keyboard-driven script finds nothing focusable until the
-  reveal. And even on `:4317` it plays on a **cold** boot only: the inline head script sets
-  `sessionStorage['auftakt-booted']`, so every `reload()` in the same context comes up without it.
-  Both directions read as a bug — the overlay being absent after a reload is correct, and a script
-  that opens a context per scenario pays the 2.6 s each time. `newContext({ reducedMotion:
-  'reduce' })` removes it outright; to look at a single frame,
-  `document.getAnimations().forEach(a => { a.pause(); a.currentTime = ms })` (seeking past ~2600 ms
-  fires the fade's `animationend`, which removes the node — that *is* the reveal, not a lost
-  overlay).
+- **The overlay has no fixed duration any more, and it is no longer a property of the build.** It
+  holds a still frame until the app is ready, then decides at runtime whether to play the gesture,
+  based on measured frame health. So a `waitForTimeout(2600)` is wrong in both directions, and the
+  same build legitimately produces different outcomes on the same machine — a boot-screen
+  screenshot diff is not reproducible by construction. Read `html[data-boot]` instead, which walks
+  `hold` → (`play` | `cross`) → `done`:
+  - `hold` → phase A, a flat `#f6f6f4` rectangle. Typically ~95 ms; up to 3500 ms, then it reveals
+    regardless.
+  - `play` → the gesture is running; ~2.6 s from here to `done`. Not 3.07 s: the overlay's fade
+    starts at 2230 ms and *overlaps* the 2700 ms envelope's tail rather than following it, so the
+    node is gone before the choreography's nominal end.
+  - `cross` → a 200 ms fade instead of the gesture. Four ways in: readiness arrived past the
+    1200 ms deadline, the app signalled that it collapsed (`html[data-app-failed]`, see below), the
+    user clicked, or the frame watchdog aborted. `#boot-overlay[data-abort]` distinguishes the last
+    one and names the reason (`hitch` — one frame over 50 ms; `slow` — a median well over the
+    cadence this display has been seen to deliver; `drops` — a fifth of frames lost; `starved` —
+    too few frames delivered).
+  - `done` → the node is gone and `#root` is no longer `inert`.
+- **Every boot files a report: `localStorage['auftakt-boot-report']`.** Written in the overlay's
+  single exit path just after the node is removed, so it is the non-racy way to learn what a boot
+  did after the fact: wait for `html[data-boot="done"]`, then read it — no need to catch
+  attributes before the overlay vanishes. One JSON object, last boot wins (a warm reload
+  overwrites it with `skip / warm`, which is also how you prove the reload happened). Fields:
+  `outcome` (`play` | `cross` | `skip`), `why` (`done`, `deadline`, `click`, `app-failed`,
+  `abort:<reason>`, `hold-max`, `gesture-max`, `warm`, `reduced-motion`, `no-prod`),
+  `readyMs`/`startMs`/`endMs` on the same clock the 1200 ms deadline reads, and — when the
+  gesture played — `frames` (judged deltas: `n`, `med`, `p95`, `worst`, `quick`, `drops`, plus
+  `lead`, the release→first-callback gap, and `warm`, the exempt first frame's delta) and `tail`
+  (deltas recorded unjudged during the reveal fade, with a retrospective `verdict`). A
+  `tail.verdict` of `hitch` on a run with **no** `data-abort` is not a contradiction: the
+  attribute still means the watchdog *changed the outcome*, the tail is record-only. Under
+  Electron the same report goes out over the `bootSettled` bridge.
+- **Under Electron the reports accumulate: `boot-log.jsonl` in userData.** One line per settle —
+  including warm reloads (a season switch writes `skip / warm`; that line is the reload proving
+  itself, not noise) — wrapped by the main process with `at` (ISO time, main's clock, so a
+  renderer cannot spoof it) and `app` (version). Capped at 64 KB, then trimmed to the last 100
+  lines. A launch whose renderer never reported still gets a line, through one of two doors: a
+  crashed or wedged renderer that lives past 8 s gets `{"outcome":"no-report","why":"fallback-8s"}`
+  from the chores fallback, and a launch *quit* before the overlay settled — Cmd-Q or Ctrl-C
+  during the hold or the gesture; on macOS the 8 s timer dies with the process — gets
+  `{"outcome":"no-report","why":"quit"}` from the before-quit/SIGINT hooks. An empty log after a
+  launch therefore always means the diagnostics did not run, never that the boot was merely
+  short-lived. Read it with
+  `tail -n 5 ~/Library/Application\ Support/Auftakt/boot-log.jsonl | jq .` (Windows:
+  `%APPDATA%\Auftakt\boot-log.jsonl`). Dev mode writes nothing, matching the overlay it reports
+  on. The writer is `electron/bootLog.ts`, electron-import-free so `check:unit` covers it.
+- **A traced launch: `AUFTAKT_BOOT_TRACE=1`.** Records from before the window until ~750 ms after
+  the overlay settles — capped at ~6 s, or the env var's value in milliseconds — to
+  `boot-trace-<stamp>.json` in userData, loadable at ui.perfetto.dev. Quitting does not lose it:
+  before-quit and SIGINT/SIGTERM hold the exit until the write lands, so quit (or Ctrl-C the
+  terminal) as soon as the app appears. Find
+  CrRendererMain, locate the overlay's `auftakt:*` marks (`blink.user_timing` category), and read
+  what else ran between `auftakt:play` and `auftakt:done` — long `v8.compile` tasks are the cold
+  code cache, RasterTask and GPU-process work the cold shader caches. Two traps: `open -a
+  Auftakt` drops environment variables, so launch the binary directly —
+  `AUFTAKT_BOOT_TRACE=1 /Applications/Auftakt.app/Contents/MacOS/Auftakt` — and tracing has
+  overhead of its own, so a traced run *attributes* a stall rather than timing it honestly.
+- **Re-creating a first launch: `node scripts/clear-boot-caches.mjs`.** Deletes exactly the
+  packaged app's Chromium/V8 cache directories from userData (`Cache`, `Code Cache`, `GPUCache`,
+  the two `Dawn*Cache` shader caches, `Shared Dictionary`, `blob_storage`, `v8-cache`) —
+  allowlist-only, because the same directory holds the live database and `Local Storage`
+  (emoji-picker state, the boot report copy). It refuses while anything answers on `:4317`, so
+  quit the app and kill dev servers first (`lsof -ti tcp:4317 -ti tcp:5317 | xargs kill`). The
+  evidence pair for the boot log is one cleared+traced launch, then one warm launch. This
+  reproduces cold caches, not macOS Gatekeeper's first-open pass over a quarantined bundle —
+  re-install from the `.dmg` for the faithful worst case.
+- **`document.getAnimations()` returns all twelve animations during the hold, not `[]`** — paused is
+  not idle, and a paused animation with a fill is still in effect and still enumerated. What
+  distinguishes the hold is `playState`: every one reads `paused` except `bootBail`, the dead man's
+  switch, which runs unconditionally and spends the whole hold inside its 6 s delay. A script that
+  polls for an empty list waits forever; check `getAnimations().every(a => a.playState === 'paused'
+  || a.animationName === 'bootBail')` instead. To look at a single frame, wait for
+  `[data-boot="play"]` *first*, then `document.getAnimations().forEach(a => { a.pause();
+  a.currentTime = ms })` — and note the clock now starts at phase B, not at navigation. Seeking past
+  the end fires the fade's `animationend`, which removes the node: that *is* the reveal, not a lost
+  overlay.
+- **An app that threw during boot reveals without the gesture, deliberately.** `window.onerror`, an
+  unhandled rejection, or a render error the `ErrorBoundary` caught all reach `signalFailed()`, which
+  sets `html[data-app-failed]` before announcing readiness; the overlay then cross-fades rather than
+  celebrating over a blank window. So a scenario that injects a throw gets `cross`, and
+  `[data-app-failed]` is the handle that tells you why it was not `play`.
+- **A blocked main thread makes the gesture abort, so do not block it and then blame the overlay.**
+  Injecting a busy-loop to simulate load, or attaching a debugger, trips the watchdog and you get
+  `cross` instead of `play`. That is the feature working, and it applies for the *whole* gesture —
+  the watchdog judges rolling 200 ms windows to the last frame, not just the opening one. The one
+  exception is a block that lands after the reveal fade has begun (~2230 ms in): from there the app
+  is already showing through, so the watchdog stops judging — it keeps recording, and the block
+  shows up in the report's `tail` — and the overlay lets the fade finish rather than throwing the
+  splash back to full opacity. That run stays a clean `play` → `done` with no `data-abort` — the
+  attribute means the watchdog changed the outcome, not merely that a frame was late. Probing that
+  window needs a *short* block, ~80 ms: a longer one runs past the fade's own end, so the overlay's
+  `animationend` is dispatched before the next rAF callback, `remove()` wins the race and nothing
+  is left to observe on the node — though `tail.worst` in the report still shows it. Read
+  `data-abort` by polling inside the page while `#boot-overlay` still exists — by the time an
+  `await` in the driving script resolves, the node and its attributes are usually gone — or skip
+  the race entirely and read `localStorage['auftakt-boot-report']` after `done`.
+- **An aborted or skipped gesture keeps its last frame on screen, and that is not a stuck
+  animation.** `cross` from within `play` adds `#boot-overlay.boot-froze`, which holds the svg
+  visible while every descendant animation re-pauses, so a screenshot taken then shows the hand
+  mid-swing with a half-drawn trail, fading out. A `cross` that never played shows the flat
+  rectangle instead — the parked hand and an un-landed wordmark are deliberately never drawn.
+- **The overlay swallows the first interaction while it is up**, whatever phase it is in, because
+  it keeps its pointer events until removal. `locator.click()` rides that out through actionability
+  retries; a raw `mouse.click()` at coordinates only reveals the app. `#root` carries `inert` for
+  the same interval, so a keyboard-driven script finds nothing focusable until `done`.
+- **It plays on a **cold** boot only.** The inline head script sets
+  `sessionStorage['auftakt-booted']`, so every `reload()` in the same context comes up without it —
+  correct, though it reads as a bug — while a script that opens a context per scenario pays the
+  full boot each time. `newContext({ reducedMotion: 'reduce' })` removes it outright and stays the
+  cheapest way to get it out of the way.
 - **`page.goto` to the same hash is a no-op** under `HashRouter`, so a dialog left open by the
   previous scenario silently eats every click. Call `reload()` after `goto`.
 - **`locator.isVisible()` does not wait** — it samples immediately, so it reads the state before an

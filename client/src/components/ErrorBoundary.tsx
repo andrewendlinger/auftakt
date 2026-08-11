@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { signalFailed } from '../boot';
 
 interface State {
   failed: boolean;
@@ -24,6 +25,11 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error('Unbehandelter Render-Fehler', error, info.componentStack);
+    // The fallback below is the app now; there is nothing further to wait for. Without
+    // this the boot screen would hold its still frame over a rendered error message
+    // until the data budget expired. `signalFailed` rather than `signalReady` so it
+    // reveals that message straight away instead of celebrating over it first.
+    signalFailed();
   }
 
   render(): ReactNode {
