@@ -540,8 +540,8 @@ function runStartupChores(): Promise<unknown> {
  * exit() being immediate.
  *
  * Exiting without a dialog is right for the case this is built for — a user double-clicks
- * the shortcut again, the running instance takes `second-instance` and raises itself, and
- * a message box would only be noise. It is not right for a developer, and there is no way
+ * the shortcut again, the running instance takes `second-instance` and opens a new window,
+ * and a message box would only be noise. It is not right for a developer, and there is no way
  * to tell the two apart from here: Electron keys the lock on the userData directory, and
  * on macOS's case-insensitive default volume `.../auftakt` (dev) and `.../Auftakt`
  * (packaged) are the same lock, so `npm run electron:dev` against an installed copy dies
@@ -571,20 +571,16 @@ let startupDone = false;
 let quitting = false;
 
 app.on('second-instance', () => {
-  const win = liveWindow();
-  if (win) {
-    if (win.isMinimized()) win.restore();
-    win.show();
-    win.focus();
-    return;
-  }
-  // No window to raise. On macOS that is the ordinary „closed the window, app still
-  // running" state and a second launch should reopen it — the same thing `activate`
-  // does. Gated on startupDone so this cannot race the first window into existence:
-  // during those first seconds whenReady is already about to create one, and answering
-  // the click here would open a second.
+  // A second launch opens a NEW window (the multi-window convention — Chrome, VS Code):
+  // double-clicking the shortcut again is how a Windows user asks for another window,
+  // and raising the existing one answers a question nobody asked. Two guards survive
+  // from the raise era, both still load-bearing:
   //
-  // Off macOS there is now a third state between „a window" and „no process":
+  // Gated on startupDone so this cannot race the first window into existence: during
+  // those first seconds whenReady is already about to create one, and answering the
+  // click here would open a second.
+  //
+  // Off macOS there is a third state between „a window" and „no process":
   // window-all-closed holds the lock for up to QUIT_CHORES_MS while the startup chores
   // finish. A user who closes the window and relaunches straight away lands in it, and
   // the second instance has already exited against our lock by the time this runs — so
@@ -670,6 +666,7 @@ app.whenReady().then(async () => {
 
   Menu.setApplicationMenu(
     buildMenu({
+      onNewWindow: () => void createWindow(),
       // Menu clicks carry no renderer context, so the season comes from the focused window.
       onExport: () => void focusedWindowSeason().then(exportDatabase),
       onImport: () => void focusedWindowSeason().then(importDatabase),
