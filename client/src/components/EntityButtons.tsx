@@ -161,23 +161,23 @@ function DeleteRecordAction({
           {/* The count is a promise about what disappears, never a gate: this delete takes
               exactly one row, so a slow or failed lookup must not stand between the user and
               the button. Said out loud while it runs, so the paragraph below doesn't appear
-              out of nowhere a moment after the dialog settles. */}
+              out of nowhere a moment after the dialog settles.
+
+              Three lines, and no more. A confirm is read in the second before a click, so it
+              answers what happens, what goes with it, and how to get it back — nothing else.
+              It used to also explain that an entry keeps its children from expiring in the
+              Papierkorb (SDL-01): true, unprompted, and unreadable („solange sie daran hängen"
+              — daran woran?). That guarantee protects the user whether or not they read it,
+              which is exactly the kind of sentence a dialog should not spend a line on. */}
           {isPending ? (
             <p className="mt-2 text-sm text-neutral-400">Wird geprüft, was daran hängt …</p>
           ) : (
             dependents != null &&
             dependents.total > 0 && (
-              <>
-                <p className="mt-2 text-sm text-neutral-600">
-                  {cascadeText(dependents)} verschwinden damit aus allen Listen. Gelöscht wird nur
-                  dieser Eintrag — die übrigen Daten bleiben erhalten und sind beim Wiederherstellen
-                  wieder da.
-                </p>
-                <p className="mt-2 text-sm text-neutral-500">
-                  Solange sie daran hängen, wird der Eintrag im Papierkorb nicht automatisch
-                  entfernt.
-                </p>
-              </>
+              <p className="mt-2 text-sm text-neutral-600">
+                {cascadeText(dependents)} verschwinden damit aus allen Listen. Gelöscht wird nur
+                dieser Eintrag.
+              </p>
             )
           )}
           <p className="mt-2 text-sm text-neutral-500">
