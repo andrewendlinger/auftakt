@@ -6,7 +6,7 @@
     <link rel="icon" href="./favicon.svg" />
     <title>Auftakt</title>
 
-    <!-- Two conditions, both decided here because the overlay below paints before any
+    <!-- Three conditions, all decided here because the overlay below paints before any
          other script of ours runs.
 
          Built bundle only. `%PROD%` is Vite's HTML env replacement, and it is applied by
@@ -20,10 +20,19 @@
 
          Cold start only. sessionStorage survives a reload of the same tab but is empty in
          a fresh process, which is exactly the distinction wanted: season switch and the
-         post-backup-dir reload skip it, a relaunch plays it. -->
+         post-backup-dir reload skip it, a relaunch plays it.
+
+         First window only. sessionStorage is per BrowserWindow, so a second window (Neues
+         Fenster, Cmd+N) reads as a cold start here — but the gesture already played in the
+         first one, and a ~2.6 s inert overlay on every further window would punish exactly
+         the multi-screen workflow those windows exist for. Electron marks them with
+         ?noboot in the search component (before the hash, where HashRouter never looks);
+         the flag survives reloads, which is why __auftaktWarm is remembered separately —
+         a season switch in a secondary window must still report `warm`, not `secondary`. -->
     <script>
       try {
-        if ('%PROD%' !== 'true' || sessionStorage.getItem('auftakt-booted')) {
+        window.__auftaktWarm = !!sessionStorage.getItem('auftakt-booted');
+        if ('%PROD%' !== 'true' || window.__auftaktWarm || location.search.indexOf('noboot') !== -1) {
           document.documentElement.classList.add('no-boot');
         }
         sessionStorage.setItem('auftakt-booted', '1');
@@ -652,8 +661,10 @@
         // rather than leave an invisible one lying in the DOM. The report still files —
         // a season switch writes `skip / warm`, which is how a log line proves the
         // reload happened at all. `%PROD%` is quoted for the same degrade-to-no-boot
-        // reason as in the head script; in a built bundle the only other way into
-        // `no-boot` is the warm-session branch.
+        // reason as in the head script; in a built bundle the other ways into `no-boot`
+        // are the warm-session branch and a secondary window's ?noboot flag. `warm` wins
+        // over `secondary` (see the head comment): the flag stays in a secondary window's
+        // URL for its whole life, but only its *first* document is a secondary boot.
         if (
           html.classList.contains('no-boot') ||
           matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -662,7 +673,9 @@
             '%PROD%' !== 'true'
               ? 'no-prod'
               : html.classList.contains('no-boot')
-                ? 'warm'
+                ? window.__auftaktWarm
+                  ? 'warm'
+                  : 'secondary'
                 : 'reduced-motion';
           remove();
           return;

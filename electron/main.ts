@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, contentTracing, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, Menu, contentTracing, dialog, ipcMain, screen, shell } from 'electron';
 import { enableCompileCache } from 'node:module';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -306,10 +306,35 @@ async function importDatabase(): Promise<void> {
   }
 }
 
+/** Default window size — also the wrap bound for the cascade below; keep them together. */
+const WIN_W = 1440;
+const WIN_H = 900;
+
 async function createWindow(): Promise<void> {
+  // Sampled BEFORE construction — a moment later the count would include this window.
+  // A secondary window cascades off the focused one and skips the boot gesture (its
+  // ?noboot flag; see client/index.html): the gesture already played in the first window,
+  // and without an offset every window opens 1440×900 centered — perfectly stacked.
+  const others = BrowserWindow.getAllWindows();
+  const isSecondary = others.length > 0;
+  let position: { x: number; y: number } | undefined;
+  if (isSecondary) {
+    const src = (BrowserWindow.getFocusedWindow() ?? others[others.length - 1]!).getBounds();
+    // Wrap, don't clamp — a clamp stacks every further window into the same corner.
+    // getDisplayMatching keeps the cascade on the monitor the user is working on.
+    const wa = screen.getDisplayMatching(src).workArea;
+    const CASCADE = 28;
+    let x = src.x + CASCADE;
+    let y = src.y + CASCADE;
+    if (x + WIN_W > wa.x + wa.width) x = wa.x + CASCADE;
+    if (y + WIN_H > wa.y + wa.height) y = wa.y + CASCADE;
+    position = { x, y };
+  }
+
   const win = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    width: WIN_W,
+    height: WIN_H,
+    ...position,
     minWidth: 1024,
     minHeight: 680,
     title: 'Auftakt',
@@ -367,8 +392,13 @@ async function createWindow(): Promise<void> {
   // Awaited outside whenReady's try/catch until now, so a rejection here was an
   // unhandled rejection and a permanently blank window with nothing said about it —
   // the same silent failure ELP-06 fixed one step earlier, for the server.
+  // ?noboot sits in the search component, before any hash: the boot gate's head script
+  // reads location.search, HashRouter reads only the hash, and will-navigate above
+  // compares origins — none of them collide. Appended in dev too (harmless: the gate
+  // already short-circuits on %PROD%), so this line stays branch-free.
   try {
-    await win.loadURL(isDev ? DEV_URL : ORIGIN);
+    const base = isDev ? DEV_URL : ORIGIN;
+    await win.loadURL(isSecondary ? `${base}/?noboot=1` : base);
   } catch (err) {
     if (win.isDestroyed()) return;
     clearTimeout(showAnyway);
