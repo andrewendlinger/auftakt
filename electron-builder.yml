@@ -55,9 +55,15 @@ asarUnpack:
   - '**/node_modules/better-sqlite3/**'
   - '**/*.node'
 
+# Both icons are named rather than left to the `buildResources` convention. The convention
+# would find these exact paths anyway; stating them is what stops a future rename or a
+# convention change from silently falling back to `icon.png` and letting electron-builder
+# downsample a 1024 bitmap into every entry of the Windows `.ico` again. Regenerate both
+# with `npm run icons`.
 mac:
   target: dmg
   category: public.app-category.productivity
+  icon: build/icon.icns
 
 # The publisher shown in the file properties and in "Apps & Features" comes from
 # `author` in package.json, not from `win.publisherName` — leave that one unset.
@@ -67,6 +73,7 @@ mac:
 # installer would turn every in-app update into ERR_UPDATER_INVALID_SIGNATURE.
 win:
   target: nsis
+  icon: build/icon.ico
 
 # `artifactName` is load-bearing, not cosmetic. The default is `${productName} Setup
 # ${version}.${ext}` — with spaces — and electron-builder writes `latest.yml` using its own

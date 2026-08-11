@@ -36,6 +36,7 @@
     "check:api": "node scripts/check-api.mjs",
     "check:markdown": "npm --prefix client run check:markdown",
     "check:package": "node scripts/check-package.mjs",
+    "icons": "node scripts/icons.mjs",
     "build:client": "npm --prefix client run build",
     "build:bundles": "node scripts/build.mjs",
     "build": "npm run build:client && npm run build:bundles",

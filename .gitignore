@@ -8,6 +8,7 @@ dist/
 # ...but keep the committed app-icon assets (electron-builder buildResources)
 !/build/icon.png
 !/build/icon.icns
+!/build/icon.ico
 release/
 server/dist/
 client/dist/
