@@ -302,7 +302,6 @@ async function createWindow(): Promise<void> {
   });
   mainWindow = win;
 
-  win.once('ready-to-show', () => win.show());
   // ready-to-show never fires if the load fails, and a window that stays hidden is worse
   // than one that flashes empty: app.on('activate') counts hidden windows too, so it
   // would not create a replacement, and the app would sit with a dock icon and no way
@@ -310,6 +309,15 @@ async function createWindow(): Promise<void> {
   const showAnyway = setTimeout(() => {
     if (!win.isDestroyed() && !win.isVisible()) win.show();
   }, 3000);
+  // Disarmed as soon as a frame has been presented, not only when the window closes.
+  // isVisible() is false for a window the user has since minimized, and „no frame came"
+  // and „the user put it away" are the same reading to it — so a timer left armed
+  // un-minimized the window three seconds into a perfectly normal launch, against an
+  // explicit action. Once ready-to-show has fired there is nothing left for it to fix.
+  win.once('ready-to-show', () => {
+    clearTimeout(showAnyway);
+    win.show();
+  });
   win.on('closed', () => {
     clearTimeout(showAnyway);
     mainWindow = null;
@@ -340,6 +348,7 @@ async function createWindow(): Promise<void> {
     await win.loadURL(isDev ? DEV_URL : ORIGIN);
   } catch (err) {
     if (win.isDestroyed()) return;
+    clearTimeout(showAnyway);
     win.show();
     await dialog.showMessageBox(win, {
       type: 'error',
