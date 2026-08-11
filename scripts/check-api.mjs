@@ -392,6 +392,22 @@ try {
     check('a preview of a row that never existed is a 404', nobody.status === 404, String(nobody.status));
   }
 
+  // ------------------------------------------------------ search hides orphaned projects (WP-34)
+  // Every other hit type runs through `parentLive`; projects were filtered on their own
+  // `deleted_at` alone, so one under a trashed artist stayed findable and its link led to a page
+  // whose artist no longer exists — the dead end SHL-07 closed everywhere else.
+  console.log('\n== search drops projects whose artist is in the trash (WP-34)');
+  {
+    const artist = await ok('POST', '/artists', { name: 'Suchbar' });
+    await ok('POST', '/projects', { artist_id: artist.id, name: 'Suchprojekt', code: 'SUCH1' });
+    const before = await ok('GET', '/search?q=SUCH1');
+    check('the project is findable while its artist is live', before.projects.length === 1, JSON.stringify(before.projects));
+
+    await ok('DELETE', `/artists/${artist.id}`);
+    const after = await ok('GET', '/search?q=SUCH1');
+    check('and gone from search once the artist is trashed', after.projects.length === 0, JSON.stringify(after.projects));
+  }
+
   // ------------------------------------------------------- the baseline order (WP-32, was TTU-11)
   // What the API returns when no sort rule is in effect is what the client keeps: `sortTasks`
   // short-circuits on an empty rule list. So the ORDER BY may rank by nothing the user cannot see
