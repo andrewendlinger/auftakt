@@ -4,6 +4,7 @@ import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import './index.css';
 import { ApiError } from './api/client';
+import { coalesced, onBroadcast } from './lib/broadcast';
 import { reportError } from './lib/errors';
 import { signalFailed } from './boot';
 import { Layout } from './components/Layout';
@@ -53,6 +54,26 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+/**
+ * The receiving half of cross-window freshness: another window wrote (its
+ * useInvalidateAll posted), so this window's cache is stale — invalidate everything, the
+ * same blanket policy a local write applies. Module scope, not a component: it needs no
+ * hooks, must not double-subscribe under StrictMode, and lives exactly as long as the
+ * document (the channel dies with the window; nothing to unsubscribe). Deliberately calls
+ * the QueryClient directly rather than useInvalidateAll — re-posting a received invalidate
+ * would ping-pong between windows forever. The coalescer collapses bursts (a drag reorder
+ * posts one invalidate per dropped row); active queries refetch immediately, the rest just
+ * go stale, and a window on another season merely refetches its own season's data.
+ */
+onBroadcast(
+  (() => {
+    const invalidate = coalesced(() => void queryClient.invalidateQueries(), 150);
+    return (msg) => {
+      if (msg.type === 'invalidate') invalidate();
+    };
+  })(),
+);
 
 /**
  * Total collapse. A throw *above* ErrorBoundary — in ToastProvider, UndoProvider,

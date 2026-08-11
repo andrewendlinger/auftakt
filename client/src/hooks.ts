@@ -18,6 +18,7 @@ import type {
   WritableSettings,
 } from './api/types';
 import { doneValueOf } from './api/types';
+import { postBroadcast } from './lib/broadcast';
 import { errorMessage } from './lib/errors';
 import { DEFAULT_EVENT_WINDOW_DAYS } from './lib/eventGroups';
 import { LABEL_DEFAULTS, isLabelKey, type LabelKey } from './lib/labels';
@@ -48,10 +49,18 @@ import { useUndo } from './components/UndoProvider';
  * do the other half or theirs is inert.
  */
 
-/** The dataset is tiny and local, so invalidating everything on write is simplest and instant. */
+/**
+ * The dataset is tiny and local, so invalidating everything on write is simplest and instant.
+ * The write is also broadcast to every other window (the listener in main.tsx invalidates
+ * there) — a write path that bypasses this hook opts out of cross-window freshness, which is
+ * the second reason every write goes through it.
+ */
 export function useInvalidateAll(): () => Promise<void> {
   const qc = useQueryClient();
-  return useCallback(() => qc.invalidateQueries(), [qc]);
+  return useCallback(() => {
+    postBroadcast({ v: 1, type: 'invalidate' });
+    return qc.invalidateQueries();
+  }, [qc]);
 }
 
 /**
