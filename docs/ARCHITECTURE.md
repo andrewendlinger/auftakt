@@ -187,7 +187,7 @@ ones (`kind: 'custom'`) store values in the `tasks.custom_values` JSON blob keye
 `ensureBuiltinColumns()` inserts missing built-ins idempotently, and users can disable, reorder or
 (where `deletable`) remove them.
 
-Column ids in `client/src/components/TaskTable.tsx` are `key` for built-ins and `custom:<id>` for
+Column ids in `client/src/lib/taskSort.ts` are `key` for built-ins and `custom:<id>` for
 customs — one `colId`/`customColId` pair owns both halves. The delimiter is load-bearing: the
 previous `c<id>` form shared a namespace with the built-in `comment` key, which then decoded as
 custom column `Number('omment')` = NaN and made that sort level compare every task equal (TTU-31).
@@ -198,11 +198,28 @@ custom column `Number('omment')` = NaN and made that sort level compare every ta
 object is asking for a merge whether it means to or not.
 
 Sort order is likewise configurable: the `task_sort` setting holds a rule hierarchy that users edit
-in Settings; clicking a header is a temporary override. `SERVER_DEFAULT_RULES` (TaskTable) restates
-`taskOrder` (`server/src/lib/queries.ts`) so „no rules configured" can be rank-tested against the
-ordering actually in effect; **the two are kept in step by comment only.** The server's priority
-`CASE` is generated from the configured option order via `priorityValues(db)`, so renaming those
-categories does not drop them all into `ELSE`.
+in Settings; clicking a header is a temporary override, and an override whose column is hidden while
+the table stays mounted stops being one — for the ordering and for dragging alike. `TASK_ORDER`
+(`server/src/lib/queries.ts`) is `ORDER BY (t.status = ?) ASC, t.sort_order ASC, t.id ASC`, and
+`rankRules` (TaskTable) measures drops against it with an empty rank list; **the two are kept in
+step by comment only.** The server ranks by nothing else on purpose: the client short-circuits on an
+empty rule list and keeps whatever came back, so any key the server adds is a rule no user can see
+in Settings or switch off. Readers that are *not* the task table — Archiv, the .xlsx export, the
+print sheets — pass `order=due` (`orderParam`, `TASK_ORDER_DUE`), because a per-list ordinal is
+meaningless to a reader that spans several lists.
+
+**A rule whose column is hidden (`enabled: 0`) or gone does not order the table.** `activeSortRules`
+(`client/src/lib/taskSort.ts`) is the one filter, used by `TaskTable` and by `TaskSortEditor`'s
+label so behaviour and „(ausgeblendet – sortiert nicht)" cannot drift. `manual` is exempt — it is
+`sort_order`, not a column. The stored rule is filtered, never rewritten, so showing the column
+wakes it up again; that is what makes `DEFAULT_TASK_SORT`'s change from `[status, priority, due]` to
+`[status]` need **no migration** — an older season stores the long list and behaves identically,
+because Priorität and Fällig ship hidden (WP-32).
+
+A created task is stamped `sort_order = MIN(scope) − 1` in the tasks `transform`, so it leads its
+list instead of tying at the column default and losing the `id` tiebreak. The scope is the
+`(artist_id, project_id)` pair compared with `IS`, and soft-deleted and archived rows count — a
+restore must not come back tied with the new row. `leadingSortOrder` says why it is not `parent_id`.
 
 Page section order is edited by `SectionArranger` and **stored per entity**: `artists.layout` and
 `projects.layout` hold that page's own array as JSON text, and `NULL` means „never arranged"

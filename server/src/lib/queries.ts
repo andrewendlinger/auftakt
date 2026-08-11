@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
-import { ARCHIVE_AFTER_DAYS, doneStatusValue, priorityValues } from '../db';
-import type { TaskScope } from './query';
+import { ARCHIVE_AFTER_DAYS, doneStatusValue } from '../db';
+import type { TaskOrder, TaskScope } from './query';
 
 /**
  * The parent joins for any table whose rows hang off a project and/or an artist.
@@ -43,27 +43,37 @@ FROM tasks t${parentJoins('t')}
 const TASK_PARENT_LIVE = parentLive('t');
 
 /**
- * Open first, then by priority, then due date (nulls last); done tasks sink to the bottom. Both
- * categories are parameterised, so the ordering follows the editable Status and Priorität columns.
+ * The baseline order: open first, then the order the user dragged the rows into. Done sinks to
+ * the bottom against the editable Status column's own „done" value, which is the one bound param.
  *
- * The priority CASE used to be a hardcoded hoch/mittel/niedrig ladder. Rename those options — the
- * column manager allows it — and every task fell into ELSE while the client ranked them 0..n by
- * the configured order, so the two disagreed about which rows were of equal rank: with an empty
- * sort hierarchy, `canDrop` could refuse a drop the server considered a tie.
+ * **This is the ordering in effect whenever no sort rule is** — the client short-circuits on an
+ * empty rule list and keeps what came back (`sortTasks`, TaskTable.tsx). So every key here is a
+ * rule the user cannot see in Einstellungen and cannot switch off. It used to rank by priority
+ * and due date, and both columns are hidden ab Werk: an invisible column decided where a new task
+ * landed, which is the whole of WP-32. What is left is `sort_order` — the one ordering the user
+ * sets by hand, and the one a newly created task is stamped to lead (routes/entities.ts).
  *
- * One bound param per option, and an unknown or empty priority sorts last, as it always did.
+ * `rankRules` in TaskTable.tsx measures drops against this — with no rule in effect every
+ * same-doneness pair is a tie — and the two are kept in step by comment only. Keep the leading
+ * done key: with no rules in effect it is the only thing sinking finished rows.
  */
-const taskOrder = (priorities: string[]): string => {
-  // `CASE x END` with no WHEN is a syntax error, so an empty ladder degrades to "all equal".
-  const rank = priorities.length
-    ? `CASE t.priority ${priorities.map((_, i) => `WHEN ? THEN ${i}`).join(' ')} ELSE ${priorities.length} END`
-    : '0';
-  return `
-ORDER BY (t.status = ?) ASC,
-  ${rank} ASC,
-  (t.due_date IS NULL) ASC, t.due_date ASC, t.sort_order ASC, t.id ASC
-`;
-};
+const TASK_ORDER = 'ORDER BY (t.status = ?) ASC, t.sort_order ASC, t.id ASC';
+
+/**
+ * For the readers that never apply a sort rule and are not the task table: the Archiv page, the
+ * .xlsx export and the print sheets all render `listTasks` output verbatim.
+ *
+ * `sort_order` is meaningful only *inside* one artist/project list — a hand-dragged project holds
+ * 0..n-1 while a composer-only one holds 0, -1, -2 — so a reader that spans several lists gets
+ * them interleaved by position-within-their-own-project. On the artist one-pager and in the export
+ * that put a task due tomorrow below one due in six months. Those readers ask for a deadline order
+ * instead, which is what they had before WP-32 took the due keys out of the baseline.
+ *
+ * Priority stays out: it is a hidden column, and „unsichtbare Spalte sortiert nicht" is the rule
+ * this ordering exists under too.
+ */
+const TASK_ORDER_DUE =
+  'ORDER BY (t.status = ?) ASC, (t.due_date IS NULL) ASC, t.due_date ASC, t.sort_order ASC, t.id ASC';
 
 /** 'localtime' because erledigt_am is a naive local stamp — a UTC cutoff compares two clocks. */
 const archivedCond = (): string =>
@@ -74,6 +84,8 @@ export interface TaskQuery {
   artistId?: unknown;
   resolvedArtistId?: unknown;
   scope?: TaskScope;
+  /** 'table' (default) is the manual order the task table re-sorts; 'due' is by deadline. */
+  order?: TaskOrder;
 }
 
 export function listTasks(db: Database.Database, q: TaskQuery = {}): unknown[] {
@@ -105,13 +117,10 @@ export function listTasks(db: Database.Database, q: TaskQuery = {}): unknown[] {
     where.push(archivedCond());
     params.push(done);
   }
-  // ORDER BY binds the done value, then one param per priority option — keep this aligned with
-  // the SQL taskOrder() emits.
-  const priorities = priorityValues(db);
-  params.push(done, ...priorities);
-  return db
-    .prepare(`${TASK_SELECT} WHERE ${where.join(' AND ')} ${taskOrder(priorities)}`)
-    .all(...params);
+  // Both orderings bind the done value once and nothing else — keep this aligned with their SQL.
+  params.push(done);
+  const order = q.order === 'due' ? TASK_ORDER_DUE : TASK_ORDER;
+  return db.prepare(`${TASK_SELECT} WHERE ${where.join(' AND ')} ${order}`).all(...params);
 }
 
 /** Same shape as TASK_SELECT, same soft-deleted-parent filter and for the same reason (SDL-03). */

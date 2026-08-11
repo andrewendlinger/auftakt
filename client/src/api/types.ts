@@ -106,6 +106,8 @@ export interface TaskPlacement {
   artist_id: ID | null;
   project_id: ID | null;
   parent_id: ID | null;
+  /** The slot inside the destination list. Omitted on a forward move, which lands it on top. */
+  sort_order: number;
 }
 
 /** Custom column widgets, plus the built-in bindings (status/title/priority/due/comment). */

@@ -135,6 +135,9 @@ export function MoveTaskDialog({ task, onClose }: { task: Task; onClose: () => v
               artist_id: prior.artist_id,
               project_id: prior.project_id,
               parent_id: prior.parent_id,
+              // The forward move placed the task at the head of its destination; without the
+              // captured ordinal the revert would put it back in the right list at the wrong slot.
+              sort_order: prior.sort_order,
             });
             await invalidate();
           },

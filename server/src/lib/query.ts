@@ -42,3 +42,19 @@ export function scopeParam(v: unknown): TaskScope {
   if (typeof v === 'string' && (TASK_SCOPES as readonly string[]).includes(v)) return v as TaskScope;
   throw new HttpError(400, 'Ungültiger Scope-Parameter');
 }
+
+const TASK_ORDERS = ['table', 'due'] as const;
+/** Which ordering a list request wants — see TASK_ORDER / TASK_ORDER_DUE in lib/queries.ts. */
+export type TaskOrder = (typeof TASK_ORDERS)[number];
+
+/**
+ * Parse `?order=`: absent/empty → `'table'`, an unknown value → 400. Validated rather than cast,
+ * for the reason `scopeParam` above is: a typo that silently falls back reads as „the ordering
+ * is broken" at the far end, and the callers that ask for `'due'` (Archiv, Export, Druckbögen)
+ * are exactly the ones nobody re-checks after a refactor.
+ */
+export function orderParam(v: unknown): TaskOrder {
+  if (v == null || v === '') return 'table';
+  if (typeof v === 'string' && (TASK_ORDERS as readonly string[]).includes(v)) return v as TaskOrder;
+  throw new HttpError(400, 'Ungültiger Order-Parameter');
+}

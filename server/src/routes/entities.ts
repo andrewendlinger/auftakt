@@ -6,7 +6,7 @@ import { listEvents, listTasks } from '../lib/queries';
 // Coerce a query param to a number. COALESCE()-based filters lose column affinity, so string
 // params never match integer ids — pass real numbers; an invalid value is now a 400, not a
 // silently-dropped filter that returned every row (SRV-09).
-import { HttpError, numParam as num, scopeParam } from '../lib/query';
+import { HttpError, numParam as num, orderParam, scopeParam } from '../lib/query';
 
 /*
  * The `writable`/`required` lists below are mirrored by the `…Create`/`…Update` types in
@@ -271,6 +271,13 @@ export const tasksRouter = crudRouter({
     if (mode === 'update' && 'status' in body && !body.status) {
       throw new HttpError(400, 'Status darf nicht leer sein.');
     }
+    // „Eine neue Aufgabe steht ganz oben." Without this the row keeps the column default 0, ties
+    // with every other never-dragged sibling, and the `id` tiebreak — highest — puts the newest
+    // one *last* (WP-32). Server-side because the client knows only its rendered siblings: it
+    // never sees archived rows and cannot see the trash at all.
+    if (mode === 'create' && body.sort_order == null) {
+      body.sort_order = leadingSortOrder(getDb(), body.artist_id, body.project_id);
+    }
     if ('erledigt_am' in body || 'status' in body) {
       const done = doneStatusValue(getDb());
       // An accepted erledigt_am wins over the derivation: that is the undo path restoring a
@@ -307,10 +314,53 @@ export const tasksRouter = crudRouter({
         artistId: num(req.query.artist_id),
         resolvedArtistId: num(req.query.resolved_artist_id),
         scope: scopeParam(req.query.scope),
+        order: orderParam(req.query.order),
       }),
     );
   },
 });
+
+/**
+ * One below the lowest `sort_order` in the list this task will appear in — so a created task
+ * leads it (WP-32). Empty scope: 0.
+ *
+ * **The scope is the `(artist_id, project_id)` pair, and deliberately not `parent_id` as well.**
+ * The obvious "exact sibling list" version has a reachable tie: a subtask whose parent is
+ * soft-deleted is *promoted* into the top-level list by the client (TTU-14) while still carrying
+ * `parent_id`, so a `parent_id IS NULL` minimum cannot see the very row the new task renders
+ * above — and the `id` tiebreak then hands the orphan the top. The pair is a lower bound over
+ * every row that can render in that table, which is what "always on top" actually needs. The
+ * tasks CHECK allows at most one of the two, so the pair is effectively one scope id.
+ *
+ * **`IS`, never `=`.** `project_id = NULL` is NULL rather than true, so `=` matches nothing for
+ * the season-wide „Festival" todos, hands every one of them the same ordinal and lets `id`
+ * decide — i.e. it reproduces exactly the bug this fixes, for exactly one list.
+ *
+ * **No `deleted_at` and no archive filter.** A trashed row returns with its old ordinal via
+ * `/restore`, an archived one the moment its status is reopened; counting them is what stops
+ * either from coming back tied with the new task. Every row in the scope counts.
+ *
+ * Repeated creates walk the ordinals negative. That is fine — `/reorder` renumbers a dragged
+ * group back to 0..n-1, the column is a 64-bit integer, and nothing reads the value itself.
+ */
+function leadingSortOrder(
+  db: ReturnType<typeof getDb>,
+  artistId: unknown,
+  projectId: unknown,
+): number {
+  // Only a real row id scopes the lookup. `Number('')` is 0 and finite, so a lax check read
+  // `{artist_id: ''}` as artist 0 — a scope that matches nothing — and handed the task
+  // `sort_order = 0`, tied with every never-dragged sibling: the WP-32 bug, reintroduced for
+  // exactly the caller that already sends the sloppy value.
+  const id = (v: unknown): number | null => {
+    const n = Number(v);
+    return v != null && v !== '' && Number.isInteger(n) && n > 0 ? n : null;
+  };
+  const row = db
+    .prepare('SELECT MIN(sort_order) AS m FROM tasks WHERE artist_id IS ? AND project_id IS ?')
+    .get(id(artistId), id(projectId)) as { m: number | null };
+  return row.m == null ? 0 : row.m - 1;
+}
 
 /* ---------- subtree operations ---------- */
 
@@ -372,11 +422,20 @@ function requireParentExists(id: number): void {
  * that would have made it revertible — so some rows sat in the new project, the rest in the old
  * one, and nothing could put them back (TTU-03).
  *
- * All three placement fields are explicit and always written, so the *same* endpoint is the
+ * All four placement fields are explicit and always written, so the *same* endpoint is the
  * revert: the client posts the prior placement it got back in `before`. Descendants follow the
  * root's scope and keep their own `parent_id`. A legacy tree whose children sat in a different
  * scope than their parent is therefore normalised to the root's — which the forward move already
  * did, and which is the consistent state anyway.
+ *
+ * **`sort_order` is the fourth field, and it has to be.** An ordinal only means something inside
+ * one artist/project list — a hand-dragged list holds 0..n-1, a composer-only one 0, -1, -2 — and
+ * since WP-32 it is the only thing ordering rows of equal rank. Carrying the old number into the
+ * new scope dropped the moved task at an arbitrary spot: below every open row in one direction,
+ * above the row the user had deliberately dragged to the top in the other. A move with no
+ * `sort_order` therefore lands the task at the head of its destination, like a new one; undo
+ * passes the captured value back and restores the exact slot. Children keep theirs — they are
+ * only ever compared with their own siblings, whose relative order the move does not touch.
  */
 tasksRouter.post('/:id/move', (req, res) => {
   const db = getDb();
@@ -406,9 +465,18 @@ tasksRouter.post('/:id/move', (req, res) => {
     }
   }
 
-  const select = db.prepare('SELECT id, artist_id, project_id, parent_id FROM tasks WHERE id = ?');
+  // An explicit sort_order is the undo putting the captured slot back; its absence means „place
+  // it like a new task", which is what a forward move from the dialog sends.
+  const placement = body.sort_order;
+  if (placement != null && !Number.isInteger(Number(placement))) {
+    throw new HttpError(400, 'Ungültige Reihenfolge.');
+  }
+
+  const select = db.prepare(
+    'SELECT id, artist_id, project_id, parent_id, sort_order FROM tasks WHERE id = ?',
+  );
   const moveRoot = db.prepare(
-    `UPDATE tasks SET artist_id = ?, project_id = ?, parent_id = ?, updated_at = datetime('now', 'localtime')
+    `UPDATE tasks SET artist_id = ?, project_id = ?, parent_id = ?, sort_order = ?, updated_at = datetime('now', 'localtime')
      WHERE id = ?`,
   );
   const moveChild = db.prepare(
@@ -419,7 +487,12 @@ tasksRouter.post('/:id/move', (req, res) => {
     // One statement per id rather than an IN-list: a subtree is small, but the bound-parameter
     // ceiling is the kind of limit this codebase has been bitten by before (DBW-02).
     const prior = ids.map((id) => select.get(id));
-    moveRoot.run(artistId, projectId, parentId, rootId);
+    // Read before the UPDATE, so the row's own outgoing ordinal cannot be the minimum it is
+    // measured against — except when the target *is* where it already sits, where landing on top
+    // is the honest answer to a move the user asked for anyway.
+    const sortOrder =
+      placement != null ? Number(placement) : leadingSortOrder(db, artistId, projectId);
+    moveRoot.run(artistId, projectId, parentId, sortOrder, rootId);
     for (const id of ids.slice(1)) moveChild.run(artistId, projectId, id);
     return prior;
   })();

@@ -48,6 +48,10 @@ jobs:
           # `security-extended` over the default: this ships to end users as a desktop app
           # with filesystem access, and the extra precision costs a few minutes a week.
           queries: security-extended
+          # …minus the one query that fires on every route handler in the server because the
+          # app is loopback-only. The suite stays as selected above; the config file only
+          # filters it, and says which change makes that filter wrong again.
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@d1ba80a13dd99fba24a470575428917156a28b43 # v4.37.5

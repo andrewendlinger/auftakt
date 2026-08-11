@@ -931,6 +931,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   project_id    INTEGER REFERENCES projects(id),
   title         TEXT NOT NULL,
   status        TEXT NOT NULL DEFAULT 'new',
+  -- Only reached by writers that omit priority (importers, raw SQL): the composer sends the
+  -- middle *configured* option instead, because a hardcoded value matches no option once the
+  -- categories are renamed, and then renders as a grey placeholder (TTU-11).
   priority      TEXT NOT NULL DEFAULT 'mittel',
   due_date      TEXT,
   comment       TEXT,
@@ -938,6 +941,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   custom_values TEXT NOT NULL DEFAULT '{}',
   erledigt_am   TEXT,
   parent_id     INTEGER REFERENCES tasks(id),
+  -- The manual row order, and since WP-32 the baseline the task list is returned in. A created
+  -- task is stamped below its scope's minimum (routes/entities.ts), so 0 is only ever a lone
+  -- first row or a writer that sets it itself.
   sort_order    INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at    TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
@@ -1085,12 +1091,19 @@ const BUILTIN_COLUMNS: BuiltinColumn[] = [
  * Default hierarchy for the automatic task ordering in the main task table.
  * Each rule sorts by a builtin column id; `status` asc follows the status option
  * order (Not Started → In Progress → Done). Users can reorder/extend this in Settings.
+ *
+ * `priority` and `due` were here too, and both columns ship `enabled: 0` — so ab Werk the list
+ * was ordered by two columns that render nowhere, and a new task landed wherever its invisible
+ * priority put it (WP-32). Under `[status]` alone, what decides inside a status is the manual
+ * order, and a new task is stamped to lead it.
+ *
+ * **A pre-WP-32 season is deliberately not migrated.** It still stores `[status, priority, due]`
+ * and behaves exactly like this one, because `activeSortRules` (client/src/lib/taskSort.ts) drops
+ * a rule whose column is hidden. Rewriting the stored value would have had to guess whether those
+ * two rules were the factory default or a hierarchy the user built by hand — and it would have
+ * taken the priority ordering away from the one user who *did* show the column and wants it.
  */
-export const DEFAULT_TASK_SORT = [
-  { id: 'status', dir: 'asc' },
-  { id: 'priority', dir: 'asc' },
-  { id: 'due', dir: 'asc' },
-];
+export const DEFAULT_TASK_SORT = [{ id: 'status', dir: 'asc' }];
 
 const DEFAULT_SETTINGS: Record<string, string> = {
   saison: 'Festival 2026',
@@ -1775,26 +1788,10 @@ export function doneStatusValue(db: Database.Database): string {
   return 'done';
 }
 
-/**
- * The Priorität option values in the order the user configured them — the ranking the task list
- * sorts by. Falls back to the factory options when the column is gone or its options are
- * unreadable, which is what the ORDER BY used to hardcode.
- */
-export function priorityValues(db: Database.Database): string[] {
-  const row = db
-    .prepare("SELECT options FROM custom_columns WHERE key = 'priority' AND deleted_at IS NULL LIMIT 1")
-    .get() as { options?: string | null } | undefined;
-  if (row?.options) {
-    try {
-      const opts = JSON.parse(row.options) as ColumnOption[];
-      const values = opts.map((o) => o.value).filter((v): v is string => typeof v === 'string' && v !== '');
-      if (values.length) return values;
-    } catch {
-      /* fall through */
-    }
-  }
-  return DEFAULT_PRIORITY_OPTIONS.map((o) => o.value);
-}
+// `priorityValues()` stood here: the Priorität options in configured order, read by the task
+// ORDER BY. WP-32 took priority out of that ordering — a hidden column must not order the table —
+// and it had no other caller. The ranking still exists where it is visible: the client ranks by
+// the same option order in `makeSortValue`, but only while the column is shown.
 
 function ensureDefaultSettings(db: Database.Database): void {
   const stmt = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');

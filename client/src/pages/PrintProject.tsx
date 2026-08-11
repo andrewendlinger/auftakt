@@ -37,7 +37,7 @@ export function PrintProject() {
         api.projects.get(projectId),
         api.events.list({ project_id: projectId }),
         api.contacts.list({ project_id: projectId }),
-        api.tasks.list({ project_id: projectId }),
+        api.tasks.list({ project_id: projectId, order: 'due' }),
         api.customColumns.list({ scope: 'global' }),
         api.customColumns.list({ scope: 'project', project_id: projectId }),
       ]);

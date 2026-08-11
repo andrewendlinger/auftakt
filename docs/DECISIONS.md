@@ -200,6 +200,45 @@ deliberate, and harmless, because the audit step in `.github/workflows/build.yml
 **Remove the ignore when** `react-router-dom` ships a release that depends on a patched
 `react-router`. At that point this becomes an ordinary bump.
 
+## CodeQL's `js/missing-rate-limiting` is filtered out — until the server leaves loopback (2026-08-10)
+
+CodeQL flags every route handler that touches the database as vulnerable to denial of service for
+want of a rate limiter. Here that is *all* of them: 18 open alerts across `server/src/lib/crud.ts`,
+`routes/entities.ts`, `deleted.ts`, `search.ts`, `export.ts`, `settings.ts`, `usage.ts` and
+`dashboard.ts`. `.github/codeql/codeql-config.yml` excludes the query.
+
+**The vector is closed one layer up.** `server/src/index.ts` binds `127.0.0.1` — not `0.0.0.0` —
+and the X-01 middleware 403s any request whose `Host` is not a loopback name or whose `Origin` is
+off the allowlist, before a handler runs. The threat model there is a hostile page in the user's
+browser; the flood CodeQL describes has no way in, and the only caller that reaches a handler is
+the user's own UI. A handler is not exposed merely because it is a handler.
+
+**The alerts were noise with a cost.** The finding is per-handler, so any PR touching any handler
+re-reports a pre-existing alert as „new in code changed by this pull request" — PR 36 hit exactly
+that by editing four lines inside `POST /tasks/:id/move`, which had carried alert #14 since
+2026-08-06. Left alone, the check is red on essentially every PR forever, which is how a check
+stops being read. Same reasoning as the `continue-on-error` on the audit step in `build.yml`,
+one step further: a signal that always fires is not a signal.
+
+**`express-rate-limit` was declined, not deferred.** It would close the alerts legitimately and it
+is cheap — the check scripts issue ~65 requests and the client does not poll, so no gate would
+notice. It is still the wrong thing twice over. On the desktop app every request arrives from
+`127.0.0.1`, so the default per-IP keying is one bucket for the whole application, and a limiter
+that ever fires presents to the user as an app that has frozen — a self-inflicted outage
+protecting against nothing. And it would not be the middleware a shared deployment needs anyway:
+that wants a shared store rather than the in-memory one, plus `trust proxy` so the key is the
+caller and not the reverse proxy. Rate limiting is also the *smallest* item on that list, well
+behind auth, sessions, per-tenant database routing and TLS. Installing it now would buy a green
+check, not a head start.
+
+**Scoped to that one query.** `js/http-to-file-access` (alert #19, the `writeFileSync` in
+`saveRegistry`, `server/src/db.ts`) stays on: untrusted data reaching a file write is live for an
+app that takes season labels over HTTP and imports user-supplied `.db` and CSV files.
+
+**Remove the filter when** the server binds anything but loopback, or serves more than one user.
+That is the change that makes the finding real — and at that point it is the least of what has to
+be built.
+
 ## The event dialog derives its mode; the checkboxes do not come back (2026-08-10, WP-40)
 
 „Mit Uhrzeit" and „Datum offen (TBD)" are gone, and neither is a candidate for restoration. Both
@@ -312,6 +351,63 @@ and so that it cannot claim a boundary that no longer withholds anything. Rename
 overrides and survive untouched.
 
 ---
+
+## A column you cannot see does not order the table (2026-08-10, WP-32)
+
+The complaint was that a new task lands at position 2 or 3 instead of on top. The reason was
+invisible: `task_sort` shipped `[status, priority, due]` while the Priorität and Fällig columns ship
+`enabled: 0`, so the table was ordered by two columns that render nowhere.
+
+**The general rule replaces the specific fix.** A sort rule is in effect only while its column is
+visible — hidden *or* deleted makes it inert (`activeSortRules`, `client/src/lib/taskSort.ts`).
+`manual` is exempt; it is `sort_order`, not a column.
+
+That is what makes the shipped default's change to `[status]` need **no migration**, and the
+migration is the part deliberately not built. TODO.md planned a self-detecting one that rewrites
+`task_sort` only when the stored value equals the old default. It would have had to guess: a stored
+`[status, priority, due]` is indistinguishable from a hierarchy the user assembled by hand to be
+identical, and rewriting it would take priority ordering away from the one user who *did* show the
+column and wants it sorted by it. The filter fixes both cases with no write at all, and because the
+rule is filtered rather than removed, showing the column brings its ordering back.
+
+The rejected alternative for the ordering itself: **temporarily pinning** the new row to the top
+until the next navigation. A row that sticks and then jumps explains itself to nobody.
+
+## The server's baseline order is the manual order (2026-08-10, WP-32)
+
+`TASK_ORDER` (`server/src/lib/queries.ts`) ranks by `sort_order` and nothing else, with done rows
+sinking. It ranked by priority and due date before, and the client keeps the server's order verbatim
+whenever no rule is in effect (`sortTasks` short-circuits) — so those keys were rules nobody could
+see in Settings and nobody could switch off, reachable from the same gap WP-32 is about. The
+consequence is accepted deliberately: the print sheets, the .xlsx export and the archive page render
+in server order and therefore now group by hand order rather than by priority. `priorityValues()`
+died with the priority `CASE`; the client still ranks by the configured option order, where the
+column is visible. TTU-11's check case was re-aimed at the new invariant, not deleted.
+
+**A created task is stamped server-side** (`leadingSortOrder`, `routes/entities.ts`): the client
+knows only its rendered siblings, never sees archived rows and cannot see the trash at all. The
+scope is the `(artist_id, project_id)` pair and deliberately *not* `parent_id`, because a promoted
+orphan renders in a list a `parent_id` minimum cannot see.
+
+**`POST /tasks/:id/move` stamps it too, as a fourth placement field.** The first cut left
+`sort_order` alone, reasoning that every field the endpoint writes is one the caller passes back and
+that this symmetry is what makes the same call its own undo. That was wrong on the facts: an ordinal
+means nothing outside its own list, so carrying it across dropped the moved task at an arbitrary
+spot in the destination — below every open row coming from a hand-dragged list, above a
+deliberately-placed first row coming from a composer-only one. The symmetry is kept by *widening*
+the contract instead: a move with no `sort_order` lands the task at the head of its destination like
+a new one, and the undo passes the captured ordinal back to restore the exact slot.
+
+**Readers that are not the task table ask for `order=due`.** The Archiv page, the .xlsx export and
+the print sheets render `listTasks` output verbatim and span several lists at once, where a per-list
+ordinal interleaves them and prints a task due tomorrow below one due in six months. They get
+`TASK_ORDER_DUE` — the pre-WP-32 ordering minus priority, which is a hidden column and stays out
+under the same rule as everywhere else.
+
+**A new and an upgraded season do diverge**, and that is the accepted cost of not migrating: show
+the Fällig column in both and the old season's dormant `due` rule wakes up while the new one has no
+such rule to wake. Both states are visible and editable in Einstellungen, which is the property that
+makes it survivable; a migration that silently rewrote the old season's hierarchy would not be.
 
 ## The boot gesture is conditional, and the condition is measured (2026-08-11, PR #35)
 
