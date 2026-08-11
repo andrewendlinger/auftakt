@@ -482,6 +482,8 @@ if (!gotLock) {
 
 /** Set once whenReady has had its turn at creating the first window. See below. */
 let startupDone = false;
+/** Set once the last window has closed and the quit is only waiting on the chores. */
+let quitting = false;
 
 app.on('second-instance', () => {
   const win = liveWindow();
@@ -496,7 +498,17 @@ app.on('second-instance', () => {
   // does. Gated on startupDone so this cannot race the first window into existence:
   // during those first seconds whenReady is already about to create one, and answering
   // the click here would open a second.
-  if (startupDone) void createWindow();
+  //
+  // Off macOS there is now a third state between „a window" and „no process":
+  // window-all-closed holds the lock for up to QUIT_CHORES_MS while the startup chores
+  // finish. A user who closes the window and relaunches straight away lands in it, and
+  // the second instance has already exited against our lock by the time this runs — so
+  // opening a window here is the only way they get one at all. Call off the quit as well
+  // as opening it, or app.quit() would tear the new window down a moment later and the
+  // relaunch would read as an app that opened and died.
+  if (!startupDone) return;
+  quitting = false;
+  void createWindow();
 });
 
 app.whenReady().then(async () => {
@@ -546,6 +558,7 @@ app.on('window-all-closed', () => {
   // on the ordinary path this is an already-settled promise and the quit is immediate.
   // Capped, because ensureBackupDir's fetch has no timeout of its own and a wedged server
   // must not turn „close the window" into „the app will not exit".
+  quitting = true;
   let cap: NodeJS.Timeout;
   // finally, not then: `chores` ends in .catch(reportBackupProblem), and that handler is
   // itself async — it awaits a dialog. Anything it throws rejects the race, and with only
@@ -559,7 +572,9 @@ app.on('window-all-closed', () => {
     }),
   ]).finally(() => {
     clearTimeout(cap);
-    app.quit();
+    // Unless a relaunch arrived while this was waiting and took the instance back over
+    // (see second-instance); the window it opened must not be quit out from under it.
+    if (quitting) app.quit();
   });
 });
 
