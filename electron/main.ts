@@ -57,6 +57,16 @@ const DEV_URL = process.env.AUFTAKT_DEV_URL ?? 'http://localhost:5317';
 let mainWindow: BrowserWindow | null = null;
 
 /**
+ * The window, if there is still one to talk to. `closed` nulls the reference, but only
+ * after the window is already destroyed, so both halves are load-bearing — and anything
+ * that can outlive the window (the startup chores, which the quit path now releases and
+ * then waits on) has to ask before it puts something on screen.
+ */
+function liveWindow(): BrowserWindow | null {
+  return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+}
+
+/**
  * Authoritative scheme allowlist for `shell.openExternal` (X-02). The renderer
  * guards the same set (`client/src/lib/external.ts`), but the renderer is the
  * untrusted side, so the check that matters is here — a compromised or bypassed
@@ -190,9 +200,17 @@ async function promptForDirectory(): Promise<string | null> {
 /**
  * A backup that cannot run is the whole failure mode this path exists to prevent, so
  * say so instead of logging it (ELP-03) — the Settings hint is easy to never open.
+ *
+ * Except with no window left, which the quit path made reachable: close the window with
+ * an unreachable backup folder — an unplugged drive, a renamed Google-Drive folder — and
+ * window-all-closed releases the chores, this throws, and a modal error box opens on an
+ * empty desktop *after* the user quit. QUIT_CHORES_MS then fires app.quit() out from
+ * under it, so the message can vanish before it has been read. Same reasoning as the
+ * folder picker in ensureBackupDir; here the fallback is the log line above.
  */
 async function reportBackupProblem(err: unknown): Promise<void> {
   console.error('Backup übersprungen:', err);
+  if (!liveWindow()) return;
   await dialog.showMessageBox({
     type: 'error',
     message: 'Es wurde keine Sicherung angelegt.',
@@ -381,7 +399,7 @@ async function ensureBackupDir(): Promise<string> {
   // released by the window closing (see window-all-closed), and a modal appearing on an
   // empty desktop *after* the user quit reads as a hang, not as a prompt. Leaving
   // `prompted` unset is the right outcome: the next launch asks properly.
-  if (!mainWindow || mainWindow.isDestroyed()) return '';
+  if (!liveWindow()) return '';
 
   const chosen = await promptForDirectory();
   if (!chosen) return '';
@@ -466,8 +484,8 @@ if (!gotLock) {
 let startupDone = false;
 
 app.on('second-instance', () => {
-  const win = mainWindow;
-  if (win && !win.isDestroyed()) {
+  const win = liveWindow();
+  if (win) {
     if (win.isMinimized()) win.restore();
     win.show();
     win.focus();
