@@ -2,36 +2,16 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { DeletedItem, DeletedType } from '../api/types';
+import type { DeletedItem } from '../api/types';
 import { SectionTitle, Spinner, EmptyState, ErrorState, Btn, Pill } from '../components/ui';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { TextInput, Modal } from '../components/fields';
 import { formatDate, daysUntil, dayCount, dayCountDative } from '../lib/dates';
+import { cascadeText, TYPE_LABELS } from '../lib/deletedTypes';
 import { Markdown } from '../components/Markdown';
 import { useGuardedAction, useInvalidateAll, useRetention } from '../hooks';
 import { useToast } from '../components/Toast';
-
-/** Singular/plural per type — drives the badge and the cascade summary. */
-const TYPE_LABELS: Record<DeletedType, { one: string; many: string }> = {
-  task: { one: 'Aufgabe', many: 'Aufgaben' },
-  event: { one: 'Termin', many: 'Termine' },
-  artist: { one: 'Künstler', many: 'Künstler' },
-  project: { one: 'Projekt', many: 'Projekte' },
-  contact: { one: 'Kontakt', many: 'Kontakte' },
-  link: { one: 'Dokument', many: 'Dokumente' },
-  section: { one: 'Bereich', many: 'Bereiche' },
-  column: { one: 'Spalte', many: 'Spalten' },
-};
-
-/** "3 Aufgaben, 1 Termin und 2 Dokumente" from the dependents map. */
-function cascadeText(dep: DeletedItem['dependents']): string {
-  const parts = (Object.entries(dep.byType) as Array<[DeletedType, number]>)
-    .filter(([, n]) => n > 0)
-    .map(([t, n]) => `${n} ${n === 1 ? TYPE_LABELS[t].one : TYPE_LABELS[t].many}`);
-  if (parts.length <= 1) return parts[0] ?? '';
-  return `${parts.slice(0, -1).join(', ')} und ${parts[parts.length - 1]}`;
-}
 
 function purgeHint(purgeAt: string | null): string {
   // No date means the automatic purge will skip this row for as long as something still

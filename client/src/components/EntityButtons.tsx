@@ -1,18 +1,29 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Btn } from './ui';
-import { RecordFormModal, type FieldDef } from './fields';
+import { TrashIcon } from './icons';
+import { Modal, RecordFormModal, type FieldDef } from './fields';
 import { api } from '../api/client';
 import type {
   Artist,
   ArtistCreate,
   ArtistUpdate,
   CustomColumnOption,
+  ID,
   Project,
   ProjectCreate,
 } from '../api/types';
 import { pickArtistColor, projectShade } from '../lib/colors';
-import { useInvalidateAll, useLabel, useProjectStatusOptions, useUndoablePatch } from '../hooks';
+import { cascadeText } from '../lib/deletedTypes';
+import {
+  resourceUndo,
+  useInvalidateAll,
+  useLabel,
+  useProjectStatusOptions,
+  useUndoableDelete,
+  useUndoablePatch,
+} from '../hooks';
 
 /** `artists.color TEXT NOT NULL DEFAULT '#888888'` — the value an empty field means. */
 const ARTIST_DEFAULT_COLOR = '#888888';
@@ -61,6 +72,116 @@ function artistUpdatePayload(v: Record<string, string | null>): ArtistUpdate {
  */
 function projectPayload(v: Record<string, string | null>): Omit<ProjectCreate, 'artist_id'> {
   return { code: v.code ?? '', name: v.name ?? '', status: v.status, color: v.color };
+}
+
+/**
+ * „Löschen" inside the edit dialog — the delete affordance for an artist or a project (WP-34).
+ *
+ * Not a 🗑 in the page header, and not for lack of room: this is the one delete in the app that
+ * takes a whole page's worth of work out of sight, and a header button sits a stray click away
+ * on the surface the user looks at most. Two deliberate acts get in front of it instead — open
+ * „✎ Bearbeiten", then confirm — which is also where the app already keeps a destructive control
+ * (the Profilbild's „Entfernen", in this very dialog). The cost is findability; if that ever
+ * bites, the answer is a hint next to „✎ Bearbeiten", not moving the button back out.
+ *
+ * The confirm is a nested `Modal` — the case `ModalDepthCtx` exists for, so Escape and the
+ * backdrop close the question and leave the form standing. `Modal`'s own „Änderungen verwerfen?"
+ * overlay is deliberately not reused: it is wired to `dirty` and the Escape contract, and asking
+ * about unsaved edits to a record on its way to the Papierkorb would be a question with no
+ * meaningful answer.
+ */
+function DeleteRecordAction({
+  kind,
+  id,
+  name,
+  noun,
+  redirectTo,
+  onDone,
+}: {
+  kind: 'artist' | 'project';
+  id: ID;
+  name: string;
+  /** „Künstler" / „Projekt", following the renameable heading where there is one. */
+  noun: string;
+  /** Where to land afterwards — staying on the page of a deleted row is what PGS-05 catches. */
+  redirectTo: string;
+  /** Closes the edit dialog this button sits in. */
+  onDone: () => void;
+}) {
+  const del = useUndoableDelete();
+  const navigate = useNavigate();
+  const [confirming, setConfirming] = useState(false);
+  const res = kind === 'artist' ? api.artists : api.projects;
+  // Fetched when the *confirm* opens, not when the edit dialog does: renaming someone is the
+  // common case and it has no business asking the server what hangs off the row.
+  const { data: dependents, isPending } = useQuery({
+    queryKey: ['dependents', kind, id],
+    queryFn: () => res.dependents(id),
+    enabled: confirming,
+  });
+
+  const remove = () => {
+    setConfirming(false);
+    onDone();
+    // Navigate *before* the delete, not after it. `useUndoableDelete` awaits its invalidate()
+    // before returning, so the page underneath refetches its own row, 404s, and flashes the
+    // LoadError panel on the way out. ToastProvider and UndoProvider sit above HashRouter
+    // (main.tsx), so the toast and the Cmd+Z entry outlive this component either way — and a
+    // failed delete still reports itself, with the row untouched.
+    navigate(redirectTo);
+    void del({ label: `${noun} „${name}“`, ...resourceUndo(res, id) });
+  };
+
+  return (
+    <>
+      <Btn variant="danger" onClick={() => setConfirming(true)}>
+        <TrashIcon className="h-4 w-4" /> Löschen
+      </Btn>
+      {confirming && (
+        <Modal
+          title={`${noun} löschen`}
+          onClose={() => setConfirming(false)}
+          footer={
+            <>
+              <Btn autoFocus onClick={() => setConfirming(false)}>
+                Abbrechen
+              </Btn>
+              <Btn variant="danger" onClick={remove}>
+                In den Papierkorb
+              </Btn>
+            </>
+          }
+        >
+          <p className="text-sm text-neutral-600">„{name}“ in den Papierkorb legen?</p>
+          {/* The count is a promise about what disappears, never a gate: this delete takes
+              exactly one row, so a slow or failed lookup must not stand between the user and
+              the button. Said out loud while it runs, so the paragraph below doesn't appear
+              out of nowhere a moment after the dialog settles. */}
+          {isPending ? (
+            <p className="mt-2 text-sm text-neutral-400">Wird geprüft, was daran hängt …</p>
+          ) : (
+            dependents != null &&
+            dependents.total > 0 && (
+              <>
+                <p className="mt-2 text-sm text-neutral-600">
+                  {cascadeText(dependents)} verschwinden damit aus allen Listen. Gelöscht wird nur
+                  dieser Eintrag — die übrigen Daten bleiben erhalten und sind beim Wiederherstellen
+                  wieder da.
+                </p>
+                <p className="mt-2 text-sm text-neutral-500">
+                  Solange sie daran hängen, wird der Eintrag im Papierkorb nicht automatisch
+                  entfernt.
+                </p>
+              </>
+            )
+          )}
+          <p className="mt-2 text-sm text-neutral-500">
+            Wiederherstellen im Archiv unter „Gelöschte Einträge“.
+          </p>
+        </Modal>
+      )}
+    </>
+  );
 }
 
 export function NewArtistButton() {
@@ -119,6 +240,16 @@ export function EditArtistButton({ artist }: { artist: Artist }) {
             });
           }}
           onClose={() => setOpen(false)}
+          danger={
+            <DeleteRecordAction
+              kind="artist"
+              id={artist.id}
+              name={artist.name}
+              noun={artistLabel}
+              redirectTo="/dashboard"
+              onDone={() => setOpen(false)}
+            />
+          }
         />
       )}
     </>
@@ -199,6 +330,18 @@ export function EditProjectButton({ project, artistColor }: { project: Project; 
             });
           }}
           onClose={() => setOpen(false)}
+          danger={
+            <DeleteRecordAction
+              kind="project"
+              id={project.id}
+              // The header shows „CODE · Name"; the dialog names the row the same way the trash
+              // will, so the user recognises the entry they are about to look for there.
+              name={project.code ? `${project.code} · ${project.name}` : project.name}
+              noun="Projekt"
+              redirectTo={`/artist/${project.artist_id}`}
+              onDone={() => setOpen(false)}
+            />
+          }
         />
       )}
     </>

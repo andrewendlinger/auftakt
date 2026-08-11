@@ -14,6 +14,7 @@ import type {
   Dashboard,
   DeletedItem,
   DeletedType,
+  DependentCounts,
   EventCreate,
   EventItem,
   EventUpdate,
@@ -110,8 +111,20 @@ export const api = {
   getSettings: () => http<Settings>('GET', '/settings'),
   patchSettings: (patch: Partial<WritableSettings>) => http<Settings>('PATCH', '/settings', patch),
 
-  artists: resource<Artist, ArtistCreate, ArtistUpdate>('/artists'),
-  projects: resource<Project, ProjectCreate, ProjectUpdate>('/projects'),
+  /**
+   * `dependents` is spread on rather than added to `resource()`: only these two tables have a
+   * delete affordance at page level, and the endpoint has no meaning for a leaf table. Counts
+   * what a soft delete would *hide*, which is not what the trash's cascade count means — see
+   * `DependentCounts`.
+   */
+  artists: {
+    ...resource<Artist, ArtistCreate, ArtistUpdate>('/artists'),
+    dependents: (id: ID) => http<DependentCounts>('GET', `/artists/${id}/dependents`),
+  },
+  projects: {
+    ...resource<Project, ProjectCreate, ProjectUpdate>('/projects'),
+    dependents: (id: ID) => http<DependentCounts>('GET', `/projects/${id}/dependents`),
+  },
   contacts: resource<Contact, ContactCreate, ContactUpdate>('/contacts'),
   events: resource<EventItem, EventCreate, EventUpdate>('/events'),
   tasks: {
