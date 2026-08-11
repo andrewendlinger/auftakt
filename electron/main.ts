@@ -430,15 +430,43 @@ function runStartupChores(): void {
  * exit(), not quit(): quit is asynchronous and would let the rest of this module run on
  * and import the server anyway. The `gotLock` guard on whenReady does not depend on
  * exit() being immediate.
+ *
+ * Exiting without a dialog is right for the case this is built for — a user double-clicks
+ * the shortcut again, the running instance takes `second-instance` and raises itself, and
+ * a message box would only be noise. It is not right for a developer, and there is no way
+ * to tell the two apart from here: Electron keys the lock on the userData directory, and
+ * on macOS's case-insensitive default volume `.../auftakt` (dev) and `.../Auftakt`
+ * (packaged) are the same lock, so `npm run electron:dev` against an installed copy dies
+ * on this line and returns to the prompt having printed nothing at all. It used to fail
+ * loudly with EADDRINUSE on :4317, a shape docs/VERIFYING.md documents. Hence a line on
+ * stderr: invisible to users, and the one thing that would have made that silence legible.
  */
 const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) app.exit(0);
+if (!gotLock) {
+  console.error(
+    'Auftakt läuft bereits — dieser Start wird beendet. ' +
+      '(Single-Instance-Lock; im Dev-Modus kollidiert er mit einer installierten Auftakt-App.)',
+  );
+  app.exit(0);
+}
+
+/** Set once whenReady has had its turn at creating the first window. See below. */
+let startupDone = false;
 
 app.on('second-instance', () => {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  const win = mainWindow;
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+    return;
+  }
+  // No window to raise. On macOS that is the ordinary „closed the window, app still
+  // running" state and a second launch should reopen it — the same thing `activate`
+  // does. Gated on startupDone so this cannot race the first window into existence:
+  // during those first seconds whenReady is already about to create one, and answering
+  // the click here would open a second.
+  if (startupDone) void createWindow();
 });
 
 app.whenReady().then(async () => {
