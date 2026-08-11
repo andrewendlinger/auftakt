@@ -425,7 +425,7 @@ function runStartupChores(): Promise<unknown> {
   if (isDev) return (chores = Promise.resolve());
   chores = (async () => {
     const backupDir = await ensureBackupDir();
-    if (backupDir) await runStartupBackup(PORT, backupDir);
+    if (backupDir) await runStartupBackup(ORIGIN, backupDir);
   })().catch(reportBackupProblem);
 
   // Silent update check; the result surfaces as a hint in the Settings card. Not awaited

@@ -26,13 +26,15 @@ export function backupDirProblem(backupDir: string): string | null {
  * and is the only side that can produce a consistent snapshot of a WAL database.
  * Electron only picks the folder and kicks the run off at startup.
  */
-export async function runStartupBackup(port: number, backupDir: string): Promise<void> {
+export async function runStartupBackup(origin: string, backupDir: string): Promise<void> {
   if (!backupDir) return;
   const problem = backupDirProblem(backupDir);
   if (problem) throw new Error(problem);
   const dir = resolve(backupDir);
-  // By address, not by name — see the ORIGIN comment in main.ts.
-  const r = await fetch(`http://127.0.0.1:${port}/api/backup`, {
+  // The origin is passed in rather than rebuilt from a port: main.ts owns that decision
+  // (see its ORIGIN comment for why it must be an address and not a name), and a second
+  // copy here would go stale the first time the scheme or the host changes.
+  const r = await fetch(`${origin}/api/backup`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ dir }),
