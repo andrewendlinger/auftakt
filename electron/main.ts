@@ -481,6 +481,13 @@ if (!gotLock) {
   app.exit(0);
 }
 
+/**
+ * Stops the AUFTAKT_BOOT_TRACE recording and resolves once the file is on disk. Null
+ * when tracing is off. Memoised inside, so the settle timer, the cap timer and the quit
+ * paths below all await the same one write.
+ */
+let stopBootTrace: (() => Promise<void>) | null = null;
+
 /** Set once whenReady has had its turn at creating the first window. See below. */
 let startupDone = false;
 /** Set once the last window has closed and the quit is only waiting on the chores. */
@@ -517,15 +524,15 @@ app.whenReady().then(async () => {
 
   /* Opt-in boot tracing, for the launches the headless checks cannot represent — a real
      cold start on a real panel is the one path they never covered. AUFTAKT_BOOT_TRACE=1
-     records ~6 s (any larger number: that many milliseconds) to
-     userData/boot-trace-<stamp>.json, loadable at ui.perfetto.dev. Started before
-     startServer() so the 3.4 MB server bundle's import and compile are in the picture.
-     The categories are picked to answer "who stole the frames":
-     disabled-by-default-v8.compile is the cold-code-cache signature, cc/gpu carry
-     raster and the GPU process, and blink.user_timing carries the overlay's auftakt:*
-     marks, so the gesture's phases sit on the same timeline as whatever ran through
-     them. Tracing has overhead of its own — a traced run attributes a stall, it does
-     not time it honestly. */
+     records from before the window until shortly after the boot settles (capped at ~6 s,
+     or the env var's value in ms) to userData/boot-trace-<stamp>.json, loadable at
+     ui.perfetto.dev. Started before startServer() so the 3.4 MB server bundle's import
+     and compile are in the picture. The categories are picked to answer "who stole the
+     frames": disabled-by-default-v8.compile is the cold-code-cache signature, cc/gpu
+     carry raster and the GPU process, and blink.user_timing carries the overlay's
+     auftakt:* marks, so the gesture's phases sit on the same timeline as whatever ran
+     through them. Tracing has overhead of its own — a traced run attributes a stall, it
+     does not time it honestly. */
   if (process.env.AUFTAKT_BOOT_TRACE) {
     const n = Number(process.env.AUFTAKT_BOOT_TRACE);
     const traceMs = n > 1 ? n : 6000;
@@ -543,13 +550,25 @@ app.whenReady().then(async () => {
           'gpu',
         ],
       });
-      setTimeout(() => {
-        const out = join(app.getPath('userData'), `boot-trace-${fileStamp()}.json`);
-        contentTracing.stopRecording(out).then(
-          (path) => console.log('Boot-Trace geschrieben:', path),
-          () => {},
-        );
-      }, traceMs);
+      /* Memoised: the settle timer, the cap timer and the quit path all funnel into the
+         same single stopRecording, and a caller that arrives while the write is already
+         in flight gets the in-flight promise to await rather than a fresh no-op — that
+         is what lets before-quit hold the quit until the file is actually on disk. The
+         first traced field run proved the need the hard way: a ~6 s trace is several MB,
+         the flush takes real time, and quitting mid-write left a
+         .com.auftakt.app.XXXXXX temp file and no trace, twice. */
+      let traceWrite: Promise<void> | null = null;
+      stopBootTrace = () =>
+        (traceWrite ??= contentTracing
+          .stopRecording(join(app.getPath('userData'), `boot-trace-${fileStamp()}.json`))
+          .then(
+            (path) => console.log('Boot-Trace geschrieben:', path),
+            () => {
+              /* recording already gone — nothing to write */
+            },
+          ));
+      const stop = stopBootTrace;
+      setTimeout(() => void stop(), traceMs);
     } catch {
       /* a trace that cannot start must not stop the app from starting */
     }
@@ -651,5 +670,54 @@ let bootReported = false;
 ipcMain.handle('boot-settled', (_e, report: unknown) => {
   bootReported = true;
   if (!isDev) writeBootReport(app.getPath('userData'), report, app.getVersion());
+  // Everything the boot trace exists for is over once the overlay has settled; 750 ms
+  // of margin catches the reveal's last frames and the released chores starting. Ending
+  // here rather than at the cap keeps the file small and beats the user's quit in the
+  // common case — the first field run showed a traced boot is watched, quit, relaunched
+  // within seconds.
+  if (stopBootTrace) {
+    const stop = stopBootTrace;
+    setTimeout(() => void stop(), 750);
+  }
   void runStartupChores();
 });
+
+/**
+ * A boot abandoned before the overlay settled must still leave a log line. The 8 s
+ * fallback cannot be that line's writer on macOS: it lives on a timer in the process
+ * app.quit() destroys — the same shape the chores had (see window-all-closed above) —
+ * and darwin never takes the window-all-closed path at all. The first field runs hit
+ * exactly this: launches quit right after the reveal left an empty log, and the absence
+ * read as "the diagnostics are broken" rather than "the boot was abandoned".
+ *
+ * The write is synchronous and reuses bootReported as its once-latch. The trace flush is
+ * the async half: before-quit holds the quit until the in-flight write lands (nulling
+ * the handle first, so the re-entrant quit passes through), because a multi-MB
+ * stopRecording loses a race against process teardown — the first traced field run left
+ * only an unrenamed temp file, twice.
+ */
+function writeAbandonedBootLine() {
+  if (bootReported || isDev) return;
+  bootReported = true;
+  writeBootReport(app.getPath('userData'), { outcome: 'no-report', why: 'quit' }, app.getVersion());
+}
+app.on('before-quit', (e) => {
+  writeAbandonedBootLine();
+  if (stopBootTrace) {
+    const stop = stopBootTrace;
+    stopBootTrace = null;
+    e.preventDefault();
+    void stop().finally(() => app.quit());
+  }
+});
+// A traced launch is started from a terminal (open -a drops env), so it usually ends in
+// Ctrl-C — and SIGINT never reaches before-quit. Same bookkeeping, explicit exit.
+for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(sig, () => {
+    writeAbandonedBootLine();
+    const stop = stopBootTrace;
+    stopBootTrace = null;
+    if (stop) void stop().finally(() => app.exit(0));
+    else app.exit(0);
+  });
+}

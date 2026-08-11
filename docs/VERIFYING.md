@@ -118,14 +118,21 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   including warm reloads (a season switch writes `skip / warm`; that line is the reload proving
   itself, not noise) — wrapped by the main process with `at` (ISO time, main's clock, so a
   renderer cannot spoof it) and `app` (version). Capped at 64 KB, then trimmed to the last 100
-  lines. A launch whose renderer never reported — crashed, wedged, or the inline script died and
-  the CSS bail cleared the overlay — still gets a line: the 8 s chores fallback writes
-  `{"outcome":"no-report","why":"fallback-8s"}`. Read it with
+  lines. A launch whose renderer never reported still gets a line, through one of two doors: a
+  crashed or wedged renderer that lives past 8 s gets `{"outcome":"no-report","why":"fallback-8s"}`
+  from the chores fallback, and a launch *quit* before the overlay settled — Cmd-Q or Ctrl-C
+  during the hold or the gesture; on macOS the 8 s timer dies with the process — gets
+  `{"outcome":"no-report","why":"quit"}` from the before-quit/SIGINT hooks. An empty log after a
+  launch therefore always means the diagnostics did not run, never that the boot was merely
+  short-lived. Read it with
   `tail -n 5 ~/Library/Application\ Support/Auftakt/boot-log.jsonl | jq .` (Windows:
   `%APPDATA%\Auftakt\boot-log.jsonl`). Dev mode writes nothing, matching the overlay it reports
   on. The writer is `electron/bootLog.ts`, electron-import-free so `check:unit` covers it.
-- **A traced launch: `AUFTAKT_BOOT_TRACE=1`.** Records the first ~6 s (any larger number: that
-  many milliseconds) to `boot-trace-<stamp>.json` in userData, loadable at ui.perfetto.dev. Find
+- **A traced launch: `AUFTAKT_BOOT_TRACE=1`.** Records from before the window until ~750 ms after
+  the overlay settles — capped at ~6 s, or the env var's value in milliseconds — to
+  `boot-trace-<stamp>.json` in userData, loadable at ui.perfetto.dev. Quitting does not lose it:
+  before-quit and SIGINT/SIGTERM hold the exit until the write lands, so quit (or Ctrl-C the
+  terminal) as soon as the app appears. Find
   CrRendererMain, locate the overlay's `auftakt:*` marks (`blink.user_timing` category), and read
   what else ran between `auftakt:play` and `auftakt:done` — long `v8.compile` tasks are the cold
   code cache, RasterTask and GPU-process work the cold shader caches. Two traps: `open -a
