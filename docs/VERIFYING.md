@@ -100,6 +100,20 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
     cadence this display has been seen to deliver; `drops` — a fifth of frames lost; `starved` —
     too few frames delivered).
   - `done` → the node is gone and `#root` is no longer `inert`.
+- **Every boot files a report: `localStorage['auftakt-boot-report']`.** Written in the overlay's
+  single exit path just after the node is removed, so it is the non-racy way to learn what a boot
+  did after the fact: wait for `html[data-boot="done"]`, then read it — no need to catch
+  attributes before the overlay vanishes. One JSON object, last boot wins (a warm reload
+  overwrites it with `skip / warm`, which is also how you prove the reload happened). Fields:
+  `outcome` (`play` | `cross` | `skip`), `why` (`done`, `deadline`, `click`, `app-failed`,
+  `abort:<reason>`, `hold-max`, `gesture-max`, `warm`, `reduced-motion`, `no-prod`),
+  `readyMs`/`startMs`/`endMs` on the same clock the 1200 ms deadline reads, and — when the
+  gesture played — `frames` (judged deltas: `n`, `med`, `p95`, `worst`, `quick`, `drops`, plus
+  `lead`, the release→first-callback gap, and `warm`, the exempt first frame's delta) and `tail`
+  (deltas recorded unjudged during the reveal fade, with a retrospective `verdict`). A
+  `tail.verdict` of `hitch` on a run with **no** `data-abort` is not a contradiction: the
+  attribute still means the watchdog *changed the outcome*, the tail is record-only. Under
+  Electron the same report goes out over the `bootSettled` bridge.
 - **`document.getAnimations()` returns all twelve animations during the hold, not `[]`** — paused is
   not idle, and a paused animation with a fill is still in effect and still enumerated. What
   distinguishes the hold is `playState`: every one reads `paused` except `bootBail`, the dead man's
@@ -120,14 +134,16 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   `cross` instead of `play`. That is the feature working, and it applies for the *whole* gesture —
   the watchdog judges rolling 200 ms windows to the last frame, not just the opening one. The one
   exception is a block that lands after the reveal fade has begun (~2230 ms in): from there the app
-  is already showing through, so the watchdog stops watching and the overlay lets the fade finish
-  rather than throwing the splash back to full opacity. That run stays a clean `play` → `done` with
-  no `data-abort` — the attribute means the watchdog changed the outcome, not merely that a frame
-  was late. Probing that window needs a *short* block, ~80 ms: a longer one runs past the fade's
-  own end, so the overlay's `animationend` is dispatched before the next rAF callback, `remove()`
-  wins the race and nothing is left to observe. Read `data-abort` by polling inside the page while
-  `#boot-overlay` still exists — by the time an `await` in the driving script resolves, the node
-  and its attributes are usually gone.
+  is already showing through, so the watchdog stops judging — it keeps recording, and the block
+  shows up in the report's `tail` — and the overlay lets the fade finish rather than throwing the
+  splash back to full opacity. That run stays a clean `play` → `done` with no `data-abort` — the
+  attribute means the watchdog changed the outcome, not merely that a frame was late. Probing that
+  window needs a *short* block, ~80 ms: a longer one runs past the fade's own end, so the overlay's
+  `animationend` is dispatched before the next rAF callback, `remove()` wins the race and nothing
+  is left to observe on the node — though `tail.worst` in the report still shows it. Read
+  `data-abort` by polling inside the page while `#boot-overlay` still exists — by the time an
+  `await` in the driving script resolves, the node and its attributes are usually gone — or skip
+  the race entirely and read `localStorage['auftakt-boot-report']` after `done`.
 - **An aborted or skipped gesture keeps its last frame on screen, and that is not a stuck
   animation.** `cross` from within `play` adds `#boot-overlay.boot-froze`, which holds the svg
   visible while every descendant animation re-pauses, so a screenshot taken then shows the hand

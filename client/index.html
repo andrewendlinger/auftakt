@@ -577,6 +577,18 @@
         var gestureAllowed = true;
         var failsafe = 0;
 
+        /* Diagnostics. A packaged launch used to leave no trace of what the boot did —
+           data-boot and data-abort die with the overlay node — so a stutter reported
+           from an installed build was unfalsifiable. `why` names the door the reveal
+           came through, stamped once at the decision site that chose it; `frames` is
+           what the watchdog measured. remove() folds both into a report for
+           localStorage and the bootSettled bridge. Assembly happens only at teardown:
+           nothing here may add work between start() and the fade. */
+        var why = null;
+        var readyAt = 0;
+        var startAt = 0;
+        var frames = null;
+
         /* One rearmable timer, not the fixed 4000 ms this replaces. That constant was
            armed at parse and sized for an animation that began at parse; now a gesture
            starting at the 1200 ms deadline ends at 3800 ms, so a fixed 4 s failsafe would
@@ -610,6 +622,7 @@
           clearTimeout(failsafe);
           html.classList.remove('boot-hold');
           html.dataset.boot = 'done';
+          performance.mark('auftakt:done');
           overlay.remove();
           if (root) root.inert = false;
           // The single exit of every path, so the one honest place to say "the boot
@@ -617,18 +630,40 @@
           // on the early return when nothing plays at all. Electron holds its startup
           // backup and update check until it hears this. Optional-chained twice: there
           // is no bridge on the dev server or in a plain browser.
+          //
+          // The report rides both channels. localStorage because it survives the node:
+          // data-boot and data-abort can only be read by polling inside the page before
+          // the overlay is gone, and a packaged launch has nobody polling; the bridge so
+          // the main process can keep a log across launches. Last writer wins in
+          // localStorage — one report per origin, the most recent boot.
+          var report = buildReport();
           try {
-            window.auftakt && window.auftakt.bootSettled && window.auftakt.bootSettled();
+            localStorage.setItem('auftakt-boot-report', JSON.stringify(report));
+          } catch (e) {
+            /* storage can be unavailable; the bridge copy below still goes out */
+          }
+          try {
+            window.auftakt && window.auftakt.bootSettled && window.auftakt.bootSettled(report);
           } catch (e) {
             /* the chores have their own timeout; never let this break the reveal */
           }
         }
         // The two cases where nothing plays: hidden by CSS above, so drop the node
-        // rather than leave an invisible one lying in the DOM.
+        // rather than leave an invisible one lying in the DOM. The report still files —
+        // a season switch writes `skip / warm`, which is how a log line proves the
+        // reload happened at all. `%PROD%` is quoted for the same degrade-to-no-boot
+        // reason as in the head script; in a built bundle the only other way into
+        // `no-boot` is the warm-session branch.
         if (
           html.classList.contains('no-boot') ||
           matchMedia('(prefers-reduced-motion: reduce)').matches
         ) {
+          why =
+            '%PROD%' !== 'true'
+              ? 'no-prod'
+              : html.classList.contains('no-boot')
+                ? 'warm'
+                : 'reduced-motion';
           remove();
           return;
         }
@@ -640,7 +675,10 @@
            laid-out, untabbable app behind it, which is worse than the opaque rectangle it
            was written to prevent. With the timer already armed, no throw below can reach
            that state. */
-        armFailsafe(HOLD_MAX, bailOut);
+        armFailsafe(HOLD_MAX, function () {
+          if (!why) why = 'hold-max';
+          bailOut();
+        });
         // The overlay's own pointer events only stop the mouse. Without this, a keyboard
         // or screen-reader user could Tab into the app underneath and activate controls
         // they cannot see, during the one interval a mouse user is locked out of — so the
@@ -652,6 +690,10 @@
         if (root) root.inert = true;
         html.classList.add('boot-hold');
         html.dataset.boot = 'hold';
+        /* The auftakt:* marks surface in the blink.user_timing trace category, so an
+           AUFTAKT_BOOT_TRACE capture shows the boot's phases on the same timeline as
+           the work that ran through them. */
+        performance.mark('auftakt:hold');
 
         // Descendant animations bubble their animationend too — only the overlay's
         // own fade, or the cross-fade, ends the show.
@@ -672,6 +714,7 @@
            this is the old click-to-skip. */
         overlay.addEventListener('pointerdown', function () {
           gestureAllowed = false;
+          if (!why) why = 'click';
           // The attribute rather than a listener of our own: boot.ts sets it before it
           // dispatches, so it also answers for a mount that happened before this script
           // could have subscribed — and it needs no subscription left standing on
@@ -688,6 +731,7 @@
 
         function onReady() {
           if (gone || playing || crossing) return;
+          readyAt = performance.now();
           /* Unhide #root first and let it paint. It is still behind an opaque overlay,
              so nothing is visible yet — but this moves the largest paint of the whole
              boot to *before* the first gesture frame instead of during it. Two frames,
@@ -706,17 +750,30 @@
 
         function start() {
           if (gone || playing || crossing) return;
-          if (!gestureAllowed || performance.now() - t0 > GESTURE_DEADLINE) return crossFade();
+          if (!gestureAllowed || performance.now() - t0 > GESTURE_DEADLINE) {
+            // `why` may already read 'click': a hold-phase click forfeits the gesture
+            // and lands here through the same `gestureAllowed` it cleared.
+            if (!why) why = 'deadline';
+            return crossFade();
+          }
           /* The app reached "ready" by collapsing, not by finishing: a throw above the
              ErrorBoundary, or one it caught. Both reveal through the same signal, because
              the boot screen has to come down either way — but what is underneath is a
              blank window or an error card, and playing three seconds of celebration over
              it is the wrong reading of the moment as well as the wrong wait. */
-          if (html.dataset.appFailed) return crossFade();
+          if (html.dataset.appFailed) {
+            if (!why) why = 'app-failed';
+            return crossFade();
+          }
           playing = true;
+          startAt = performance.now();
           html.dataset.boot = 'play';
+          performance.mark('auftakt:play');
           overlay.classList.add('boot-play');
-          armFailsafe(GESTURE_MS + 400, bailOut);
+          armFailsafe(GESTURE_MS + 400, function () {
+            if (!why) why = 'gesture-max';
+            bailOut();
+          });
           watchFrames();
         }
 
@@ -762,28 +819,46 @@
              this has seen, the likelier it is to have caught frames that landed on actual
              vsyncs. Ranked rather than minimised at verdict time — see the slow test. */
           var seen = [];
+          frames = { seen: seen, tail: [], warm: -1, lead: -1 };
 
           function tick(now) {
-            /* `fading` as well as the other three: once bootOut has begun the gesture is
-               already being revealed away, and crossFade() declines from there — so an
-               abort could no longer change what the user sees, but it would still stamp
-               data-abort on a run that goes on to finish normally (docs/VERIFYING.md
-               reads that attribute as "the watchdog fired") and then re-fire on every
-               remaining frame of the fade, re-sorting a growing deltas array each time. */
-            if (gone || crossing || fading || !playing) return;
+            /* The loop used to die with `fading`, which kept aborts honest — once
+               bootOut has begun, crossFade() declines, so an abort could no longer
+               change what the user sees, only stamp data-abort on a run that finishes
+               normally and then re-fire per frame over a growing sort. But dying there
+               also left the last ~370 ms — the fade overlapping the envelope's tail —
+               with no record at all, and that is exactly where a late stutter can hide.
+               So only remove() ends the loop now: past `crossing` or `fading` every
+               delta goes to the tail *unjudged*. No abort can fire from there (the
+               judge below is unreachable), nothing is sorted per frame (a push and a
+               return), and data-abort keeps meaning "the watchdog changed the
+               outcome". */
+            if (gone) return;
             requestAnimationFrame(tick);
             if (prev < 0) {
               prev = now;
+              /* First callback after start(): its distance from startAt is the one
+                 stall no delta can carry. The animations' clocks begin at style
+                 application, so a long first presentation — cold GPU and shader caches
+                 doing the svg's first raster — is a gesture that starts already jumped
+                 forward, and until this number it was invisible. */
+              frames.lead = now - startAt;
               return;
             }
             var d = now - prev;
             prev = now;
+            if (crossing || fading || !playing) {
+              frames.tail.push(d);
+              return;
+            }
             /* The first measured frame carries the cost of promoting layers for
-               animations that have only just started. Expected rather than perceived, and
-               judging it aborts healthy runs — so it is neither tested nor recorded, and
-               the window's clock starts after it. */
+               animations that have only just started. Expected rather than perceived,
+               and judging it aborts healthy runs — so it is exempt from every test and
+               from the window's clock, but no longer discarded: the report keeps it,
+               because on a cold first launch this is the frame with the most to say. */
             if (!warmed) {
               warmed = true;
+              frames.warm = d;
               first = now;
               return;
             }
@@ -861,6 +936,73 @@
           requestAnimationFrame(tick);
         }
 
+        // ---- the boot report ---------------------------------------------------------
+        function r10(x) {
+          return Math.round(x * 10) / 10;
+        }
+        function packed(arr) {
+          if (!arr.length) return null;
+          var s = arr.slice().sort(function (a, b) {
+            return a - b;
+          });
+          return {
+            n: s.length,
+            med: r10(s[s.length >> 1]),
+            p95: r10(s[Math.min(s.length - 1, Math.floor(0.95 * s.length))]),
+            worst: r10(s[s.length - 1]),
+          };
+        }
+        /* Everything the run measured, folded to a handful of numbers. Runs once, in
+           remove(), after the overlay node is gone — the sorts here are the ones the
+           watchdog must never pay per frame. Times are relative to t0, the same clock
+           the deadline reads, so a report's readyMs can be held against
+           GESTURE_DEADLINE directly. The tail verdict reuses the watchdog's own
+           arithmetic but is retrospective and report-only: an abort back there could
+           not have changed what the user saw. */
+        function buildReport() {
+          var report = {
+            v: 1,
+            outcome: crossing ? 'cross' : playing ? 'play' : 'skip',
+            why: why || 'done',
+            readyMs: readyAt ? r10(readyAt - t0) : null,
+            startMs: startAt ? r10(startAt - t0) : null,
+            endMs: r10(performance.now() - t0),
+            frames: null,
+            tail: null,
+            dpr: r10(window.devicePixelRatio || 1),
+            vp: [innerWidth, innerHeight],
+          };
+          if (!frames) return report;
+          var f = packed(frames.seen) || { n: 0, med: null, p95: null, worst: null };
+          f.lead = frames.lead < 0 ? null : r10(frames.lead);
+          f.warm = frames.warm < 0 ? null : r10(frames.warm);
+          f.quick = null;
+          if (frames.seen.length) {
+            var ranked = frames.seen.slice().sort(function (a, b) {
+              return a - b;
+            });
+            var rank = Math.max(2, Math.floor(0.1 * ranked.length));
+            f.quick = r10(ranked[Math.min(rank, ranked.length - 1)]);
+            var drops = 0;
+            for (var i = 0; i < frames.seen.length; i++) {
+              drops += Math.max(0, Math.round(frames.seen[i] / f.med) - 1);
+            }
+            f.drops = drops;
+          }
+          report.frames = f;
+          var tl = packed(frames.tail);
+          if (tl) {
+            tl.verdict =
+              tl.worst >= HITCH_MS
+                ? 'hitch'
+                : f.quick !== null && tl.med > Math.max(SLOW_MS, f.quick * SLOW_FACTOR)
+                  ? 'slow'
+                  : 'ok';
+            report.tail = tl;
+          }
+          return report;
+        }
+
         /* No cancelling of animations, and so none of the ways that goes wrong — a
            document-wide getAnimations() sweep would take the overlay's own fade with it
            and strand the overlay forever. crossFade drops .boot-play, which reverts every
@@ -869,6 +1011,8 @@
            from there. A held frame reads as deliberate; stopping mid-swing and cutting
            reads as a crash. */
         function abort(reason) {
+          if (!why) why = 'abort:' + reason;
+          performance.mark('auftakt:abort:' + reason);
           overlay.dataset.abort = reason;
           crossFade();
         }
@@ -885,6 +1029,7 @@
           if (fading) return;
           crossing = true;
           html.dataset.boot = 'cross';
+          performance.mark('auftakt:cross');
           /* Before dropping boot-play, if the gesture had started: that class carries the
              svg's visibility as well as the running play-state, so losing it alone blanked
              the artwork in one frame and left a flat rectangle to fade. What is wanted is

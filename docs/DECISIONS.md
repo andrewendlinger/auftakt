@@ -371,6 +371,22 @@ contention so uniform that not one frame in 2.6 s lands on vsync: from inside th
 indistinguishable from a genuinely slower panel. Real contention jitters, and `drops` catches
 jitter.
 
+**Every boot now files a report, because the first field stutter was unfalsifiable.** The first
+launch after a local install visibly hitched once — and left nothing to read: `data-boot` and
+`data-abort` die with the overlay node, so there was no way to tell whether the watchdog had
+aborted, whether the gesture had played at all, or which frame was late. The overlay now folds
+what the watchdog measured into a small JSON report in its single exit path — outcome, the door
+the reveal came through, ready/start/end on the deadline's own clock, frame statistics — and
+writes it to `localStorage['auftakt-boot-report']` and through the `bootSettled` bridge. Three
+recording gaps close with it, and all three stay unjudged: the exempt first frame is kept
+(`frames.warm`); the gap between release and the first rAF callback is kept (`frames.lead` — the
+animations' clocks start at style application, so a long first presentation is a jump no delta
+ever carried); and the reveal-fade tail is recorded instead of abandoned (`tail`, with a
+retrospective verdict). The watchdog's rules are unchanged: recording past `fading` keeps every
+property that made stopping the *judging* there correct, because the judge is unreachable from
+the tail path. The report is also the next thing stored in localStorage after the emoji list
+above — an origin change orphans it, which costs one launch's diagnostics and is accepted.
+
 **A boot that collapsed reveals through a different door.** `signalFailed()` rather than
 `signalReady()` from `window.onerror`, from an unhandled rejection, and from `ErrorBoundary`. Both
 bring the overlay down — that part was never in question — but the failure paths were previously
