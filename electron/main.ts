@@ -38,9 +38,18 @@ const PORT = Number(process.env.AUFTAKT_PORT) || 4317;
  * is cheap only when the stack refuses promptly — behind a firewall that drops instead,
  * it is a stall on the one code path that gates the window.
  *
- * Safe as an origin change: the server already allowlists this exact origin and has
- * 127.0.0.1 in its loopback set, and `auftakt-booted` — the only web-storage key in the
- * app — is sessionStorage, so nothing is keyed to the old origin.
+ * The server already allowlists this exact origin and has 127.0.0.1 in its loopback set,
+ * so the API side is a non-event. Web storage is not: Chromium buckets it per origin, and
+ * `http://localhost:4317` and `http://127.0.0.1:4317` are two origins. The audit that
+ * cleared this change looked only at our own code — where the sole key really is
+ * `auftakt-booted`, and really is sessionStorage — and missed that a dependency has one
+ * too. `emoji-picker-react` keeps the „frequently used" list under `epr_suggested` in
+ * localStorage, reachable from the notes editor, so upgrading past this build resets that
+ * list once. The old bucket still exists on disk and is unreachable from the new origin;
+ * there is no supported way to read another origin's localStorage from the main process,
+ * and a recently-used emoji list does not justify inventing one. Accepted, once, and
+ * recorded in docs/DECISIONS.md — the point of writing it down is that the next thing
+ * stored in localStorage will not be an emoji list.
  */
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 const DEV_URL = process.env.AUFTAKT_DEV_URL ?? 'http://localhost:5317';
