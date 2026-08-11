@@ -38,11 +38,17 @@ npm run dist:mac    # or dist:win
 
 ### 2 · The prompt arrives once there is data
 
-- [ ] Add an artist, quit, relaunch → the backup-folder prompt appears now.
-- [ ] Decline it → relaunch → it appears **again**, and keeps appearing until a folder is set
-      (the amber hint remains in Settings meanwhile). **Never asking again is the old bug.**
+- [ ] Add an artist, quit, relaunch → an **explanation dialog** appears now — „Automatische
+      Sicherungen einrichten?", attached to the Auftakt window, with „Backup-Ordner wählen…"
+      and „Später". **A bare folder picker with no explanation is the old bug**: macOS does not
+      display an open-dialog's title, so it read as a stray Finder window.
+- [ ] „Backup-Ordner wählen…" → the folder picker opens (as a sheet on the window).
+- [ ] „Später" (or cancelling the picker) → relaunch → the dialog appears **again**, and keeps
+      appearing until a folder is set (the amber hint remains in Settings meanwhile).
+      **Never asking again is the old bug.**
 - [ ] Choose a folder → relaunch → the prompt is gone for good.
-- [ ] Settings → "Wählen…" still works and sets the folder.
+- [ ] Settings → "Wählen…" still works and sets the folder — without the explanation dialog
+      (the click there already is the explanation).
 
 ### 2b · A folder the backup cannot use is refused when it is picked (Windows)
 

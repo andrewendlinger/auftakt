@@ -186,17 +186,23 @@ async function saveBackupDir(dir: string): Promise<void> {
  * Pick a backup folder, rejecting one the startup backup could not use (ELP-03).
  * Validating here rather than only in runStartupBackup is the point: a Windows user
  * could pick a NAS share, see it accepted, and never learn that backups had stopped.
+ *
+ * Parented to `win` when there is one: macOS does not display an open-dialog's `title`
+ * at all, so an unparented picker is a bare Finder window with nothing saying which app
+ * wants it or why. A sheet on the Auftakt window at least answers "which app".
  */
-async function promptForDirectory(): Promise<string | null> {
-  const r = await dialog.showOpenDialog({
+async function promptForDirectory(win: BrowserWindow | null): Promise<string | null> {
+  const opts = {
     title: 'Backup-Ordner wählen (z. B. Google Drive)',
-    properties: ['openDirectory', 'createDirectory'],
-  });
+    properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'>,
+  };
+  const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
   const dir = r.canceled ? null : (r.filePaths[0] ?? null);
   if (!dir) return null;
   const problem = backupDirProblem(dir);
   if (problem) {
-    await dialog.showMessageBox({ type: 'error', message: 'Dieser Ordner kann nicht verwendet werden.', detail: problem });
+    const box = { type: 'error' as const, message: 'Dieser Ordner kann nicht verwendet werden.', detail: problem };
+    await (win ? dialog.showMessageBox(win, box) : dialog.showMessageBox(box));
     return null;
   }
   return dir;
@@ -224,7 +230,7 @@ async function reportBackupProblem(err: unknown): Promise<void> {
 }
 
 async function chooseBackupDir(): Promise<void> {
-  const dir = await promptForDirectory();
+  const dir = await promptForDirectory(liveWindow());
   if (!dir) return;
   try {
     await saveBackupDir(dir);
@@ -477,9 +483,28 @@ async function ensureBackupDir(): Promise<string> {
   // released by the window closing (see window-all-closed), and a modal appearing on an
   // empty desktop *after* the user quit reads as a hang, not as a prompt. Leaving
   // `prompted` unset is the right outcome: the next launch asks properly.
-  if (!liveWindow()) return '';
+  const win = liveWindow();
+  if (!win) return '';
 
-  const chosen = await promptForDirectory();
+  // Explain BEFORE any picker opens. A folder-selection dialog straight out of startup is
+  // an unexplained Finder/Explorer window — macOS does not even display its title — and
+  // nothing on it says what the folder is for or what happens on cancel. The message box
+  // is parented (a sheet on the Auftakt window), names the why, and hands the user an
+  // explicit „Später": that path leaves `prompted` unset on purpose, so the next launch
+  // asks again until a folder is actually saved (ELP-05) while the amber hint in
+  // Einstellungen keeps carrying the state.
+  const intro = await dialog.showMessageBox(win, {
+    type: 'info',
+    message: 'Automatische Sicherungen einrichten?',
+    detail:
+      'Auftakt kann bei jedem Start eine Sicherung aller Saisons in einem Ordner deiner Wahl anlegen — z. B. in Google Drive oder OneDrive.\n\nDer Ordner lässt sich auch später unter Einstellungen → „Saison & Daten“ festlegen.',
+    buttons: ['Backup-Ordner wählen…', 'Später'],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (intro.response !== 0) return '';
+
+  const chosen = await promptForDirectory(win);
   if (!chosen) return '';
   await saveBackupDir(chosen);
   await post('backup/prompted', {});
