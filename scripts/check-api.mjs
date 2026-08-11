@@ -408,6 +408,25 @@ try {
     check('and gone from search once the artist is trashed', after.projects.length === 0, JSON.stringify(after.projects));
   }
 
+  // ------------------------------------- the season card counts what the season shows (WP-34)
+  // Kennzahlen on the landing page. `seasonStats` is a bare COUNT rather than a row list, so it
+  // carries no `parentLive` and needs the artist-liveness test spelled out — without it the card
+  // contradicted itself the moment an artist could be trashed: one Künstler fewer, every one of
+  // their Projekte still counted.
+  console.log('\n== the season card drops an artist and its projects together (WP-34)');
+  {
+    const seasonId = (await ok('GET', '/seasons')).activeId;
+    const stats = async () => (await ok('GET', '/seasons/stats'))[seasonId];
+    const artist = await ok('POST', '/artists', { name: 'Kennzahl' });
+    await ok('POST', '/projects', { artist_id: artist.id, name: 'Zählt mit', code: 'Z1' });
+
+    const before = await stats();
+    await ok('DELETE', `/artists/${artist.id}`);
+    const after = await stats();
+    check('the artist leaves the count', after.artists === before.artists - 1, `${before.artists} → ${after.artists}`);
+    check('…and its project leaves with it', after.projects === before.projects - 1, `${before.projects} → ${after.projects}`);
+  }
+
   // ------------------------------------------------------- the baseline order (WP-32, was TTU-11)
   // What the API returns when no sort rule is in effect is what the client keeps: `sortTasks`
   // short-circuits on an empty rule list. So the ORDER BY may rank by nothing the user cannot see
