@@ -198,7 +198,9 @@ There is a pattern here, and it is worth matching rather than re-deciding per su
 - **section deletes** — only inside „✎ Bereiche bearbeiten" (`SectionArranger`'s strip)
 - **config deletes** — only inside their manager (⚙ Spalten, the option editors in Einstellungen)
 - **record deletes** (artist, project) — inside „✎ Bearbeiten", behind a second confirm, never on
-  the page header. See `docs/DECISIONS.md`, WP-34.
+  the page header. See `docs/DECISIONS.md`, WP-34. The page they delete is the page you are on, so
+  the redirect out **replaces** the history entry: a push leaves the deleted row one Zurück away,
+  and the refetch there 404s into the `LoadError` panel (PGS-05).
 - **seasons** — Einstellungen only, and the one delete with no undo at all.
 
 ### Task subtrees

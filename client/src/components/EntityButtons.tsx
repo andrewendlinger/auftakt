@@ -128,7 +128,12 @@ function DeleteRecordAction({
     // LoadError panel on the way out. ToastProvider and UndoProvider sit above HashRouter
     // (main.tsx), so the toast and the Cmd+Z entry outlive this component either way — and a
     // failed delete still reports itself, with the row untouched.
-    navigate(redirectTo);
+    //
+    // `replace` because the page we are leaving is about to stop existing. A push kept it on the
+    // history stack, so Zurück walked straight back into the LoadError panel this redirect exists
+    // to avoid (PGS-05) — the row is gone, so the refetch 404s and there is nothing to render. An
+    // undo restores the row but not the entry, which is the same trade every other delete makes.
+    navigate(redirectTo, { replace: true });
     void del({ label: `${noun} „${name}“`, ...resourceUndo(res, id) });
   };
 
