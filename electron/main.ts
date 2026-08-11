@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { fileStamp } from '../shared/time';
 import { buildMenu } from './menu';
 import { backupDirProblem, runStartupBackup } from './backup';
+import { writeBootReport } from './bootLog';
 import { checkForUpdates, downloadAndInstallUpdate, startSilentStartupCheck } from './updater';
 
 const isDev = !app.isPackaged;
@@ -537,8 +538,20 @@ app.whenReady().then(async () => {
   startupDone = true;
 
   // The renderer normally releases these (see runStartupChores). It might not: a crashed
-  // or wedged renderer must not cost the user their backup for the launch.
-  if (!isDev) setTimeout(() => void runStartupChores(), 8000);
+  // or wedged renderer must not cost the user their backup for the launch — and that
+  // launch is exactly the one the boot log must still have a line for, because the
+  // renderer's own report died with it. bootReported distinguishes "released late" from
+  // "never heard from".
+  if (!isDev)
+    setTimeout(() => {
+      if (!bootReported)
+        writeBootReport(
+          app.getPath('userData'),
+          { outcome: 'no-report', why: 'fallback-8s' },
+          app.getVersion(),
+        );
+      void runStartupChores();
+    }, 8000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();
@@ -586,8 +599,16 @@ ipcMain.handle('choose-backup-dir', () => chooseBackupDir());
 ipcMain.handle('get-version', () => app.getVersion());
 ipcMain.handle('check-updates', (_e, refresh: boolean) => checkForUpdates(refresh));
 ipcMain.handle('install-update', () => downloadAndInstallUpdate());
+/** Whether any renderer settle arrived, so the 8 s fallback can log its absence. */
+let bootReported = false;
 // Sent from the boot overlay's single exit path, not from React — see runStartupChores.
 // Deliberately not returning the chores' promise: the renderer does not await this, and
 // holding the IPC reply open for the length of a VACUUM would only invent a way for that
 // to matter. The quit path is the one caller that needs the promise, and it has it.
-ipcMain.handle('boot-settled', () => void runStartupChores());
+// The payload is the boot report; every settle writes a line, so a season switch's
+// reload logs `skip / warm` — that is the log proving the reload, not noise.
+ipcMain.handle('boot-settled', (_e, report: unknown) => {
+  bootReported = true;
+  if (!isDev) writeBootReport(app.getPath('userData'), report, app.getVersion());
+  void runStartupChores();
+});

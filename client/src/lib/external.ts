@@ -29,8 +29,10 @@ declare global {
        * "The boot screen is gone." Called from the overlay's single exit path in
        * `client/index.html`, not from React — React never learns the overlay existed.
        * Releases the startup chores the main process is holding back (see main.ts).
+       * The optional payload is the boot report, which main appends to
+       * boot-log.jsonl in userData (electron/bootLog.ts).
        */
-      bootSettled?: () => Promise<void>;
+      bootSettled?: (report?: unknown) => Promise<void>;
       platform?: string;
     };
   }

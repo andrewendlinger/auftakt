@@ -114,6 +114,16 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   `tail.verdict` of `hitch` on a run with **no** `data-abort` is not a contradiction: the
   attribute still means the watchdog *changed the outcome*, the tail is record-only. Under
   Electron the same report goes out over the `bootSettled` bridge.
+- **Under Electron the reports accumulate: `boot-log.jsonl` in userData.** One line per settle —
+  including warm reloads (a season switch writes `skip / warm`; that line is the reload proving
+  itself, not noise) — wrapped by the main process with `at` (ISO time, main's clock, so a
+  renderer cannot spoof it) and `app` (version). Capped at 64 KB, then trimmed to the last 100
+  lines. A launch whose renderer never reported — crashed, wedged, or the inline script died and
+  the CSS bail cleared the overlay — still gets a line: the 8 s chores fallback writes
+  `{"outcome":"no-report","why":"fallback-8s"}`. Read it with
+  `tail -n 5 ~/Library/Application\ Support/Auftakt/boot-log.jsonl | jq .` (Windows:
+  `%APPDATA%\Auftakt\boot-log.jsonl`). Dev mode writes nothing, matching the overlay it reports
+  on. The writer is `electron/bootLog.ts`, electron-import-free so `check:unit` covers it.
 - **`document.getAnimations()` returns all twelve animations during the hold, not `[]`** — paused is
   not idle, and a paused animation with a fill is still in effect and still enumerated. What
   distinguishes the hold is `playState`: every one reads `paused` except `bootBail`, the dead man's

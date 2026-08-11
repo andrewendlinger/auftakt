@@ -11,8 +11,9 @@ contextBridge.exposeInMainWorld('auftakt', {
   checkForUpdates: (refresh: boolean) => ipcRenderer.invoke('check-updates', refresh),
   installUpdate: () => ipcRenderer.invoke('install-update'),
   // Fire-and-forget, but invoke rather than send: this file is one shape, and a second
-  // idiom for the sake of one unread reply on a local channel is not worth it.
-  bootSettled: () => ipcRenderer.invoke('boot-settled'),
+  // idiom for the sake of one unread reply on a local channel is not worth it. The
+  // argument is the boot report (see client/index.html); main treats it as untrusted.
+  bootSettled: (report?: unknown) => ipcRenderer.invoke('boot-settled', report),
   // Static value, not IPC — the Settings card picks platform-specific install copy.
   platform: process.platform,
 });
