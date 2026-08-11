@@ -763,7 +763,13 @@
           var fastest = Infinity;
 
           function tick(now) {
-            if (gone || crossing || !playing) return;
+            /* `fading` as well as the other three: once bootOut has begun the gesture is
+               already being revealed away, and crossFade() declines from there — so an
+               abort could no longer change what the user sees, but it would still stamp
+               data-abort on a run that goes on to finish normally (docs/VERIFYING.md
+               reads that attribute as "the watchdog fired") and then re-fire on every
+               remaining frame of the fade, re-sorting a growing deltas array each time. */
+            if (gone || crossing || fading || !playing) return;
             requestAnimationFrame(tick);
             if (prev < 0) {
               prev = now;

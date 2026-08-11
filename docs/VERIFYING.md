@@ -120,8 +120,14 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   `cross` instead of `play`. That is the feature working, and it applies for the *whole* gesture —
   the watchdog judges rolling 200 ms windows to the last frame, not just the opening one. The one
   exception is a block that lands after the reveal fade has begun (~2230 ms in): from there the app
-  is already showing through, so the overlay lets the fade finish rather than throwing the splash
-  back to full opacity.
+  is already showing through, so the watchdog stops watching and the overlay lets the fade finish
+  rather than throwing the splash back to full opacity. That run stays a clean `play` → `done` with
+  no `data-abort` — the attribute means the watchdog changed the outcome, not merely that a frame
+  was late. Probing that window needs a *short* block, ~80 ms: a longer one runs past the fade's
+  own end, so the overlay's `animationend` is dispatched before the next rAF callback, `remove()`
+  wins the race and nothing is left to observe. Read `data-abort` by polling inside the page while
+  `#boot-overlay` still exists — by the time an `await` in the driving script resolves, the node
+  and its attributes are usually gone.
 - **An aborted or skipped gesture keeps its last frame on screen, and that is not a stuck
   animation.** `cross` from within `play` adds `#boot-overlay.boot-froze`, which holds the svg
   visible while every descendant animation re-pauses, so a screenshot taken then shows the hand
