@@ -514,6 +514,34 @@ would arguably suit those users better than the app popping in mid-mount. But
 in `docs/VERIFYING.md` relies on, and quietly turning it into „hold, then reveal" would break them
 all. Worth revisiting only behind a separate opt-out that Playwright can use first.
 
+## Deleting a record lives inside „✎ Bearbeiten"; deleting a season stays in Einstellungen (2026-08-11, WP-34)
+
+WP-34 gave artists and projects a delete affordance at last — the server had carried `DELETE` and
+`/restore` for both since the crud factory existed, and only the button was missing. Where to put
+it was the whole decision, and it was taken twice: once for rows, once for seasons.
+
+**Rows: in the edit dialog, behind a second confirm.** The alternative — a 🗑 beside „✎ Bearbeiten"
+in the page header — is what the work package originally described, and it was rejected in
+planning. This is the only delete in the app that takes a whole page's worth of work out of sight,
+and the header of the artist and project pages is the surface the user is on most; a stray click
+there is cheap to make and expensive to mean. Inside the dialog it takes two deliberate acts, and
+it lands next to a destructive control that is already there — the Profilbild's „Entfernen".
+
+The known cost is findability, and it is the *stated* customer complaint („alles muss loeschbar
+sein"). Accepted knowingly: if it is reported as missing, the answer is a hint next to
+„✎ Bearbeiten", **not** moving the button back into the header. Nothing else in the app puts a
+record delete on the page surface either — see the inventory in `ARCHITECTURE.md`.
+
+**Seasons: unchanged, in Einstellungen — and the reason belongs here rather than only in a code
+comment.** The customer asked for „projekte, kuenstler, saisons" to be deletable and seasons
+already were, so the report was findability, not function. It stays where it is because a season is
+not a row: `deleteSeason` deregisters it from `seasons.json` and unlinks the `.db`, `-wal` and
+`-shm` files. There is no `deleted_at`, no Papierkorb, no undo toast, and no restore short of
+lifting the file out of a backup folder. Putting that one click from the landing page, where
+seasons are routinely created and renamed, would make the only irreversible delete in the app the
+easiest one to reach. `SeasonManagementCard` and `SeasonSwitcher` both carry a pointer to this
+entry.
+
 ---
 
 ## Known sharp edges with no owner

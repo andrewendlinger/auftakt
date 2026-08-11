@@ -165,6 +165,34 @@ Separately, tasks in the „done" status move to the archive view after `ARCHIVE
 „Done" is not hardcoded: it is whichever Status option carries `done: true`, read via
 `doneStatusValue(db)`.
 
+### Counting before a delete
+
+Two endpoints put a number in front of a delete, and they count **different things** — read which
+one produced a `DependentCounts` before believing it:
+
+| | walks | answers |
+|---|---|---|
+| `GET /api/deleted` → `dependents` | `collect()`, whole closure | what „Endgültig löschen" **destroys** |
+| `GET /api/artists\|projects/:id/dependents` | `collect(…, {liveOnly: true})` | what a soft delete **hides** (WP-34) |
+
+The second exists because a soft delete stamps one row: nothing under it is deleted, it merely
+stops being listed, and „Wiederherstellen" brings the page back whole. Counting a descendant that
+is *already* in the Papierkorb would overstate what the click costs, which is what `liveOnly` is
+for — the same line `liveSubtreeIds` draws for task trees. Both share `dependentCounts()` in
+`lib/cascade.ts` and the German formatter `cascadeText()` in `client/src/lib/deletedTypes.ts`.
+
+### Where delete affordances live
+
+There is a pattern here, and it is worth matching rather than re-deciding per surface:
+
+- **row deletes** — the hover-revealed ✎/🗑 pair (Kontakte, Termine, Dokumente & Links) and the
+  task table's always-visible 🗑
+- **section deletes** — only inside „✎ Bereiche bearbeiten" (`SectionArranger`'s strip)
+- **config deletes** — only inside their manager (⚙ Spalten, the option editors in Einstellungen)
+- **record deletes** (artist, project) — inside „✎ Bearbeiten", behind a second confirm, never on
+  the page header. See `docs/DECISIONS.md`, WP-34.
+- **seasons** — Einstellungen only, and the one delete with no undo at all.
+
 ### Task subtrees
 
 Three endpoints own subtree operations and are where any future one belongs: `POST /tasks/:id/move`

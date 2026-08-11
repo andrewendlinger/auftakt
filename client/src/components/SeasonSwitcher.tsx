@@ -13,7 +13,8 @@ import {
  * Quick season switch in the header. Each season is its own SQLite file; switching
  * re-opens that file server-side (no restart) and drops the client cache so the
  * whole app refetches against the newly active season. Anlegen/Umbenennen live on
- * the landing page („Alle …" below), Löschen deliberately only in Einstellungen.
+ * the landing page („Alle …" below), Löschen deliberately only in Einstellungen — the reasoning
+ * is in `docs/DECISIONS.md`, „Deleting a record lives inside ✎ Bearbeiten".
  */
 export function SeasonSwitcher() {
   const { data } = useSeasons();
