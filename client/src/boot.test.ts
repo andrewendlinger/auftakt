@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetBootSignalsForTest, signalMounted, signalReady } from './boot';
+import { resetBootSignalsForTest, signalFailed, signalMounted, signalReady } from './boot';
 
 /**
  * The boot screen in client/index.html is driven entirely by these two signals, and it
@@ -58,5 +58,28 @@ describe('boot signals', () => {
     signalReady();
     expect(ready).toHaveBeenCalledTimes(1);
     document.removeEventListener('auftakt:ready', ready);
+  });
+
+  it('marks a collapse as failed before the reveal is announced', () => {
+    // The overlay reads the flag synchronously inside its auftakt:ready listener to
+    // decide whether it has anything to celebrate. Setting it after the dispatch — or
+    // calling plain signalReady() from window.onerror, which is what this replaces —
+    // reads as a healthy boot and plays the full gesture over a dead app.
+    let flagAtDispatch: string | undefined;
+    const ready = () => {
+      flagAtDispatch = document.documentElement.dataset.appFailed;
+    };
+    document.addEventListener('auftakt:ready', ready);
+
+    signalFailed();
+
+    expect(flagAtDispatch).toBe('1');
+    expect(document.documentElement.dataset.appReady).toBe('1');
+    document.removeEventListener('auftakt:ready', ready);
+  });
+
+  it('leaves the failed flag unset on a healthy boot', () => {
+    signalReady();
+    expect(document.documentElement.dataset.appFailed).toBeUndefined();
   });
 });

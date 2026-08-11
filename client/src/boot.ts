@@ -52,10 +52,27 @@ export function signalReady(): void {
   mark('ready');
 }
 
+/**
+ * Ready, but by collapsing rather than by finishing.
+ *
+ * The overlay has to come down for a dead app exactly as it does for a live one, so the
+ * failure paths cannot simply stay silent — but plain `signalReady()` was indistinguishable
+ * from a healthy boot, and the overlay answered a window that had just thrown away its
+ * whole tree with a full three seconds of celebration before revealing the blank. The flag
+ * goes up *before* the event so the overlay's synchronous listener sees it, and it is an
+ * attribute rather than an event argument because that is the form the inline script in
+ * `client/index.html` can read without knowing anything about this module.
+ */
+export function signalFailed(): void {
+  document.documentElement.dataset.appFailed = '1';
+  signalReady();
+}
+
 /** Test seam. The signals are module state, which no test should carry between cases. */
 export function resetBootSignalsForTest(): void {
   mounted = false;
   ready = false;
   delete document.documentElement.dataset.appMounted;
   delete document.documentElement.dataset.appReady;
+  delete document.documentElement.dataset.appFailed;
 }

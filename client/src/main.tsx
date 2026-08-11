@@ -5,7 +5,7 @@ import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-qu
 import './index.css';
 import { ApiError } from './api/client';
 import { reportError } from './lib/errors';
-import { signalReady } from './boot';
+import { signalFailed } from './boot';
 import { Layout } from './components/Layout';
 import { BootReady } from './components/BootReady';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -63,10 +63,12 @@ const queryClient = new QueryClient({
  * Revealing a blank window is the right answer here: it is the state the app is actually
  * in, and it leaves DevTools and the reload affordances reachable. Hiding it behind a
  * splash that plays out its full choreography would be worse. An error during boot is
- * also, on its own, a reason not to play a celebratory animation.
+ * also, on its own, a reason not to play a celebratory animation — which is why this is
+ * `signalFailed` and not `signalReady`. The two are the same reveal; only the second one
+ * lets the overlay decide it has something to celebrate.
  */
-window.addEventListener('error', () => signalReady(), { once: true });
-window.addEventListener('unhandledrejection', () => signalReady(), { once: true });
+window.addEventListener('error', () => signalFailed(), { once: true });
+window.addEventListener('unhandledrejection', () => signalFailed(), { once: true });
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
