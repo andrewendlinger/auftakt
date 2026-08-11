@@ -6,6 +6,10 @@
 # Grouped, weekly, and capped: this is a single-developer repo, and a Dependabot that opens
 # fifteen PRs a week gets muted, which is the same as not having one. Minor and patch bumps
 # arrive as one PR per directory; majors come separately because they need reading.
+#
+# No `commit-message.prefix`. It used to be 'Bump', which Dependabot prepends to its own
+# `Bump X from A to B` title — every PR arrived as „Bump: Bump js-yaml from 4.3.0 to 4.3.1".
+# Left off, the default title is already an imperative subject in the house style.
 version: 2
 
 updates:
@@ -27,8 +31,6 @@ updates:
         update-types:
           - minor
           - patch
-    commit-message:
-      prefix: 'Bump'
 
   - package-ecosystem: npm
     directory: /server
@@ -40,8 +42,6 @@ updates:
         update-types:
           - minor
           - patch
-    commit-message:
-      prefix: 'Bump'
 
   - package-ecosystem: npm
     directory: /client
@@ -53,15 +53,6 @@ updates:
         update-types:
           - minor
           - patch
-    ignore:
-      # GHSA-qwww-vcr4-c8h2 is an RSC-mode CSRF bypass. This client is a HashRouter SPA with
-      # no RSC, no data router and no loaders, so the path does not exist here — and the only
-      # update npm can resolve downgrades react-router-dom from 7.18.2 to 0.0.0, which is why
-      # the security update failed twice on 2026-08-06. Reasoning in docs/DECISIONS.md.
-      # Remove this once react-router-dom depends on a patched react-router.
-      - dependency-name: react-router
-    commit-message:
-      prefix: 'Bump'
 
   # The workflow pins actions by commit SHA. Dependabot reads the trailing `# vN` comment
   # to know which tag each SHA tracks, and rewrites both together — so pinning costs
@@ -75,5 +66,3 @@ updates:
       actions:
         patterns:
           - '*'
-    commit-message:
-      prefix: 'Bump'
