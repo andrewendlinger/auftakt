@@ -163,25 +163,30 @@ function DeleteRecordAction({
               the button. Said out loud while it runs, so the paragraph below doesn't appear
               out of nowhere a moment after the dialog settles.
 
-              Three lines, and no more. A confirm is read in the second before a click, so it
-              answers what happens, what goes with it, and how to get it back — nothing else.
-              It used to also explain that an entry keeps its children from expiring in the
-              Papierkorb (SDL-01): true, unprompted, and unreadable („solange sie daran hängen"
-              — daran woran?). That guarantee protects the user whether or not they read it,
-              which is exactly the kind of sentence a dialog should not spend a line on. */}
+              Three lines, and no more: what happens, what goes with it, how to get it back.
+
+              **Do not explain soft delete here.** The user expects a deleted artist to take
+              its projects, tasks and Termine with it, and from where they sit that is what
+              happens — everything vanishes from every list and comes back together. Earlier
+              drafts insisted on the mechanism instead („Gelöscht wird nur dieser Eintrag —
+              die übrigen Daten bleiben erhalten") and it reads as a correction to a belief
+              that was never wrong, in words („die übrigen Daten") that name nothing the user
+              can see. „Mit dabei:" answers the question actually being asked.
+
+              The line about an entry keeping its children from expiring in the Papierkorb
+              („solange sie daran hängen" — daran woran?) is gone for a related reason: SDL-01
+              protects the user whether or not they read it, and it is what makes the third
+              line's „alles wiederherstellbar" true indefinitely rather than a caveat. */}
           {isPending ? (
-            <p className="mt-2 text-sm text-neutral-400">Wird geprüft, was daran hängt …</p>
+            <p className="mt-2 text-sm text-neutral-400">Wird geprüft, was mitgeht …</p>
           ) : (
             dependents != null &&
             dependents.total > 0 && (
-              <p className="mt-2 text-sm text-neutral-600">
-                {cascadeText(dependents)} verschwinden damit aus allen Listen. Gelöscht wird nur
-                dieser Eintrag.
-              </p>
+              <p className="mt-2 text-sm text-neutral-600">Mit dabei: {cascadeText(dependents)}.</p>
             )
           )}
           <p className="mt-2 text-sm text-neutral-500">
-            Wiederherstellen im Archiv unter „Gelöschte Einträge“.
+            Alles wiederherstellbar im Archiv unter „Gelöschte Einträge“.
           </p>
         </Modal>
       )}
