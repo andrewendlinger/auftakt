@@ -741,8 +741,8 @@
            period estimate is only trustworthy once the window has some samples, and a
            hitch has to be catchable on the very first one. */
         var HITCH_MS = 50;
-        /* Floor for the uniformly-slow test, ~45 fps, and the allowance over the fastest
-           frame actually observed. See the test itself for why both are needed. */
+        /* Floor for the uniformly-slow test, ~45 fps, and the allowance over the quickest
+           cadence actually observed. See the test itself for why both are needed. */
         var SLOW_MS = 22;
         var SLOW_FACTOR = 1.35;
 
@@ -758,9 +758,10 @@
              of warm-up was enough, which twelve animations starting at once can reach. */
           var first = -1;
           var deltas = [];
-          /* Kept across windows, not per window: the more of the gesture it has seen, the
-             likelier it is to have caught a frame that landed on an actual vsync. */
-          var fastest = Infinity;
+          /* Every delta of the whole gesture, not just the current window: the more of it
+             this has seen, the likelier it is to have caught frames that landed on actual
+             vsyncs. Ranked rather than minimised at verdict time — see the slow test. */
+          var seen = [];
 
           function tick(now) {
             /* `fading` as well as the other three: once bootOut has begun the gesture is
@@ -787,7 +788,7 @@
               return;
             }
             deltas.push(d);
-            if (d < fastest) fastest = d;
+            seen.push(d);
             if (d >= HITCH_MS) return abort('hitch');
             var elapsed = now - first;
             if (elapsed < WATCH_MS) return;
@@ -822,8 +823,21 @@
                second term: a median is only damning next to what this display has been
                seen to deliver. Uniform contention on a 60 Hz panel that never once hits
                vsync still slips through, which is what the drops and starved tests below
-               are for. */
-            if (nominal > Math.max(SLOW_MS, fastest * SLOW_FACTOR)) return abort('slow');
+               are for.
+
+               "Has been seen to deliver" is a low quantile of every delta so far, not the
+               quickest one: the strict minimum is the same fragile estimator rejected for
+               `nominal` above, and worse here, because this is kept for the whole gesture
+               rather than one window. A single coalesced callback would pin it low for the
+               rest of the run, collapse the term below SLOW_MS, and hand the 30 Hz panel
+               back the false abort the term exists to prevent. Third-smallest while the
+               sample is small, the tenth percentile once there is enough to rank. */
+            var ranked = seen.slice().sort(function (a, b) {
+              return a - b;
+            });
+            var rank = Math.max(2, Math.floor(0.1 * ranked.length));
+            var quick = ranked[Math.min(rank, ranked.length - 1)];
+            if (nominal > Math.max(SLOW_MS, quick * SLOW_FACTOR)) return abort('slow');
             var drops = 0;
             for (var i = 0; i < deltas.length; i++) {
               drops += Math.max(0, Math.round(deltas[i] / nominal) - 1);

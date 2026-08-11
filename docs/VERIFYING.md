@@ -96,9 +96,9 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   - `cross` → a 200 ms fade instead of the gesture. Four ways in: readiness arrived past the
     1200 ms deadline, the app signalled that it collapsed (`html[data-app-failed]`, see below), the
     user clicked, or the frame watchdog aborted. `#boot-overlay[data-abort]` distinguishes the last
-    one and names the reason (`hitch` — one frame over 50 ms; `slow` — a median well under the
-    fastest frame this display has managed; `drops` — a fifth of frames lost; `starved` — too few
-    frames delivered).
+    one and names the reason (`hitch` — one frame over 50 ms; `slow` — a median well over the
+    cadence this display has been seen to deliver; `drops` — a fifth of frames lost; `starved` —
+    too few frames delivered).
   - `done` → the node is gone and `#root` is no longer `inert`.
 - **`document.getAnimations()` returns all twelve animations during the hold, not `[]`** — paused is
   not idle, and a paused animation with a fill is still in effect and still enumerated. What
