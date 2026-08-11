@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, Menu, contentTracing, dialog, ipcMain, shell } from 'electron';
 import { enableCompileCache } from 'node:module';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -514,6 +514,47 @@ app.on('second-instance', () => {
 
 app.whenReady().then(async () => {
   if (!gotLock) return;
+
+  /* Opt-in boot tracing, for the launches the headless checks cannot represent — a real
+     cold start on a real panel is the one path they never covered. AUFTAKT_BOOT_TRACE=1
+     records ~6 s (any larger number: that many milliseconds) to
+     userData/boot-trace-<stamp>.json, loadable at ui.perfetto.dev. Started before
+     startServer() so the 3.4 MB server bundle's import and compile are in the picture.
+     The categories are picked to answer "who stole the frames":
+     disabled-by-default-v8.compile is the cold-code-cache signature, cc/gpu carry
+     raster and the GPU process, and blink.user_timing carries the overlay's auftakt:*
+     marks, so the gesture's phases sit on the same timeline as whatever ran through
+     them. Tracing has overhead of its own — a traced run attributes a stall, it does
+     not time it honestly. */
+  if (process.env.AUFTAKT_BOOT_TRACE) {
+    const n = Number(process.env.AUFTAKT_BOOT_TRACE);
+    const traceMs = n > 1 ? n : 6000;
+    try {
+      await contentTracing.startRecording({
+        included_categories: [
+          'devtools.timeline',
+          'disabled-by-default-devtools.timeline',
+          'disabled-by-default-devtools.timeline.frame',
+          'disabled-by-default-v8.compile',
+          'toplevel',
+          'v8.execute',
+          'blink.user_timing',
+          'cc',
+          'gpu',
+        ],
+      });
+      setTimeout(() => {
+        const out = join(app.getPath('userData'), `boot-trace-${fileStamp()}.json`);
+        contentTracing.stopRecording(out).then(
+          (path) => console.log('Boot-Trace geschrieben:', path),
+          () => {},
+        );
+      }, traceMs);
+    } catch {
+      /* a trace that cannot start must not stop the app from starting */
+    }
+  }
+
   if (!isDev) {
     try {
       await startServer();

@@ -124,6 +124,14 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   `tail -n 5 ~/Library/Application\ Support/Auftakt/boot-log.jsonl | jq .` (Windows:
   `%APPDATA%\Auftakt\boot-log.jsonl`). Dev mode writes nothing, matching the overlay it reports
   on. The writer is `electron/bootLog.ts`, electron-import-free so `check:unit` covers it.
+- **A traced launch: `AUFTAKT_BOOT_TRACE=1`.** Records the first ~6 s (any larger number: that
+  many milliseconds) to `boot-trace-<stamp>.json` in userData, loadable at ui.perfetto.dev. Find
+  CrRendererMain, locate the overlay's `auftakt:*` marks (`blink.user_timing` category), and read
+  what else ran between `auftakt:play` and `auftakt:done` — long `v8.compile` tasks are the cold
+  code cache, RasterTask and GPU-process work the cold shader caches. Two traps: `open -a
+  Auftakt` drops environment variables, so launch the binary directly —
+  `AUFTAKT_BOOT_TRACE=1 /Applications/Auftakt.app/Contents/MacOS/Auftakt` — and tracing has
+  overhead of its own, so a traced run *attributes* a stall rather than timing it honestly.
 - **`document.getAnimations()` returns all twelve animations during the hold, not `[]`** — paused is
   not idle, and a paused animation with a fill is still in effect and still enumerated. What
   distinguishes the hold is `playState`: every one reads `paused` except `bootBail`, the dead man's
