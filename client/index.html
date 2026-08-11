@@ -570,8 +570,11 @@
            left to skip to. Cross-fading from here would swap in bootCross, which starts
            at opacity 1, and throw the splash back to fully opaque for another 200 ms. */
         var fading = false;
+        /* The click-to-skip half of "should the gesture still play?". The other half is
+           the deadline, and that one is a comparison against t0 rather than a timer: a
+           timer armed here could only ever fire *after* the comparison already answered
+           no, so it decided nothing and kept this whole scope alive until it did. */
         var gestureAllowed = true;
-        var mounted = false;
         var failsafe = 0;
 
         /* One rearmable timer, not the fixed 4000 ms this replaces. That constant was
@@ -649,9 +652,6 @@
         if (root) root.inert = true;
         html.classList.add('boot-hold');
         html.dataset.boot = 'hold';
-        setTimeout(function () {
-          gestureAllowed = false;
-        }, GESTURE_DEADLINE);
 
         // Descendant animations bubble their animationend too — only the overlay's
         // own fade, or the cross-fade, ends the show.
@@ -672,13 +672,14 @@
            this is the old click-to-skip. */
         overlay.addEventListener('pointerdown', function () {
           gestureAllowed = false;
-          if (playing || mounted) crossFade();
+          // The attribute rather than a listener of our own: boot.ts sets it before it
+          // dispatches, so it also answers for a mount that happened before this script
+          // could have subscribed — and it needs no subscription left standing on
+          // `document`, holding the removed overlay and this scope, for the session.
+          if (playing || html.dataset.appMounted) crossFade();
         });
 
         // ---- the handshake ----------------------------------------------------------
-        document.addEventListener('auftakt:mounted', function () {
-          mounted = true;
-        });
         document.addEventListener('auftakt:ready', onReady, { once: true });
         /* Race insurance. It cannot currently fire — this script runs during parse and
            the bundle is a deferred module — but that stops being true the day someone
