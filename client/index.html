@@ -50,7 +50,8 @@
          and harmlessly — until the app signals that it is mounted and the main thread is
          idle. Only then does phase B release the animation, onto a thread with nothing
          left to do. Everything below is `animation-play-state: paused` until
-         `html.boot-play` says otherwise; the script at the end of <body> owns that class.
+         `#boot-overlay.boot-play` says otherwise; the script at the end of <body> owns
+         that class.
 
          Pausing rather than withholding the `animation` shorthand is deliberate: adding
          the shorthand later would construct the animations at that moment and re-run
@@ -111,10 +112,20 @@
       #boot-overlay * {
         animation-play-state: paused !important;
       }
-      html.boot-play #boot-overlay {
+      /* The gate is a class on the overlay, not on <html>, and that is about invalidation
+         rather than taste. A selector whose rightmost compound is `*` gives the engine no
+         feature to build a targeted invalidation set from, so the set is whole-subtree —
+         and on <html> that subtree is the whole document, including the React tree that
+         phase A has just finished mounting and laying out underneath. Toggling the class
+         then re-resolved style for every element in the app, twice per launch, and the
+         first of those two lands inside the gesture's opening frame: the one frame the
+         warm-up exemption means nobody would ever see charged. Scoped here it is eight
+         nodes. Specificity still clears the paused base rules — (1,1,0) over (1,0,0), both
+         flagged — and the svg rule below clears (1,0,1) the same way. */
+      #boot-overlay.boot-play {
         animation-play-state: running, running;
       }
-      html.boot-play #boot-overlay * {
+      #boot-overlay.boot-play * {
         animation-play-state: running !important;
       }
       /* The reveal when the gesture does not play: too slow to earn it, or the user
@@ -145,7 +156,7 @@
            which is what it should read as — it may be on screen for a while. */
         visibility: hidden;
       }
-      html.boot-play #boot-overlay svg {
+      #boot-overlay.boot-play svg {
         visibility: visible;
       }
       /* An interrupted gesture — the watchdog aborting, or a click mid-swing — has to
@@ -594,7 +605,7 @@
           if (gone) return;
           gone = true;
           clearTimeout(failsafe);
-          html.classList.remove('boot-hold', 'boot-play');
+          html.classList.remove('boot-hold');
           html.dataset.boot = 'done';
           overlay.remove();
           if (root) root.inert = false;
@@ -703,7 +714,7 @@
           if (html.dataset.appFailed) return crossFade();
           playing = true;
           html.dataset.boot = 'play';
-          html.classList.add('boot-play');
+          overlay.classList.add('boot-play');
           armFailsafe(GESTURE_MS + 400, bailOut);
           watchFrames();
         }
@@ -859,7 +870,8 @@
              the opposite — the paused base rule freezes every descendant on the frame it
              had reached, and this keeps that frame on screen to fade out from. */
           if (playing) overlay.classList.add('boot-froze');
-          html.classList.remove('boot-hold', 'boot-play');
+          html.classList.remove('boot-hold');
+          overlay.classList.remove('boot-play');
           overlay.classList.add('boot-cross');
           armFailsafe(CROSS_MS + 200, remove);
         }
