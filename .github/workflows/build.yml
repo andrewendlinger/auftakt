@@ -29,7 +29,7 @@ jobs:
   # without this job the repo's correctness gates would run at release time only and a
   # broken `main` would stay invisible until someone tried to ship it.
   #
-  # Linux-only on purpose. The four check scripts boot the real server and drive it;
+  # Linux-only on purpose. Four of the five check scripts boot the real server and drive it;
   # `check-dates` re-runs the API under two timezones via `TZ`, and `check-backup`
   # exercises POSIX file permissions. Neither is worth reproducing on Windows, and a
   # false failure there would block releases, since `build` needs this job.
@@ -67,10 +67,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      # backup/import, the naive-local-time convention, server data invariants and the
-      # Markdown round-trip — four scripts that boot the real server and drive it. The
-      # load-bearing gate; see docs/DECISIONS.md for what is being added alongside it
-      # and why that is a reversal rather than a default.
+      # Five gates. `check:unit` is client Vitest over the pure logic the others cannot reach;
+      # the remaining four — backup/import, the naive-local-time convention, server data
+      # invariants and the Markdown round-trip — boot the real server and drive it. The
+      # load-bearing gate; docs/DECISIONS.md records why adding a test framework here was a
+      # reversal rather than a default. `check:package` is deliberately not among them: it
+      # inspects what electron-builder packed, so it needs a build and runs in `build` below.
       - name: Checks
         run: npm run check
 
