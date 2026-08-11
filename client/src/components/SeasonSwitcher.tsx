@@ -1,48 +1,43 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../api/client';
 import type { ID } from '../api/types';
-import { reloadToDashboard } from '../lib/season';
+import { switchSeason } from '../lib/season';
 import {
-  useErrorToast,
+  useCurrentSeasonId,
   useSeasons,
   useSeasonTerm,
 } from '../hooks';
 
 /**
- * Quick season switch in the header. Each season is its own SQLite file; switching
- * re-opens that file server-side (no restart) and drops the client cache so the
- * whole app refetches against the newly active season. Anlegen/Umbenennen live on
- * the landing page („Alle …" below), Löschen deliberately only in Einstellungen — the reasoning
- * is in `docs/DECISIONS.md`, „Deleting a record lives inside ✎ Bearbeiten".
+ * Quick season switch in the header. Window-local: each season is its own SQLite file and
+ * each window pins its own (lib/season.ts), so switching repins THIS window and reloads it —
+ * other windows keep the season they show. Anlegen/Umbenennen live on the landing page
+ * („Alle …" below), Löschen deliberately only in Einstellungen — the reasoning is in
+ * `docs/DECISIONS.md`, „Deleting a record lives inside ✎ Bearbeiten".
  */
 export function SeasonSwitcher() {
   const { data } = useSeasons();
+  const currentId = useCurrentSeasonId();
   const navigate = useNavigate();
   const term = useSeasonTerm();
-  const report = useErrorToast();
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
 
-  const active = data?.seasons.find((s) => s.id === data.activeId);
+  const active = data?.seasons.find((s) => s.id === currentId);
 
-  // The dropdown stays open across the await: closing it first meant a rejected activation
-  // (server restarting, an unknown id after a restart, a dropped fetch) left the menu gone,
-  // the app still on the old season and nothing said — the rejection surfaced only in a
-  // console the packaged app has no way to show, and the user carried on entering data into
-  // the wrong season (SHL-13). On success the reload takes the menu with it.
+  // The dropdown stays open across the await and the reload takes it away. switchSeason
+  // cannot leave the app silently on the old season (the pin IS the switch — SHL-13's
+  // failure mode is gone); the finally is defence in depth so a throw could never leave
+  // the whole header dead (the PGS-03 class).
   const switchTo = async (id: ID) => {
-    if (!data || id === data.activeId) {
+    if (!data || id === currentId) {
       setOpen(false);
       return;
     }
     if (switching) return;
     setSwitching(true);
     try {
-      await api.activateSeason(id);
-      reloadToDashboard();
-    } catch (err) {
-      report(err, `${term.singular} konnte nicht gewechselt werden.`);
+      await switchSeason(id);
     } finally {
       setSwitching(false);
     }
@@ -72,8 +67,8 @@ export function SeasonSwitcher() {
                 className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-neutral-100 disabled:opacity-50"
                 onClick={() => switchTo(s.id)}
               >
-                <span className="w-4 text-neutral-500">{s.id === data.activeId ? '✓' : ''}</span>
-                <span className={s.id === data.activeId ? 'font-semibold' : ''}>{s.label}</span>
+                <span className="w-4 text-neutral-500">{s.id === currentId ? '✓' : ''}</span>
+                <span className={s.id === currentId ? 'font-semibold' : ''}>{s.label}</span>
               </button>
             ))}
             <div className="my-1 border-t border-neutral-100" />

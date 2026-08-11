@@ -10,6 +10,11 @@
  * whose season was deleted comes back through seasonGone() → the landing page.
  */
 
+// Deliberate import cycle with api/client.ts (which imports the pin accessors): both sides
+// touch the other only inside function bodies, never during module evaluation.
+import { api } from '../api/client';
+import { postBroadcast } from './broadcast';
+
 const KEY = 'auftakt-season';
 /** Relay for the „Saison wurde gelöscht" toast — a toast cannot survive the reload. */
 const GONE_KEY = 'auftakt-season-gone';
@@ -86,4 +91,27 @@ export function consumeSeasonGone(): boolean {
 export function reloadToDashboard(): void {
   window.location.replace('#/dashboard');
   window.location.reload();
+}
+
+/**
+ * Switch THIS window to another season — the only legal way to change seasons from the
+ * client. Window-local: other windows keep their own pins and are merely nudged to refresh
+ * their season lists. The reload is mandatory, not an optimisation — a fresh document means
+ * a fresh QueryClient, which is why per-window caches never need season-prefixed keys.
+ */
+export async function switchSeason(id: number): Promise<void> {
+  setWindowSeason(id);
+  // Moving the DEFAULT (what new windows and headerless callers resolve) is best-effort:
+  // the local switch above cannot fail, so a rejected activate — a server mid-restart —
+  // must not block it. The SHL-13 silence this call used to guard against (app stuck on
+  // the old season, nothing said) is structurally gone: the pin IS the switch. Awaited
+  // before the reload, because a fetch fired from an unloading document is cancelled.
+  try {
+    await api.activateSeason(id);
+  } catch {
+    /* keep the local switch */
+  }
+  // Other windows refresh their ['seasons'] markers (the default moved); their pins stay.
+  postBroadcast({ v: 1, type: 'invalidate' });
+  reloadToDashboard();
 }

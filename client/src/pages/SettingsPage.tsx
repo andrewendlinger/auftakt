@@ -300,9 +300,12 @@ function SeasonManagementCard() {
         {data?.seasons.map((s) => (
           <li key={s.id} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-neutral-50">
             <span className="flex-1 truncate text-sm text-neutral-700">{s.label}</span>
+            {/* The registry default (what new windows open) is the one season the server
+                refuses to delete; the season THIS window shows can be deleted — the window
+                recovers to the landing page via the 410 path (lib/season.ts). */}
             {s.id === data.activeId ? (
               <span className="shrink-0 rounded-full bg-neutral-900 px-2 py-0.5 text-[11px] font-medium text-white">
-                Aktiv
+                Standard
               </span>
             ) : (
               <IconButton size="sm" variant="danger" title="Löschen" onClick={() => setDeleting(s)}>
