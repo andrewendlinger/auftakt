@@ -155,23 +155,16 @@ function waitForServer(timeoutMs = 10000): Promise<void> {
 }
 
 /**
- * Save the backup folder and treat a non-OK response as the failure it is (ELP-04): a
- * silently dropped save leaves the user believing backups are set up while no startup
- * backup ever runs again.
+ * Save the backup folder. Through post(), so a non-OK response is the failure it is
+ * (ELP-04) rather than something a caller has to remember to check: a silently dropped
+ * save leaves the user believing backups are set up while no startup backup ever runs
+ * again.
  *
  * Its own endpoint rather than a settings PATCH (WP-39) — the folder lives in the registry
  * now, so it is season-independent and one choice covers every season.
  */
 async function saveBackupDir(dir: string): Promise<void> {
-  const r = await fetch(`${ORIGIN}/api/backup/dir`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ dir }),
-  });
-  if (!r.ok) {
-    const { error } = (await r.json().catch(() => ({}))) as { error?: string };
-    throw new Error(error ?? r.statusText);
-  }
+  await post('backup/dir', { dir });
 }
 
 /**
