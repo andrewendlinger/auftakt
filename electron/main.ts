@@ -375,6 +375,11 @@ async function ensureBackupDir(): Promise<string> {
   };
   if (status.backupDir) return status.backupDir;
   if (!status.hasData || status.prompted) return '';
+  // Never open a folder picker with nothing behind it. The chores can now also be
+  // released by the window closing (see window-all-closed), and a modal appearing on an
+  // empty desktop *after* the user quit reads as a hang, not as a prompt. Leaving
+  // `prompted` unset is the right outcome: the next launch asks properly.
+  if (!mainWindow || mainWindow.isDestroyed()) return '';
 
   const chosen = await promptForDirectory();
   if (!chosen) return '';
@@ -383,7 +388,7 @@ async function ensureBackupDir(): Promise<string> {
   return chosen;
 }
 
-let choresRan = false;
+let chores: Promise<unknown> | null = null;
 
 /**
  * The startup backup and the update check, held until the boot screen has gone.
@@ -400,20 +405,25 @@ let choresRan = false;
  * bundle has been fetched *and executed* — so this block used to fire at the moment
  * React had just mounted, inside the gesture's first second, on every launch.
  *
- * Idempotent because it has three callers: the renderer's signal, the 8 s fallback, and
- * a renderer that reloads itself (a season switch, or the reload after saving a backup
- * folder) and signals a second time.
+ * Idempotent because it has four callers: the renderer's signal, the 8 s fallback, a
+ * renderer that reloads itself (a season switch, or the reload after saving a backup
+ * folder) and signals a second time, and the last window closing. It returns the same
+ * promise to all of them rather than nothing, because that last caller has to know when
+ * the backup is finished — it is on its way to app.quit().
  */
-function runStartupChores(): void {
-  if (choresRan || isDev) return;
-  choresRan = true;
-  void (async () => {
+function runStartupChores(): Promise<unknown> {
+  if (chores) return chores;
+  if (isDev) return (chores = Promise.resolve());
+  chores = (async () => {
     const backupDir = await ensureBackupDir();
     if (backupDir) await runStartupBackup(PORT, backupDir);
   })().catch(reportBackupProblem);
 
-  // Silent update check; the result surfaces as a hint in the Settings card.
+  // Silent update check; the result surfaces as a hint in the Settings card. Not awaited
+  // by the promise above: it is a background HTTP call whose only output is a hint in a
+  // Settings card, so nothing should ever wait on it — least of all a quit.
   startSilentStartupCheck();
+  return chores;
 }
 
 /**
@@ -492,18 +502,40 @@ app.whenReady().then(async () => {
     buildMenu({ onExport: exportDatabase, onImport: importDatabase, onChooseBackup: chooseBackupDir }),
   );
   await createWindow();
+  startupDone = true;
 
   // The renderer normally releases these (see runStartupChores). It might not: a crashed
   // or wedged renderer must not cost the user their backup for the launch.
-  if (!isDev) setTimeout(runStartupChores, 8000);
+  if (!isDev) setTimeout(() => void runStartupChores(), 8000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();
   });
 });
 
+/** Longest a quit will wait on the startup chores it just released. */
+const QUIT_CHORES_MS = 5000;
+
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  if (process.platform === 'darwin') return;
+  // The 8 s fallback above lives on a timer, and app.quit() destroys the process it runs
+  // in — so a window closed before the boot overlay reported back (a wedged renderer that
+  // never revealed, or just an impatient user during the hold) took the whole launch's
+  // startup backup and update check with it, silently. Release them here instead of
+  // racing them, and let them settle before quitting: runStartupChores is idempotent, so
+  // on the ordinary path this is an already-settled promise and the quit is immediate.
+  // Capped, because ensureBackupDir's fetch has no timeout of its own and a wedged server
+  // must not turn „close the window" into „the app will not exit".
+  let cap: NodeJS.Timeout;
+  void Promise.race([
+    runStartupChores(),
+    new Promise((resolve) => {
+      cap = setTimeout(resolve, QUIT_CHORES_MS);
+    }),
+  ]).then(() => {
+    clearTimeout(cap);
+    app.quit();
+  });
 });
 
 // Preload bridge → main. React never touches Electron APIs directly.
@@ -515,4 +547,7 @@ ipcMain.handle('get-version', () => app.getVersion());
 ipcMain.handle('check-updates', (_e, refresh: boolean) => checkForUpdates(refresh));
 ipcMain.handle('install-update', () => downloadAndInstallUpdate());
 // Sent from the boot overlay's single exit path, not from React — see runStartupChores.
-ipcMain.handle('boot-settled', () => runStartupChores());
+// Deliberately not returning the chores' promise: the renderer does not await this, and
+// holding the IPC reply open for the length of a VACUUM would only invent a way for that
+// to matter. The quit path is the one caller that needs the promise, and it has it.
+ipcMain.handle('boot-settled', () => void runStartupChores());
