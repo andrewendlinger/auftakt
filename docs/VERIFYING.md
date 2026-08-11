@@ -132,6 +132,15 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   Auftakt` drops environment variables, so launch the binary directly —
   `AUFTAKT_BOOT_TRACE=1 /Applications/Auftakt.app/Contents/MacOS/Auftakt` — and tracing has
   overhead of its own, so a traced run *attributes* a stall rather than timing it honestly.
+- **Re-creating a first launch: `node scripts/clear-boot-caches.mjs`.** Deletes exactly the
+  packaged app's Chromium/V8 cache directories from userData (`Cache`, `Code Cache`, `GPUCache`,
+  the two `Dawn*Cache` shader caches, `Shared Dictionary`, `blob_storage`, `v8-cache`) —
+  allowlist-only, because the same directory holds the live database and `Local Storage`
+  (emoji-picker state, the boot report copy). It refuses while anything answers on `:4317`, so
+  quit the app and kill dev servers first (`lsof -ti tcp:4317 -ti tcp:5317 | xargs kill`). The
+  evidence pair for the boot log is one cleared+traced launch, then one warm launch. This
+  reproduces cold caches, not macOS Gatekeeper's first-open pass over a quarantined bundle —
+  re-install from the `.dmg` for the faithful worst case.
 - **`document.getAnimations()` returns all twelve animations during the hold, not `[]`** — paused is
   not idle, and a paused animation with a fill is still in effect and still enumerated. What
   distinguishes the hold is `playState`: every one reads `paused` except `bootBail`, the dead man's
