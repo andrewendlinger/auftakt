@@ -14,6 +14,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fileStamp, localStamp } from '../../shared/time';
 import { CHILD_EDGES, DELETE_ORDER } from './lib/cascade';
+import { currentSeasonId } from './seasonContext';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -173,8 +174,23 @@ function activeSeason(reg: Registry = readRegistry()): Season {
   return reg.seasons.find((s) => s.id === reg.activeId) ?? reg.seasons[0]!;
 }
 
+/**
+ * The registry row the request's season context resolves to; headerless callers (Electron
+ * main, check scripts, seed/demo, the Notion importer) get the default. Throws for a context
+ * id whose season vanished mid-request: failing beats silently routing the caller's write
+ * into the default season's file.
+ */
+function currentSeason(reg: Registry = readRegistry()): Season {
+  const ctx = currentSeasonId();
+  if (ctx === null) return activeSeason(reg);
+  const s = reg.seasons.find((x) => x.id === ctx);
+  if (!s) throw new Error(`unknown season ${ctx}`);
+  return s;
+}
+
+/** The current (context ?? default) season's DB file — the file /export snapshots and /import replaces. */
 export function resolveDbPath(): string {
-  return join(dataDir(), activeSeason().file);
+  return join(dataDir(), currentSeason().file);
 }
 
 export function listSeasons(): {
@@ -293,13 +309,17 @@ export function createSeason(label: string): Season {
   return season;
 }
 
-/** Switch the active season; closes the current handle so the next getDb() opens the new file. */
+/**
+ * Set the default season — what new windows and headerless callers resolve to. A window's
+ * own season travels with each request (X-Auftakt-Season / ?season=), so activating no
+ * longer touches any open connection; the pool keys by id and headerless getDb() re-reads
+ * the registry per call (the check scripts rely on activate-then-getDb following the write).
+ */
 export function activateSeason(id: number): void {
   const reg = readRegistry();
   if (!reg.seasons.some((s) => s.id === id)) throw new Error('unknown season');
   reg.activeId = id;
   saveRegistry(reg);
-  closeDb();
 }
 
 export interface SeasonPatch {
@@ -516,11 +536,15 @@ export function patchLanding(patch: {
 export function deleteSeason(id: number): void {
   const reg = readRegistry();
   if (reg.seasons.length <= 1) throw new Error('cannot delete the last season');
-  if (id === reg.activeId) throw new Error('cannot delete the active season');
+  if (id === reg.activeId) throw new Error('cannot delete the default season');
   const s = reg.seasons.find((x) => x.id === id);
   if (!s) throw new Error('unknown season');
   reg.seasons = reg.seasons.filter((x) => x.id !== id);
   saveRegistry(reg);
+  // A window pinned to this season may hold it in the pool: close first, or the unlink
+  // below reliably fails on Windows (open files cannot be unlinked there). The window
+  // itself recovers via 410 on its next request.
+  closeSeason(id);
   // Best-effort: the season is deregistered either way. A failed unlink (Windows lock) is
   // logged rather than swallowed — it leaves a file createSeason then has to route around
   // (DBW-03), so the warning is the only trace of why the next season skipped an id.
@@ -534,10 +558,16 @@ export function deleteSeason(id: number): void {
   }
 }
 
-/** Keep the active season's registry label in sync with the in-DB `saison` setting. */
+/**
+ * Keep the current season's registry label in sync with the in-DB `saison` setting.
+ * Context-aware like getDb(): a settings PATCH from a pinned window relabels that window's
+ * season, not the default's. Headerless callers (demo, the Notion importer) keep the
+ * default-season semantics the name was coined for — the export name stays because
+ * gitignored local code imports it.
+ */
 export function setActiveSeasonLabel(label: string): void {
   const reg = readRegistry();
-  const s = activeSeason(reg);
+  const s = currentSeason(reg);
   if (s.label !== label) {
     s.label = label;
     saveRegistry(reg);
@@ -1131,7 +1161,14 @@ const MAX_PURGE_PASSES = 100;
 /** Number of days a completed task stays in the live views before archiving. */
 export const ARCHIVE_AFTER_DAYS = 30;
 
-let instance: Database.Database | null = null;
+/**
+ * One connection per season a caller has touched, keyed by season id. Multiple windows can
+ * pin different seasons concurrently (X-Auftakt-Season → seasonContext), so "the" connection
+ * became a pool. Handles are bounded by the number of registered seasons and are never
+ * idle-closed — eviction happens only where the file underneath changes: closeSeason()
+ * (delete, import) and closeDb() (close-all, for the check scripts).
+ */
+const pool = new Map<number, Database.Database>();
 
 /**
  * Bring a just-opened season file up to date: pragmas, schema, defaults, built-in columns and
@@ -1175,22 +1212,35 @@ function initDb(db: Database.Database, isFresh: boolean): void {
 }
 
 export function getDb(): Database.Database {
-  if (instance) return instance;
-  const path = resolveDbPath();
+  const season = currentSeason();
+  const cached = pool.get(season.id);
+  if (cached?.open) return cached;
+  const path = join(dataDir(), season.file);
   mkdirSync(dirname(path), { recursive: true });
   const isFresh = !existsSync(path);
   const db = new Database(path);
   initDb(db, isFresh);
-  instance = db;
+  pool.set(season.id, db);
   return db;
 }
 
-/** Close the cached connection so the next getDb() re-opens the (possibly changed) active season. */
+/**
+ * Close every pooled connection. The check scripts call this in-process around filesystem
+ * assertions expecting "nothing holds any season file" — close-all is a superset of the
+ * single-handle semantics the name used to have.
+ */
 export function closeDb(): void {
-  if (instance) {
-    instance.close();
-    instance = null;
+  for (const db of pool.values()) {
+    if (db.open) db.close();
   }
+  pool.clear();
+}
+
+/** Close one season's pooled handle — required before deleting or replacing its file. */
+export function closeSeason(id: number): void {
+  const db = pool.get(id);
+  if (db?.open) db.close();
+  pool.delete(id);
 }
 
 /*
@@ -1206,12 +1256,12 @@ export function snapshotDb(srcPath: string, destPath: string): void {
   // a read-only handle cannot create the WAL shared-memory file when one is missing.
   // The open connection knows its own file, so ask it rather than re-reading and
   // re-parsing seasons.json once per season on every backup run (DBW-13).
-  const active = !!instance && resolve(instance.name) === resolve(srcPath);
-  const db = active ? instance! : new Database(srcPath);
+  const pooled = [...pool.values()].find((d) => d.open && resolve(d.name) === resolve(srcPath));
+  const db = pooled ?? new Database(srcPath);
   try {
     db.prepare('VACUUM INTO ?').run(destPath);
   } finally {
-    if (!active) db.close();
+    if (!pooled) db.close();
   }
 }
 
@@ -1225,7 +1275,7 @@ const REQUIRED_TABLES = ['settings', 'artists', 'tasks', 'custom_columns'];
 export function validateImportCandidate(path: string): string | null {
   if (!existsSync(path)) return 'Die gewählte Datei existiert nicht.';
   // A non-empty -wal sidecar means committed rows still sit in the WAL. The import copies only
-  // the .db (importIntoActiveSeason), so those rows would be silently lost — and the read-only
+  // the .db (importIntoCurrentSeason), so those rows would be silently lost — and the read-only
   // open below often rejects such a file first with a misleading "keine gültige SQLite-Datenbank".
   // Reject it explicitly with an actionable message. App-produced candidates are VACUUM INTO
   // output (no WAL), so this only bites hand-picked raw .db files. The size > 0 guard tolerates a
@@ -1260,7 +1310,7 @@ export function validateImportCandidate(path: string): string | null {
 }
 
 /**
- * Replace the active season's database with a user-picked file.
+ * Replace the current (context ?? default) season's database with a user-picked file.
  *
  * Order matters, and it is the whole fix:
  *
@@ -1269,17 +1319,19 @@ export function validateImportCandidate(path: string): string | null {
  *     still open. A copy is the step that can fail halfway (ENOSPC/EIO/EACCES, or a
  *     killed process); doing it over the live file left it truncated while the caller
  *     reported "die bisherige Datenbank wurde nicht verändert" (DBW-04);
- *  3. close the connection so SQLite checkpoints and removes the -wal/-shm — a stale
- *     WAL beside a freshly written file gets replayed on the next launch, which either
- *     silently discards the import or corrupts it into "database disk image is malformed";
+ *  3. close this season's pooled connection so SQLite checkpoints and removes the
+ *     -wal/-shm — a stale WAL beside a freshly written file gets replayed on the next
+ *     launch, which either silently discards the import or corrupts it into "database
+ *     disk image is malformed". Other seasons' handles stay open and untouched;
  *  4. rename the temp file into place. Same directory, so it is an atomic replace on
  *     POSIX and Windows alike: the season file is either the old one or the new one.
  */
-export function importIntoActiveSeason(candidatePath: string, backupDir: string): { backup: string } {
+export function importIntoCurrentSeason(candidatePath: string, backupDir: string): { backup: string } {
   const invalid = validateImportCandidate(candidatePath);
   if (invalid) throw new Error(invalid);
 
-  const dest = resolveDbPath();
+  const season = currentSeason();
+  const dest = join(dataDir(), season.file);
   // A season registered but never opened has no file yet — nothing to back up, and
   // reporting a path to a file we did not write would be a lie.
   let backup = '';
@@ -1306,7 +1358,7 @@ export function importIntoActiveSeason(candidatePath: string, backupDir: string)
     throw err; // dest untouched, connection still open — the app keeps working
   }
 
-  closeDb();
+  closeSeason(season.id);
   renameSync(staged, dest);
   for (const suffix of ['-wal', '-shm']) {
     try {

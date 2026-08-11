@@ -20,6 +20,7 @@ import { TrashIcon } from '../components/icons';
 import { useToast } from '../components/Toast';
 import { ALL_METRICS } from '../lib/taskStats';
 import { openExternal, type UpdateStatus } from '../lib/external';
+import { getWindowSeason } from '../lib/season';
 import {
   useErrorToast,
   useEventTypeOptions,
@@ -300,9 +301,12 @@ function SeasonManagementCard() {
         {data?.seasons.map((s) => (
           <li key={s.id} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-neutral-50">
             <span className="flex-1 truncate text-sm text-neutral-700">{s.label}</span>
+            {/* The registry default (what new windows open) is the one season the server
+                refuses to delete; the season THIS window shows can be deleted — the window
+                recovers to the landing page via the 410 path (lib/season.ts). */}
             {s.id === data.activeId ? (
               <span className="shrink-0 rounded-full bg-neutral-900 px-2 py-0.5 text-[11px] font-medium text-white">
-                Aktiv
+                Standard
               </span>
             ) : (
               <IconButton size="sm" variant="danger" title="Löschen" onClick={() => setDeleting(s)}>
@@ -425,10 +429,10 @@ export function SettingsDataTab() {
             )}
           </div>
           <div className="flex gap-2">
-            <Btn onClick={() => window.auftakt?.exportDatabase?.()} disabled={!hasElectron}>
+            <Btn onClick={() => window.auftakt?.exportDatabase?.(getWindowSeason() ?? undefined)} disabled={!hasElectron}>
               Datenbank exportieren…
             </Btn>
-            <Btn onClick={() => window.auftakt?.importDatabase?.()} disabled={!hasElectron}>
+            <Btn onClick={() => window.auftakt?.importDatabase?.(getWindowSeason() ?? undefined)} disabled={!hasElectron}>
               Datenbank importieren…
             </Btn>
           </div>

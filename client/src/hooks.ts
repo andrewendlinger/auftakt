@@ -18,9 +18,11 @@ import type {
   WritableSettings,
 } from './api/types';
 import { doneValueOf } from './api/types';
+import { postBroadcast } from './lib/broadcast';
 import { errorMessage } from './lib/errors';
 import { DEFAULT_EVENT_WINDOW_DAYS } from './lib/eventGroups';
 import { LABEL_DEFAULTS, isLabelKey, type LabelKey } from './lib/labels';
+import { getWindowSeason } from './lib/season';
 import { normalizeEventTypeOptions, normalizeSelectOptions } from './lib/selectOptions';
 import {
   ALL_METRICS,
@@ -47,10 +49,18 @@ import { useUndo } from './components/UndoProvider';
  * do the other half or theirs is inert.
  */
 
-/** The dataset is tiny and local, so invalidating everything on write is simplest and instant. */
+/**
+ * The dataset is tiny and local, so invalidating everything on write is simplest and instant.
+ * The write is also broadcast to every other window (the listener in main.tsx invalidates
+ * there) — a write path that bypasses this hook opts out of cross-window freshness, which is
+ * the second reason every write goes through it.
+ */
 export function useInvalidateAll(): () => Promise<void> {
   const qc = useQueryClient();
-  return useCallback(() => qc.invalidateQueries(), [qc]);
+  return useCallback(() => {
+    postBroadcast({ v: 1, type: 'invalidate' });
+    return qc.invalidateQueries();
+  }, [qc]);
 }
 
 /**
@@ -147,9 +157,21 @@ export function useSeasons() {
 }
 
 /**
- * The active season's name, read from the seasons.json registry — the one place a rename
+ * The season THIS WINDOW shows: the sessionStorage pin, with the registry default as the
+ * pre-pin fallback (a fresh window's requests resolve the default until the first response
+ * echo pins it, so the fallback names the same season). The pin only ever changes together
+ * with a full document reload (switchSeason, seasonGone), so reading it during render
+ * cannot go stale.
+ */
+export function useCurrentSeasonId(): number | undefined {
+  const { data } = useSeasons();
+  return getWindowSeason() ?? data?.activeId;
+}
+
+/**
+ * The window's season's name, read from the seasons.json registry — the one place a rename
  * always lands. The per-season `settings.saison` row is *not* it: renaming a season on the
- * landing page while it is inactive updates the registry only (updateSeason can write the
+ * landing page while it is not open updates the registry only (updateSeason can write the
  * setting solely for the season it has open), so that row keeps the old name and every
  * consumer here — the season-scope label in the task table, the kicker on the printed
  * one-pagers — disagreed with the switcher and the landing card, with no in-app way to
@@ -164,7 +186,8 @@ export function useSeasons() {
  */
 export function useSaison(): string {
   const { data } = useSeasons();
-  return data?.seasons.find((s) => s.id === data.activeId)?.label ?? '';
+  const current = getWindowSeason() ?? data?.activeId;
+  return data?.seasons.find((s) => s.id === current)?.label ?? '';
 }
 
 /**

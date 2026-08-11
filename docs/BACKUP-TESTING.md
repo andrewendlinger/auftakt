@@ -38,11 +38,17 @@ npm run dist:mac    # or dist:win
 
 ### 2 · The prompt arrives once there is data
 
-- [ ] Add an artist, quit, relaunch → the backup-folder prompt appears now.
-- [ ] Decline it → relaunch → it appears **again**, and keeps appearing until a folder is set
-      (the amber hint remains in Settings meanwhile). **Never asking again is the old bug.**
+- [ ] Add an artist, quit, relaunch → an **explanation dialog** appears now — „Automatische
+      Sicherungen einrichten?", attached to the Auftakt window, with „Backup-Ordner wählen…"
+      and „Später". **A bare folder picker with no explanation is the old bug**: macOS does not
+      display an open-dialog's title, so it read as a stray Finder window.
+- [ ] „Backup-Ordner wählen…" → the folder picker opens (as a sheet on the window).
+- [ ] „Später" (or cancelling the picker) → relaunch → the dialog appears **again**, and keeps
+      appearing until a folder is set (the amber hint remains in Settings meanwhile).
+      **Never asking again is the old bug.**
 - [ ] Choose a folder → relaunch → the prompt is gone for good.
-- [ ] Settings → "Wählen…" still works and sets the folder.
+- [ ] Settings → "Wählen…" still works and sets the folder — without the explanation dialog
+      (the click there already is the explanation).
 
 ### 2b · A folder the backup cannot use is refused when it is picked (Windows)
 
@@ -118,7 +124,36 @@ that season's settings.
 - [ ] Settings still names the backup folder — it rides along in `seasons.json` (WP-39).
 - [ ] A season restored from before the local-time conversion carries UTC stamps until it is
       opened; switch to it once and „Angelegt am"/„Erledigt am" shift into local time. Only the
-      *active* season migrates, so this is per season, not once for the file set.
+      *default* season migrates at boot, so this is per season, not once for the file set.
+
+### 8 · Mehrere Fenster (multi-window, per-window seasons)
+
+What the headless checks cannot cover: real `BrowserWindow`s, the menu, the cascade, and the
+focused-window season resolution. Run with at least two seasons present.
+
+- [ ] „Neues Fenster" / Cmd+N (Ctrl+N) opens a second window, cascaded off the first — not
+      perfectly stacked — and **without** the boot gesture. `boot-log.jsonl` gains a
+      `skip / secondary` line; a reload of that window logs `skip / warm`.
+- [ ] Edit a task in window A → window B (same season) shows it without any interaction. Then
+      break the fast path once: edit in A and merely *focus* B — the focus refetch is the
+      backstop and must also bring the edit in.
+- [ ] Switch A to another season → only A reloads; B keeps its season in the header chip and its
+      rows. A new window (Cmd+N) opens on the season A switched to (the default follows).
+- [ ] Delete the season B is showing (from A's Einstellungen; the „Standard" one is refusable) →
+      B lands on the landing page with the „… wurde gelöscht" toast. **Windows:** the season's
+      `.db` file is actually gone from the data dir — an open pooled handle used to make that
+      unlink fail silently.
+- [ ] Export from a window pinned to a non-default season (both the Einstellungen button and the
+      Datei menu) → the exported file contains *that* season's rows. The import confirmation
+      names the season it will replace; after an import, **all** windows close and one returns.
+- [ ] „Backup-Ordner wählen…" → every open window reloads, and each shows the new folder.
+- [ ] Close one of two windows → the other keeps working (menus, dialogs, edits). Close the last
+      window with an unreachable backup folder configured → the quit grace still behaves: no
+      orphan process, no dialog on an empty desktop.
+- [ ] Windows: double-click the shortcut while the app runs → a **new window**, not a raise.
+      Ctrl+W closes one window; „Beenden" quits the app.
+- [ ] Type into an inline editor in A, focus B, edit a different row there, focus A again → the
+      draft in A survived and B's edit is visible in A's other rows.
 
 ## Notes
 

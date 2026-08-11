@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
@@ -15,10 +15,12 @@ import {
   nonEmptyLandingKeys,
   useRemoveLandingSection,
 } from '../components/LandingCards';
-import { NewSeasonModal, reloadToDashboard } from '../components/SeasonModals';
+import { NewSeasonModal } from '../components/SeasonModals';
+import { consumeSeasonGone, switchSeason } from '../lib/season';
 import { SectionArranger } from '../components/SectionArranger';
 import { useToast } from '../components/Toast';
 import {
+  useCurrentSeasonId,
   useErrorToast,
   useGuardedAction,
   useInvalidateAll,
@@ -60,25 +62,33 @@ export function LandingPage() {
 
   const [creating, setCreating] = useState(false);
   const [switching, setSwitching] = useState(false);
+  const currentId = useCurrentSeasonId();
+
+  // seasonGone() lands here after its reload; the flag relays the explanation across it
+  // (a toast cannot survive a document reload). Read-and-clear, so it shows exactly once.
+  useEffect(() => {
+    if (consumeSeasonGone()) {
+      toast.show({ message: `${term.singular} wurde gelöscht — bitte neu wählen.` });
+    }
+    // Run-once on mount is the point: the flag is consumed, a re-run finds it cleared.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const seasons = data?.seasons ?? []; // registry order — manual and stable
 
   // `switching` disables every card (and drops it out of the tab order), so it has to be
-  // cleared on failure: without the finally, one rejected activation — a restarting server,
-  // a 400, a dropped fetch — left the whole page dead for good, silently, until the user
-  // reloaded the app by hand (PGS-03).
+  // cleared even on a throw: without the finally, one rejection left the whole page dead
+  // for good, silently, until the user reloaded the app by hand (PGS-03). switchSeason
+  // itself cannot fail locally (the pin is the switch), so the finally is defence in depth.
   const open = async (s: Season) => {
     if (switching) return;
-    if (s.id === data?.activeId) {
+    if (s.id === currentId) {
       navigate('/dashboard');
       return;
     }
     setSwitching(true);
     try {
-      await api.activateSeason(s.id);
-      reloadToDashboard();
-    } catch (err) {
-      report(err, `${term.singular} konnte nicht geöffnet werden.`);
+      await switchSeason(s.id);
     } finally {
       setSwitching(false);
     }
@@ -99,8 +109,7 @@ export function LandingPage() {
           `${term.singular} „${season.label}“ wurde angelegt, aber das Übernehmen ist fehlgeschlagen:\n\n${season.copyError}`,
         );
       }
-      await api.activateSeason(season.id);
-      reloadToDashboard();
+      await switchSeason(season.id);
     } catch (err) {
       // No reload happens on this path, so a toast survives — and a failed „Anlegen &
       // wechseln" used to vanish without a word (PGS-03).
@@ -129,7 +138,7 @@ export function LandingPage() {
           <SeasonCard
             key={s.id}
             season={s}
-            active={s.id === data.activeId}
+            active={s.id === currentId}
             stats={stats?.[s.id]}
             disabled={switching}
             drag={drag}

@@ -110,10 +110,10 @@ async function stopServer() {
  * shape in a check script whose job is to catch the server disagreeing with that shape.
  * @returns {Promise<{ status: number, body: any }>}
  */
-async function req(method, path, body) {
+async function req(method, path, body, headers = {}) {
   const r = await fetch(API + path, {
     method,
-    headers: body === undefined ? {} : { 'content-type': 'application/json' },
+    headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return { status: r.status, body: await r.json().catch(() => null) };
@@ -123,8 +123,8 @@ async function req(method, path, body) {
  * …and the same, asserting success, for fixture setup where a failure is not the point.
  * @returns {Promise<any>}
  */
-async function ok(method, path, body) {
-  const r = await req(method, path, body);
+async function ok(method, path, body, headers) {
+  const r = await req(method, path, body, headers);
   if (r.status >= 400) throw new Error(`${method} ${path} → ${r.status} ${JSON.stringify(r.body)}`);
   return r.body;
 }
@@ -692,6 +692,54 @@ try {
     const withProjects = await ok('POST', '/seasons', { label: 'Kopie mit Projekten', copyFrom: 1, includeProjects: true });
     check('the second copy reported no error', withProjects.copyError === undefined, String(withProjects.copyError));
     projectCopyTarget = seasonFile(withProjects.file);
+  }
+
+  // ----------------------------------------------------------- per-window season routing
+  // A window pins its season and sends it with every request (X-Auftakt-Season, or ?season=
+  // for the one <a href> download); no header means the registry default. Each assertion is
+  // one leg of that contract — the client's pin, recovery and Excel export all key on them.
+  console.log('\n== per-window season routing');
+  {
+    const routing = await ok('POST', '/seasons', { label: 'Routing-Saison' });
+    const before = await ok('GET', '/seasons');
+    const defaultLabel = before.seasons.find((s) => s.id === before.activeId)?.label;
+
+    const viaHeader = await ok('GET', '/settings', undefined, { 'x-auftakt-season': String(routing.id) });
+    check('the season header routes to that season', viaHeader.saison === 'Routing-Saison', String(viaHeader.saison));
+    const headerless = await ok('GET', '/settings');
+    check('headerless requests stay on the default season', headerless.saison !== 'Routing-Saison', String(headerless.saison));
+
+    const viaQuery = await ok('GET', `/settings?season=${routing.id}`);
+    check('?season= routes like the header (the <a href> leg)', viaQuery.saison === 'Routing-Saison', String(viaQuery.saison));
+
+    // The echo is what a fresh window pins itself from — it must name the resolved season.
+    const echo = await fetch(`${API}/settings`, { headers: { 'x-auftakt-season': String(routing.id) } });
+    check('the response echoes the resolved season id', echo.headers.get('x-auftakt-season') === String(routing.id));
+    await echo.json();
+
+    const gone = await req('GET', '/settings', undefined, { 'x-auftakt-season': '9999' });
+    check('an unknown season answers 410, not 404', gone.status === 410, String(gone.status));
+
+    // Renaming the Saison from a pinned window must relabel *that* season in the registry,
+    // not the default one (the setActiveSeasonLabel scoping fix).
+    await ok('PATCH', '/settings', { saison: 'Routing II' }, { 'x-auftakt-season': String(routing.id) });
+    const after = await ok('GET', '/seasons');
+    check(
+      'a pinned rename relabels the pinned season',
+      after.seasons.find((s) => s.id === routing.id)?.label === 'Routing II',
+      JSON.stringify(after.seasons.map((s) => s.label)),
+    );
+    check(
+      'the default season keeps its label',
+      after.seasons.find((s) => s.id === after.activeId)?.label === defaultLabel,
+      String(defaultLabel),
+    );
+
+    // Headerless callers (Electron main, these scripts) follow the default as it moves.
+    await ok('POST', `/seasons/${routing.id}/activate`);
+    const followed = await ok('GET', '/settings');
+    check('headerless requests follow the activated default', followed.saison === 'Routing II', String(followed.saison));
+    await ok('POST', '/seasons/1/activate'); // restore: later sections purge the default season's file
   }
 
   // ------------------------------------------------------- purge fixtures (SDL-01 / DBW-02)

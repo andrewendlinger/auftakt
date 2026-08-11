@@ -18,8 +18,9 @@ declare global {
   interface Window {
     auftakt?: {
       openExternal?: (url: string) => void;
-      exportDatabase?: () => void;
-      importDatabase?: () => void;
+      /** Pass the window's season pin so the file operation targets it, not the default. */
+      exportDatabase?: (seasonId?: number) => void;
+      importDatabase?: (seasonId?: number) => void;
       chooseBackupDir?: () => void;
       getVersion?: () => Promise<string>;
       /** refresh=false → cached silent startup check (null if it failed); true → fresh check, may reject. */

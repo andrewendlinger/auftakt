@@ -61,12 +61,27 @@ explicitly (`lib/crud.ts`, `ensureBuiltinColumns`, the event duplicate) instead 
 default. **A new insert path must do the same** — relying on the default writes UTC on an old
 database and local on a new one.
 
-## Seasons: one SQLite file per season
+## Seasons: one SQLite file per season, scoped per request
 
 `server/src/db.ts` is the single source of truth for data location. A `seasons.json` registry in
-the data dir lists seasons and the active one; `getDb()` caches one connection to the active file,
-and `activateSeason()` closes it so the next call re-opens the new file — no restart. Data dir is
-`<repo>/.data` in dev and Electron `userData` when packaged.
+the data dir lists seasons and the **default** one (`activeId` — what new windows and headerless
+callers resolve; `activateSeason()` is a registry write only). Each window pins its own season
+(`client/src/lib/season.ts`, sessionStorage) and sends it with every request — `X-Auftakt-Season`
+via the one `http()` wrapper, or `?season=` for the plain `<a href>` downloads that cannot carry a
+header. The `/api` middleware (`server/src/index.ts`) validates the id, answers **410** for a
+season that no longer exists (distinct from row-level 404s; `no-store`, and every `/api` response
+carries `Vary: X-Auftakt-Season` — a heuristically-cached 410 replayed after recovery was an
+infinite reload loop), echoes the resolved id — an unpinned window adopts the first echo — and
+opens an `AsyncLocalStorage` context (`server/src/seasonContext.ts`) that `getDb()` resolves
+against a per-season connection pool.
+
+The rule that keeps this invisible: **handlers never pass season ids around.** `getDb()` is
+season-aware through the request context; anything running outside a request — the boot warm,
+seed/demo, the check scripts' in-process calls, the Notion importer — deliberately gets the
+default. Never capture `getDb()`'s return across requests (the boot warm in `index.ts` is the
+sole deliberate exception). The check scripts' `activateSeason(id)` → `getDb()` pattern is a
+compatibility constraint: headerless resolution re-reads the registry per call, so do not cache
+the default id. Data dir is `<repo>/.data` in dev and Electron `userData` when packaged.
 
 `copySeasonData()` carries a `SeasonCopyOptions` selection into a fresh season with ids preserved
 so FKs and `custom_values` keys stay linked. Every group is opt-in and **a row only comes over if
@@ -109,11 +124,14 @@ For the same reason these operations live **server-side** (`server/src/routes/ba
 the connections and is the only side that can checkpoint. Electron supplies paths from dialogs and
 nothing else; `electron/backup.ts` is just an HTTP call.
 
-`importIntoActiveSeason()` is order-sensitive and the order is the fix: validate the candidate →
-snapshot the current DB → `closeDb()` → copy → unlink `-wal`/`-shm`. Closing before the copy is
-what removes the sidecars; a stale WAL left beside a freshly copied file is replayed on the next
-launch, which either silently discards the import or corrupts it into `database disk image is
-malformed` at startup, before the window exists.
+`importIntoCurrentSeason()` is order-sensitive and the order is the fix: validate the candidate →
+snapshot the current DB → `closeSeason()` → copy → unlink `-wal`/`-shm`. Closing before the copy
+is what removes the sidecars; a stale WAL left beside a freshly copied file is replayed on the
+next launch, which either silently discards the import or corrupts it into `database disk image
+is malformed` at startup, before the window exists. It targets the request's season; the Electron
+menu path resolves the focused window's pin, the Einstellungen buttons pass theirs through IPC.
+`deleteSeason()` closes the pooled handle before unlinking for the same family of reason — an
+open file cannot be unlinked on Windows.
 
 Backups cover **every season plus `seasons.json`**, written as one dated restore-point folder per
 run and pruned to 30. Guarded by `npm run check:backup`; the Electron half has a manual checklist
@@ -314,6 +332,8 @@ Which module owns which invariant. Reach for these rather than rebuilding the be
 | `useGuardedAction()` / `useErrorToast()` (hooks.ts) | the failure arm for any write. `guard(fallback, () => api.x(…))` returns `true` when the call resolved, so a caller can gate its success toast or dialog close on it. Wording policy lives in `client/src/lib/errors.ts`: the German sentence leads, an `ApiError`'s server text follows in parentheses; anything else goes to `console.error`. |
 | `pushWithToast(entry, message)` (UndoProvider) | pairing a stack entry with its toast. Never call `push` *and* wire a toast `onAction` — doing both is TTU-13, where the toast ran `revert` behind the stack's back. `DERIVED_INVERSE_KEYS` (hooks.ts) maps a resource to the columns the server derives. |
 | `useUndoableDelete()` (hooks.ts) | soft-delete + undo stack + toast, returning whether the row is actually gone. A delete endpoint that does not answer `{deleted:false}` on a no-op silently opts out of the „war bereits gelöscht" check — teach it in `nothingDeleted()`. **Deleting a row that has a page of its own passes `gone: [kind, id]`** — its keys go stale but are never refetched. Without it the blanket invalidate asks for the deleted row while its page is still mounted (the redirect is a router transition and does not commit first), the server answers 404, and the user gets an error toast next to the „gelöscht" one. |
+| `lib/season.ts` | the window's season boundary: the sessionStorage pin, the response-echo adoption, the 410 recovery (`seasonGone()` → landing + relayed toast) and `switchSeason()` — **the only legal way to change seasons from the client.** Calling `api.activateSeason` directly moves the default without switching anything. Nothing else reads `sessionStorage['auftakt-season']`. |
+| `lib/broadcast.ts` | cross-window signalling. **One channel object per window, for posting AND listening — the singleton IS the self-suppression**: BroadcastChannel skips delivery only to the posting object, so a second `new BroadcastChannel('auftakt')` makes a window hear its own writes and loop every invalidate. Messages are versioned pure signals, never data. `useInvalidateAll` posts; the sole listener lives in `main.tsx`. |
 | `useAnchoredPopover()` (`lib/popover.ts`) | any new popover: anchor rect, flip-above, clamp, height cap, close on scroll/resize, Escape. Escape is a **capture-phase window listener, not a React `onKeyDown`** — a popover opened by a click has no focus inside its menu. |
 | `InlineInput` + `useCommitOnUnmount` (hooks.ts) | click-to-edit that commits on blur. React delegates focus events at the root, so a detached node never reaches `onBlur`. `useCommitOnUnmount`'s `active` argument is load-bearing: a constant `true` makes StrictMode's mount-time cleanup fire the commit while the editor is still open. Pick an `EmptyPolicy` (`ignore`/`clear`/`raw`) explicitly. |
 | `normalizeUrl` (`lib/url.ts`) | URL shaping at the **storage and render** boundaries, never inside `openExternal` — `normalizeUrl('/foo')` yields `https:///foo`, which the allowlist would then accept. `openExternal`'s protocol allowlist stays the one place that decides what may open. |
@@ -327,12 +347,29 @@ Which module owns which invariant. Reach for these rather than rebuilding the be
 - One `api` object (`client/src/api/client.ts`) wraps all fetches; components never call `fetch`
   directly. `client/src/api/types.ts` mirrors the server row shapes.
 - Writes call `useInvalidateAll()` — the dataset is small and local, so blanket invalidation is
-  intentional, not an oversight.
+  intentional, not an oversight. It also broadcasts the invalidate to every other window; a write
+  path that bypasses the hook opts out of cross-window freshness, which is the second reason to
+  stay on it. `refetchOnWindowFocus` is the backstop, wired to real `focus` events because
+  `visibilitychange` never fires between two visible Electron windows.
 - The error boundary is **app-wide, not per-section**: a throw in one widget takes the whole page
   to the German fallback panel.
 - **UI strings are German.** Match the surrounding language in labels, toasts, dialogs and menu
   items; code identifiers and comments are English, except domain fields that are German in the
   schema (`saison`, `erledigt_am`, `priority` values `hoch`/`mittel`/`niedrig`).
+
+## Windows (plural)
+
+N `BrowserWindow`s over the one in-process server, each pinned to its own season.
+`createWindow()` (`electron/main.ts`) is the only constructor — the `setWindowOpenHandler` deny
+stays, since a child window would not inherit the preload. Secondary windows cascade off the
+focused one and load with `?noboot` (they skip the boot gesture; the flag lives in the search
+component, where HashRouter never looks). New windows open unpinned and adopt the registry
+default from the first response echo — `switchSeason()` moves that default, so Cmd+N opens the
+last-switched season, not necessarily the opener's. The startup chores are memoized, so N
+`boot-settled` calls are one run; `window-all-closed` only fires when the last window closes, so
+the quit grace is window-count-agnostic; a second app launch opens a new window
+(`second-instance`). The single-instance lock stays — two *processes* would race the port and
+corrupt WAL sidecars on import.
 
 ## Packaging
 

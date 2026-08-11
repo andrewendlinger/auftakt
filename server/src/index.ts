@@ -2,7 +2,8 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { adoptLegacyBackupConfig, getDb, purgeExpired } from './db';
+import { adoptLegacyBackupConfig, getDb, listSeasons, purgeExpired } from './db';
+import { runWithSeason } from './seasonContext';
 import { HttpError } from './lib/query';
 import {
   artistsRouter,
@@ -26,9 +27,14 @@ import { usageRouter } from './routes/usage';
 
 const PORT = Number(process.env.AUFTAKT_PORT ?? 4317);
 
+// Hard-delete rows soft-deleted more than 30 days ago. Boot-only and default-season-only —
+// deliberately NOT in getDb's pool-miss path: check-dates' migration harness plants legacy
+// soft-deleted fixtures and re-opens the file expecting them converted, not purged, and an
+// open-time sweep would also tax the first request a window sends to a freshly pinned
+// season. Non-default seasons purge when they next boot as the default, exactly as an
+// inactive season always has. Never fatal: a purge blocked by a lingering FK reference must
+// not keep the whole app from starting.
 const db = getDb();
-// Hard-delete rows soft-deleted more than 30 days ago. Never fatal: a purge blocked by a
-// lingering FK reference must not keep the whole app from starting.
 try {
   purgeExpired(db);
 } catch (err) {
@@ -100,7 +106,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   //    Checks run first, so a hostile preflight gets 403, not 204.
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,POST,PATCH,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Auftakt-Season');
     return res.status(204).end();
   }
   next();
@@ -110,6 +116,40 @@ app.use(express.json({ limit: '4mb' }));
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
+});
+
+// --- Per-window seasons: establish the request's season context ---
+// A window pins its season client-side and sends it as X-Auftakt-Season (or ?season= for
+// plain <a href> downloads, which cannot carry headers); getDb() resolves the context per
+// call. No header/param — Electron main, the check scripts, curl — means the registry
+// default. A season that no longer exists answers 410, not 404: row-level 404s are
+// meaningful to the client, and nothing else uses 410, so the client can read it as "this
+// window's season is gone" without body-sniffing. Every response echoes the resolved id;
+// a window with no pin yet adopts the first echo it sees, which is consistent by
+// construction (all its pre-pin requests resolved to the same default). Mounted after
+// /api/health (season-free — waitForServer polls it before any season exists client-side).
+app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+  const raw = req.get('x-auftakt-season') ?? (typeof req.query.season === 'string' ? req.query.season : undefined);
+  const reg = listSeasons();
+  // The same URL answers differently per season header, and Chromium's cache is keyed by
+  // URL alone unless told otherwise — without Vary, a response stored under one pin can be
+  // replayed for another (or for no pin at all).
+  res.vary('X-Auftakt-Season');
+  // Resolve the default to a season that actually exists: echoing a stale activeId would
+  // make a fresh window pin it, 410 on its next request, clear the pin and loop forever.
+  let id = reg.seasons.some((s) => s.id === reg.activeId) ? reg.activeId : reg.seasons[0]!.id;
+  if (raw !== undefined) {
+    id = Number(raw);
+    if (!Number.isInteger(id) || !reg.seasons.some((s) => s.id === id)) {
+      // 410 is cacheable BY DEFAULT (RFC 9110) and this one carries no validators, so
+      // Chromium served it heuristically-fresh to the pinless retry after seasonGone()
+      // recovered — an unbreakable reload loop. Never store it.
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(410).json({ error: 'Saison existiert nicht mehr' });
+    }
+  }
+  res.setHeader('X-Auftakt-Season', String(id));
+  runWithSeason(id, next);
 });
 
 app.use('/api/artists', artistsRouter);

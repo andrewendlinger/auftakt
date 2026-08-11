@@ -1,9 +1,10 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
-import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryCache, QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query';
 import './index.css';
 import { ApiError } from './api/client';
+import { coalesced, onBroadcast } from './lib/broadcast';
 import { reportError } from './lib/errors';
 import { signalFailed } from './boot';
 import { Layout } from './components/Layout';
@@ -38,7 +39,11 @@ const queryClient = new QueryClient({
   }),
   defaultOptions: {
     queries: {
-      refetchOnWindowFocus: false,
+      // The backstop behind the cross-window broadcast: focusing a window catches anything
+      // a missed message left stale. Safe for inline editors since TTU-12/TTU-38 — cells
+      // keep their identity across a refetch and drafts seed only on start(), so a
+      // background refetch reorders rows at worst, it does not remount an open editor.
+      refetchOnWindowFocus: true,
       staleTime: 5_000,
       /**
        * The server is the local Express process, so a 4xx is a definitive answer — retrying it
@@ -53,6 +58,43 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+/**
+ * refetchOnWindowFocus above is inert between Electron windows without this: React Query v5
+ * listens to `visibilitychange` only, and two windows side by side on two screens are BOTH
+ * permanently visible — switching between them never fires it. Feed the manager real
+ * window focus as well, which is exactly the multi-window case the flag exists for here.
+ */
+focusManager.setEventListener((handleFocus) => {
+  const onFocus = () => handleFocus(true);
+  const onVisibility = () => handleFocus(document.visibilityState === 'visible');
+  window.addEventListener('focus', onFocus);
+  document.addEventListener('visibilitychange', onVisibility);
+  return () => {
+    window.removeEventListener('focus', onFocus);
+    document.removeEventListener('visibilitychange', onVisibility);
+  };
+});
+
+/**
+ * The receiving half of cross-window freshness: another window wrote (its
+ * useInvalidateAll posted), so this window's cache is stale — invalidate everything, the
+ * same blanket policy a local write applies. Module scope, not a component: it needs no
+ * hooks, must not double-subscribe under StrictMode, and lives exactly as long as the
+ * document (the channel dies with the window; nothing to unsubscribe). Deliberately calls
+ * the QueryClient directly rather than useInvalidateAll — re-posting a received invalidate
+ * would ping-pong between windows forever. The coalescer collapses bursts (a drag reorder
+ * posts one invalidate per dropped row); active queries refetch immediately, the rest just
+ * go stale, and a window on another season merely refetches its own season's data.
+ */
+onBroadcast(
+  (() => {
+    const invalidate = coalesced(() => void queryClient.invalidateQueries(), 150);
+    return (msg) => {
+      if (msg.type === 'invalidate') invalidate();
+    };
+  })(),
+);
 
 /**
  * Total collapse. A throw *above* ErrorBoundary — in ToastProvider, UndoProvider,

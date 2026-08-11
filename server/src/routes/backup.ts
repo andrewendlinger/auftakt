@@ -6,7 +6,7 @@ import {
   backupStamp,
   getBackupConfig,
   getDb,
-  importIntoActiveSeason,
+  importIntoCurrentSeason,
   registryPath,
   resolveDbPath,
   seasonFiles,
@@ -80,7 +80,7 @@ export function runBackup(backupDir: string): { dir: string; files: string[] } {
   return { dir: target, files };
 }
 
-/** True once the active season holds anything worth backing up. */
+/** True once the request's season holds anything worth backing up. */
 function hasData(): boolean {
   const db = getDb();
   for (const table of ['artists', 'projects', 'tasks']) {
@@ -137,7 +137,7 @@ backupRouter.post('/', (req, res) => {
   }
 });
 
-/** Export the active season as a single consistent file (never a raw file copy). */
+/** Export the request's season as a single consistent file (never a raw file copy). */
 backupRouter.post('/export', (req, res) => {
   const path = String((req.body as { path?: unknown })?.path ?? '').trim();
   if (!path) return res.status(400).json({ error: 'Kein Zielpfad angegeben.' });
@@ -162,7 +162,7 @@ backupRouter.post('/import', (req, res) => {
   if (!path) return res.status(400).json({ error: 'Keine Datei angegeben.' });
   try {
     const backupDir = getBackupConfig().dir;
-    res.json(importIntoActiveSeason(path, backupDir));
+    res.json(importIntoCurrentSeason(path, backupDir));
   } catch (err) {
     res.status(400).json({ error: (err as Error).message });
   }

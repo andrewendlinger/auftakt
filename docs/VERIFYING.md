@@ -129,7 +129,7 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   attributes before the overlay vanishes. One JSON object, last boot wins (a warm reload
   overwrites it with `skip / warm`, which is also how you prove the reload happened). Fields:
   `outcome` (`play` | `cross` | `skip`), `why` (`done`, `deadline`, `click`, `app-failed`,
-  `abort:<reason>`, `hold-max`, `gesture-max`, `warm`, `reduced-motion`, `no-prod`),
+  `abort:<reason>`, `hold-max`, `gesture-max`, `warm`, `secondary`, `reduced-motion`, `no-prod`),
   `readyMs`/`startMs`/`endMs` on the same clock the 1200 ms deadline reads, and — when the
   gesture played — `frames` (judged deltas: `n`, `med`, `p95`, `worst`, `quick`, `drops`, plus
   `lead`, the release→first-callback gap, and `warm`, the exempt first frame's delta) and `tail`
@@ -217,6 +217,31 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   cheapest way to get it out of the way.
 - **`page.goto` to the same hash is a no-op** under `HashRouter`, so a dialog left open by the
   previous scenario silently eats every click. Call `reload()` after `goto`.
+- **Several "windows" are several pages in ONE BrowserContext.** BroadcastChannel is partitioned
+  per context, so two contexts never deliver — and a cross-window-freshness check against them
+  "passes" vacuously, since nothing arrives and nothing was expected to. `context.newPage()`
+  twice, not `browser.newContext()` twice. sessionStorage is still per page, which is exactly the
+  Electron shape (per-window pins, shared broadcast).
+- **A tab is pinned to a season via `page.evaluate(() => sessionStorage.setItem('auftakt-season',
+  '2'))` followed by `reload()`** — the pin (and a fresh QueryClient) apply only with a document
+  reload, so a hash `goto` after setting it renders the old season's cache and the check reads
+  "pinning is broken" against working code. Not `context.addInitScript`, which pins every page in
+  the context.
+- **A curl-written fixture does not broadcast.** Only a window's own write path (through
+  `useInvalidateAll`) posts the invalidate, so a second tab will not refresh after a
+  `curl -X POST` — by design, not a defect. Drive the write through the first tab's UI when
+  asserting cross-tab freshness, and `reload()` a tab that must see a curl-created season.
+- **410 means "this window's season is gone", and only that.** Row-level misses stay 404. The
+  client reacts to a 410 by dropping its pin and restarting on the landing page with a toast; the
+  server marks it `no-store` and varies every `/api` response on `X-Auftakt-Season` — a cached
+  410 replayed after recovery was an infinite reload loop, found by exactly this scenario.
+- **The demo seeds several seasons** (three at the time of writing) and their ids shift as
+  fixtures accumulate. Create your own fixture season over the API and use the returned id;
+  a hardcoded "season 2" assertion matches a different database on every run.
+- **Focus-refetch never fires between two visible Electron windows on `visibilitychange`** — the
+  client wires React Query's `focusManager` to real `focus` events instead. Headlessly, trigger it
+  with `window.dispatchEvent(new Event('focus'))`, and remember `staleTime: 5_000`: a focus inside
+  five seconds of the last fetch refetches nothing, which reads as "focus-refetch is broken".
 - **`locator.isVisible()` does not wait** — it samples immediately, so it reads the state before an
   aborted request resolves. Use `waitFor`.
 - **Labels and table headers are CSS-uppercased.** `innerText` returns `DEADLINE` and
