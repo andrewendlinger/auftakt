@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import type { ID } from '../api/types';
-import { reloadToDashboard } from './SeasonModals';
+import { reloadToDashboard } from '../lib/season';
 import {
   useErrorToast,
   useSeasons,

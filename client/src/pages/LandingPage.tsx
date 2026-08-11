@@ -15,7 +15,8 @@ import {
   nonEmptyLandingKeys,
   useRemoveLandingSection,
 } from '../components/LandingCards';
-import { NewSeasonModal, reloadToDashboard } from '../components/SeasonModals';
+import { NewSeasonModal } from '../components/SeasonModals';
+import { reloadToDashboard } from '../lib/season';
 import { SectionArranger } from '../components/SectionArranger';
 import { useToast } from '../components/Toast';
 import {

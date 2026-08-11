@@ -42,6 +42,7 @@ import type {
   TaskUpdate,
   WritableSettings,
 } from './types';
+import { getWindowSeason, pinFromResponse, seasonGone } from '../lib/season';
 
 const BASE = '/api';
 
@@ -54,11 +55,23 @@ export class ApiError extends Error {
 }
 
 async function http<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const season = getWindowSeason();
   const res = await fetch(BASE + path, {
     method,
-    headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
+    headers: {
+      ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+      // The window's season travels with every request; unpinned requests resolve the
+      // server's default and pin from the echo below. The .xlsx export link cannot go
+      // through here — ExcelButton carries ?season= instead.
+      ...(season !== null ? { 'x-auftakt-season': String(season) } : {}),
+    },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+  // 410 means this window's season was deleted (410 is reserved for exactly that; row-level
+  // misses stay 404): drop the pin and restart on the landing page. No echo to pin from —
+  // the middleware rejects before setting it.
+  if (res.status === 410) seasonGone();
+  else pinFromResponse(res.headers.get('x-auftakt-season'));
   if (!res.ok) {
     let msg = res.statusText;
     try {
