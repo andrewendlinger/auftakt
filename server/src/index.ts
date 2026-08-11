@@ -131,12 +131,20 @@ app.get('/api/health', (_req, res) => {
 app.use('/api', (req: Request, res: Response, next: NextFunction) => {
   const raw = req.get('x-auftakt-season') ?? (typeof req.query.season === 'string' ? req.query.season : undefined);
   const reg = listSeasons();
+  // The same URL answers differently per season header, and Chromium's cache is keyed by
+  // URL alone unless told otherwise — without Vary, a response stored under one pin can be
+  // replayed for another (or for no pin at all).
+  res.vary('X-Auftakt-Season');
   // Resolve the default to a season that actually exists: echoing a stale activeId would
   // make a fresh window pin it, 410 on its next request, clear the pin and loop forever.
   let id = reg.seasons.some((s) => s.id === reg.activeId) ? reg.activeId : reg.seasons[0]!.id;
   if (raw !== undefined) {
     id = Number(raw);
     if (!Number.isInteger(id) || !reg.seasons.some((s) => s.id === id)) {
+      // 410 is cacheable BY DEFAULT (RFC 9110) and this one carries no validators, so
+      // Chromium served it heuristically-fresh to the pinless retry after seasonGone()
+      // recovered — an unbreakable reload loop. Never store it.
+      res.setHeader('Cache-Control', 'no-store');
       return res.status(410).json({ error: 'Saison existiert nicht mehr' });
     }
   }

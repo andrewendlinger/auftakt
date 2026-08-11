@@ -63,8 +63,12 @@ export function pinFromResponse(header: string | null): void {
  * next requests resolve the default season.
  */
 export function seasonGone(): void {
+  const s = storage();
+  // A dashboard refetches ~10 queries at once, so the 410s land as a burst and every one
+  // of them calls this; the flag makes the burst one reload instead of a navigation storm.
+  if (s?.getItem(GONE_KEY)) return;
   clearWindowSeason();
-  storage()?.setItem(GONE_KEY, '1');
+  s?.setItem(GONE_KEY, '1');
   window.location.replace('#/');
   window.location.reload();
 }
