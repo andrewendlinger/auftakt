@@ -148,6 +148,17 @@
       html.boot-play #boot-overlay svg {
         visibility: visible;
       }
+      /* An interrupted gesture — the watchdog aborting, or a click mid-swing — has to
+         keep what it had drawn. crossFade() drops .boot-play, which is what re-pauses
+         every descendant and freezes the frame they had reached; on its own it also
+         revokes the rule above, so the hand and the half-drawn ink vanished in one frame
+         and only the flat rectangle faded. That is the pop the freeze exists to avoid.
+         Set from script and only when the gesture actually started, because a cross-fade
+         from phase A must still show nothing: flashing the parked hand and a wordmark
+         that never lands is worse than the blank rectangle it replaces. */
+      #boot-overlay.boot-froze svg {
+        visibility: visible;
+      }
 
       /* React mounts and lays out underneath during phase A, and its paint would
          otherwise be recorded, rastered and then painted over — occlusion culling works
@@ -545,31 +556,57 @@
 
         /* Past this, the gesture is forfeit and the reveal is a plain cross-fade. It
            looks harsh next to the 2700 ms it guards, and it is meant to: hold plus
-           gesture plus fade is already ~4.3 s of splash at this deadline. At the 2.5 s
-           that felt natural it would be 5.6 s, which is worse than never animating. The
+           gesture plus fade is already ~3.8 s of splash at this deadline. At the 2.5 s
+           that felt natural it would be ~5.1 s, which is worse than never animating. The
            gesture is a reward for a fast boot, never a tax on a slow one. */
         var GESTURE_DEADLINE = 1200;
         /* Reveal no matter what — a bundle that 404s, a signal that never comes. */
         var HOLD_MAX = 3500;
         var CROSS_MS = 200;
-        /* The envelope plus bootOut's 370 ms fade. */
-        var GESTURE_MS = 2700 + 370;
+        /* Phase B until the overlay is gone. Not the 2700 ms envelope plus the 370 ms
+           fade: bootOut starts at --ti + 350 = 2230 ms, so it *overlaps* the envelope's
+           tail rather than following it, and its animationend — which removes the node —
+           lands at 2600 ms, before the choreography's nominal end. Adding the two gave
+           3070 and inflated everything derived from it by 470 ms. Written as the same
+           three numbers the CSS uses so the next change to --ti has one place to land. */
+        var GESTURE_MS = 1880 + 350 + 370;
 
         var gone = false;
         var playing = false;
         var crossing = false;
+        /* bootOut has begun: the app is already showing through and there is nothing
+           left to skip to. Cross-fading from here would swap in bootCross, which starts
+           at opacity 1, and throw the splash back to fully opaque for another 200 ms. */
+        var fading = false;
         var gestureAllowed = true;
         var mounted = false;
         var failsafe = 0;
 
         /* One rearmable timer, not the fixed 4000 ms this replaces. That constant was
            armed at parse and sized for an animation that began at parse; now a gesture
-           starting at the 1200 ms deadline ends at 4270 ms, so a fixed 4 s failsafe would
+           starting at the 1200 ms deadline ends at 3800 ms, so a fixed 4 s failsafe would
            cut off the very thing it exists to protect — one frame from the end, on slow
            machines only, intermittently. */
-        function armFailsafe(ms) {
+        function armFailsafe(ms, fn) {
           clearTimeout(failsafe);
-          failsafe = setTimeout(remove, ms);
+          failsafe = setTimeout(fn, ms);
+        }
+
+        /* What the failsafe fires into, everywhere except inside the cross-fade itself.
+           Firing remove() straight was a hard cut: during the hold, bootOut is paused
+           inside its own delay and its backwards fill pins the overlay at opacity 1, so
+           `remove()` swapped a solid cream rectangle for the fully laid-out app in a
+           single frame — on exactly the slow machines the failsafe exists to protect,
+           where the old unconditional CSS fade had reached opacity 0 long before the
+           timer and only an invisible node was ever reaped.
+
+           So prefer the graceful exit and keep the guarantee. crossFade() declines once
+           the reveal is already fading (there is nothing left to cross-fade to) and
+           otherwise arms its own removal, which is why this can fall through to remove()
+           on the one path where it declined. */
+        function bailOut() {
+          crossFade();
+          if (!crossing) remove();
         }
 
         function remove() {
@@ -600,20 +637,26 @@
           remove();
           return;
         }
+        // ---- phase A: hold ----------------------------------------------------------
+        /* Armed first, before anything is hidden, and that order is the point. Everything
+           below makes the app invisible and inert, and only remove() undoes either — no
+           CSS bail can, since `inert` is a DOM property. bootBail can clear the overlay
+           off a dead script but would then leave the user a blank window with a fully
+           laid-out, untabbable app behind it, which is worse than the opaque rectangle it
+           was written to prevent. With the timer already armed, no throw below can reach
+           that state. */
+        armFailsafe(HOLD_MAX, bailOut);
         // The overlay's own pointer events only stop the mouse. Without this, a keyboard
         // or screen-reader user could Tab into the app underneath and activate controls
         // they cannot see, during the one interval a mouse user is locked out of — so the
         // barrier has to be on #root, not on the thing covering it. Set from script and
         // cleared in remove(), which is the single exit of all three paths (the fade's
-        // animationend, the skip fade, the failsafe below). Deliberately not an attribute
+        // animationend, the skip fade, the failsafe above). Deliberately not an attribute
         // in the markup: there it would outlive a script that failed to run, and the app
         // would be permanently unusable rather than merely un-animated.
         if (root) root.inert = true;
-
-        // ---- phase A: hold ----------------------------------------------------------
         html.classList.add('boot-hold');
         html.dataset.boot = 'hold';
-        armFailsafe(HOLD_MAX);
         setTimeout(function () {
           gestureAllowed = false;
         }, GESTURE_DEADLINE);
@@ -622,6 +665,12 @@
         // own fade, or the cross-fade, ends the show.
         overlay.addEventListener('animationend', function (e) {
           if (e.target === overlay) remove();
+        });
+        // animationstart fires when an animation leaves its delay, so on the overlay
+        // itself this is the reveal beginning — the moment after which there is nothing
+        // left to skip. Same target test, same reason.
+        overlay.addEventListener('animationstart', function (e) {
+          if (e.target === overlay) fading = true;
         });
 
         /* Someone clicking during the hold wants the app, not the choreography. Reveal
@@ -665,10 +714,16 @@
         function start() {
           if (gone || playing || crossing) return;
           if (!gestureAllowed || performance.now() - t0 > GESTURE_DEADLINE) return crossFade();
+          /* The app reached "ready" by collapsing, not by finishing: a throw above the
+             ErrorBoundary, or one it caught. Both reveal through the same signal, because
+             the boot screen has to come down either way — but what is underneath is a
+             blank window or an error card, and playing three seconds of celebration over
+             it is the wrong reading of the moment as well as the wrong wait. */
+          if (html.dataset.appFailed) return crossFade();
           playing = true;
           html.dataset.boot = 'play';
           html.classList.add('boot-play');
-          armFailsafe(GESTURE_MS + 400);
+          armFailsafe(GESTURE_MS + 400, bailOut);
           watchFrames();
         }
 
@@ -758,9 +813,10 @@
         /* No cancelling of animations, and so none of the ways that goes wrong — a
            document-wide getAnimations() sweep would take the overlay's own fade with it
            and strand the overlay forever. crossFade drops .boot-play, which reverts every
-           descendant to the paused base rule: the gesture freezes on the frame it had
-           reached and fades out from there. A held frame reads as deliberate; stopping
-           mid-swing and cutting reads as a crash. */
+           descendant to the paused base rule, and pins the svg visible with .boot-froze so
+           that frame is still on screen: the gesture freezes where it stood and fades out
+           from there. A held frame reads as deliberate; stopping mid-swing and cutting
+           reads as a crash. */
         function abort(reason) {
           overlay.dataset.abort = reason;
           crossFade();
@@ -769,11 +825,24 @@
         // ---- the reveal without a gesture -------------------------------------------
         function crossFade() {
           if (gone || crossing) return;
+          /* Once bootOut is under way the reveal is already happening and the app is
+             already showing through. bootCross starts from opacity 1, so "skipping" from
+             here would throw the splash back to fully opaque and re-fade it — the exact
+             regression the old animationstart guard existed to prevent. Declining here
+             covers every caller: the click, the watchdog's abort, and the failsafe (which
+             falls through to remove(), see bailOut). */
+          if (fading) return;
           crossing = true;
           html.dataset.boot = 'cross';
+          /* Before dropping boot-play, if the gesture had started: that class carries the
+             svg's visibility as well as the running play-state, so losing it alone blanked
+             the artwork in one frame and left a flat rectangle to fade. What is wanted is
+             the opposite — the paused base rule freezes every descendant on the frame it
+             had reached, and this keeps that frame on screen to fade out from. */
+          if (playing) overlay.classList.add('boot-froze');
           html.classList.remove('boot-hold', 'boot-play');
           overlay.classList.add('boot-cross');
-          armFailsafe(CROSS_MS + 200);
+          armFailsafe(CROSS_MS + 200, remove);
         }
       })();
     </script>
