@@ -1,5 +1,7 @@
+import type { RequestHandler } from 'express';
 import { localStamp } from '../../../shared/time';
 import { doneStatusValue, getDb } from '../db';
+import { collect, dependentCounts } from '../lib/cascade';
 import { crudRouter } from '../lib/crud';
 import { parseCustomValues } from '../lib/customValues';
 import { listEvents, listTasks } from '../lib/queries';
@@ -31,14 +33,55 @@ export const artistsRouter = crudRouter({
   order: 'sort_order ASC, name ASC',
 });
 
+// `parent` is the one edge of the FK graph this file hands to the factory, and only because a
+// project cannot be read without it: every other child of an artist is fetched through a page that
+// is itself gated, while a project has a page of its own that a stale URL or the Zurück button
+// reaches directly. See `parentLive` in lib/crud.ts for what it does and what it deliberately
+// leaves writable.
 export const projectsRouter = crudRouter({
   table: 'projects',
   writable: ['artist_id', 'code', 'name', 'status', 'description', 'color', 'layout', 'sort_order'],
   required: ['artist_id', 'code', 'name'],
   jsonColumns: ['layout'],
   filters: ['artist_id'],
+  parent: { table: 'artists', column: 'artist_id' },
   order: 'sort_order ASC, id ASC',
 });
+
+/**
+ * What a soft delete of this row would take out of sight (WP-34) — the numbers the „Löschen"
+ * confirmation promises before the user commits to it.
+ *
+ * Deliberately **not** the same count as the trash's cascade. A soft delete stamps one row;
+ * `parentLive` then hides the descendants from every list, and `purgeExpired` never takes a
+ * parent something still references (SDL-01), so nothing here is destroyed and „Wiederherstellen"
+ * brings the whole page back. The dialog therefore counts what *disappears*, which is why the
+ * walk is `liveOnly`: a descendant already in the Papierkorb is invisible before the click too.
+ *
+ * Live-only also makes the number stable under the obvious sequence — delete a project, undo,
+ * delete the artist — where the full closure would still be counting the undone one.
+ *
+ * Mounted only on the two tables that have a delete affordance at page level. It is not on the
+ * crud factory: `/:id/dependents` is meaningless for a leaf table, and the factory knows at most
+ * one edge of the FK graph — the `parent` above, declared per table — never the walk over all of
+ * it, which stays in `lib/cascade.ts`.
+ */
+function dependentsRoute(table: 'artists' | 'projects'): RequestHandler {
+  return (req, res) => {
+    const db = getDb();
+    const id = Number(req.params.id);
+    // Same answer as crudRouter's GET /:id for a row that is gone, unparseable or already
+    // trashed: there is no delete to preview, and `{total: 0}` would read as „nothing depends
+    // on it" — the one sentence the dialog must never show wrongly.
+    if (!Number.isInteger(id)) return res.status(404).json({ error: 'not found' });
+    const row = db.prepare(`SELECT 1 FROM ${table} WHERE id = ? AND deleted_at IS NULL`).get(id);
+    if (!row) return res.status(404).json({ error: 'not found' });
+    res.json(dependentCounts(collect(db, table, id, { liveOnly: true }), table, id));
+  };
+}
+
+artistsRouter.get('/:id/dependents', dependentsRoute('artists'));
+projectsRouter.get('/:id/dependents', dependentsRoute('projects'));
 
 export const contactsRouter = crudRouter({
   table: 'contacts',

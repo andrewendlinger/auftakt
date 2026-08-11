@@ -13,6 +13,8 @@ export interface CrudOptions {
   required?: string[];
   /** Query params (?x=) that become equality filters on the default list. */
   filters?: string[];
+  /** The owning row, for a table that reaches its parent by one FK — see `parentTrashed` below. */
+  parent?: { table: string; column: string };
   /** ORDER BY clause for the default list (without the keyword). */
   order?: string;
   /** Columns stored as JSON text; object/array values are stringified. */
@@ -80,6 +82,7 @@ export function crudRouter(opts: CrudOptions): Router {
     writable,
     required = [],
     filters = [],
+    parent,
     order,
     jsonColumns = [],
     transform,
@@ -91,9 +94,43 @@ export function crudRouter(opts: CrudOptions): Router {
   // client-writable is validated by construction, with nothing to remember to add here.
   const validatesColor = writable.includes('color');
 
+  /*
+   * `parentLive` (lib/queries.ts), for a table that reaches its owner by a single foreign key
+   * instead of the `parentJoins` pair.
+   *
+   * A soft delete stamps one row, so a child of a trashed parent still reads `deleted_at IS NULL`
+   * and an unqualified list keeps serving it. Tasks and events leave the live lists with their
+   * parent (SDL-03); projects did not, because they find their artist without a join. The result
+   * was a project page that rendered — its own row is live — with no artist name and an empty task
+   * table, for a project that search, „Verschieben" and the artist page all hide (WP-34).
+   *
+   * A NULL foreign key is *no* parent rather than a dead one, matching `parentLive`: that is what
+   * keeps unowned rows visible on the tables where the FK is optional.
+   *
+   * **Reads only, deliberately.** PATCH/DELETE/restore stay reachable on a hidden row: restoring
+   * the parent has to bring the child back exactly as it was, and `purgeExpired` still counts it
+   * as a live reference that keeps the parent from being destroyed (SDL-01). Nothing in the UI can
+   * reach the writes anyway once GET is a 404.
+   */
+  const parentLive = parent
+    ? `(${table}.${parent.column} IS NULL OR EXISTS (SELECT 1 FROM ${parent.table} pl` +
+      ` WHERE pl.id = ${table}.${parent.column} AND pl.deleted_at IS NULL))`
+    : null;
+
+  const parentTrashed = (row: Row): boolean => {
+    if (!parent) return false;
+    const fk = row[parent.column];
+    if (fk === null || fk === undefined) return false;
+    const live = getDb()
+      .prepare(`SELECT 1 FROM ${parent.table} WHERE id = ? AND deleted_at IS NULL`)
+      .get(fk);
+    return live === undefined;
+  };
+
   const defaultList: RequestHandler = (req, res) => {
     const db = getDb();
     const where = ['deleted_at IS NULL'];
+    if (parentLive) where.push(parentLive);
     const params: unknown[] = [];
     for (const f of filters) {
       const val = req.query[f];
@@ -159,7 +196,9 @@ export function crudRouter(opts: CrudOptions): Router {
 
   r.get('/:id', (req, res) => {
     const row = one(table, req.params.id);
-    if (!row || row.deleted_at) return res.status(404).json({ error: 'not found' });
+    if (!row || row.deleted_at || parentTrashed(row)) {
+      return res.status(404).json({ error: 'not found' });
+    }
     res.json(row);
   });
 

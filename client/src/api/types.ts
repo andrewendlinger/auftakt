@@ -328,6 +328,18 @@ export type DeletedType =
   | 'section'
   | 'column';
 
+/**
+ * Rows hanging off another row, grouped by type — the payload behind every counted delete
+ * sentence in the app. Two callers with deliberately different meanings, so read the one that
+ * produced it: the trash's `DeletedItem.dependents` counts what „Endgültig löschen" *destroys*
+ * (the whole closure, trashed rows included), while `api.artists.dependents()` counts what a
+ * soft delete *hides* (live rows only). Same shape, same formatter (`cascadeText`).
+ */
+export interface DependentCounts {
+  total: number;
+  byType: Partial<Record<DeletedType, number>>;
+}
+
 /** One soft-deleted row surfaced in the "Gelöschte Items" section. */
 export interface DeletedItem {
   type: DeletedType;
@@ -343,7 +355,7 @@ export interface DeletedItem {
    */
   purge_at: string | null;
   /** What a permanent delete cascades to. `column` = a project's custom columns. */
-  dependents: { total: number; byType: Partial<Record<DeletedType, number>> };
+  dependents: DependentCounts;
 }
 
 export interface Season {

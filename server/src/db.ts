@@ -237,7 +237,14 @@ export function seasonStats(): Record<number, SeasonStats | null> {
         .get() as { first: string | null; last: string | null };
       out[s.id] = {
         artists: count('SELECT COUNT(*) AS n FROM artists WHERE deleted_at IS NULL'),
-        projects: count('SELECT COUNT(*) AS n FROM projects WHERE deleted_at IS NULL'),
+        // Same artist-liveness test the projects list carries (lib/crud.ts). Counting a trashed
+        // artist's projects here left the card disagreeing with itself the moment WP-34 made
+        // artists deletable — „3 Künstler · 11 Projekte", where four of the projects belong to
+        // nobody the season can show and no page in the app will open.
+        projects: count(
+          `SELECT COUNT(*) AS n FROM projects p WHERE p.deleted_at IS NULL
+             AND EXISTS (SELECT 1 FROM artists a WHERE a.id = p.artist_id AND a.deleted_at IS NULL)`,
+        ),
         // NOT IN also excludes legacy 'erledigt' rows — old files never ran migrateTaskStatus.
         openTasks: count(
           "SELECT COUNT(*) AS n FROM tasks WHERE deleted_at IS NULL AND status NOT IN (?, 'erledigt')",

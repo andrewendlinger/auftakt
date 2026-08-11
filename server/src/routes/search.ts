@@ -35,11 +35,18 @@ searchRouter.get('/', (req, res) => {
     )
     .all(like, like, LIMIT);
 
+  // The EXISTS is this query's `parentLive`. Projects are the one hit type whose owner is not
+  // reached through `parentJoins`, so they were filtered on their own `deleted_at` alone and a
+  // project under a trashed artist stayed findable — the exact dead end SHL-07 closed for the
+  // four types below. Unreachable until WP-34 gave artists a delete affordance at all, which is
+  // why it survived: nothing in the UI could produce a soft-deleted artist.
   const projects = db
     .prepare(
-      `SELECT id, artist_id, code, name FROM projects
-       WHERE deleted_at IS NULL AND (code LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')
-       ORDER BY code LIMIT ?`,
+      `SELECT p.id, p.artist_id, p.code, p.name FROM projects p
+       WHERE p.deleted_at IS NULL
+         AND EXISTS (SELECT 1 FROM artists a WHERE a.id = p.artist_id AND a.deleted_at IS NULL)
+         AND (p.code LIKE ? ESCAPE '\\' OR p.name LIKE ? ESCAPE '\\' OR p.description LIKE ? ESCAPE '\\')
+       ORDER BY p.code LIMIT ?`,
     )
     .all(like, like, like, LIMIT);
 

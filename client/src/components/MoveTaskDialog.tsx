@@ -55,10 +55,15 @@ export function MoveTaskDialog({ task, onClose }: { task: Task; onClose: () => v
   const current =
     task.project_id != null ? `p${task.project_id}` : task.artist_id != null ? `a${task.artist_id}` : 'overview';
   const artistOptions = artists.filter((a) => `a${a.id}` !== current);
+  // `artistName.has` is the live-parent test, not a lookup convenience. `/projects` now applies it
+  // server-side too (`parent` in lib/crud.ts), so this is the second of two: the two lists are
+  // separate queries and a move must never target a project whose artist arrived trashed in one of
+  // them. Offering it moved the task somewhere the user cannot navigate to, and the sort then filed
+  // it under an empty artist name at the top of the picker.
   const projectOptions = useMemo(
     () =>
       projects
-        .filter((p) => `p${p.id}` !== current)
+        .filter((p) => `p${p.id}` !== current && artistName.has(p.artist_id))
         .sort(
           (x, y) =>
             (artistName.get(x.artist_id) ?? '').localeCompare(artistName.get(y.artist_id) ?? '') ||

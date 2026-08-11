@@ -189,19 +189,25 @@ export function Modal({
             ✕
           </IconButton>
         </div>
+        {/* Covers the footer too, not just the body. The provider used to wrap `children` alone,
+            because that was the only place a nested dialog had ever come from — and a Modal
+            opened out of the *footer* (RecordFormModal's `danger` slot, WP-34) then read the
+            depth of the layer above this one and registered as this dialog's equal. `Math.max`
+            found them tied, both listeners passed the topmost test, and one Escape tore down the
+            confirm and the form under it in the same keystroke: exactly TTU-16, one slot over. */}
         <ModalDepthCtx.Provider value={depth}>
           <div ref={bodyRef} inert={confirming} className="flex-1 overflow-y-auto px-5 py-4">
             {children}
           </div>
+          {footer && (
+            <div
+              inert={confirming}
+              className="flex shrink-0 justify-end gap-2 border-t border-neutral-100 px-5 py-3"
+            >
+              {footer}
+            </div>
+          )}
         </ModalDepthCtx.Provider>
-        {footer && (
-          <div
-            inert={confirming}
-            className="flex shrink-0 justify-end gap-2 border-t border-neutral-100 px-5 py-3"
-          >
-            {footer}
-          </div>
-        )}
         {confirming && (
           // Inside the dialog rather than as a nested `Modal`: it must not register a depth of
           // its own, and the form underneath has to stay visible while the user decides.
@@ -509,6 +515,7 @@ export function RecordFormModal({
   submitLabel = 'Speichern',
   onSubmit,
   onClose,
+  danger,
 }: {
   title: ReactNode;
   fields: FieldDef[];
@@ -516,6 +523,17 @@ export function RecordFormModal({
   submitLabel?: string;
   onSubmit: (values: Record<string, string | null>) => void | Promise<void>;
   onClose: () => void;
+  /**
+   * Destructive action for the record being edited — rendered hard left in the footer, away
+   * from Abbrechen/Speichern. Deleting a record is rare and heavy next to the everyday edit,
+   * so it lives one dialog in rather than on the page behind it, where a stray click lands on
+   * the surface the user looks at most (WP-34).
+   *
+   * The slot is only the button. Whatever confirmation it needs is the caller's, because only
+   * the caller knows what the record costs — see `DeleteRecordAction` in EntityButtons.tsx,
+   * which opens a nested `Modal` over this one.
+   */
+  danger?: ReactNode;
 }) {
   const initialVals = useMemo(() => {
     const src = initial as Record<string, unknown> | undefined;
@@ -579,6 +597,9 @@ export function RecordFormModal({
       dirty={dirty}
       footer={
         <>
+          {/* `mr-auto` against the footer's `justify-end`: the destructive action sits at the
+              opposite end from Speichern, so the two are never neighbours under the pointer. */}
+          {danger && <div className="mr-auto">{danger}</div>}
           {missing.length > 0 && (
             <FooterHint>Bitte ausfüllen: {missing.map((f) => f.label).join(', ')}</FooterHint>
           )}

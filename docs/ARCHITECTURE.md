@@ -131,6 +131,14 @@ resolve each task/event to its owning artist via `COALESCE(t.artist_id, p.artist
 Behaviour keyed off the allowlist rather than a separate flag: `/reorder` mounts when `sort_order`
 is writable, and `color` is hex-validated when `color` is. A new table gets both by construction.
 
+`parent: {table, column}` is `parentLive` for a table that reaches its owner by one foreign key
+instead of the `parentJoins` pair — it filters list and get, so a row whose parent is in the trash
+answers 404 rather than rendering a page the rest of the app hides (WP-34). **Reads only:**
+PATCH/DELETE/restore stay reachable on a hidden row, because restoring the parent has to bring the
+child back untouched and `purgeExpired` still counts it as a live reference (SDL-01). Only
+`projects` carries it today — every other child is fetched through a page that is itself gated,
+while a project has a URL of its own.
+
 Each `writable`/`required` pair is mirrored on the client by a `…Create`/`…Update` type in
 `client/src/api/types.ts`, which is what `resource<T, Create, Update>()` binds to. **Adding a
 column means editing both**: `crudRouter` drops anything not on the list without a word, so a
@@ -164,6 +172,36 @@ kills retention permanently (DBW-02).
 Separately, tasks in the „done" status move to the archive view after `ARCHIVE_AFTER_DAYS` (30).
 „Done" is not hardcoded: it is whichever Status option carries `done: true`, read via
 `doneStatusValue(db)`.
+
+### Counting before a delete
+
+Two endpoints put a number in front of a delete, and they count **different things** — read which
+one produced a `DependentCounts` before believing it:
+
+| | walks | answers |
+|---|---|---|
+| `GET /api/deleted` → `dependents` | `collect()`, whole closure | what „Endgültig löschen" **destroys** |
+| `GET /api/artists\|projects/:id/dependents` | `collect(…, {liveOnly: true})` | what a soft delete **hides** (WP-34) |
+
+The second exists because a soft delete stamps one row: nothing under it is deleted, it merely
+stops being listed, and „Wiederherstellen" brings the page back whole. Counting a descendant that
+is *already* in the Papierkorb would overstate what the click costs, which is what `liveOnly` is
+for — the same line `liveSubtreeIds` draws for task trees. Both share `dependentCounts()` in
+`lib/cascade.ts` and the German formatter `cascadeText()` in `client/src/lib/deletedTypes.ts`.
+
+### Where delete affordances live
+
+There is a pattern here, and it is worth matching rather than re-deciding per surface:
+
+- **row deletes** — the hover-revealed ✎/🗑 pair (Kontakte, Termine, Dokumente & Links) and the
+  task table's always-visible 🗑
+- **section deletes** — only inside „✎ Bereiche bearbeiten" (`SectionArranger`'s strip)
+- **config deletes** — only inside their manager (⚙ Spalten, the option editors in Einstellungen)
+- **record deletes** (artist, project) — inside „✎ Bearbeiten", behind a second confirm, never on
+  the page header. See `docs/DECISIONS.md`, WP-34. The page they delete is the page you are on, so
+  the redirect out **replaces** the history entry: a push leaves the deleted row one Zurück away,
+  and the refetch there 404s into the `LoadError` panel (PGS-05).
+- **seasons** — Einstellungen only, and the one delete with no undo at all.
 
 ### Task subtrees
 
@@ -266,12 +304,12 @@ Which module owns which invariant. Reach for these rather than rebuilding the be
 | `useRetention()` (hooks.ts) | „wie lange bleibt das". **No German string may state a retention threshold again.** Both constants ride on the settings response. |
 | `useGuardedAction()` / `useErrorToast()` (hooks.ts) | the failure arm for any write. `guard(fallback, () => api.x(…))` returns `true` when the call resolved, so a caller can gate its success toast or dialog close on it. Wording policy lives in `client/src/lib/errors.ts`: the German sentence leads, an `ApiError`'s server text follows in parentheses; anything else goes to `console.error`. |
 | `pushWithToast(entry, message)` (UndoProvider) | pairing a stack entry with its toast. Never call `push` *and* wire a toast `onAction` — doing both is TTU-13, where the toast ran `revert` behind the stack's back. `DERIVED_INVERSE_KEYS` (hooks.ts) maps a resource to the columns the server derives. |
-| `useUndoableDelete()` (hooks.ts) | soft-delete + undo stack + toast, returning whether the row is actually gone. A delete endpoint that does not answer `{deleted:false}` on a no-op silently opts out of the „war bereits gelöscht" check — teach it in `nothingDeleted()`. |
+| `useUndoableDelete()` (hooks.ts) | soft-delete + undo stack + toast, returning whether the row is actually gone. A delete endpoint that does not answer `{deleted:false}` on a no-op silently opts out of the „war bereits gelöscht" check — teach it in `nothingDeleted()`. **Deleting a row that has a page of its own passes `gone: [kind, id]`** — its keys go stale but are never refetched. Without it the blanket invalidate asks for the deleted row while its page is still mounted (the redirect is a router transition and does not commit first), the server answers 404, and the user gets an error toast next to the „gelöscht" one. |
 | `useAnchoredPopover()` (`lib/popover.ts`) | any new popover: anchor rect, flip-above, clamp, height cap, close on scroll/resize, Escape. Escape is a **capture-phase window listener, not a React `onKeyDown`** — a popover opened by a click has no focus inside its menu. |
 | `InlineInput` + `useCommitOnUnmount` (hooks.ts) | click-to-edit that commits on blur. React delegates focus events at the root, so a detached node never reaches `onBlur`. `useCommitOnUnmount`'s `active` argument is load-bearing: a constant `true` makes StrictMode's mount-time cleanup fire the commit while the editor is still open. Pick an `EmptyPolicy` (`ignore`/`clear`/`raw`) explicitly. |
 | `normalizeUrl` (`lib/url.ts`) | URL shaping at the **storage and render** boundaries, never inside `openExternal` — `normalizeUrl('/foo')` yields `https:///foo`, which the allowlist would then accept. `openExternal`'s protocol allowlist stays the one place that decides what may open. |
 | `ExternalLink` / `EXTERNAL_LINK_CLASS` (ui.tsx) | the anchor contract; `linkify`, `MdLink` and `MdLinkText` all render through it. |
-| `parentJoins(alias)` / `parentLive(alias)` (`server/src/lib/queries.ts`) | the soft-deleted-parent filter shared by `listTasks`, `listEvents` and global search. Any new query over a table hanging off a project/artist wants both, or it returns rows no list view shows. |
+| `parentJoins(alias)` / `parentLive(alias)` (`server/src/lib/queries.ts`) | the soft-deleted-parent filter shared by `listTasks`, `listEvents` and global search. Any new query over a table hanging off a project/artist wants both, or it returns rows no list view shows. A single-FK child takes `crudRouter`'s `parent` option instead; a count that is *not* a row list (`seasonStats`) spells the same `EXISTS` out by hand. |
 | `Settings` vs `WritableSettings` (`api/types.ts`) | the read-only seam. A server constant spliced into the response and *not* added to `WritableSettings` is unwritable by construction — that is how `archive_after_days`/`purge_after_days` reach the client. |
 | `PrintContacts` / `PrintEvents` / `Empty` / `PrintHeader` / `Section` (PrintSheet.tsx) | the print primitives. A new contact column or changed date fallback belongs there, not in a sheet. **`print-color-adjust: exact` is scoped to `.print-page`**, not to the print block — a new printable surface outside the two sheets does not inherit it and will print `contrastText` foregrounds onto dropped backgrounds. |
 

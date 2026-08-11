@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getDb, PURGE_AFTER_DAYS } from '../db';
-import { collect, DELETE_ORDER, hasLiveDescendant, type Collected } from '../lib/cascade';
+import { collect, DELETE_ORDER, dependentCounts, hasLiveDescendant } from '../lib/cascade';
 
 /**
  * The "Gelöschte Items" (trash) endpoints powering the second section of the archive page:
@@ -21,18 +21,6 @@ const TYPES = {
   column: 'custom_columns',
 } as const;
 type DeletedType = keyof typeof TYPES;
-
-/** table → the type name used in cascade counts (`custom_columns` has no user-facing type). */
-const TABLE_TYPE: Record<string, string> = {
-  artists: 'artist',
-  projects: 'project',
-  contacts: 'contact',
-  events: 'event',
-  tasks: 'task',
-  links: 'link',
-  custom_columns: 'column',
-  custom_sections: 'section',
-};
 
 /** Compact per-type list of soft-deleted rows: id, a human label, an owner sublabel, timestamps. */
 const LIST_SQL: Record<DeletedType, string> = {
@@ -93,26 +81,6 @@ interface DeletedRow {
   deleted_at: string;
   /** NULL once a live descendant blocks the sweep — the row then stays until deleted by hand. */
   purge_at: string | null;
-}
-
-/** Count everything in the closure except the root row itself, grouped by type name. */
-function dependentCounts(
-  collected: Collected,
-  rootTable: string,
-  rootId: number,
-): { total: number; byType: Record<string, number> } {
-  const byType: Record<string, number> = {};
-  let total = 0;
-  for (const [table, ids] of collected) {
-    for (const id of ids) {
-      if (table === rootTable && id === rootId) continue;
-      const type = TABLE_TYPE[table];
-      if (!type) continue;
-      byType[type] = (byType[type] ?? 0) + 1;
-      total++;
-    }
-  }
-  return { total, byType };
 }
 
 function tableFor(type: string): string | undefined {

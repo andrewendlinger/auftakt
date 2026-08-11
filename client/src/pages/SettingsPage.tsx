@@ -265,7 +265,13 @@ export function SettingsCategoriesTab() {
   );
 }
 
-/** The season list with the only delete affordance in the app — deliberately not on the landing. */
+/**
+ * The season list with the only *irreversible* delete in the app — deliberately not on the
+ * landing page, where seasons are created and renamed. A season is a file, not a row: no
+ * `deleted_at`, no Papierkorb, no undo, and no way back but a backup folder. Re-raised and
+ * confirmed by WP-34, which gave artists and projects a delete of their own; see
+ * `docs/DECISIONS.md`, „Deleting a record lives inside ✎ Bearbeiten".
+ */
 function SeasonManagementCard() {
   const { data } = useSeasons();
   const invalidate = useInvalidateAll();

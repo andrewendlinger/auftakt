@@ -70,6 +70,29 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 
 ## Playwright traps
 
+- **How a page was *reached* changes what a delete on it does.** „Daten konnten nicht aktualisiert
+  werden. (not found)" after deleting an artist reproduces when the page was reached by a
+  client-side navigation (dashboard → artist card → „✎ Bearbeiten" → delete) and **not** when the
+  same page was opened with `page.goto('#/artist/4')`, which is how a script naturally writes it.
+  `navigate()` is a React Router transition, so the unmount races a DELETE that takes ~2 ms against
+  localhost, and the two routes in lose that race at different rates. A repro that only ever
+  `goto`s the page under test reports the bug fixed while a user hits it on the first click. Drive
+  the navigation the user drives — and read `useUndoableDelete`'s `gone` before assuming a stray
+  404 during a delete is a server bug.
+- **`getByRole('button', { name: 'Löschen' })` is ambiguous on any page with tasks on it.** The
+  task table's row 🗑 carries `title="Löschen"`, so it takes the accessible name too — on a project
+  page that is four matches, and the one you want (the edit dialog's footer button, WP-34) is only
+  one of them. Scope to the dialog: every `Modal` is a `div.fixed.inset-0`, and the topmost is the
+  last of them. The same scoping is what makes „Löschen" reachable inside *two stacked* dialogs.
+- **Toasts stack, and they hold for 6 s — which is longer than a script takes to do the next
+  thing.** So `getByRole('button', { name: 'Rückgängig' }).first()` can be an *earlier* operation's
+  undo still sitting on screen, and clicking it reverts the wrong row while every visible signal
+  looks right: a toast was there, it was clicked, a „rückgängig gemacht" toast came back. This cost
+  a real diagnosis — the delete under test was fine, the click was landing on the previous test
+  step's toast. Filter by the record's own name
+  (`.locator('.pointer-events-auto').filter({ hasText: 'Kollektiv Halbton' })`), and do not assert
+  on `count()`: the toast renders a tick after the request resolves, so a count read at the wrong
+  moment reports 0 while the very next `click()` — which waits — succeeds.
 - **Wait for `html[data-app-ready]`, not for `networkidle`.** It is set once React has committed,
   painted, and its bootstrap queries have settled — or given up after 700 ms, so it also arrives
   when a query 500s or hangs, which is exactly when `networkidle` does not. `html[data-app-mounted]`
@@ -277,6 +300,13 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   (55 „new" + 6 „active" tasks); neighbouring counts silently miss it.
 
 ## Fixture facts about the demo
+
+- **The record delete (WP-34) is inside „✎ Bearbeiten", not on the page header** — „Löschen" in the
+  dialog footer, then a nested confirm, then „In den Papierkorb". A script looking for a 🗑 next to
+  the print link finds nothing, against working code. Useful fixtures: project 2 („NQ2 ·
+  Schulworkshop") has exactly 3 tasks and nothing else, so its confirm reads „3 Aufgaben"; artist 3
+  („Kollektiv Halbton") reaches 2 projects, 1 contact, 14 tasks and 1 event, which is the case that
+  proves the count walks *through* projects rather than stopping at them.
 
 - **The default `task_sort` is `[status]`, and a rule for a hidden column is inert.** A season
   created before WP-32 still *stores* `[status, priority, due]` and behaves identically — Priorität
