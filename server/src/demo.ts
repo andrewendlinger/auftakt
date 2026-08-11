@@ -170,8 +170,11 @@ const CONTACTS = [
   // field needs both the filled and the hover-only-placeholder branch on screen.
   //
   // Project 1 carries three and artist 1 two, so both contact surfaces can actually be dragged
-  // (WP-35). Every other parent keeps exactly one: artist 3's single contact is the fixture
-  // docs/VERIFYING.md leans on to prove the dependent count walks *through* projects.
+  // (WP-35). Every other parent keeps exactly one — artist 3 in particular, whose „1 Kontakt" is
+  // one of the four numbers docs/VERIFYING.md pins for the WP-34 delete dialog. Note what that
+  // contact is *not*: it hangs off the artist directly, so it says nothing about the count
+  // walking through projects — the 14 tasks are what prove that. Moving it onto project 5 or 6
+  // would leave the total unchanged and still break the documented fixture.
   { id: 1, artist_id: null, project_id: 1, role: 'Management', name: 'Merle Dahlke', email: 'merle.dahlke@example.org', phone: '+49 151 0000001', notes: 'Erreichbar **vormittags**, sonst per [Mail](mailto:merle.dahlke@example.org).' },
   { id: 2, artist_id: 1, project_id: null, role: 'Tourmanagement', name: 'Piet Aalders', email: 'piet@example.org', phone: null, notes: 'Regelt auch die Backline.' },
   { id: 3, artist_id: null, project_id: 3, role: 'Booking', name: 'Rosa Enríquez', email: 'rosa@example.org', phone: '+351 900 000 000' },

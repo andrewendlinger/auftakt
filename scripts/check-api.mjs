@@ -289,11 +289,17 @@ try {
 
     // The 409 arm, on a resource that had no coverage for it: a half-applied batch would leave
     // two rows sharing an ordinal, so a stale id has to roll the whole transaction back.
-    const stale = await req('POST', '/contacts/reorder', { ids: [...ids, 999999] });
+    //
+    // The batch has to *permute* the rows, not repeat the order they are already in. Sending
+    // `ids` again would write 0,1,2 onto rows that already hold 0,1,2 — the endpoint would still
+    // 409, and „nothing moved" would still pass with the rollback deleted. The assertion has to
+    // be able to fail.
+    const staleIds = [...ids].reverse();
+    const stale = await req('POST', '/contacts/reorder', { ids: [...staleIds, 999999] });
     check('a stale id rolls the whole batch back', stale.status === 409, String(stale.status));
     const unchanged = await ok('GET', `/contacts?artist_id=${artist.id}`);
     check(
-      '…and nothing moved',
+      '…and the rows it did reach kept their old order',
       JSON.stringify(unchanged.map((c) => c.id)) === JSON.stringify(ids),
       unchanged.map((c) => c.id).join(','),
     );
