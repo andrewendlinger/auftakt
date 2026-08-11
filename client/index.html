@@ -77,27 +77,45 @@
            usable app. Pausing everything took that away: a throw would now leave an
            opaque cream rectangle over a working app, with no reload affordance in a
            packaged window. So bootBail runs unconditionally, well past the latest reveal
-           any live script can produce (1200 ms deadline + 3070 ms gesture + 400 ms
-           failsafe = 4670 ms), and ends on visibility: hidden so the corpse stops
-           swallowing clicks too — which the old opacity-only fade never did. */
+           any live script can produce (1200 ms deadline + 2600 ms gesture + 400 ms
+           failsafe = 4200 ms), and ends on visibility: hidden so the corpse stops
+           swallowing clicks too — which the old opacity-only fade never did.
+
+           bootBail fills *forwards*, never `both`, and that is not a detail: an animation
+           still inside its delay counts as in effect when it fills backwards, and the
+           later entry in an `animation` list wins the properties both entries touch. With
+           `both` here, bootBail's `from { opacity: 1 }` applied for its whole 6 s delay
+           and overrode bootOut — the reveal fade never rendered on any successful boot,
+           and every launch ended in a hard cut. Forwards fill contributes nothing before
+           the animation starts, which is exactly the dead man's switch that was wanted. */
         animation:
           bootOut 370ms linear calc((var(--ti) + 350) * 1ms) both,
-          bootBail 400ms linear 6000ms both;
+          bootBail 400ms linear 6000ms forwards;
       }
       /* Nothing runs until phase B — except the bail, which is why the play-state is a
          list rather than a single value. The universal selector is the point: a list of
-         animated selectors here would silently miss the next one added below. */
+         animated selectors here would silently miss the next one added below.
+
+         `!important` is load-bearing, not a shortcut. Every rule below sets its element's
+         animation with the `animation` shorthand, which resets animation-play-state to
+         `running` — and those rules are both more specific (`#boot-overlay .mover` beats
+         `#boot-overlay *`) and later in source order. Without the flag this gate paused
+         nothing at all: the whole gesture ran from parse, invisibly behind the hidden
+         svg, and phase B unhid a choreography already as far in as the bundle had taken
+         to mount. Measured with a 700 ms hold, the baton appeared a fifth of the way
+         through its stroke. The flag is what makes the universal selector actually
+         universal, which is the only reason to write it that way. */
       #boot-overlay {
         animation-play-state: paused, running;
       }
       #boot-overlay * {
-        animation-play-state: paused;
+        animation-play-state: paused !important;
       }
       html.boot-play #boot-overlay {
         animation-play-state: running, running;
       }
       html.boot-play #boot-overlay * {
-        animation-play-state: running;
+        animation-play-state: running !important;
       }
       /* The reveal when the gesture does not play: too slow to earn it, or the user
          clicked. Its own keyframes so it starts from full opacity rather than inheriting
