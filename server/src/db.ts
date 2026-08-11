@@ -14,6 +14,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fileStamp, localStamp } from '../../shared/time';
 import { CHILD_EDGES, DELETE_ORDER } from './lib/cascade';
+import { currentSeasonId } from './seasonContext';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -293,13 +294,17 @@ export function createSeason(label: string): Season {
   return season;
 }
 
-/** Switch the active season; closes the current handle so the next getDb() opens the new file. */
+/**
+ * Set the default season — what new windows and headerless callers resolve to. A window's
+ * own season travels with each request (X-Auftakt-Season / ?season=), so activating no
+ * longer touches any open connection; the pool keys by id and headerless getDb() re-reads
+ * the registry per call (the check scripts rely on activate-then-getDb following the write).
+ */
 export function activateSeason(id: number): void {
   const reg = readRegistry();
   if (!reg.seasons.some((s) => s.id === id)) throw new Error('unknown season');
   reg.activeId = id;
   saveRegistry(reg);
-  closeDb();
 }
 
 export interface SeasonPatch {
@@ -1131,7 +1136,14 @@ const MAX_PURGE_PASSES = 100;
 /** Number of days a completed task stays in the live views before archiving. */
 export const ARCHIVE_AFTER_DAYS = 30;
 
-let instance: Database.Database | null = null;
+/**
+ * One connection per season a caller has touched, keyed by season id. Multiple windows can
+ * pin different seasons concurrently (X-Auftakt-Season → seasonContext), so "the" connection
+ * became a pool. Handles are bounded by the number of registered seasons and are never
+ * idle-closed — eviction happens only where the file underneath changes: closeSeason()
+ * (delete, import) and closeDb() (close-all, for the check scripts).
+ */
+const pool = new Map<number, Database.Database>();
 
 /**
  * Bring a just-opened season file up to date: pragmas, schema, defaults, built-in columns and
@@ -1175,22 +1187,41 @@ function initDb(db: Database.Database, isFresh: boolean): void {
 }
 
 export function getDb(): Database.Database {
-  if (instance) return instance;
-  const path = resolveDbPath();
+  const ctx = currentSeasonId();
+  const reg = readRegistry();
+  // A context id was validated by the middleware; if its season vanished since (deleted
+  // mid-request), throwing beats silently routing the write into the default season.
+  // Headerless callers keep the old activeSeason() fallback (activeId ?? first).
+  const season = ctx === null ? activeSeason(reg) : reg.seasons.find((s) => s.id === ctx);
+  if (!season) throw new Error(`unknown season ${ctx}`);
+  const cached = pool.get(season.id);
+  if (cached?.open) return cached;
+  const path = join(dataDir(), season.file);
   mkdirSync(dirname(path), { recursive: true });
   const isFresh = !existsSync(path);
   const db = new Database(path);
   initDb(db, isFresh);
-  instance = db;
+  pool.set(season.id, db);
   return db;
 }
 
-/** Close the cached connection so the next getDb() re-opens the (possibly changed) active season. */
+/**
+ * Close every pooled connection. The check scripts call this in-process around filesystem
+ * assertions expecting "nothing holds any season file" — close-all is a superset of the
+ * single-handle semantics the name used to have.
+ */
 export function closeDb(): void {
-  if (instance) {
-    instance.close();
-    instance = null;
+  for (const db of pool.values()) {
+    if (db.open) db.close();
   }
+  pool.clear();
+}
+
+/** Close one season's pooled handle — required before deleting or replacing its file. */
+export function closeSeason(id: number): void {
+  const db = pool.get(id);
+  if (db?.open) db.close();
+  pool.delete(id);
 }
 
 /*
@@ -1206,12 +1237,12 @@ export function snapshotDb(srcPath: string, destPath: string): void {
   // a read-only handle cannot create the WAL shared-memory file when one is missing.
   // The open connection knows its own file, so ask it rather than re-reading and
   // re-parsing seasons.json once per season on every backup run (DBW-13).
-  const active = !!instance && resolve(instance.name) === resolve(srcPath);
-  const db = active ? instance! : new Database(srcPath);
+  const pooled = [...pool.values()].find((d) => d.open && resolve(d.name) === resolve(srcPath));
+  const db = pooled ?? new Database(srcPath);
   try {
     db.prepare('VACUUM INTO ?').run(destPath);
   } finally {
-    if (!active) db.close();
+    if (!pooled) db.close();
   }
 }
 
