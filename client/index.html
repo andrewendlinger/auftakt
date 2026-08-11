@@ -215,7 +215,8 @@
       /* The ink trace behind the baton tip: a soft wide halo and a fine core, drawn as
          sliding dash windows (200 / 110 path units) along the same path the hand
          travels. Their keyframes share bootMotion's percentages and easings, so tip and
-         ink stay synchronized by construction. pathLength pins the browser's arc-length
+         ink stay synchronized by construction — one table for both strokes, since the two
+         windows slide the same path. pathLength pins the browser's arc-length
          arithmetic to the value the offsets were computed against. The base
          stroke-dashoffset parks the window before the path start, so with animations
          off nothing shows until the failsafe removes the overlay.
@@ -235,18 +236,25 @@
         fill: none;
         stroke: #3c3c3b;
         stroke-linecap: round;
+        /* 616 is one over pathLength: a single dash long enough that the path never
+           shows a second one, whatever the window. */
+        stroke-dasharray: var(--dash-w) 616px;
+        stroke-dashoffset: var(--dash-w);
+        animation: bootDash calc(var(--T) * 1ms) both;
       }
+      /* --dash-w is the length of ink trailing the tip, and it is the *only* thing that
+         differs between the two strokes' geometry: dash window, parked offset and every
+         keyframe below are all derived from it, so a change to the halo's length is one
+         number rather than eleven. */
       #boot-overlay .trail.soft {
+        --dash-w: 200px;
         stroke-width: 14;
         opacity: 0.055;
-        stroke-dashoffset: 200;
-        animation: bootDashSoft calc(var(--T) * 1ms) both;
       }
       #boot-overlay .trail.core {
+        --dash-w: 110px;
         stroke-width: 3;
         opacity: 0.45;
-        stroke-dashoffset: 110;
-        animation: bootDashCore calc(var(--T) * 1ms) both;
       }
       /* The trace appears a blink after the hand's first movement, then runs in sync;
          after the ictus it dissolves. bootTrailIn fills backwards only, so once it
@@ -350,70 +358,45 @@
           transform: rotate(0deg);
         }
       }
-      /* Dash offsets = window width minus the tip's arc position at each phase mark;
-         computed against pathLength 615.32, one set per window width. */
-      @keyframes bootDashSoft {
+      /* The dash offset is the window width minus the tip's arc position at each phase
+         mark, so the subtrahends below are just bootMotion's offset-distance stops read
+         as arc length against pathLength 615.32 — same percentages, same easings, which
+         is what keeps ink and tip synchronized by construction.
+
+         One table, not one per stroke. Written out per stroke they were two sets of eight
+         numbers that had to stay exactly --dash-w apart at every mark, hand-derived, with
+         nothing to catch a one-sided edit: the halo would simply lead or lag its own core
+         by however much the slip was. */
+      @keyframes bootDash {
         0% {
-          stroke-dashoffset: 200;
+          stroke-dashoffset: var(--dash-w);
           animation-timing-function: cubic-bezier(0.35, 0, 0.25, 1);
         }
         44.444% {
-          stroke-dashoffset: 43.05;
+          stroke-dashoffset: calc(var(--dash-w) - 156.95px);
           animation-timing-function: cubic-bezier(0.4, 0, 0.5, 1);
         }
         47.407% {
-          stroke-dashoffset: 37.32;
+          stroke-dashoffset: calc(var(--dash-w) - 162.68px);
           animation-timing-function: cubic-bezier(0.45, 0.05, 0.2, 1);
         }
         61.852% {
-          stroke-dashoffset: -144.2;
+          stroke-dashoffset: calc(var(--dash-w) - 344.2px);
           animation-timing-function: cubic-bezier(0.5, 0, 0.85, 0.35);
         }
         69.63% {
-          stroke-dashoffset: -319.22;
+          stroke-dashoffset: calc(var(--dash-w) - 519.22px);
           animation-timing-function: cubic-bezier(0, 0.5, 0.35, 1);
         }
         77.037% {
-          stroke-dashoffset: -391.29;
+          stroke-dashoffset: calc(var(--dash-w) - 591.29px);
           animation-timing-function: cubic-bezier(0.4, 0, 0.4, 1);
         }
         86.296% {
-          stroke-dashoffset: -415.32;
+          stroke-dashoffset: calc(var(--dash-w) - 615.32px);
         }
         100% {
-          stroke-dashoffset: -415.32;
-        }
-      }
-      @keyframes bootDashCore {
-        0% {
-          stroke-dashoffset: 110;
-          animation-timing-function: cubic-bezier(0.35, 0, 0.25, 1);
-        }
-        44.444% {
-          stroke-dashoffset: -46.95;
-          animation-timing-function: cubic-bezier(0.4, 0, 0.5, 1);
-        }
-        47.407% {
-          stroke-dashoffset: -52.68;
-          animation-timing-function: cubic-bezier(0.45, 0.05, 0.2, 1);
-        }
-        61.852% {
-          stroke-dashoffset: -234.2;
-          animation-timing-function: cubic-bezier(0.5, 0, 0.85, 0.35);
-        }
-        69.63% {
-          stroke-dashoffset: -409.22;
-          animation-timing-function: cubic-bezier(0, 0.5, 0.35, 1);
-        }
-        77.037% {
-          stroke-dashoffset: -481.29;
-          animation-timing-function: cubic-bezier(0.4, 0, 0.4, 1);
-        }
-        86.296% {
-          stroke-dashoffset: -505.32;
-        }
-        100% {
-          stroke-dashoffset: -505.32;
+          stroke-dashoffset: calc(var(--dash-w) - 615.32px);
         }
       }
       @keyframes bootTrailIn {
@@ -518,13 +501,11 @@
           <path
             class="trail soft"
             pathLength="615.32"
-            stroke-dasharray="200 616"
             d="M280,404 C316,382 352,334 344,270 C343,272 342.6,274.5 342.5,275.5 C333,247 331,165 342,95 C343,150 344,215 344,270 C341,244 342,212 342,198 C342.5,206 343,216 343,222"
           />
           <path
             class="trail core"
             pathLength="615.32"
-            stroke-dasharray="110 616"
             d="M280,404 C316,382 352,334 344,270 C343,272 342.6,274.5 342.5,275.5 C333,247 331,165 342,95 C343,150 344,215 344,270 C341,244 342,212 342,198 C342.5,206 343,216 343,222"
           />
         </g>
