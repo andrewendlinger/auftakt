@@ -55,6 +55,42 @@ has no meaning when the display is not the manual order.
 `DragHandle` has a `disabled` variant (dimmed, `cursor-not-allowed`, reason in the `title`) for
 this state. Use it rather than hiding a handle.
 
+## The drag handle is visible at rest, on every drag surface (2026-08-11, WP-35)
+
+`DragHandle` was `opacity-0` until its row was hovered. The customer then reported a link list as
+„kann ich nicht mehr verschieben" — it had been reorderable since v0.5.0. An affordance that only
+appears once you happen to be over it is one most people never find, and there is nothing else in
+the UI that says a list can be reordered.
+
+It now rests at `opacity-40` and goes to full on `group-hover`. **One resting state for every drag
+surface**, not per list: a handle that shows in one list and hides in the next teaches that the
+other list cannot be reordered, which is the same wrong lesson in a new place. The cost is
+accepted — a faint ⠿ column down a long task table — and it was weighed against a task table with
+no visible reordering at all.
+
+The `disabled` variant above stays *below* the live resting opacity (`opacity-20`, barely lifting
+on hover) so „inert" is legible without hovering to compare.
+
+Not part of this: a second affordance. `ReorderArrows` exists for the settings editors, where rows
+are short and keyboard reachable; cards and content lists keep the drag alone until keyboard
+reordering is designed as a whole (WP-43's territory).
+
+## Links reorder inside their category (2026-08-11, WP-35)
+
+A link list is grouped by category, but `sort_order` is a single sequence across the whole list, so
+a drop into a foreign group would park a row under a heading that contradicts its own category.
+`LinkList`'s `canDrop` therefore refuses cross-group pairings — and the whole list, not the group,
+is what gets renumbered, which is what leaves the other groups where they are.
+
+The alternative — a cross-group drop that rewrites `category` on the way — was declined: one
+gesture would then perform two writes of different kinds, and the category half is deliberately not
+on the undo stack (see „Category reassignment stays off the undo stack"). Changing a category stays
+the ✎ dialog's job, where it is one visible, undoable edit.
+
+What *did* have to change is that the rule was invisible: a refused drop simply did nothing, which
+is indistinguishable from broken. While a drag runs, the other groups dim, and the handle's tooltip
+names the limit.
+
 ## Category reassignment stays off the undo stack (2026-08-02, reaffirmed 2026-08-04)
 
 Moving N tasks or events onto a replacement category is a bulk write carrying **one distinct old
