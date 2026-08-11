@@ -17,7 +17,7 @@ process's own event loop, so left where they were they stalled the very frames t
 See `docs/DECISIONS.md` for why the gesture is sequenced the way it is.
 
 - `server/` — Express 5 + better-sqlite3, ESM, run via `tsx`. Owns all business logic.
-- `client/` — React 19 + Vite + Tailwind v4 + TanStack Query/Table. Dev server proxies
+- `client/` — React 19 + Vite + Tailwind v4 + TanStack Query. Dev server proxies
   `/api` → `:4317`; in the packaged app the same Express process serves `client/dist`, so the
   client's relative `/api` calls work unchanged.
 - `electron/` — window, menu, backups, file dialogs. In production it sets
@@ -216,6 +216,15 @@ into a general batch API.
 The subtask tree is at most two levels. The tasks transform enforces it on the API and
 `migrateFlattenDeepSubtasks` repairs anything that arrived another way (a local one-off Notion
 importer, not part of this repo, writes rows with raw SQL and bypasses the transform).
+
+**The tree becomes rows in `client/src/lib/taskRows.ts`.** `buildTaskRows` flattens the sorted
+top-level list plus the per-parent child lists depth-first into `TaskRow`s carrying `depth`,
+`canExpand` and `isExpanded`; `groupRows` then chunks that by depth so a task and its subtasks
+render as one `<tbody>`. Both lists arrive already sorted — ordering is `taskSort.ts`'s job and
+the flatten must never reorder. Expansion is stored inverted, as a set of *collapsed* ids, so an
+unknown parent is open and nothing has to seed it. This replaced `@tanstack/react-table`; see
+`DECISIONS.md` for why, and note that the recursion is unbounded and cycle-guarded on purpose
+even though the API caps the tree at two levels (TTU-37).
 
 ## Data-driven task columns
 

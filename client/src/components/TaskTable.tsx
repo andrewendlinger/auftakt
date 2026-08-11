@@ -1,13 +1,12 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import {
-  flexRender,
-  getCoreRowModel,
-  getExpandedRowModel,
-  useReactTable,
-  type CellContext,
-  type ColumnDef,
-  type ExpandedState,
-} from '@tanstack/react-table';
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+} from 'react';
 import { api } from '../api/client';
 import type { CustomColumn, CustomColumnOption, Task, TaskSortRule, TaskUpdate } from '../api/types';
 import { compareColumns, customValueOf, doneValueOf, parseColumnOptions } from '../api/types';
@@ -24,10 +23,11 @@ import {
 import { arrayMoveTo } from '../lib/arrays';
 import { useDragReorder } from '../lib/dragReorder';
 import { descendantsOf } from '../lib/taskTree';
+import { buildTaskRows, groupRows, type TaskRow } from '../lib/taskRows';
 import { Markdown } from './Markdown';
 import { RichTextEditor } from './RichTextEditor';
 import { ColorSwatchPicker } from './ColorSwatchPicker';
-import { CHILD_BAND, TREE, TreeGutterCell, groupRows, spineColorFor } from './TaskTreeGutter';
+import { CHILD_BAND, TREE, TreeGutterCell, spineColorFor } from './TaskTreeGutter';
 import { MoveIcon, TrashIcon } from './icons';
 import { MoveTaskDialog } from './MoveTaskDialog';
 import { PillSelect } from './PillSelect';
@@ -60,19 +60,35 @@ export interface TaskTableParent {
 /** null = follow the configured automatic hierarchy; a rule = a temporary header-click override. */
 type SortState = TaskSortRule | null;
 
+/** What every cell component is handed. The column arrives as its id; the rest comes from context. */
+interface TaskCellProps {
+  row: TaskRow;
+  columnId: string;
+}
+
+/**
+ * One rendered column. `header` is a plain string and `cell` a component *type*, which is the
+ * whole column model this table needs — no accessors, because a cell derives its own value from
+ * `row.original` and the `CustomColumn` it resolves by id.
+ */
+interface TaskColumn {
+  id: string;
+  header: string;
+  cell: ComponentType<TaskCellProps>;
+}
+
 /**
  * Everything a cell needs from its table, handed down as context rather than captured in the
  * `columns` memo.
  *
- * The memo is the whole point. TanStack renders a cell through `flexRender`, which is
- * `React.createElement(columnDef.cell, ctx)` — so if `cell` is an inline arrow, every rebuild of
- * `columns` hands React a *new component type* and React answers by unmounting and remounting
- * every cell subtree in the table. With the per-render values (callbacks, option lists, the
- * children map) in the dep list, that rebuild happened on every single render: measured on the
- * demo season, one „＋ Unteraufgabe" click — which changes no data — remounted all 60 data
- * cells, and a background refetch tore down an open Titel editor together with the text being
- * typed into it, since removing a focused node fires no blur and nothing commits it
- * (TTU-12, TTU-38).
+ * The memo is the whole point. Each column's `cell` is rendered as a component in its own right
+ * (`<Cell … />`), so if `cell` is an inline arrow, every rebuild of `columns` hands React a *new
+ * component type* and React answers by unmounting and remounting every cell subtree in the
+ * table. With the per-render values (callbacks, option lists, the children map) in the dep list,
+ * that rebuild happened on every single render: measured on the demo season, one
+ * „＋ Unteraufgabe" click — which changes no data — remounted all 60 data cells, and a
+ * background refetch tore down an open Titel editor together with the text being typed into it,
+ * since removing a focused node fires no blur and nothing commits it (TTU-12, TTU-38).
  *
  * So the cells are stable module-level components and read the moving parts from here. The value
  * is deliberately *not* memoised: a re-render of a mounted cell is cheap and correct, a remount
@@ -404,12 +420,6 @@ export function TaskTable({
     },
   });
 
-  // Which parents are expanded, as a TanStack ExpandedState keyed by task id (via getRowId).
-  const expanded = useMemo<ExpandedState>(() => {
-    const rec: Record<string, boolean> = {};
-    for (const pid of childrenByParent.keys()) if (!collapsed.has(pid)) rec[String(pid)] = true;
-    return rec;
-  }, [childrenByParent, collapsed]);
   const toggleExpand = useCallback((id: number) => {
     setCollapsed((s) => {
       const n = new Set(s);
@@ -471,8 +481,8 @@ export function TaskTable({
    * reads the moving parts from `TaskTableCtx`. See the interface's docstring for why the dep
    * list must stay this short (TTU-12).
    */
-  const columns = useMemo<ColumnDef<Task>[]>(() => {
-    const cols: ColumnDef<Task>[] = [];
+  const columns = useMemo<TaskColumn[]>(() => {
+    const cols: TaskColumn[] = [];
     for (const col of visibleCols) {
       cols.push({
         id: colId(col),
@@ -498,15 +508,12 @@ export function TaskTable({
     startMove: setMoveTask,
   };
 
-  const table = useReactTable({
-    data: sortedTop,
-    columns,
-    state: { expanded },
-    getRowId: (t) => String(t.id),
-    getSubRows: (t) => sortedChildren.get(t.id),
-    getCoreRowModel: getCoreRowModel(),
-    getExpandedRowModel: getExpandedRowModel(),
-  });
+  // The rendered rows: the sorted tree flattened depth-first, minus whatever is folded away.
+  // Both lists arrive already sorted, so this only decides depth and visibility.
+  const rows = useMemo(
+    () => buildTaskRows(sortedTop, sortedChildren, collapsed),
+    [sortedTop, sortedChildren, collapsed],
+  );
 
   const sortableIds = new Set([
     ...SORTABLE_TASK_COLUMNS.map((c) => c.id),
@@ -563,18 +570,17 @@ export function TaskTable({
           <tr className="border-b border-neutral-100 text-left text-xs uppercase tracking-wide text-neutral-400">
             {/* Gutter header. Rendered outside the map so it carries no sort handler. */}
             <th className="p-0" style={{ width: TREE.width, minWidth: TREE.width }} aria-hidden />
-            {table.getHeaderGroups()[0]?.headers.map((h) => {
-              const id = h.column.id;
+            {columns.map(({ id, header }) => {
               const active = sort?.id === id;
               return (
                 <th
-                  key={h.id}
+                  key={id}
                   className={`px-3 py-2 font-semibold ${sortableIds.has(id) ? 'cursor-pointer select-none hover:text-neutral-600' : ''}`}
                   title={sortableIds.has(id) ? 'Sortieren: aufsteigend → absteigend → Standard' : undefined}
                   onClick={() => toggleSort(id)}
                 >
                   <span className="inline-flex items-center gap-1">
-                    {flexRender(h.column.columnDef.header, h.getContext())}
+                    {header}
                     {active && <span>{sort?.dir === 'asc' ? '▲' : '▼'}</span>}
                   </span>
                 </th>
@@ -583,7 +589,7 @@ export function TaskTable({
           </tr>
         </thead>
         {/* One <tbody> per top-level task, so a task and its subtasks form one framed group. */}
-        {groupRows(table.getRowModel().rows).map((group) => {
+        {groupRows(rows).map((group) => {
           const head = group[0]!;
           const spineColor = spineColorFor(head.original.color);
           const composerOpen = addingChildFor === head.original.id;
@@ -633,14 +639,14 @@ export function TaskTable({
                       // children and could not be folded (TTU-37).
                       kind={
                         child
-                          ? row.getCanExpand()
+                          ? row.canExpand
                             ? 'branch'
                             : 'child'
-                          : row.getCanExpand()
+                          : row.canExpand
                             ? 'parent'
                             : 'leaf'
                       }
-                      expanded={row.getIsExpanded()}
+                      expanded={row.isExpanded}
                       continues={i < lastIdx || composerOpen}
                       spineColor={spineColor}
                       accentColor={colored ? color : null}
@@ -660,9 +666,9 @@ export function TaskTable({
                         )
                       }
                     />
-                    {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-3 py-2">
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    {columns.map(({ id, cell: Cell }) => (
+                      <td key={id} className="px-3 py-2">
+                        <Cell row={row} columnId={id} />
                       </td>
                     ))}
                   </tr>
@@ -672,7 +678,7 @@ export function TaskTable({
                 <SubtaskAddRow
                   parentTask={head.original}
                   /* Data columns only — the composer supplies its own gutter cell. */
-                  colSpan={head.getVisibleCells().length}
+                  colSpan={columns.length}
                   spineColor={spineColor}
                   defaultStatus={defaultStatus}
                   defaultPriority={defaultPriority}
@@ -758,9 +764,9 @@ export function TaskTable({
  * belongs in a data cell is the counter — a property of the task itself, and the one cue that
  * stays meaningful wherever the user has ordered the Titel column.
  */
-function DataCell({ row, column }: CellContext<Task, unknown>) {
+function DataCell({ row, columnId }: TaskCellProps) {
   const api = useTaskTableApi();
-  const col = api.colById.get(column.id);
+  const col = api.colById.get(columnId);
   if (!col) return null;
   const inner = (
     <ColumnCell
@@ -778,7 +784,7 @@ function DataCell({ row, column }: CellContext<Task, unknown>) {
   const kids = api.childrenByParent.get(row.original.id) ?? [];
   if (kids.length === 0) return inner;
   const doneKids = kids.filter((k) => k.status === api.doneValue).length;
-  const isExpanded = row.getIsExpanded();
+  const isExpanded = row.isExpanded;
   const pct = Math.round((doneKids / kids.length) * 100);
   return (
     <div className="flex items-start gap-2">
@@ -810,7 +816,7 @@ function DataCell({ row, column }: CellContext<Task, unknown>) {
 }
 
 /** Trailing row actions: add subtask, move, colour, delete. */
-function ActionsCell({ row }: CellContext<Task, unknown>) {
+function ActionsCell({ row }: TaskCellProps) {
   const api = useTaskTableApi();
   const task = row.original;
   return (
