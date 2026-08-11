@@ -33,12 +33,18 @@ export const artistsRouter = crudRouter({
   order: 'sort_order ASC, name ASC',
 });
 
+// `parent` is the one edge of the FK graph this file hands to the factory, and only because a
+// project cannot be read without it: every other child of an artist is fetched through a page that
+// is itself gated, while a project has a page of its own that a stale URL or the Zurück button
+// reaches directly. See `parentLive` in lib/crud.ts for what it does and what it deliberately
+// leaves writable.
 export const projectsRouter = crudRouter({
   table: 'projects',
   writable: ['artist_id', 'code', 'name', 'status', 'description', 'color', 'layout', 'sort_order'],
   required: ['artist_id', 'code', 'name'],
   jsonColumns: ['layout'],
   filters: ['artist_id'],
+  parent: { table: 'artists', column: 'artist_id' },
   order: 'sort_order ASC, id ASC',
 });
 
@@ -56,8 +62,9 @@ export const projectsRouter = crudRouter({
  * delete the artist — where the full closure would still be counting the undone one.
  *
  * Mounted only on the two tables that have a delete affordance at page level. It is not on the
- * crud factory: `/:id/dependents` is meaningless for a leaf table, and `lib/crud.ts` is kept
- * clear of the FK graph on purpose.
+ * crud factory: `/:id/dependents` is meaningless for a leaf table, and the factory knows at most
+ * one edge of the FK graph — the `parent` above, declared per table — never the walk over all of
+ * it, which stays in `lib/cascade.ts`.
  */
 function dependentsRoute(table: 'artists' | 'projects'): RequestHandler {
   return (req, res) => {

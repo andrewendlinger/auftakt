@@ -408,6 +408,32 @@ try {
     check('and gone from search once the artist is trashed', after.projects.length === 0, JSON.stringify(after.projects));
   }
 
+  // -------------------------------------------------- projects go with their artist (WP-34)
+  // The same hole as the search one above, one layer down: `/projects` and `/projects/:id` are
+  // where the project page and „Verschieben" read, so filtering only the project's own
+  // `deleted_at` served a row every other view hides. The page then rendered — own row live, its
+  // artist a 404 the component never gates on — with no artist name and an empty task table.
+  console.log('\n== projects leave the live reads with their artist (WP-34)');
+  {
+    const artist = await ok('POST', '/artists', { name: 'Verwaist' });
+    const project = await ok('POST', '/projects', { artist_id: artist.id, name: 'Waise', code: 'W1' });
+    const listed = async () => (await ok('GET', '/projects')).some((p) => p.id === project.id);
+    check('the project is listed while its artist is live', await listed());
+
+    await ok('DELETE', `/artists/${artist.id}`);
+    check('and drops out of the list once the artist is trashed', !(await listed()));
+    const gone = await req('GET', `/projects/${project.id}`);
+    check('…and its own page is a 404, not a half-rendered one', gone.status === 404, String(gone.status));
+    const filtered = await ok('GET', `/projects?artist_id=${artist.id}`);
+    check('the artist_id filter hides it too', filtered.length === 0, JSON.stringify(filtered));
+
+    // The row itself is untouched — this is a read filter, not a cascade. Restoring the artist
+    // has to bring the whole page back with nothing else to undo.
+    await ok('POST', `/artists/${artist.id}/restore`);
+    check('restoring the artist brings the project back', await listed());
+    check('…with its page reachable again', (await req('GET', `/projects/${project.id}`)).status === 200);
+  }
+
   // ------------------------------------- the season card counts what the season shows (WP-34)
   // Kennzahlen on the landing page. `seasonStats` is a bare COUNT rather than a row list, so it
   // carries no `parentLive` and needs the artist-liveness test spelled out — without it the card
@@ -679,7 +705,11 @@ try {
     const lone = await ok('POST', '/artists', { name: 'Eltern ohne Kind' });
     await ok('DELETE', `/artists/${lone.id}`);
     purge.loneId = lone.id;
-    check('the fixture is set up: parent trashed, child still live', (await ok('GET', `/projects/${kid.id}`)).deleted_at === null);
+    // Over HTTP the child now reads as gone: `parent` (lib/crud.ts) hides a project whose artist
+    // is in the trash. The row itself is untouched, which is the whole point of the sweep case
+    // below — „…and its live child is untouched" asserts that against the file, not the API.
+    const hidden = await req('GET', `/projects/${kid.id}`);
+    check('the fixture is set up: parent trashed, child hidden behind it', hidden.status === 404, String(hidden.status));
   }
 
   await stopServer();

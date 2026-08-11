@@ -131,6 +131,14 @@ resolve each task/event to its owning artist via `COALESCE(t.artist_id, p.artist
 Behaviour keyed off the allowlist rather than a separate flag: `/reorder` mounts when `sort_order`
 is writable, and `color` is hex-validated when `color` is. A new table gets both by construction.
 
+`parent: {table, column}` is `parentLive` for a table that reaches its owner by one foreign key
+instead of the `parentJoins` pair — it filters list and get, so a row whose parent is in the trash
+answers 404 rather than rendering a page the rest of the app hides (WP-34). **Reads only:**
+PATCH/DELETE/restore stay reachable on a hidden row, because restoring the parent has to bring the
+child back untouched and `purgeExpired` still counts it as a live reference (SDL-01). Only
+`projects` carries it today — every other child is fetched through a page that is itself gated,
+while a project has a URL of its own.
+
 Each `writable`/`required` pair is mirrored on the client by a `…Create`/`…Update` type in
 `client/src/api/types.ts`, which is what `resource<T, Create, Update>()` binds to. **Adding a
 column means editing both**: `crudRouter` drops anything not on the list without a word, so a
@@ -299,7 +307,7 @@ Which module owns which invariant. Reach for these rather than rebuilding the be
 | `InlineInput` + `useCommitOnUnmount` (hooks.ts) | click-to-edit that commits on blur. React delegates focus events at the root, so a detached node never reaches `onBlur`. `useCommitOnUnmount`'s `active` argument is load-bearing: a constant `true` makes StrictMode's mount-time cleanup fire the commit while the editor is still open. Pick an `EmptyPolicy` (`ignore`/`clear`/`raw`) explicitly. |
 | `normalizeUrl` (`lib/url.ts`) | URL shaping at the **storage and render** boundaries, never inside `openExternal` — `normalizeUrl('/foo')` yields `https:///foo`, which the allowlist would then accept. `openExternal`'s protocol allowlist stays the one place that decides what may open. |
 | `ExternalLink` / `EXTERNAL_LINK_CLASS` (ui.tsx) | the anchor contract; `linkify`, `MdLink` and `MdLinkText` all render through it. |
-| `parentJoins(alias)` / `parentLive(alias)` (`server/src/lib/queries.ts`) | the soft-deleted-parent filter shared by `listTasks`, `listEvents` and global search. Any new query over a table hanging off a project/artist wants both, or it returns rows no list view shows. |
+| `parentJoins(alias)` / `parentLive(alias)` (`server/src/lib/queries.ts`) | the soft-deleted-parent filter shared by `listTasks`, `listEvents` and global search. Any new query over a table hanging off a project/artist wants both, or it returns rows no list view shows. A single-FK child takes `crudRouter`'s `parent` option instead; a count that is *not* a row list (`seasonStats`) spells the same `EXISTS` out by hand. |
 | `Settings` vs `WritableSettings` (`api/types.ts`) | the read-only seam. A server constant spliced into the response and *not* added to `WritableSettings` is unwritable by construction — that is how `archive_after_days`/`purge_after_days` reach the client. |
 | `PrintContacts` / `PrintEvents` / `Empty` / `PrintHeader` / `Section` (PrintSheet.tsx) | the print primitives. A new contact column or changed date fallback belongs there, not in a sheet. **`print-color-adjust: exact` is scoped to `.print-page`**, not to the print block — a new printable surface outside the two sheets does not inherit it and will print `contrastText` foregrounds onto dropped backgrounds. |
 
