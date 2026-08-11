@@ -105,8 +105,8 @@ server/   Express + better-sqlite3: db.ts (Schema), seed.ts, routes/, lib/
 client/   React-App: pages/, components/, api/, lib/ (linkify, dates, colors)
 electron/ main.ts, preload.ts, menu.ts, backup.ts
 shared/   time.ts — die Zeitstempel-Konvention, von Server und Electron geteilt
-scripts/  build.mjs (esbuild-Bündel) + die check-*.mjs-Gates
-build/    App-Icons für electron-builder (icon.png, icon.icns)
+scripts/  build.mjs (esbuild-Bündel), icons.mjs (npm run icons) + die check-*.mjs-Gates
+build/    App-Icons für electron-builder (icon.icns, icon.ico, icon.png)
 docs/     Architektur, Entscheidungen, Test-Checklisten
 ```
 
