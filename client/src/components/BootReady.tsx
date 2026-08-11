@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { useIsFetching } from '@tanstack/react-query';
 import { signalMounted, signalReady } from '../boot';
 
@@ -22,11 +22,39 @@ const IDLE_TIMEOUT_MS = 300;
  * `ErrorBoundary`**, so a route that throws cannot unmount the component responsible for
  * revealing the app.
  *
+ * Two components rather than one so that the watching can *stop*. `useIsFetching()`
+ * subscribes to the query cache for as long as it is mounted, and its snapshot is a scan
+ * of every cached query, re-run on every notification — each fetch start and end, each
+ * `setQueryData`, and every observer added or removed by any of the app's ~33 query sites
+ * on every route change. The cache only grows over a session. All of that would have run
+ * for the whole life of the window, re-rendering this component and re-scheduling an idle
+ * callback whose `signalReady()` has been an idempotent no-op since the first second. The
+ * boot signals are the one thing here that matters, and once `ready` has been sent there
+ * is nothing left for the watcher to observe, so it leaves the tree.
+ */
+export function BootReady(): ReactElement | null {
+  // The attribute, not the event, for the initial value: it is already set if a failure
+  // path signalled before this ever mounted.
+  const [done, setDone] = useState(() => document.documentElement.dataset.appReady === '1');
+
+  useEffect(() => {
+    if (done) return;
+    const finish = (): void => setDone(true);
+    // Listening rather than acting on the calls below, because signalReady() also arrives
+    // from outside this component: signalFailed() on a collapse above the ErrorBoundary.
+    document.addEventListener('auftakt:ready', finish, { once: true });
+    return () => document.removeEventListener('auftakt:ready', finish);
+  }, [done]);
+
+  return done ? null : <BootWatcher />;
+}
+
+/**
  * Route-agnostic by construction: `useIsFetching()` counts every query in the client, so
  * this behaves the same on `#/`, on `#/dashboard`, and on whatever deep hash route the
  * window happens to restore to — without any page component knowing it exists.
  */
-export function BootReady(): null {
+function BootWatcher(): null {
   const inFlight = useIsFetching();
   // useIsFetching() reads 0 on the first render, before the route's queries have
   // registered. Without this latch "nothing is fetching" would be true one tick after
