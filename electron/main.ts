@@ -547,12 +547,17 @@ app.on('window-all-closed', () => {
   // Capped, because ensureBackupDir's fetch has no timeout of its own and a wedged server
   // must not turn „close the window" into „the app will not exit".
   let cap: NodeJS.Timeout;
+  // finally, not then: `chores` ends in .catch(reportBackupProblem), and that handler is
+  // itself async — it awaits a dialog. Anything it throws rejects the race, and with only
+  // a fulfilment handler the quit would simply never happen: no windows, no app.quit(),
+  // a process the user can end only from the task manager. The cap cannot save that,
+  // because the race has already settled.
   void Promise.race([
     runStartupChores(),
     new Promise((resolve) => {
       cap = setTimeout(resolve, QUIT_CHORES_MS);
     }),
-  ]).then(() => {
+  ]).finally(() => {
     clearTimeout(cap);
     app.quit();
   });
