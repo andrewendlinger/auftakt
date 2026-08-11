@@ -76,12 +76,21 @@ jobs:
       - name: Checks
         run: npm run check
 
-      # Reporting, not gating — for now. There is a standing backlog of advisories (mostly
-      # the node-gyp/tar build-time chain), and failing every PR on it would train everyone
-      # to ignore this step. Read the summary, work the backlog down, then drop
-      # `continue-on-error` so a *new* advisory blocks the merge.
+      # Gating, as of 2026-08-11. This step carried `continue-on-error: true` while there was
+      # a standing backlog of advisories — mostly the node-gyp/tar build-time chain that came
+      # in through better-sqlite3's `prebuild-install` — because failing every PR on a backlog
+      # nobody was clearing would have trained everyone to ignore the step.
+      #
+      # The backlog is gone. better-sqlite3 v13 is N-API and dropped `prebuild-install` with
+      # its 26 transitive packages, js-yaml went to 4.3.1, and the react-router advisory was
+      # revised to a patched version the client already had. All three directories now report
+      # zero at `--audit-level=high`, so a failure here is news rather than noise.
+      #
+      # What is deliberately still allowed through: `server/` carries two *moderate*
+      # advisories, exceljs and the uuid it pins, and neither has an upgrade that is not a
+      # major downgrade. docs/DECISIONS.md records why they are not actionable. Raising this
+      # to `--audit-level=moderate` would fail every PR on them.
       - name: Audit dependencies
-        continue-on-error: true
         run: |
           rc=0
           for dir in . server client; do

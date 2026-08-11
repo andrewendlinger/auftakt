@@ -173,7 +173,7 @@ some weeks and then fail for reasons that have nothing to do with the code.
 
 ---
 
-## react-router GHSA-qwww-vcr4-c8h2 — not applicable, not upgradable (2026-08-06)
+## ~~react-router GHSA-qwww-vcr4-c8h2 — not applicable, not upgradable~~ — RESOLVED (2026-08-06, resolved 2026-08-11)
 
 `npm audit` reports a **high** on `react-router` in `client/`, and it will keep reporting it. It
 is not being fixed, for two independent reasons.
@@ -192,13 +192,50 @@ Dependabot tried twice on 2026-08-06 and failed both times with exactly that. Fo
 `npm audit fix --force` would install `react-router-dom@7.11.0` — a real, breaking downgrade of the
 router in exchange for closing a hole the app does not have.
 
-So: `react-router` is ignored for `/client` in `.github/dependabot.yml`, which stops the failing
-security update from re-running. `npm audit` is unaffected and still reports it — that is
-deliberate, and harmless, because the audit step in `.github/workflows/build.yml` is
-`continue-on-error: true` and reports without gating the build.
+So: `react-router` was ignored for `/client` in `.github/dependabot.yml`, which stopped the
+failing security update from re-running. `npm audit` was unaffected and kept reporting it — that
+was deliberate, and harmless, because the audit step in `.github/workflows/build.yml` was
+`continue-on-error: true` at the time and reported without gating the build.
 
-**Remove the ignore when** `react-router-dom` ships a release that depends on a patched
-`react-router`. At that point this becomes an ordinary bump.
+**Resolved on 2026-08-11, and not by an upgrade.** The advisory itself was revised: its
+`first_patched_version` for the 7.x line is now **7.18.2**, which is the version `client/` was
+already pinned to the whole time. `npm audit` reports zero for `/client`, and the repository has
+no react-router alert at all — 28 fixed, 2 open, none of them this one. The removal condition
+written above was therefore met without anything moving, so the `ignore:` entry is gone; left in,
+it would have suppressed genuine future react-router updates.
+
+Worth keeping the reasoning rather than deleting the entry: the *first* half still stands on its
+own. A revised advisory is the second time this dependency produced a high that was not a problem
+here, and the argument for why — HashRouter, no RSC, no data router — is what makes the next one
+quick to assess.
+
+## uuid GHSA-w5hq-g745-h8pq — unreachable, and not upgradable (2026-08-11)
+
+`npm audit` reports a **moderate** on `uuid` in `server/`, and it will keep reporting it. The
+alert (Dependabot #65, CVE-2026-41907) is a missing buffer bounds check in `uuid`'s `v3`, `v5` and
+`v6` generators when the optional `buf` argument is supplied.
+
+**The vulnerable code is not reachable — twice over.** `uuid` is not a direct dependency; it
+arrives only through `exceljs@4.4.0`, which pins `uuid@8.3.2`. exceljs touches it in exactly one
+file, `lib/xlsx/xform/sheet/cf-ext/cf-rule-ext-xform.js`, which does
+`const {v4: uuidv4} = require('uuid')` and calls `uuidv4()` at two sites. So the affected
+generators are never imported, and no call anywhere passes a `buf`. Either fact alone closes it.
+
+**There is no upgrade to take.** exceljs 4.4.0 is the current release, and the only fix npm can
+resolve is `exceljs@3.4.0` — a major *downgrade* of the library the Excel export is built on, in
+exchange for closing a hole that does not exist. An `overrides` pin to `uuid@11` would close the
+alert honestly, but it would change what exceljs runs against, and the export path has no test
+coverage to catch a regression. Not worth it for an unreachable finding.
+
+So: alert #65 is dismissed on GitHub as `vulnerable_code_not_actually_used`. `npm audit` still
+reports it, along with the moderate on exceljs itself — that is deliberate and harmless, because
+the audit step in `.github/workflows/build.yml` runs at `--audit-level=high`. Note the asymmetry
+with the react-router entry above: there is no `ignore:` in `.github/dependabot.yml` for this one,
+because there is no failing security update to stop from re-running. Adding one would only hide a
+future exceljs release that fixes it.
+
+**Revisit when** exceljs ships a release that moves off `uuid@8`, or when the Excel export is
+rewritten onto something else. At that point this becomes an ordinary bump.
 
 ## CodeQL's `js/missing-rate-limiting` is filtered out — until the server leaves loopback (2026-08-10)
 
@@ -217,8 +254,11 @@ the user's own UI. A handler is not exposed merely because it is a handler.
 re-reports a pre-existing alert as „new in code changed by this pull request" — PR 36 hit exactly
 that by editing four lines inside `POST /tasks/:id/move`, which had carried alert #14 since
 2026-08-06. Left alone, the check is red on essentially every PR forever, which is how a check
-stops being read. Same reasoning as the `continue-on-error` on the audit step in `build.yml`,
-one step further: a signal that always fires is not a signal.
+stops being read: a signal that always fires is not a signal. The audit step in `build.yml` was
+carrying `continue-on-error: true` for the same reason at the time; that one was resolved on
+2026-08-11 the way this note implies it should be — by clearing the backlog until a failure meant
+something, then removing the escape hatch. This query has no equivalent backlog to clear, because
+the alerts are not findings that can be worked down.
 
 **`express-rate-limit` was declined, not deferred.** It would close the alerts legitimately and it
 is cheap — the check scripts issue ~65 requests and the client does not poll, so no gate would
