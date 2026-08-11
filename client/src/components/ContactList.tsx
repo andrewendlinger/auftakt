@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { SectionTitle, Btn, EmptyState } from './ui';
+import { SectionTitle, Btn, DragHandle, EmptyState } from './ui';
 import { RecordFormModal, type FieldDef } from './fields';
+import { useListReorder } from '../lib/dragReorder';
 import { api } from '../api/client';
 import type { Contact, ContactCreate } from '../api/types';
 import { linkify } from '../lib/linkify';
@@ -68,6 +69,11 @@ export function ContactList({
     await undoablePatch({ res: api.contacts, row: c, patch: { color }, label: 'Farbänderung' });
   };
 
+  // `contacts` is the whole list of one parent — `api.contacts.list` is filtered by exactly one of
+  // artist_id/project_id — so the renumbering `useListReorder` sends covers every row it may touch.
+  // No `canDrop`: unlike links, contacts are not rendered in groups, so every pairing is legal.
+  const drag = useListReorder(contacts, api.contacts.reorder);
+
   return (
     <div>
       <SectionTitle right={<Btn onClick={() => setCreating(true)}>+ Kontakt</Btn>}>
@@ -80,11 +86,17 @@ export function ContactList({
           {contacts.map((c) => (
             <li
               key={c.id}
-              className={`group flex items-start gap-3 rounded-lg px-3 py-1.5 shadow-sm ring-1 ring-black/5 ${
+              className={`group flex items-start gap-3 rounded-lg px-3 py-1.5 shadow-sm ring-1 ring-black/5 transition ${
                 c.color ? 'border-l-4' : 'bg-white'
+              } ${drag.isDropTarget(c.id) ? 'ring-2 ring-neutral-500' : ''} ${
+                drag.isDragging(c.id) ? 'opacity-40' : ''
               }`}
               style={c.color ? { background: withAlpha(c.color, 0.16), borderLeftColor: c.color } : undefined}
+              {...drag.itemProps(c.id)}
             >
+              {/* items-start above, so the handle stays on the name's line when the row grows a
+                  second one for its notes — DocumentRow places its ⠿ the same way. */}
+              <DragHandle className="mt-0.5 text-base" {...drag.handleProps(c.id)} />
               <div className="min-w-0 flex-1">
                 {/* Name · role · email · phone on one line to keep long contact lists compact. */}
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-sm">

@@ -117,12 +117,19 @@ export function ReorderArrows({
 
 /**
  * The ⠿ grab handle that arms a drag. Spread `useDragReorder().handleProps(key)` onto it.
- * Hidden until the enclosing `group` is hovered, so it never competes with the row's own
- * content — pass `className="opacity-100"` to pin it visible.
+ *
+ * **Faintly visible at rest, full on hover of the enclosing `group`.** It used to be `opacity-0`
+ * until hovered, and that is what the customer reported as „kann ich nicht mehr verschieben" about
+ * a link list that had been reorderable for two releases (WP-35): an affordance nobody can see is
+ * an affordance nobody has. One resting state for every drag surface — a handle that is visible in
+ * one list and hidden in the next teaches that some lists cannot be reordered. Pass
+ * `className="opacity-100"` to pin it fully visible where the surface is already a drag mode.
  *
  * `disabled` is for a list that is temporarily not reorderable (the task table under a
  * header-click sort): the handle stays where the user expects it, dimmed and inert, so the row
- * can say *why* it won't move. Pass the reason as `title`.
+ * can say *why* it won't move. Pass the reason as `title`. It stays *below* the live handle's
+ * resting opacity and gains almost nothing on hover, so „inert" reads at a glance and not just
+ * from the cursor.
  */
 export function DragHandle({
   className = '',
@@ -135,8 +142,8 @@ export function DragHandle({
       title="Zum Verschieben ziehen"
       className={`select-none leading-none text-neutral-400 transition-opacity ${
         disabled
-          ? 'cursor-not-allowed opacity-0 group-hover:opacity-30'
-          : 'cursor-grab opacity-0 group-hover:opacity-100 active:cursor-grabbing'
+          ? 'cursor-not-allowed opacity-20 group-hover:opacity-30'
+          : 'cursor-grab opacity-40 group-hover:opacity-100 active:cursor-grabbing'
       } ${className}`}
       // A handle is only ever grabbed, never clicked. Swallowing the click keeps a press that
       // didn't turn into a drag from activating whatever encloses it — on a project card that

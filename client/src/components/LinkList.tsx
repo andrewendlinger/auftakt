@@ -114,14 +114,24 @@ export function LinkList({
 
   // Dragging is confined to one category group: `sort_order` is a single sequence across the
   // whole list, so a drop across groups would move a row under a heading that contradicts its
-  // category. Changing the category is the ✎ dialog's job. The reorder itself still renumbers
-  // every row — see useListReorder on why that leaves the other groups where they are.
+  // category. Changing the category is the ✎ dialog's job (docs/DECISIONS.md, „Links reorder
+  // inside their category"). The reorder itself still renumbers every row — see useListReorder on
+  // why that leaves the other groups where they are.
   const byId = new Map(links.map((l) => [l.id, l]));
   const drag = useListReorder(links, api.links.reorder, (from, to) => {
     const a = byId.get(from);
     const b = byId.get(to);
     return !!a && !!b && groupOf(a) === groupOf(b);
   });
+
+  /**
+   * The group a drag currently belongs to, or null while none is running. Derived from the rows
+   * rather than read out of the hook, which reports per-item state only. Every other group is
+   * dimmed while this is set: a refused drop used to be silent — the row simply snapped back — and
+   * a rule nobody can see reads as a broken feature, which is how this list was reported (WP-35).
+   */
+  const dragged = links.find((l) => drag.isDragging(l.id));
+  const draggingGroup = dragged ? groupOf(dragged) : null;
 
   const row = (l: LinkItem) => (
     <DocumentRow
@@ -131,7 +141,15 @@ export function LinkList({
       color={l.color}
       dragging={drag.isDragging(l.id)}
       dropTarget={drag.isDropTarget(l.id)}
-      handle={<DragHandle className="mt-0.5 text-base" {...drag.handleProps(l.id)} />}
+      handle={
+        <DragHandle
+          className="mt-0.5 text-base"
+          // Only once categories exist: without them the list is one group and the qualifier
+          // would name a rule that isn't in force.
+          {...(categories.length > 0 ? { title: 'Zum Verschieben ziehen (innerhalb der Kategorie)' } : {})}
+          {...drag.handleProps(l.id)}
+        />
+      }
       notes={
         // Inline-edited like a contact's note, and the add placeholder only shows on row hover
         // so a list of plain documents doesn't grow a second line per row.
@@ -178,7 +196,12 @@ export function LinkList({
           {[...grouped, { key: '', label: 'Ohne Kategorie', color: null as string | null, items: uncategorized }]
             .filter((g) => g.items.length > 0)
             .map((g) => (
-              <div key={g.key}>
+              <div
+                key={g.key}
+                className={`transition-opacity ${
+                  draggingGroup !== null && draggingGroup !== g.key ? 'opacity-40' : ''
+                }`}
+              >
                 <div className="mb-1.5">
                   <span
                     className="rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-600"

@@ -253,6 +253,58 @@ try {
     check('an empty filter means "no filter", not "match 0" (SDL-09)', empty.length >= 1, `${empty.length} rows`);
   }
 
+  // ------------------------------------------------ /reorder follows the allowlist (WP-35)
+  //
+  // The endpoint is not declared per resource: `crud.ts` mounts it wherever `sort_order` is
+  // client-writable. That coupling is invisible to typecheck, so dropping `sort_order` from a
+  // `writable` list — a plausible tidy-up — would silently 404 the endpoint and leave the client's
+  // drag handles pointing at nothing. Contacts and artists are the two the UI reorders since
+  // WP-35; tasks have their own coverage further down.
+  console.log('\n== /reorder is mounted wherever sort_order is writable (WP-35)');
+  {
+    const artist = await ok('POST', '/artists', { name: 'Sortierbar' });
+    const made = [];
+    for (const name of ['Erster', 'Zweiter', 'Dritter']) {
+      made.push(await ok('POST', '/contacts', { artist_id: artist.id, name }));
+    }
+    const ids = made.map((c) => c.id).reverse();
+    await ok('POST', '/contacts/reorder', { ids });
+    const rows = await ok('GET', `/contacts?artist_id=${artist.id}`);
+    check(
+      'a contact reorder is persisted and renumbers to 0..n-1',
+      JSON.stringify(rows.map((c) => c.id)) === JSON.stringify(ids) && rows.every((c, i) => c.sort_order === i),
+      rows.map((c) => `${c.name}:${c.sort_order}`).join(', '),
+    );
+
+    // Artists are the dashboard's card grid, which sends the whole live list.
+    const others = (await ok('GET', '/artists')).map((a) => a.id);
+    const flipped = [...others].reverse();
+    await ok('POST', '/artists/reorder', { ids: flipped });
+    const listed = (await ok('GET', '/artists')).map((a) => a.id);
+    check(
+      'an artist reorder is persisted',
+      JSON.stringify(listed) === JSON.stringify(flipped),
+      listed.join(','),
+    );
+
+    // The 409 arm, on a resource that had no coverage for it: a half-applied batch would leave
+    // two rows sharing an ordinal, so a stale id has to roll the whole transaction back.
+    //
+    // The batch has to *permute* the rows, not repeat the order they are already in. Sending
+    // `ids` again would write 0,1,2 onto rows that already hold 0,1,2 — the endpoint would still
+    // 409, and „nothing moved" would still pass with the rollback deleted. The assertion has to
+    // be able to fail.
+    const staleIds = [...ids].reverse();
+    const stale = await req('POST', '/contacts/reorder', { ids: [...staleIds, 999999] });
+    check('a stale id rolls the whole batch back', stale.status === 409, String(stale.status));
+    const unchanged = await ok('GET', `/contacts?artist_id=${artist.id}`);
+    check(
+      '…and the rows it did reach kept their old order',
+      JSON.stringify(unchanged.map((c) => c.id)) === JSON.stringify(ids),
+      unchanged.map((c) => c.id).join(','),
+    );
+  }
+
   // ------------------------------------------------- the dashboard's event columns (WP-33)
   //
   // `upcomingEvents` has its own column list instead of `EVENT_SELECT`'s `e.*`, because the

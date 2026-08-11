@@ -299,9 +299,17 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **A drag must start on the ⠿, not on the row.** Every reorderer runs `useDragReorder` in
   `mode: 'armed'`, so the item is not `draggable` until a primary-button `pointerdown` lands on
   its handle — `locator.dragTo()` on the row body is a silent no-op that reads as "reordering is
-  broken". What works: hover the row, `mouse.move` onto `[title="Zum Verschieben ziehen"]`,
-  `mouse.down`, `mouse.move` to the target with `{ steps: … }`, `mouse.up`. The handle is
-  `opacity-0` until the row is hovered but still hit-testable, so actionability passes either way.
+  broken". What works: hover the row, `mouse.move` onto `[title^="Zum Verschieben ziehen"]`,
+  `mouse.down`, `mouse.move` to the target with `{ steps: … }`, `mouse.up`.
+- **Match the handle's title with `^=`, not `=`.** In a link list *with* categories the tooltip is
+  „Zum Verschieben ziehen (innerhalb der Kategorie)"; everywhere else it is the bare sentence. An
+  exact-match selector finds nothing on `#/project/1`.
+- **The handle is `opacity-40` at rest and `opacity-100` on row hover** (WP-35 — it used to be
+  invisible until hovered). Both states are hit-testable, so actionability was never the issue;
+  what changed is that a screenshot assertion about a "clean" row now has a ⠿ in it.
+- **Reorderable surfaces, as of WP-35:** task rows, links (within one category group), contacts,
+  the project cards on an artist page, the artist cards on the Übersicht, the season cards on the
+  landing page, and sections in „anordnen" mode.
 - **`keyboard.down` emits one keydown.** A repeat-key defect (TTU-24) needs events dispatched with
   `repeat: true`.
 - **Some repros only fire inside a refetch window.** On a local server the refetch beats a human's
@@ -343,6 +351,11 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 
 ## Fixture facts about the demo
 
+- **Only two contact lists have more than one row**, so they are the only two a reorder can be
+  tried on: project 1 („NQ1 · Eröffnungskonzert") has three contacts and artist 1 („Nordlicht
+  Quartett") has two. Their `sort_order` values are interleaved with the other parents' (0, 6, 7
+  and 1, 8), which is the case a reorder must not disturb. Artist 3 deliberately keeps its single
+  contact — the dependent-count fixture below leans on it.
 - **The record delete (WP-34) is inside „✎ Bearbeiten", not on the page header** — „Löschen" in the
   dialog footer, then a nested confirm, then „In den Papierkorb". A script looking for a 🗑 next to
   the print link finds nothing, against working code. Useful fixtures: project 2 („NQ2 ·
