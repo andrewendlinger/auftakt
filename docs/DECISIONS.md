@@ -625,6 +625,51 @@ they are the ones a library keeps tempting you to hand over twice.
 
 ---
 
+## Per-window seasons via request scoping; one file per season stays (2026-08-11)
+
+The customer needs several windows on one PC showing **different seasons at once**. Two designs
+were on the table, including the customer's own offer to consolidate „one sqlite file for all
+seasons if thats easier". It is not easier, and the offer was declined: file-per-season is
+load-bearing across the codebase — per-season `settings` rows are each file's self-description,
+`copySeasonData` copies rows *between files* with ids preserved, `runBackup` snapshots per file
+via `VACUUM INTO`, import is an atomic file swap, `seasonStats` opens inactive files raw, the
+local Notion importer writes season files, and `check:api`'s season-copy assertions encode all of
+it. Consolidation means `season_id` in every query and the CRUD factory, a data migration and a
+backup/import redesign — for no gain over scoping the *request*: one middleware, one
+`Map<seasonId, Database>`, zero changes at the `getDb()` call sites.
+
+What that re-scoped, deliberately:
+
+- **„Aktiv" became „Standard".** `activateSeason()` writes the registry and touches no
+  connection; the default is what new windows and headerless callers (Electron main, check
+  scripts, seed/demo, the Notion importer) resolve. The check scripts' in-process
+  `activateSeason(id) → getDb()` pattern is a hard compatibility constraint — headerless
+  resolution re-reads the registry per call, so the default id must never be cached at boot.
+- **Season switching is window-local** (`switchSeason()` in `lib/season.ts`): repin + reload this
+  window, move the default for future windows best-effort, nudge other windows' season lists via
+  the broadcast. The pre-multi-window design — activate globally and reload *the* window — would
+  have left every other window rendering the old season while its writes landed in the new
+  season's file under colliding row ids.
+- **410 is the deleted-season contract.** Row-level misses stay 404; a pinned season that no
+  longer exists answers 410, the client drops the pin and restarts on the landing page with a
+  relayed toast. The 410 is `no-store` and every `/api` response carries
+  `Vary: X-Auftakt-Season` — found the hard way in a two-tab verification run: 410 is cacheable
+  by default (RFC 9110), and Chromium replayed the dead pin's cached 410 for the recovered
+  window's headerless retry, an infinite reload loop.
+- **A second app launch opens a new window** instead of raising the existing one — the
+  multi-window convention (Chrome, VS Code). The single-instance lock itself stays; two
+  *processes* would race the fixed port and corrupt WAL sidecars on import.
+
+Accepted limitations, narrowed but not fixed: whole-array settings and cross-window undo remain
+last-write-wins between windows (the broadcast shrinks the window to ~milliseconds; redesigning
+undo was already ruled out once, see the category-reassignment entry); a write in flight at the
+exact moment its season is deleted or imported can land oddly (closing that fully means per-write
+season tokens — the architecture this entry rejects); Cmd+N inherits the *default* season, not
+necessarily the opener window's (main has no cheap, non-racy way to read the opener's
+sessionStorage); zoom is per-origin in the shared Electron session and leaks across windows; and
+one window's heavy synchronous operation (backup `VACUUM INTO`, xlsx export) briefly freezes all
+windows, since the server shares the main process — pre-existing, now merely more visible.
+
 ## Known sharp edges with no owner
 
 Real, understood, and deliberately not scheduled. Each carries a comment at its own site; none is
