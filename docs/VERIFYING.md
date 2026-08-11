@@ -70,6 +70,15 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 
 ## Playwright traps
 
+- **How a page was *reached* changes what a delete on it does.** „Daten konnten nicht aktualisiert
+  werden. (not found)" after deleting an artist reproduces when the page was reached by a
+  client-side navigation (dashboard → artist card → „✎ Bearbeiten" → delete) and **not** when the
+  same page was opened with `page.goto('#/artist/4')`, which is how a script naturally writes it.
+  `navigate()` is a React Router transition, so the unmount races a DELETE that takes ~2 ms against
+  localhost, and the two routes in lose that race at different rates. A repro that only ever
+  `goto`s the page under test reports the bug fixed while a user hits it on the first click. Drive
+  the navigation the user drives — and read `useUndoableDelete`'s `gone` before assuming a stray
+  404 during a delete is a server bug.
 - **`getByRole('button', { name: 'Löschen' })` is ambiguous on any page with tasks on it.** The
   task table's row 🗑 carries `title="Löschen"`, so it takes the accessible name too — on a project
   page that is four matches, and the one you want (the edit dialog's footer button, WP-34) is only

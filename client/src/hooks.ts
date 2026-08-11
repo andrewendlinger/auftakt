@@ -613,6 +613,12 @@ export interface UndoableDeleteArgs {
   label: string;
   remove: () => Promise<unknown>;
   restore: () => Promise<unknown>;
+  /**
+   * Query-key prefix of the row itself — `['artist', 7]`, `['project', 3]` — for a row that has
+   * a page of its own. Those queries are marked stale but **not asked for again**: see the
+   * settle step below for why refetching a row we just deleted is never right.
+   */
+  gone?: readonly unknown[];
 }
 
 /**
@@ -632,9 +638,37 @@ export function useUndoableDelete(): (args: UndoableDeleteArgs) => Promise<boole
   const { pushWithToast } = useUndo();
   const toast = useToast();
   const report = useErrorToast();
+  const qc = useQueryClient();
   const invalidate = useInvalidateAll();
   return useCallback(
-    async ({ label, remove, restore }: UndoableDeleteArgs) => {
+    async ({ label, remove, restore, gone }: UndoableDeleteArgs) => {
+      /**
+       * Refresh everything the delete could have changed — except the row it deleted.
+       *
+       * A record delete redirects off the page it happened on, but `navigate()` is a React
+       * Router transition and does not commit before this runs: the DELETE round trip to
+       * localhost is a couple of milliseconds and the unmount loses that race often enough to
+       * be a bug report. A blanket invalidate then refetches the page's own `['artist', 7]`
+       * while it is still mounted, the server answers 404 — correctly, the row is in the
+       * Papierkorb — and `QueryCache.onError` (main.tsx) turns that into „Daten konnten nicht
+       * aktualisiert werden. (not found)" next to the „gelöscht" toast. Nothing is wrong, and
+       * the user is told something is.
+       *
+       * So the row's own keys are marked stale and left alone: nothing asks for a row we just
+       * deleted. Stale rather than untouched matters — a later mount from a bookmark or the
+       * history must still refetch and land on the `LoadError` panel (PGS-05) rather than
+       * render a deleted record out of the cache.
+       *
+       * The redirect is still worth doing first (it is what keeps the page from flashing that
+       * panel on the way out); it is just not a guarantee, and this does not depend on it.
+       */
+      const settle = async () => {
+        if (!gone) return invalidate();
+        const isGone = (key: readonly unknown[]) => gone.every((part, i) => Object.is(key[i], part));
+        await qc.invalidateQueries({ queryKey: [...gone], refetchType: 'none' });
+        await qc.invalidateQueries({ predicate: (q) => !isGone(q.queryKey) });
+      };
+
       let result: unknown;
       try {
         result = await remove();
@@ -646,7 +680,7 @@ export function useUndoableDelete(): (args: UndoableDeleteArgs) => Promise<boole
         await invalidate();
         return false;
       }
-      await invalidate();
+      await settle();
       if (nothingDeleted(result)) {
         toast.show({ message: `${label} war bereits gelöscht` });
         return false;
@@ -654,13 +688,15 @@ export function useUndoableDelete(): (args: UndoableDeleteArgs) => Promise<boole
       pushWithToast(
         {
           label: `Löschen von ${label}`,
-          // Redo re-deletes; both halves refresh even when the call fails, so a list can never
-          // keep showing a row the server no longer has.
+          // Redo re-deletes, and settles the same way — the row is gone again, so asking for it
+          // again is the same mistake. Both halves refresh even when the call fails, so a list
+          // can never keep showing a row the server no longer has. Restore takes the blanket
+          // invalidate: the row is back and every list that dropped it needs it again.
           apply: async () => {
             try {
               await remove();
             } finally {
-              await invalidate();
+              await settle();
             }
           },
           revert: async () => {
@@ -675,7 +711,7 @@ export function useUndoableDelete(): (args: UndoableDeleteArgs) => Promise<boole
       );
       return true;
     },
-    [pushWithToast, toast, report, invalidate],
+    [pushWithToast, toast, report, qc, invalidate],
   );
 }
 

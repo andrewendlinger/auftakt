@@ -133,8 +133,13 @@ function DeleteRecordAction({
     // history stack, so Zurück walked straight back into the LoadError panel this redirect exists
     // to avoid (PGS-05) — the row is gone, so the refetch 404s and there is nothing to render. An
     // undo restores the row but not the entry, which is the same trade every other delete makes.
+    //
+    // It is a React Router transition either way, so this page can still be mounted when the
+    // delete settles — `gone` is what keeps that from becoming an error toast. `flushSync` around
+    // the navigate does *not* close the gap: it flushes the sync lane and the router's update is
+    // not in it. See `useUndoableDelete`.
     navigate(redirectTo, { replace: true });
-    void del({ label: `${noun} „${name}“`, ...resourceUndo(res, id) });
+    void del({ label: `${noun} „${name}“`, gone: [kind, id], ...resourceUndo(res, id) });
   };
 
   return (
