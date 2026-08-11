@@ -168,6 +168,10 @@ const PROJECTS = [
 const CONTACTS = [
   // Two with notes (one rich, one plain), the rest without — the inline contact text
   // field needs both the filled and the hover-only-placeholder branch on screen.
+  //
+  // Project 1 carries three and artist 1 two, so both contact surfaces can actually be dragged
+  // (WP-35). Every other parent keeps exactly one: artist 3's single contact is the fixture
+  // docs/VERIFYING.md leans on to prove the dependent count walks *through* projects.
   { id: 1, artist_id: null, project_id: 1, role: 'Management', name: 'Merle Dahlke', email: 'merle.dahlke@example.org', phone: '+49 151 0000001', notes: 'Erreichbar **vormittags**, sonst per [Mail](mailto:merle.dahlke@example.org).' },
   { id: 2, artist_id: 1, project_id: null, role: 'Tourmanagement', name: 'Piet Aalders', email: 'piet@example.org', phone: null, notes: 'Regelt auch die Backline.' },
   { id: 3, artist_id: null, project_id: 3, role: 'Booking', name: 'Rosa Enríquez', email: 'rosa@example.org', phone: '+351 900 000 000' },
@@ -175,6 +179,11 @@ const CONTACTS = [
   { id: 5, artist_id: null, project_id: 7, role: 'Agentur', name: 'Ines Kubowski', email: 'ines@example.org', phone: '+49 151 0000002' },
   // Soft-deleted contact — a leaf in the trash (nothing references it).
   { id: 6, artist_id: 1, project_id: null, role: 'Fahrer', name: 'Ehemaliger Fahrer', email: null, phone: null, deleted_at: stamp(-5) },
+  // The rows that make a contact list reorderable. One of them is coloured: the drop highlight is
+  // a ring, and a coloured row draws its own left border, so the two have to be seen together.
+  { id: 7, artist_id: null, project_id: 1, role: 'Technik', name: 'Tobias Reinke', email: 'tobias.reinke@example.org', phone: '+49 151 0000003', color: '#f59e0b' },
+  { id: 8, artist_id: null, project_id: 1, role: 'Abendspielleitung', name: 'Wanda Groß', email: null, phone: '+49 151 0000004', notes: 'Nur am Konzerttag erreichbar.' },
+  { id: 9, artist_id: 1, project_id: null, role: 'Backline', name: 'Sven Ostermann', email: 'sven@example.org', phone: null },
 ];
 
 /** Mix of all-day (date-only start) and timed rows — the UI renders them differently. */
@@ -406,8 +415,8 @@ function main(): void {
      VALUES (@id, @artist_id, @code, @name, @status, @description, @color, @layout, @deleted_at, @sort_order)`,
   );
   const insContact = db.prepare(
-    `INSERT INTO contacts (id, artist_id, project_id, role, name, email, phone, notes, deleted_at, sort_order)
-     VALUES (@id, @artist_id, @project_id, @role, @name, @email, @phone, @notes, @deleted_at, @sort_order)`,
+    `INSERT INTO contacts (id, artist_id, project_id, role, name, email, phone, notes, color, deleted_at, sort_order)
+     VALUES (@id, @artist_id, @project_id, @role, @name, @email, @phone, @notes, @color, @deleted_at, @sort_order)`,
   );
   const insEvent = db.prepare(
     `INSERT INTO events (id, artist_id, project_id, type, title, start_at, end_at, all_day, location, notes, deleted_at, sort_order)
@@ -437,7 +446,7 @@ function main(): void {
     PROJECTS.forEach((p, i) =>
       insProject.run({ color: null, layout: null, deleted_at: null, ...p, sort_order: i }),
     );
-    CONTACTS.forEach((c, i) => insContact.run({ notes: null, deleted_at: null, ...c, sort_order: i }));
+    CONTACTS.forEach((c, i) => insContact.run({ notes: null, color: null, deleted_at: null, ...c, sort_order: i }));
     EVENTS.forEach((e, i) => insEvent.run({ notes: null, deleted_at: null, ...e, sort_order: i }));
 
     // Custom columns first: their generated ids are the keys inside tasks.custom_values.

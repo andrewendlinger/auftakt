@@ -6,7 +6,7 @@ import type { ArtistCard as ArtistCardT, Task, UpcomingEvent } from '../api/type
 import { withAlpha } from '../lib/colors';
 import { formatEventWhen, weekdayShort } from '../lib/dates';
 import { groupUpcomingEvents } from '../lib/eventGroups';
-import { Card, SectionTitle, Spinner, EmptyState, ErrorState } from '../components/ui';
+import { Card, DragHandle, SectionTitle, Spinner, EmptyState, ErrorState } from '../components/ui';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { TaskTable } from '../components/TaskTable';
 import { TaskStatChips } from '../components/TaskStatChips';
@@ -14,6 +14,7 @@ import { AttentionList } from '../components/AttentionList';
 import { NewArtistButton } from '../components/EntityButtons';
 import { EditableLabel } from '../components/EditableLabel';
 import { SectionArranger, parseLayoutEntries } from '../components/SectionArranger';
+import { useListReorder, type DragReorder } from '../lib/dragReorder';
 import {
   builtinPicker,
   customSectionEntries,
@@ -108,6 +109,11 @@ export function Dashboard() {
     [data?.upcoming, eventWindowDays],
   );
 
+  // Above the early returns for the same reason. `/api/dashboard` sends every live artist ordered
+  // by `sort_order` (never a slice), so the ids this renumbers are the complete sequence — the
+  // condition `useListReorder` is built on.
+  const artistDrag = useListReorder(data?.artists ?? [], api.artists.reorder);
+
   if (isLoading) return <Spinner />;
   if (isError || !data) {
     return <ErrorState title="Übersicht konnte nicht geladen werden." onRetry={() => void refetch()} />;
@@ -131,6 +137,7 @@ export function Dashboard() {
               <ArtistCard
                 key={a.id}
                 artist={a}
+                drag={artistDrag}
                 tasks={tasksByArtist.get(a.id) ?? []}
               />
             ))}
@@ -222,13 +229,28 @@ export function Dashboard() {
   );
 }
 
-function ArtistCard({ artist, tasks }: { artist: ArtistCardT; tasks: Task[] }) {
+/**
+ * Reorderable by dragging the ⠿, like the project cards on the artist page. The handle sits in the
+ * card's top-right corner rather than in a bar of its own — the artist card's colour strip is 8 px
+ * of pure colour with nothing in it, and the season cards already put their handle there
+ * (LandingPage). It sits *inside* the card's `<Link>`, which is safe: `DragHandle` swallows the
+ * click, so a grab that never became a drag does not navigate into the artist.
+ */
+function ArtistCard({ artist, drag, tasks }: { artist: ArtistCardT; drag: DragReorder; tasks: Task[] }) {
   return (
-    <Link to={`/artist/${artist.id}`}>
+    <Link
+      to={`/artist/${artist.id}`}
+      className={`group relative block rounded-2xl transition ${
+        drag.isDropTarget(artist.id) ? 'ring-2 ring-neutral-500' : ''
+      } ${drag.isDragging(artist.id) ? 'opacity-40' : ''}`}
+      {...drag.itemProps(artist.id)}
+    >
+      <DragHandle className="absolute right-3 top-4 z-10 text-base" {...drag.handleProps(artist.id)} />
       <Card className="overflow-hidden transition hover:shadow-md">
         <div className="h-2" style={{ background: artist.color }} />
         <div className="p-4">
-          <div className="flex items-center gap-2">
+          {/* pr-6 keeps a long artist name clear of the handle in the corner above it. */}
+          <div className="flex items-center gap-2 pr-6">
             {artist.image ? (
               <img
                 src={artist.image}
