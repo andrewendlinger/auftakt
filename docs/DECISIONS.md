@@ -584,6 +584,47 @@ entry.
 
 ---
 
+## The task table renders its own rows; `@tanstack/react-table` is gone (2026-08-11, #47)
+
+Dependabot #46 bumped `@tanstack/react-table` 8.21.3 → 9.1.0 and failed `npm run typecheck` with
+24 errors. v9 is an API rewrite — `useTable` for `useReactTable`, opt-in registration through
+`tableFeatures()`, and a `TFeatures` generic in front of `ColumnDef`, `Row` and `CellContext` — so
+the PR could not merge, and a red PR that reopens weekly is how a Dependabot gets muted.
+
+Taking the bump meant reading what the library was actually doing here, and the answer was: very
+little. Two files imported it, and between them they used **two** features — the core row model
+and expansion. Sorting already happened in `client/src/lib/taskSort.ts` before the data reached
+the table; column visibility and order in `visibleCols`; the `<tbody>` grouping in `groupRows`;
+dragging in `useDragReorder`, keyed on task ids. Expansion state was one-way controlled — `state`
+was supplied and `onExpandedChange` was not, so the table could never write it, and the truth was
+the component's own inverted `collapsed` set. Every column carried `id`, a string `header` and a
+component `cell`, and **no accessor at all**, so the table held no cell values; the hierarchy
+gutter was not even in the column model. What was left was a depth-first flatten and `flexRender`,
+which is `React.createElement`.
+
+**So the migration was rejected in favour of deleting the dependency.** `buildTaskRows` and
+`groupRows` in `client/src/lib/taskRows.ts` are the replacement, and moving them there is most of
+the point: the flatten is the part of this table that can actually be wrong, and inside the
+library it was the part no gate could reach. It now sits where `check:unit` does — the same rule
+as `eventTime.ts` (WP-40). Issue #7 is untouched; this piece simply stopped depending on it.
+
+The second reason is narrower and worth stating. v9 is backed by TanStack Store atoms and
+`useTable` without a selector subscribes to every registered slice. This component's most
+expensive defect class is TTU-12/TTU-38 — a rebuilt `columns` memo handing React new component
+*types* and remounting every cell subtree, which once ate an open Titel editor mid-typing. Moving
+that onto a one-week-old reactive core was more risk than writing forty lines. v9.0.0 shipped
+2026-08-04; 9.1.1 was itself a fix restoring v8's row order in `getSortedRowModel().flatRows`.
+
+It also makes the table consistent with the rest of the app: `ArchivePage`, `PrintArtist` and
+`PrintProject` are all plain `<table>` + `.map()` already.
+
+**What would reverse this:** column virtualization, column resizing, or faceted filtering. Each is
+real work to do by hand and a solved problem in a table library, and any of them is a good reason
+to take one back. Row ordering, visibility and expansion are not — those are already ours, and
+they are the ones a library keeps tempting you to hand over twice.
+
+---
+
 ## Known sharp edges with no owner
 
 Real, understood, and deliberately not scheduled. Each carries a comment at its own site; none is

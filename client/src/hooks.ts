@@ -37,7 +37,7 @@ import { useUndo } from './components/UndoProvider';
  * That is a correctness requirement, not a micro-optimisation. A fresh arrow per render
  * propagates: `TaskTable`'s `commit`/`commitCustom`/`requestDelete` are `useCallback`s that
  * depend on these, so an unstable value here invalidates them, which invalidates the `columns`
- * memo, which hands TanStack's `flexRender` a new component *type* — and React answers that by
+ * memo, which hands React a new component *type* for every cell — and React answers that by
  * unmounting and remounting every cell subtree in the table. Measured on the demo season: one
  * „＋ Unteraufgabe" click, which changes no data at all, remounted all 60 data cells, and a
  * background refetch destroyed an open Titel editor together with the text being typed into it

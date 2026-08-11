@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react';
-import type { Row } from '@tanstack/react-table';
 import { withAlpha } from '../lib/colors';
 import { ChevronRightIcon } from './icons';
 import { IconButton } from './ui';
@@ -7,7 +6,7 @@ import { IconButton } from './ui';
 /**
  * Geometry of the task table's hierarchy gutter, in px.
  *
- * The gutter is a fixed leading column rendered *outside* TanStack's column model, so nesting
+ * The gutter is a fixed leading column rendered *outside* the table's column model, so nesting
  * always reads at the start of the row. That matters because task columns are user-orderable:
  * an indent applied to the Titel cell lands mid-table whenever Titel isn't first, which looks
  * like a rendering bug rather than hierarchy.
@@ -43,21 +42,6 @@ export const CHILD_BAND = 'linear-gradient(rgba(0,0,0,0.028), rgba(0,0,0,0.028))
 /** Rail colour for a group, tinted by the parent task's own colour when it has one. */
 export function spineColorFor(parentColor: string | null | undefined): string {
   return parentColor ? withAlpha(parentColor, 0.5) : DEFAULT_SPINE;
-}
-
-/**
- * Chunk the flat expanded row model into one array per top-level task, so a task and its
- * subtasks can be rendered as a single `<tbody>` and framed as a group. A depth-0 row opens a
- * group; deeper rows join the current one. Order is preserved exactly as TanStack emitted it,
- * so sorting and expansion state are untouched.
- */
-export function groupRows<T>(rows: Row<T>[]): Row<T>[][] {
-  const groups: Row<T>[][] = [];
-  for (const row of rows) {
-    if (row.depth === 0 || groups.length === 0) groups.push([row]);
-    else groups[groups.length - 1]!.push(row);
-  }
-  return groups;
 }
 
 type TreeKind =

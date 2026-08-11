@@ -6,7 +6,7 @@ liegen lokal; Phase 1 ist Einzelnutzer.
 
 ## Stack
 
-- **Frontend:** React + TypeScript + Vite + Tailwind CSS + TanStack Table
+- **Frontend:** React + TypeScript + Vite + Tailwind CSS + TanStack Query
 - **Backend:** Express + better-sqlite3 (eine SQLite-Datei = die ganze Datenbank)
 - **Shell/Packaging:** Electron + electron-builder
 
