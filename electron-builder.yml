@@ -22,11 +22,33 @@ publish:
 
 # Built artifacts + the one native dependency (better-sqlite3 is added
 # automatically as a production dependency and rebuilt for Electron's ABI).
+#
+# The last entry drops three quarters of that dependency. better-sqlite3 is N-API since
+# v13, so it ships prebuilt binaries for all eight platform/arch combos inside the
+# package — 16 MB, of which the app ever loads one. Keeping only the host's two takes
+# the dmg from 126.4 MB to 120.1 MB, which is where v0.7.0 sat on v12 (120.7 MB): the
+# trim is what stops the N-API move from costing users 6 MB per download.
+#
+# `${platform}` expands to the *host* (darwin/win32/linux), which is the target only
+# because each installer is built on its own runner; anything that cross-builds would
+# have to state the target explicitly. Both of the host's architectures are kept: the
+# second costs 2 MB and means a loadable binary is present even if the ABI rebuild is
+# skipped — which it now is, since @electron/rebuild leaves the N-API prebuild in place
+# rather than producing a build/Release of its own.
+#
+# It has to live in *this* list, not under `mac:`/`win:`, and that is not a style
+# preference. electron-builder normalises this list into a single `{filter: [...]}` set
+# with its own matcher, while a platform-specific `files:` entry lands in the *default*
+# matcher instead. Put the exclude there and that matcher holds nothing but an ignore,
+# `containsOnlyIgnore()` fires, electron-builder prepends `**/*` to it — and the app
+# quietly packs the entire repository, sources and all. Verified: 290 asar entries with
+# client/src and server/src inside, against 112 correct ones.
 files:
   - electron/dist/**
   - server/dist/**
   - client/dist/**
   - package.json
+  - '!**/node_modules/better-sqlite3/prebuilds/!(${platform})-*.node'
 
 asar: true
 asarUnpack:

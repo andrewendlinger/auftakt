@@ -23,7 +23,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "better-sqlite3": "^12.11.1",
+    "better-sqlite3": "^13.0.3",
     "csv-parse": "^7.0.2",
     "exceljs": "^4.4.0",
     "express": "^5.2.1"
