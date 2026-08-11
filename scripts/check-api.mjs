@@ -350,6 +350,48 @@ try {
     check('restoring a row that no longer exists is a 404', missing.status === 404, String(missing.status));
   }
 
+  // --------------------------------------------------------------- delete preview (WP-34)
+  // The numbers behind „Löschen" on an artist or a project. This is a *soft* delete: it stamps
+  // one row and `parentLive` hides the rest, so the count describes what stops being visible,
+  // not what is destroyed — which is why it must skip rows already in the Papierkorb. Getting
+  // that wrong overstates the cost of a click that costs nothing permanent.
+  console.log('\n== delete preview counts live descendants only (WP-34)');
+  {
+    const artist = await ok('POST', '/artists', { name: 'Vorschau' });
+    const keep = await ok('POST', '/projects', { artist_id: artist.id, name: 'Bleibt', code: 'V1' });
+    const gone = await ok('POST', '/projects', { artist_id: artist.id, name: 'Schon weg', code: 'V2' });
+    await ok('POST', '/tasks', { title: 'Aufgabe am Künstler', artist_id: artist.id });
+    await ok('POST', '/tasks', { title: 'Aufgabe am Projekt', project_id: keep.id });
+    await ok('POST', '/contacts', { project_id: keep.id, name: 'Kontakt am Projekt' });
+    await ok('POST', '/events', { project_id: gone.id, type: 'Auftritt', title: 'Termin am toten Projekt', start_at: '2026-09-03', all_day: 1 });
+
+    const full = await ok('GET', `/artists/${artist.id}/dependents`);
+    check('the artist counts both projects while both are live', full.byType.project === 2, JSON.stringify(full.byType));
+
+    // Soft-deleting the second project must remove it *and* its event from the count: the walk
+    // stops at a trashed row rather than stepping through it, exactly as `liveSubtreeIds` does.
+    await ok('DELETE', `/projects/${gone.id}`);
+    const live = await ok('GET', `/artists/${artist.id}/dependents`);
+    check('a trashed project drops out of the count', live.byType.project === 1, JSON.stringify(live.byType));
+    check('…and so does the event underneath it', live.byType.event === undefined, JSON.stringify(live.byType));
+    check('tasks are counted through the project as well as directly', live.byType.task === 2, JSON.stringify(live.byType));
+    check('a project-level contact reaches the artist count', live.byType.contact === 1, JSON.stringify(live.byType));
+    check('total agrees with the parts', live.total === Object.values(live.byType).reduce((a, b) => a + b, 0), JSON.stringify(live));
+
+    // The project arm answers for itself, and never counts its own artist — the walk only ever
+    // goes down the FK graph.
+    const proj = await ok('GET', `/projects/${keep.id}/dependents`);
+    check('a project counts its own children', proj.byType.task === 1 && proj.byType.contact === 1, JSON.stringify(proj.byType));
+    check('…and never counts upwards to its artist', proj.byType.artist === undefined, JSON.stringify(proj.byType));
+
+    // There is no delete to preview for a row that is gone or already trashed, and `{total: 0}`
+    // would read in the dialog as „nothing depends on it".
+    const trashed = await req('GET', `/projects/${gone.id}/dependents`);
+    check('a preview of an already-trashed row is a 404', trashed.status === 404, String(trashed.status));
+    const nobody = await req('GET', '/artists/999999/dependents');
+    check('a preview of a row that never existed is a 404', nobody.status === 404, String(nobody.status));
+  }
+
   // ------------------------------------------------------- the baseline order (WP-32, was TTU-11)
   // What the API returns when no sort rule is in effect is what the client keeps: `sortTasks`
   // short-circuits on an empty rule list. So the ORDER BY may rank by nothing the user cannot see

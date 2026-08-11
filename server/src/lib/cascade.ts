@@ -6,13 +6,17 @@ import type Database from 'better-sqlite3';
  * better-sqlite3 type and takes `db` as a parameter — so both callers can use it without an
  * import cycle through `db.ts`.
  *
- * The two callers use it differently, on purpose. The manual delete walks `collect()` and
+ * The three callers use it differently, on purpose. The manual delete walks `collect()` and
  * hard-deletes the whole closure, live children included — that is a counted, confirmed
  * choice the user makes in a dialog. The startup purge never expands: it takes only rows
  * whose own `deleted_at` expired and generates `NOT EXISTS` guards from `CHILD_EDGES` to
- * skip anything a remaining row still references (SDL-01).
+ * skip anything a remaining row still references (SDL-01). The delete *preview*
+ * (`GET /artists/:id/dependents`, WP-34) walks `collect(…, { liveOnly: true })`, because it
+ * describes a soft delete: what it counts is what stops being visible, and a row already in
+ * the Papierkorb is invisible either way.
  *
- * Exports: `CHILD_EDGES`, `DELETE_ORDER`, `collect`, `hasLiveDescendant`.
+ * Exports: `CHILD_EDGES`, `DELETE_ORDER`, `TABLE_TYPE`, `collect`, `dependentCounts`,
+ * `hasLiveDescendant`.
  */
 
 /**
@@ -51,6 +55,22 @@ export const CHILD_EDGES: Record<string, Array<readonly [table: string, fk: stri
 /** Delete children before parents so no FK is violated mid-transaction (foreign_keys = ON). */
 export const DELETE_ORDER = ['links', 'custom_sections', 'custom_columns', 'tasks', 'events', 'contacts', 'projects', 'artists'];
 
+/**
+ * table → the type name the client counts by. `custom_columns` has no user-facing deleted type
+ * of its own, but a project's columns are part of both the cascade and the delete preview, so it
+ * maps to `column` all the same.
+ */
+export const TABLE_TYPE: Record<string, string> = {
+  artists: 'artist',
+  projects: 'project',
+  contacts: 'contact',
+  events: 'event',
+  tasks: 'task',
+  links: 'link',
+  custom_columns: 'column',
+  custom_sections: 'section',
+};
+
 export type Collected = Map<string, Set<number>>;
 
 /**
@@ -84,8 +104,29 @@ function cached(db: Database.Database, sql: string): Database.Statement {
   return stmt;
 }
 
+export interface CollectOptions {
+  /**
+   * Skip soft-deleted children, and do not descend through them.
+   *
+   * Off by default, because the two destructive callers must see the *whole* closure: a hard
+   * delete that stepped over a trashed row would leave it behind with a dangling FK, and the
+   * purge's guards exist precisely to notice rows a parent still references.
+   *
+   * On for the delete preview, where the closure is a promise made to the user rather than a
+   * work list. A soft delete hides live descendants; one that is already in the Papierkorb is
+   * hidden from every list either way, so counting it would overstate what the click costs.
+   * Matches `liveSubtreeIds` (routes/entities.ts), which draws the same line for task trees.
+   */
+  liveOnly?: boolean;
+}
+
 /** Transitive closure of a row and everything that (recursively) references it, keyed by table. */
-export function collect(db: Database.Database, rootTable: string, rootId: number): Collected {
+export function collect(
+  db: Database.Database,
+  rootTable: string,
+  rootId: number,
+  opts: CollectOptions = {},
+): Collected {
   const found: Collected = new Map();
   const add = (table: string, id: number): boolean => {
     let set = found.get(table);
@@ -102,14 +143,48 @@ export function collect(db: Database.Database, rootTable: string, rootId: number
   while (queue.length) {
     const [table, id] = queue.shift() as [string, number];
     for (const [childTable, fk] of CHILD_EDGES[table] ?? []) {
-      // childTable/fk come from the hardcoded CHILD_EDGES map, never from the client.
-      const rows = cached(db, `SELECT id FROM ${childTable} WHERE ${fk} = ?`).all(id) as {
+      // childTable/fk come from the hardcoded CHILD_EDGES map, never from the client. The
+      // liveOnly arm is a second SQL string rather than a bound parameter, which the statement
+      // cache handles for free: it is keyed by the SQL itself, so both variants simply coexist.
+      const live = opts.liveOnly ? ' AND deleted_at IS NULL' : '';
+      const rows = cached(db, `SELECT id FROM ${childTable} WHERE ${fk} = ?${live}`).all(id) as {
         id: number;
       }[];
       for (const row of rows) if (add(childTable, row.id)) queue.push([childTable, row.id]);
     }
   }
   return found;
+}
+
+export interface DependentCounts {
+  total: number;
+  byType: Record<string, number>;
+}
+
+/**
+ * Count everything in the closure except the root row itself, grouped by type name.
+ *
+ * Shared by the trash (what „Endgültig löschen" destroys) and the delete preview (what a soft
+ * delete hides). Which of the two a count describes is decided by the `liveOnly` flag the
+ * caller passed to `collect`, not here.
+ */
+export function dependentCounts(
+  collected: Collected,
+  rootTable: string,
+  rootId: number,
+): DependentCounts {
+  const byType: Record<string, number> = {};
+  let total = 0;
+  for (const [table, ids] of collected) {
+    for (const id of ids) {
+      if (table === rootTable && id === rootId) continue;
+      const type = TABLE_TYPE[table];
+      if (!type) continue;
+      byType[type] = (byType[type] ?? 0) + 1;
+      total++;
+    }
+  }
+  return { total, byType };
 }
 
 /**
