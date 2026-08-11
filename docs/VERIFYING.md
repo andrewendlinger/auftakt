@@ -299,6 +299,23 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - The demo's project sheet only crosses a page boundary at a group header with a tuned fixture
   (55 „new" + 6 „active" tasks); neighbouring counts silently miss it.
 
+## Native modules in the packaged app
+
+- **`npm run check` never exercises Electron's ABI** — it runs under plain Node, and
+  `check:package` only asserts the `.node` is *present*. Neither would notice a binary that cannot
+  load in the app.
+- **Run the built app's own Electron binary as Node to close that gap**, without opening a window:
+
+  ```sh
+  ELECTRON_RUN_AS_NODE=1 release/mac-arm64/Auftakt.app/Contents/MacOS/Auftakt -e "…"
+  ```
+
+  Point it at the *unpacked* copy (`Contents/Resources/app.asar.unpacked/node_modules/…`) and do a
+  real `prepare`/`exec` round-trip, not just a `require`.
+- **better-sqlite3 has been N-API since v13**, so `@electron/rebuild` no longer writes a
+  `build/Release` — the shipped `prebuilds/<platform>-<arch>.node` *is* what loads. `electron-builder.yml`
+  excludes the other seven; if that exclude ever over-matches, the app dies at the first query.
+
 ## Fixture facts about the demo
 
 - **The record delete (WP-34) is inside „✎ Bearbeiten", not on the page header** — „Löschen" in the
