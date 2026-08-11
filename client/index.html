@@ -737,39 +737,64 @@
            trail removed, offset-distance made compositable — this must go, or it will
            abort smooth animations whenever something unrelated occupies the main thread.
            docs/DECISIONS.md records that condition. */
+
+        /* Length of one judging window. Windows repeat for as long as the gesture runs —
+           they are not a warm-up check. Judging only the first 200 ms left ~92 % of a
+           2600 ms animation unmonitored, and the things that stutter it arrive late by
+           nature: a query retry's backoff, a route effect, font or image decode, a GC. */
         var WATCH_MS = 200;
         /* One visibly dropped run of frames, as an absolute: three frames at 60 Hz, six
            at 120. Deliberately not expressed as a multiple of the measured period — the
            period estimate is only trustworthy once the window has some samples, and a
            hitch has to be catchable on the very first one. */
         var HITCH_MS = 50;
+        /* Floor for the uniformly-slow test, ~45 fps, and the allowance over the fastest
+           frame actually observed. See the test itself for why both are needed. */
+        var SLOW_MS = 22;
+        var SLOW_FACTOR = 1.35;
 
         function watchFrames() {
-          var first = -1;
           var prev = -1;
-          var judged = 0;
+          var warmed = false;
+          /* Start of the current window: the timestamp of the frame *before* its first
+             recorded delta, so that `elapsed` is exactly the sum of what `deltas` holds.
+             It used to be the timestamp of the very first callback, which left the
+             deliberately unrecorded warm-up frame inside elapsed and nowhere in deltas —
+             so the starved test compared a short count against a long clock and aborted
+             perfectly cadenced runs whenever that one frame was expensive. Around 85 ms
+             of warm-up was enough, which twelve animations starting at once can reach. */
+          var first = -1;
           var deltas = [];
+          /* Kept across windows, not per window: the more of the gesture it has seen, the
+             likelier it is to have caught a frame that landed on an actual vsync. */
+          var fastest = Infinity;
 
           function tick(now) {
             if (gone || crossing || !playing) return;
-            if (first < 0) {
-              first = prev = now;
-              return requestAnimationFrame(tick);
+            requestAnimationFrame(tick);
+            if (prev < 0) {
+              prev = now;
+              return;
             }
             var d = now - prev;
             prev = now;
             /* The first measured frame carries the cost of promoting layers for
                animations that have only just started. Expected rather than perceived, and
-               judging it aborts healthy runs — so it is neither tested nor recorded, since
-               recording it would drag the period estimate below. */
-            if (judged++ < 1) return requestAnimationFrame(tick);
+               judging it aborts healthy runs — so it is neither tested nor recorded, and
+               the window's clock starts after it. */
+            if (!warmed) {
+              warmed = true;
+              first = now;
+              return;
+            }
             deltas.push(d);
+            if (d < fastest) fastest = d;
             if (d >= HITCH_MS) return abort('hitch');
             var elapsed = now - first;
-            if (elapsed < WATCH_MS) return requestAnimationFrame(tick);
+            if (elapsed < WATCH_MS) return;
 
-            /* Verdict, taken once at the end of the window so that the frame period can
-               be a *median* rather than a running minimum.
+            /* Verdict, taken at the end of each window so that the frame period can be a
+               *median* rather than a running minimum.
 
                The minimum is the tempting estimator — a frame cannot arrive sooner than
                vsync, so the fastest delta looks like the period. It is also fragile in
@@ -787,10 +812,19 @@
                to: they compare frames against a period derived from the frames
                themselves, so a run where *every* frame takes 22 ms scores a perfect
                median, no drops, and a frame count exactly matching its own expectation.
-               An absolute limit is available because every panel this ships to is 60 Hz
-               or faster — a median slower than ~45 fps is degraded on any of them.
-               Caught real sustained contention that the relative tests waved through. */
-            if (nominal > 22) return abort('slow');
+
+               The floor alone was wrong. It read "every panel this ships to is 60 Hz or
+               faster", and that is not true of a 4K panel driven at 30 Hz over HDMI 1.4,
+               nor of a ProMotion display, which idles its refresh rate down over the
+               still frame of phase A and ramps back up over the first frames of the
+               gesture — precisely the frames this measures. Both scored a median past the
+               floor with no individual frame anywhere near a hitch, so a smooth gesture
+               aborted, and a fixed 30 Hz panel could never play one at all. Hence the
+               second term: a median is only damning next to what this display has been
+               seen to deliver. Uniform contention on a 60 Hz panel that never once hits
+               vsync still slips through, which is what the drops and starved tests below
+               are for. */
+            if (nominal > Math.max(SLOW_MS, fastest * SLOW_FACTOR)) return abort('slow');
             var drops = 0;
             for (var i = 0; i < deltas.length; i++) {
               drops += Math.max(0, Math.round(deltas[i] / nominal) - 1);
@@ -806,6 +840,10 @@
                deltas can still look unremarkable next to the others; comparing frame
                *count* against elapsed time is the only thing that sees it. */
             if (deltas.length < 0.6 * (elapsed / nominal)) return abort('starved');
+
+            // Clean window. Open the next one and keep watching to the last frame.
+            deltas = [];
+            first = now;
           }
           requestAnimationFrame(tick);
         }
