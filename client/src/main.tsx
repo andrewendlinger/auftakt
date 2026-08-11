@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
-import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryCache, QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query';
 import './index.css';
 import { ApiError } from './api/client';
 import { coalesced, onBroadcast } from './lib/broadcast';
@@ -39,7 +39,11 @@ const queryClient = new QueryClient({
   }),
   defaultOptions: {
     queries: {
-      refetchOnWindowFocus: false,
+      // The backstop behind the cross-window broadcast: focusing a window catches anything
+      // a missed message left stale. Safe for inline editors since TTU-12/TTU-38 — cells
+      // keep their identity across a refetch and drafts seed only on start(), so a
+      // background refetch reorders rows at worst, it does not remount an open editor.
+      refetchOnWindowFocus: true,
       staleTime: 5_000,
       /**
        * The server is the local Express process, so a 4xx is a definitive answer — retrying it
@@ -53,6 +57,23 @@ const queryClient = new QueryClient({
         !(err instanceof ApiError && err.status >= 400 && err.status < 500) && count < 2,
     },
   },
+});
+
+/**
+ * refetchOnWindowFocus above is inert between Electron windows without this: React Query v5
+ * listens to `visibilitychange` only, and two windows side by side on two screens are BOTH
+ * permanently visible — switching between them never fires it. Feed the manager real
+ * window focus as well, which is exactly the multi-window case the flag exists for here.
+ */
+focusManager.setEventListener((handleFocus) => {
+  const onFocus = () => handleFocus(true);
+  const onVisibility = () => handleFocus(document.visibilityState === 'visible');
+  window.addEventListener('focus', onFocus);
+  document.addEventListener('visibilitychange', onVisibility);
+  return () => {
+    window.removeEventListener('focus', onFocus);
+    document.removeEventListener('visibilitychange', onVisibility);
+  };
 });
 
 /**
