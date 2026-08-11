@@ -90,21 +90,43 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   `hold` → (`play` | `cross`) → `done`:
   - `hold` → phase A, a flat `#f6f6f4` rectangle. Typically ~95 ms; up to 3500 ms, then it reveals
     regardless.
-  - `play` → the gesture is running; ~3.1 s from here to `done`.
-  - `cross` → a 200 ms fade instead of the gesture. Three ways in: readiness arrived past the
-    1200 ms deadline, the user clicked, or the frame watchdog aborted. `#boot-overlay[data-abort]`
-    distinguishes the last one and names the reason (`hitch` — one frame over 50 ms; `slow` — a
-    median under ~45 fps; `drops` — a fifth of frames lost; `starved` — too few frames delivered).
+  - `play` → the gesture is running; ~2.6 s from here to `done`. Not 3.07 s: the overlay's fade
+    starts at 2230 ms and *overlaps* the 2700 ms envelope's tail rather than following it, so the
+    node is gone before the choreography's nominal end.
+  - `cross` → a 200 ms fade instead of the gesture. Four ways in: readiness arrived past the
+    1200 ms deadline, the app signalled that it collapsed (`html[data-app-failed]`, see below), the
+    user clicked, or the frame watchdog aborted. `#boot-overlay[data-abort]` distinguishes the last
+    one and names the reason (`hitch` — one frame over 50 ms; `slow` — a median well under the
+    fastest frame this display has managed; `drops` — a fifth of frames lost; `starved` — too few
+    frames delivered).
   - `done` → the node is gone and `#root` is no longer `inert`.
-- **`document.getAnimations()` returns `[]` during the hold**, because everything is
-  `animation-play-state: paused` until phase B. A script that assumes otherwise concludes the
-  overlay is broken. To look at a single frame, wait for `[data-boot="play"]` *first*, then
-  `document.getAnimations().forEach(a => { a.pause(); a.currentTime = ms })` — and note the clock
-  now starts at phase B, not at navigation. Seeking past the end fires the fade's `animationend`,
-  which removes the node: that *is* the reveal, not a lost overlay.
+- **`document.getAnimations()` returns all twelve animations during the hold, not `[]`** — paused is
+  not idle, and a paused animation with a fill is still in effect and still enumerated. What
+  distinguishes the hold is `playState`: every one reads `paused` except `bootBail`, the dead man's
+  switch, which runs unconditionally and spends the whole hold inside its 6 s delay. A script that
+  polls for an empty list waits forever; check `getAnimations().every(a => a.playState === 'paused'
+  || a.animationName === 'bootBail')` instead. To look at a single frame, wait for
+  `[data-boot="play"]` *first*, then `document.getAnimations().forEach(a => { a.pause();
+  a.currentTime = ms })` — and note the clock now starts at phase B, not at navigation. Seeking past
+  the end fires the fade's `animationend`, which removes the node: that *is* the reveal, not a lost
+  overlay.
+- **An app that threw during boot reveals without the gesture, deliberately.** `window.onerror`, an
+  unhandled rejection, or a render error the `ErrorBoundary` caught all reach `signalFailed()`, which
+  sets `html[data-app-failed]` before announcing readiness; the overlay then cross-fades rather than
+  celebrating over a blank window. So a scenario that injects a throw gets `cross`, and
+  `[data-app-failed]` is the handle that tells you why it was not `play`.
 - **A blocked main thread makes the gesture abort, so do not block it and then blame the overlay.**
   Injecting a busy-loop to simulate load, or attaching a debugger, trips the watchdog and you get
-  `cross` instead of `play`. That is the feature working.
+  `cross` instead of `play`. That is the feature working, and it applies for the *whole* gesture —
+  the watchdog judges rolling 200 ms windows to the last frame, not just the opening one. The one
+  exception is a block that lands after the reveal fade has begun (~2230 ms in): from there the app
+  is already showing through, so the overlay lets the fade finish rather than throwing the splash
+  back to full opacity.
+- **An aborted or skipped gesture keeps its last frame on screen, and that is not a stuck
+  animation.** `cross` from within `play` adds `#boot-overlay.boot-froze`, which holds the svg
+  visible while every descendant animation re-pauses, so a screenshot taken then shows the hand
+  mid-swing with a half-drawn trail, fading out. A `cross` that never played shows the flat
+  rectangle instead — the parked hand and an un-landed wordmark are deliberately never drawn.
 - **The overlay swallows the first interaction while it is up**, whatever phase it is in, because
   it keeps its pointer events until removal. `locator.click()` rides that out through actionability
   retries; a raw `mouse.click()` at coordinates only reveals the app. `#root` carries `inert` for
