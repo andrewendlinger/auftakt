@@ -242,7 +242,47 @@ async function chooseBackupDir(): Promise<void> {
   for (const w of BrowserWindow.getAllWindows()) w.webContents.reload();
 }
 
-async function exportDatabase(): Promise<void> {
+/** An IPC argument is untrusted: only a positive integer passes, anything else → default. */
+function asSeasonId(v: unknown): number | undefined {
+  return Number.isInteger(v) && (v as number) > 0 ? (v as number) : undefined;
+}
+
+/**
+ * The caller's season as the routing middleware's ?season= query leg — main's requests
+ * carry no Origin and no header, so without this they resolve the registry default.
+ */
+function seasonPath(path: string, seasonId?: number): string {
+  return seasonId === undefined ? path : `${path}?season=${seasonId}`;
+}
+
+/**
+ * The season pinned in the focused window, for the MENU-initiated export/import — the
+ * Einstellungen buttons pass their window's pin through IPC instead. A read-only peek;
+ * undefined (→ the default season) when there is no window, no pin, or the peek fails.
+ */
+async function focusedWindowSeason(): Promise<number | undefined> {
+  const win = liveWindow();
+  if (!win) return undefined;
+  try {
+    const raw: unknown = await win.webContents.executeJavaScript('sessionStorage.getItem("auftakt-season")');
+    return asSeasonId(Number(raw));
+  } catch {
+    return undefined;
+  }
+}
+
+/** The registry label of `seasonId` (or of the default), for naming dialogs. Best-effort. */
+async function seasonLabel(seasonId?: number): Promise<string> {
+  try {
+    const r = await fetch(`${ORIGIN}/api/seasons`);
+    const reg = (await r.json()) as { activeId: number; seasons: Array<{ id: number; label: string }> };
+    return reg.seasons.find((s) => s.id === (seasonId ?? reg.activeId))?.label ?? '';
+  } catch {
+    return '';
+  }
+}
+
+async function exportDatabase(seasonId?: number): Promise<void> {
   const r = await dialog.showSaveDialog({
     title: 'Datenbank exportieren',
     // Local wall-clock time, the same helper the server's backup folders use: a UTC stamp
@@ -251,14 +291,14 @@ async function exportDatabase(): Promise<void> {
   });
   if (r.canceled || !r.filePath) return;
   try {
-    await post('backup/export', { path: r.filePath });
+    await post(seasonPath('backup/export', seasonId), { path: r.filePath });
     await dialog.showMessageBox({ message: 'Datenbank wurde exportiert.', type: 'info' });
   } catch (err) {
     await dialog.showMessageBox({ type: 'error', message: `Export fehlgeschlagen: ${(err as Error).message}` });
   }
 }
 
-async function importDatabase(): Promise<void> {
+async function importDatabase(seasonId?: number): Promise<void> {
   const r = await dialog.showOpenDialog({
     title: 'Datenbank importieren',
     properties: ['openFile'],
@@ -279,17 +319,22 @@ async function importDatabase(): Promise<void> {
     return;
   }
 
+  // Name the season the import will replace: with per-window seasons, „die aktuelle
+  // Datenbank" no longer says which one that is.
+  const label = await seasonLabel(seasonId);
   const confirm = await dialog.showMessageBox({
     type: 'warning',
     buttons: ['Abbrechen', 'Importieren'],
     defaultId: 1,
     cancelId: 0,
-    message: 'Die aktuelle Datenbank wird zuerst gesichert und dann ersetzt. Fortfahren?',
+    message: label
+      ? `„${label}“ wird zuerst gesichert und dann ersetzt. Fortfahren?`
+      : 'Die aktuelle Datenbank wird zuerst gesichert und dann ersetzt. Fortfahren?',
   });
   if (confirm.response !== 1) return;
 
   try {
-    const { backup } = await post<{ backup: string }>('backup/import', { path: r.filePaths[0] });
+    const { backup } = await post<{ backup: string }>(seasonPath('backup/import', seasonId), { path: r.filePaths[0] });
     await dialog.showMessageBox({
       type: 'info',
       message: 'Import abgeschlossen. Alle Fenster werden geschlossen und die App wird neu gestartet.',
@@ -624,7 +669,12 @@ app.whenReady().then(async () => {
   }
 
   Menu.setApplicationMenu(
-    buildMenu({ onExport: exportDatabase, onImport: importDatabase, onChooseBackup: chooseBackupDir }),
+    buildMenu({
+      // Menu clicks carry no renderer context, so the season comes from the focused window.
+      onExport: () => void focusedWindowSeason().then(exportDatabase),
+      onImport: () => void focusedWindowSeason().then(importDatabase),
+      onChooseBackup: chooseBackupDir,
+    }),
   );
   await createWindow();
   startupDone = true;
@@ -685,8 +735,8 @@ app.on('window-all-closed', () => {
 
 // Preload bridge → main. React never touches Electron APIs directly.
 ipcMain.handle('open-external', (_e, url: string) => openExternalSafely(url));
-ipcMain.handle('export-db', () => exportDatabase());
-ipcMain.handle('import-db', () => importDatabase());
+ipcMain.handle('export-db', (_e, seasonId: unknown) => exportDatabase(asSeasonId(seasonId)));
+ipcMain.handle('import-db', (_e, seasonId: unknown) => importDatabase(asSeasonId(seasonId)));
 ipcMain.handle('choose-backup-dir', () => chooseBackupDir());
 ipcMain.handle('get-version', () => app.getVersion());
 ipcMain.handle('check-updates', (_e, refresh: boolean) => checkForUpdates(refresh));

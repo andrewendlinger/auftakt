@@ -20,6 +20,7 @@ import { TrashIcon } from '../components/icons';
 import { useToast } from '../components/Toast';
 import { ALL_METRICS } from '../lib/taskStats';
 import { openExternal, type UpdateStatus } from '../lib/external';
+import { getWindowSeason } from '../lib/season';
 import {
   useErrorToast,
   useEventTypeOptions,
@@ -428,10 +429,10 @@ export function SettingsDataTab() {
             )}
           </div>
           <div className="flex gap-2">
-            <Btn onClick={() => window.auftakt?.exportDatabase?.()} disabled={!hasElectron}>
+            <Btn onClick={() => window.auftakt?.exportDatabase?.(getWindowSeason() ?? undefined)} disabled={!hasElectron}>
               Datenbank exportieren…
             </Btn>
-            <Btn onClick={() => window.auftakt?.importDatabase?.()} disabled={!hasElectron}>
+            <Btn onClick={() => window.auftakt?.importDatabase?.(getWindowSeason() ?? undefined)} disabled={!hasElectron}>
               Datenbank importieren…
             </Btn>
           </div>

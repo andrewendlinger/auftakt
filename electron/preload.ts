@@ -4,8 +4,10 @@ import { contextBridge, ipcRenderer } from 'electron';
 // lets external links open via shell.openExternal (default browser / mail client).
 contextBridge.exposeInMainWorld('auftakt', {
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
-  exportDatabase: () => ipcRenderer.invoke('export-db'),
-  importDatabase: () => ipcRenderer.invoke('import-db'),
+  // The caller's season pin rides along so export/import target the window's season,
+  // not the registry default. Main treats the value as untrusted.
+  exportDatabase: (seasonId?: number) => ipcRenderer.invoke('export-db', seasonId),
+  importDatabase: (seasonId?: number) => ipcRenderer.invoke('import-db', seasonId),
   chooseBackupDir: () => ipcRenderer.invoke('choose-backup-dir'),
   getVersion: () => ipcRenderer.invoke('get-version'),
   checkForUpdates: (refresh: boolean) => ipcRenderer.invoke('check-updates', refresh),
