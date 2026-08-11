@@ -227,7 +227,7 @@ exchange for closing a hole that does not exist. An `overrides` pin to `uuid@11`
 alert honestly, but it would change what exceljs runs against, and the export path has no test
 coverage to catch a regression. Not worth it for an unreachable finding.
 
-So: alert #65 is dismissed on GitHub as `vulnerable_code_not_actually_used`. `npm audit` still
+So: alert #65 is dismissed on GitHub as `not_used`. `npm audit` still
 reports it, along with the moderate on exceljs itself — that is deliberate and harmless, because
 the audit step in `.github/workflows/build.yml` runs at `--audit-level=high`. Note the asymmetry
 with the react-router entry above: there is no `ignore:` in `.github/dependabot.yml` for this one,
