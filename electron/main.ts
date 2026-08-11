@@ -55,16 +55,20 @@ const PORT = Number(process.env.AUFTAKT_PORT) || 4317;
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 const DEV_URL = process.env.AUFTAKT_DEV_URL ?? 'http://localhost:5317';
 
-let mainWindow: BrowserWindow | null = null;
-
 /**
- * The window, if there is still one to talk to. `closed` nulls the reference, but only
- * after the window is already destroyed, so both halves are load-bearing — and anything
- * that can outlive the window (the startup chores, which the quit path now releases and
- * then waits on) has to ask before it puts something on screen.
+ * A window to talk to, if there is still one — the focused window first, else any that is
+ * not destroyed. Derived from Electron's own registry rather than a module-level reference:
+ * with several windows, a single `mainWindow` slot was nulled by whichever window closed
+ * *last wrote it*, so closing window A disabled dialogs while window B was still on screen.
+ * Anything that can outlive the windows (the startup chores, which the quit path releases
+ * and then waits on) has to ask before it puts something on screen.
  */
 function liveWindow(): BrowserWindow | null {
-  return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  return (
+    BrowserWindow.getFocusedWindow() ??
+    BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ??
+    null
+  );
 }
 
 /**
@@ -233,7 +237,9 @@ async function chooseBackupDir(): Promise<void> {
     });
     return;
   }
-  mainWindow?.webContents.reload();
+  // Every window shows the folder in its Einstellungen — reload them all, not just the
+  // one the click came from.
+  for (const w of BrowserWindow.getAllWindows()) w.webContents.reload();
 }
 
 async function exportDatabase(): Promise<void> {
@@ -286,7 +292,7 @@ async function importDatabase(): Promise<void> {
     const { backup } = await post<{ backup: string }>('backup/import', { path: r.filePaths[0] });
     await dialog.showMessageBox({
       type: 'info',
-      message: 'Import abgeschlossen. Die App wird neu gestartet.',
+      message: 'Import abgeschlossen. Alle Fenster werden geschlossen und die App wird neu gestartet.',
       detail: backup ? `Die bisherige Datenbank wurde gesichert:\n${backup}` : undefined,
     });
     app.relaunch();
@@ -321,7 +327,6 @@ async function createWindow(): Promise<void> {
       nodeIntegration: false,
     },
   });
-  mainWindow = win;
 
   // ready-to-show never fires if the load fails, and a window that stays hidden is worse
   // than one that flashes empty: app.on('activate') counts hidden windows too, so it
@@ -339,10 +344,7 @@ async function createWindow(): Promise<void> {
     clearTimeout(showAnyway);
     win.show();
   });
-  win.on('closed', () => {
-    clearTimeout(showAnyway);
-    mainWindow = null;
-  });
+  win.on('closed', () => clearTimeout(showAnyway));
 
   // Never spawn a child BrowserWindow (a child would not inherit the preload,
   // but denying is the safe default); route allowlisted schemes out to the OS
