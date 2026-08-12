@@ -447,9 +447,6 @@ const PREFERRED = { width: 1440, height: 900 };
 /** Enforced by Electron itself, so the placement arithmetic must never go below it. */
 const MINIMUM = { width: 1024, height: 680 };
 
-/** Which anchor the next wrapped window takes. Module state, deliberately — see cascade.ts. */
-let wrapSlot = 0;
-
 async function createWindow(): Promise<void> {
   // Sampled BEFORE construction — a moment later the count would include this window.
   // A secondary window cascades off the focused one and skips the boot gesture (its
@@ -459,11 +456,12 @@ async function createWindow(): Promise<void> {
   const isSecondary = others.length > 0;
   let bounds;
   if (isSecondary) {
-    // getDisplayMatching keeps the cascade on the monitor the user is working on.
+    // getDisplayMatching keeps the cascade on the monitor the user is working on, and the
+    // windows already open are the state that decides where this one may go — a counter drifts
+    // out of step with them and never frees the place a closed window left (see cascade.ts).
     const src = (BrowserWindow.getFocusedWindow() ?? others[others.length - 1]!).getBounds();
-    const placed = cascadeBounds(src, screen.getDisplayMatching(src).workArea, PREFERRED, MINIMUM, wrapSlot);
-    wrapSlot = placed.nextWrapSlot;
-    bounds = placed.bounds;
+    const taken = others.filter((w) => !w.isDestroyed()).map((w) => w.getBounds());
+    bounds = cascadeBounds(src, screen.getDisplayMatching(src).workArea, PREFERRED, MINIMUM, taken);
   } else {
     // Size only: with no window to match a display against, Electron's own centering is the
     // better answer than guessing which monitor of several the user is sitting at.
