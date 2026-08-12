@@ -466,6 +466,10 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   TanStack's cache notification land in different batches, so asserting a `[data-section]` is
   gone right after `toast.waitFor()` races the second batch and fails against working code. Wait
   for the node: `locator.waitFor({ state: 'detached' })` — `gone()` in the shared `drive.mjs`.
+- **The removal toast names the section by its label, not its key.** On the artist page the
+  `termine` 🗑 toasts „Bereich „Wichtige Termine“ entfernt." — asserting „Bereich „Termine““
+  matches nothing (and `getByText` substring matching does not save you, the `„` is in the way).
+  Take the expected name from `labels.ts`' default for that page's label key.
 - **The link dialog's „Kategorie" is `type: 'pills'`, not a `<select>`** — `selectOption` finds
   nothing. The options are `[aria-pressed]` buttons and the current value is
   `[aria-pressed="true"]`; a second click on it clears the field.
