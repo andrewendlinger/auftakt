@@ -295,9 +295,11 @@ function notifyBackupConfigChanged(): void {
 }
 
 async function chooseBackupDir(win: BrowserWindow | null): Promise<void> {
-  // The picker parents on the initiating window when there is one, else on any live window:
-  // saying which *app* wants the folder matters more than which window (see promptForDirectory).
-  const dir = await promptForDirectory(win ?? liveWindow());
+  // No liveWindow() fallback, deliberately. It returns any non-destroyed window, including a
+  // *minimized* one — and a sheet on a window that is not on screen is a picker the user never
+  // sees, i.e. a folder chooser that reads as a hang. Unparented is the better of the two: on
+  // macOS it is app-modal and visible, which is also what export/import do with a null window.
+  const dir = await promptForDirectory(win);
   if (!dir) return;
   try {
     await saveBackupDir(dir);
@@ -617,10 +619,11 @@ let chores: Promise<unknown> | null = null;
  * React had just mounted, inside the gesture's first second, on every launch.
  *
  * Idempotent because it has four callers: the renderer's signal, the 8 s fallback, a
- * renderer that reloads itself (a season switch, or the reload after saving a backup
- * folder) and signals a second time, and the last window closing. It returns the same
- * promise to all of them rather than nothing, because that last caller has to know when
- * the backup is finished — it is on its way to app.quit().
+ * renderer that reloads itself (a season switch — picking a backup folder used to reload
+ * too, until PR50-05 replaced that with an invalidate) and signals a second time, and the
+ * last window closing. It returns the same promise to all of them rather than nothing,
+ * because that last caller has to know when the backup is finished — it is on its way to
+ * app.quit().
  */
 function runStartupChores(): Promise<unknown> {
   if (chores) return chores;
