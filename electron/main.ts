@@ -342,8 +342,11 @@ function seasonPath(path: string, seasonId?: number): string {
 async function windowSeason(win: BrowserWindow | null): Promise<number | undefined> {
   if (!win || win.isDestroyed()) return undefined;
   try {
-    // The renderer's own key, `KEY` in client/src/lib/season.ts. Grep is the only coupling
-    // between the two spellings — see the comment there before renaming either.
+    // The renderer's own pin key, spelled `KEY` in client/src/lib/season.ts. This process
+    // cannot import it — electron/tsconfig.json is `include: ["*.ts"]`, so nothing type-checks
+    // across the boundary — which makes **grep the only coupling** between the two literals.
+    // Rename one without the other and this silently returns undefined, i.e. the registry
+    // default, and Datei → „Datenbank importieren…" replaces the wrong season's file (PR50-10).
     const raw: unknown = await win.webContents.executeJavaScript('sessionStorage.getItem("auftakt-season")');
     return asSeasonId(Number(raw));
   } catch {
