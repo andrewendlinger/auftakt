@@ -701,8 +701,12 @@ last-write-wins between windows (the broadcast shrinks the window to ~millisecon
 undo was already ruled out once, see the category-reassignment entry); a write in flight at the
 exact moment its season is deleted or imported can land oddly (closing that fully means per-write
 season tokens — the architecture this entry rejects); Cmd+N inherits the *default* season, not
-necessarily the opener window's (main has no cheap, non-racy way to read the opener's
-sessionStorage); zoom is per-origin in the shared Electron session and leaks across windows; and
+necessarily the opener window's (**reading** the opener's pin is not the obstacle — `windowSeason()`
+in `electron/main.ts` peeks it via `executeJavaScript` and is trusted with the Datei menu's
+destructive import; **seeding** the new window is: injecting sessionStorage after `loadURL` races
+the renderer's first API call, and the client has no `?season=` adoption path — `pinFromResponse()`
+takes the echo or nothing, and the query leg exists for main's own header-less HTTP); zoom is
+per-origin in the shared Electron session and leaks across windows; and
 one window's heavy synchronous operation (backup `VACUUM INTO`, xlsx export) briefly freezes all
 windows, since the server shares the main process — pre-existing, now merely more visible.
 
