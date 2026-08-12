@@ -282,8 +282,7 @@ export function ArtistPage() {
       </Card>
 
       <SectionArranger
-        layout={layout.value}
-        onPersist={layout.write}
+        store={layout}
         sections={sections}
         labelKeys={SECTION_LABEL_KEYS}
         titles={custom.titles}

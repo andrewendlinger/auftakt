@@ -453,8 +453,17 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **`paletteFor('Deadline')` is `#fee2e2`, the same colour `LEGACY_EVENT_COLORS` holds for it**, so
   „Deadline" cannot distinguish the two code paths. „Termin" can (legacy `#e2e8f0` vs palette
   `#dcfce7`).
-- **Hiding a *filled* built-in opens the „Bereich ist nicht leer" dialog**, whose overlay then eats
-  every following click. An *empty* custom widget skips the dialog entirely.
+- **Removing a *filled* built-in opens the „Bereich entfernen" confirm** (WP-45 — the old
+  „Bereich ist nicht leer" refusal is gone), whose overlay eats every following click until
+  „Entfernen" or „Abbrechen" is pressed. An *empty* built-in skips the dialog and removes at
+  once, with an undo toast. An *empty* custom widget skips the dialog entirely.
+- **„+ Bereich" is in the toolbar *outside* edit mode** (WP-45). A script that infers arrange
+  mode from that button's presence is wrong now — the mode signal is „✓ Fertig" vs
+  „✎ Bereiche bearbeiten", or the strip (`.section-title` hidden, dashed outlines).
+- **An undo toast appears a React tick *before* the section unmounts.** The toast's setState and
+  TanStack's cache notification land in different batches, so asserting a `[data-section]` is
+  gone right after `toast.waitFor()` races the second batch and fails against working code. Wait
+  for the node: `locator.waitFor({ state: 'detached' })` — `gone()` in the shared `drive.mjs`.
 - **The link dialog's „Kategorie" is `type: 'pills'`, not a `<select>`** — `selectOption` finds
   nothing. The options are `[aria-pressed]` buttons and the current value is
   `[aria-pressed="true"]`; a second click on it clears the field.

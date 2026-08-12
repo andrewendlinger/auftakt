@@ -769,6 +769,45 @@ Folding it into `kontakte` would have avoided that and was rejected for the reas
 section on every existing project page for a symmetry nobody asked for. So the two pages differ on
 purpose — this is not drift to be tidied up.
 
+## One 🗑, one outcome: removing a built-in is a tombstone, and it is undoable (2026-08-12, WP-45, #57)
+
+Issue #57 documented four different outcomes behind the same 🗑 — silent vanish, refusal
+(„Bereich ist nicht leer"), Papierkorb, hard delete — and a third section state between present
+and removed: `hidden: true`, invisible, with no trace outside „✎ → + Bereich". A customer read
+that state as a missing feature („gerade kann ich z.B. keine Kontakte einfügen").
+
+Decided: a section has **two states — on the page, or removed** — and one removal flow. An empty
+built-in is removed at once; a filled one gets a confirm that says the truth („Die Inhalte
+bleiben erhalten — der Bereich lässt sich jederzeit über „+ Bereich" wieder hinzufügen", a
+`primary` button, not `danger`, because nothing is destroyed); custom widgets keep their
+Papierkorb confirm, the landing its no-Papierkorb copy. The refusal dialog is gone.
+
+The stored form is unchanged: removal writes a **tombstone** (`hidden: true` stays on the entry).
+Dropping the entry instead was considered and rejected — the entry's *absence* is what tells
+„a later build added a section this layout has never seen" (auto-appended visible, the #59
+distribution path) from „the user took this away", and its presence is what remembers position
+and width for the re-add. `defaultHidden` survives with a new reading: „not part of the default
+arrangement, available in the picker" — legitimate only now that the picker is always reachable.
+„Als Standard speichern" continues to carry tombstones into the template; with a discoverable
+picker that is curation, not data loss.
+
+Removal is **the one undoable layout write** — it supersedes the blanket „no layout write has
+ever been undoable". Its arms are built on `store.current()` (pure helpers in
+`lib/layoutEntries.ts`; `SectionArranger` therefore takes the page's `LayoutStore`, not a bare
+write callback). The revert throws when the tombstone is gone from `current()` — „Auf Standard
+zurücksetzen", another window — so `UndoProvider` toasts the failure instead of freezing an
+arrangement onto a template-following page. Reorder, width, and every `LayoutMenu` action stay
+off the undo stack; the picker's re-add too, its inverse being the 🗑 itself.
+
+## „+ Bereich" lives in the toolbar, outside edit mode (2026-08-12, WP-45, #57)
+
+The picker is the only way back to a removed section, and a route that exists only behind
+„✎ Bereiche bearbeiten" is a route users do not find — that is how the contacts report above
+happened. So `addAction` renders whenever the toolbar does: `[+ Bereich] [✎ Bereiche bearbeiten]`
+in view mode, „⌂ Layout" joining in edit mode. „⌂ Layout" stays gated: its actions replace whole
+arrangements, which is edit-mode business. A „N Bereiche ausgeblendet" hint was considered in #57
+and rejected — it makes the third state visible instead of removing it.
+
 ## Known sharp edges with no owner
 
 Real, understood, and deliberately not scheduled. Each carries a comment at its own site; none is

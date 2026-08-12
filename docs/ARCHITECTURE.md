@@ -314,15 +314,28 @@ toolbar, whose heading names the scope through `useLabel` — **appended, never 
 Which store a page uses is the page's business, and all of them expose the same `LayoutStore`
 shape (`value` / `current()` / `write()`), so `useRemoveCustomSection` prunes a `cs<id>` without
 knowing where the array lives: `useEntityLayout` for artists and projects, `useSettingsArray` for
-the dashboard, `useLanding` for the landing. Settings whose values are JSON arrays must still be
-listed in `ARRAY_KEYS` in `server/src/routes/settings.ts` to round-trip parsed; the entity column
-is **not** parsed on read, because the CRUD factory has no read transform — use `parseEntityLayout`.
+the dashboard, `useLanding` (behind a small adapter in `LandingPage`) for the landing. Since WP-45
+`SectionArranger` takes that store itself — the `store` prop, or `layoutKey` for the settings
+arm — because the removal undo needs `current()`, not just a write. Settings whose values are
+JSON arrays must still be listed in `ARRAY_KEYS` in `server/src/routes/settings.ts` to round-trip
+parsed; the entity column is **not** parsed on read, because the CRUD factory has no read
+transform — use `parseEntityLayout`.
+
+Removing a built-in section (WP-45, issue #57) writes a **tombstone** — the entry stays, flagged
+`hidden: true` — so its position and width survive for the „+ Bereich" picker, and a key *absent*
+from a stored layout still means „this build added a section the layout has never seen" and is
+appended visible (how a new section reaches existing pages, #59). Removal is **the one undoable
+layout write**: its undo arms are built on `store.current()` (`lib/layoutEntries.ts` holds the
+pure helpers). Everything else — reorder, width, the whole `LayoutMenu` — stays off the undo
+stack. „+ Bereich" renders outside edit mode, because the picker is the only way back to a
+removed section.
 
 Two things that look like tidiness and are not. A layout write must **publish to its query cache
-before awaiting**, because five of the six arrange mutations fire as `void persist(…)` (SHL-10);
-and pruning a widget entry stays at the delete site, where the id is known — with the extra rule
-that a page still following the standard must not be written to at all, or the standard freezes
-onto it as an arrangement the user never made.
+before awaiting**, because most arrange mutations fire as `void write(…)` (SHL-10) — the removal
+undo arms rely on the same publish through `current()`; and pruning a widget entry stays at the
+delete site, where the id is known — with the extra rule that a page still following the standard
+must not be written to at all, or the standard freezes onto it as an arrangement the user never
+made.
 
 ## Client contracts
 

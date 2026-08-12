@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
@@ -17,7 +17,7 @@ import {
 } from '../components/LandingCards';
 import { NewSeasonModal } from '../components/SeasonModals';
 import { consumeSeasonGone, switchSeason } from '../lib/season';
-import { SectionArranger } from '../components/SectionArranger';
+import { SectionArranger, type LayoutStore } from '../components/SectionArranger';
 import { useToast } from '../components/Toast';
 import {
   useCurrentSeasonId,
@@ -50,7 +50,7 @@ const DEFAULT_LANDING_LAYOUT: LayoutEntry[] = [
 export function LandingPage() {
   const { data, isLoading, isError, refetch } = useSeasons();
   const { data: stats } = useQuery({ queryKey: ['seasonStats'], queryFn: api.seasonStats });
-  const { data: landing, patch: patchLanding } = useLanding();
+  const { data: landing, current: landingCurrent, patch: patchLanding } = useLanding();
   const navigate = useNavigate();
   const toast = useToast();
   const report = useErrorToast();
@@ -137,6 +137,26 @@ export function LandingPage() {
 
   const drag = useListReorder(seasons, api.reorderSeasons);
 
+  // The arranger's store view of the registry blob. `value` and `current()` fall back to the
+  // default arrangement while the stored array is empty, and the write is guarded here rather
+  // than left to the caller: the arranger fires most of its layout writes as `void write(…)`,
+  // so an unguarded rejection was invisible — no toast, and in the packaged app not even a
+  // console the user could open (SHL-14). `current()` is what the removal undo reads.
+  const landingStore: LayoutStore = useMemo(
+    () => ({
+      value: landing?.layout.length ? landing.layout : DEFAULT_LANDING_LAYOUT,
+      current: () => {
+        const cur = landingCurrent()?.layout ?? [];
+        return cur.length ? cur : DEFAULT_LANDING_LAYOUT;
+      },
+      write: (next: LayoutEntry[]) =>
+        guard('Die Anordnung konnte nicht gespeichert werden.', () =>
+          patchLanding({ layout: next }),
+        ),
+    }),
+    [landing, landingCurrent, patchLanding, guard],
+  );
+
   const seasonGrid =
     isLoading ? (
       <Spinner />
@@ -198,15 +218,7 @@ export function LandingPage() {
 
       {landing ? (
         <SectionArranger
-          layout={landing.layout.length ? landing.layout : DEFAULT_LANDING_LAYOUT}
-          // Guarded here rather than left to the caller: the arranger fires five of its six
-          // layout writes as `void persist(…)`, so an unguarded rejection was invisible —
-          // no toast, and in the packaged app not even a console the user could open (SHL-14).
-          onPersist={(next) =>
-            guard('Die Anordnung konnte nicht gespeichert werden.', () =>
-              patchLanding({ layout: next }),
-            )
-          }
+          store={landingStore}
           sections={sections}
           labelKeys={{ notizen: 'landing.notizen', dokumente: 'landing.dokumente' }}
           titles={titles}
