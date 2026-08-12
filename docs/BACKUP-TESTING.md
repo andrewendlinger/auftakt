@@ -161,9 +161,12 @@ focused-window season resolution. Run with at least two seasons present.
       window with an unreachable backup folder configured → the quit grace still behaves: no
       orphan process, no dialog on an empty desktop.
 - [ ] **Windows**, with two windows open: Datei → „Datenbank importieren…", then click back into
-      a window. The confirmation must **not** be sendable behind them, and the menu item must not
-      open a second file picker over a pending one (PR50-14 — an unparented dialog is modal to
-      nothing on Windows; macOS hides this by making it app-modal).
+      the *other* window. The confirmation must **not** be sendable behind the windows — it now
+      belongs to one of them (PR50-14; an unparented dialog is modal to nothing on Windows, which
+      macOS hides by making it app-modal).
+- [ ] From that other window, trigger the import again while the first confirmation is open →
+      „Es läuft bereits ein Import." A parented dialog is window-modal, so it does not block the
+      second window on its own, and two import flows both end in a relaunch after replacing files.
 - [ ] Windows: double-click the shortcut while the app runs → a **new window**, not a raise.
       Ctrl+W closes one window; „Beenden" quits the app.
 - [ ] Type into an inline editor in A, focus B, edit a different row there, focus A again → the

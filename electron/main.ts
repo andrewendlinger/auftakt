@@ -398,7 +398,37 @@ async function exportDatabase(seasonId: number | undefined, win: BrowserWindow |
   }
 }
 
+/**
+ * One import at a time, across every window.
+ *
+ * Parenting the dialogs (PR50-14) makes each one belong to the window that asked, but a
+ * parented dialog is window-*modal*: it blocks its own window and nothing else. With two
+ * windows open, the user can still start a second import from the other one while the first is
+ * sitting on „…wird zuerst gesichert und dann ersetzt", and both flows end in
+ * `app.relaunch(); app.exit(0)` after replacing database files. Parenting narrows the window
+ * for that; it does not close it, and this is the destructive path, so it gets a latch.
+ */
+let importPending = false;
+
 async function importDatabase(seasonId: number | undefined, win: BrowserWindow | null): Promise<void> {
+  if (importPending) {
+    await messageBox(win, {
+      type: 'info',
+      message: 'Es läuft bereits ein Import.',
+      detail: 'Bitte zuerst das offene Import-Fenster abschließen oder abbrechen.',
+    });
+    return;
+  }
+  importPending = true;
+  try {
+    await runImport(seasonId, win);
+  } finally {
+    // Not on the success path, which never returns here — app.exit(0) ends the process.
+    importPending = false;
+  }
+}
+
+async function runImport(seasonId: number | undefined, win: BrowserWindow | null): Promise<void> {
   const r = await openDialog(win, {
     title: 'Datenbank importieren',
     properties: ['openFile'],
