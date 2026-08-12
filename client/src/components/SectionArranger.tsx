@@ -664,7 +664,7 @@ function Arranger({
   const defaultHiddenSig = defaultHidden.join(' ');
   const defaultWidthsSig = Object.entries(defaultWidths)
     .map(([k, w]) => `${k}:${w}`)
-    .join(' ');
+    .join('\u0000');
 
   const { full, display, hiddenKeys } = useMemo(() => {
     const known = Object.keys(sections);
