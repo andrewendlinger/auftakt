@@ -555,10 +555,10 @@ export interface SectionArrangerProps {
   sections: Record<string, ReactNode>;
   /**
    * Section key → the heading id it is named by, so the strip below shows whatever the user
-   * renamed that section's heading to. Stated explicitly rather than derived from
-   * `layoutKey`: the project page's `kontakte` section holds two headings, and this picks
-   * which of them names the section. Also the built-in/custom discriminator: a key without
-   * a LabelKey is a custom widget.
+   * renamed that section's heading to. Also the built-in/custom discriminator — a key without
+   * a LabelKey is a custom widget — which is the job that outlives the naming one: a key is a
+   * stable layout id, the heading naming it is renamable text, so the two cannot be derived
+   * from each other. `sectionSpecs.ts` builds this map from the same spec list as `sections`.
    */
   labelKeys: Record<string, LabelKey>;
   /** Names for sections without a LabelKey — the custom widgets, titled by their own name. */
@@ -572,7 +572,8 @@ export interface SectionArrangerProps {
   /**
    * Width a key gets when it is first appended to a stored layout (default `'full'`). For
    * sections that should arrive half-width — a pair meant to sit side by side on pages whose
-   * layout predates it. No key sets this yet.
+   * layout predates it. The project page's `kontakte`/`links` pair sets it (WP-48): splitting
+   * one welded section into two would otherwise stack them full width on every fresh page.
    */
   defaultWidths?: Record<string, 'full' | 'half'>;
   /** Sections that still hold content — their 🗑 confirms first instead of acting at once. */
