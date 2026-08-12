@@ -1,4 +1,16 @@
-import { app, BrowserWindow, Menu, contentTracing, dialog, ipcMain, screen, shell } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  contentTracing,
+  dialog,
+  ipcMain,
+  screen,
+  shell,
+  type MessageBoxOptions,
+  type OpenDialogOptions,
+  type SaveDialogOptions,
+} from 'electron';
 import { enableCompileCache } from 'node:module';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -184,26 +196,55 @@ async function saveBackupDir(dir: string): Promise<void> {
 }
 
 /**
+ * Every dialog hangs off the window that asked for it, when there still is one.
+ *
+ * Parenting is not decoration. macOS does not display an open-dialog's `title` at all, so an
+ * unparented picker is a bare Finder window with nothing saying which app wants it or why; and
+ * with several windows open, „„Festival 2026" wird zuerst gesichert und dann ersetzt" has to
+ * belong to a window or it does not say whose season that is. On Windows an unparented dialog
+ * is modal to nothing: it can be sent behind the windows, the user clicks the menu item again
+ * thinking nothing happened, and a second file picker opens over a pending destructive confirm
+ * (PR50-14). macOS hides that half — an unparented dialog is app-modal there.
+ *
+ * The `isDestroyed` check is per call, not once at entry: importDatabase awaits an HTTP check
+ * and a confirmation between its dialogs, and parenting to a window closed in the meantime
+ * throws.
+ */
+function alive(win: BrowserWindow | null): win is BrowserWindow {
+  return win !== null && !win.isDestroyed();
+}
+
+function messageBox(win: BrowserWindow | null, opts: MessageBoxOptions) {
+  return alive(win) ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts);
+}
+
+function saveDialog(win: BrowserWindow | null, opts: SaveDialogOptions) {
+  return alive(win) ? dialog.showSaveDialog(win, opts) : dialog.showSaveDialog(opts);
+}
+
+function openDialog(win: BrowserWindow | null, opts: OpenDialogOptions) {
+  return alive(win) ? dialog.showOpenDialog(win, opts) : dialog.showOpenDialog(opts);
+}
+
+/**
  * Pick a backup folder, rejecting one the startup backup could not use (ELP-03).
  * Validating here rather than only in runStartupBackup is the point: a Windows user
  * could pick a NAS share, see it accepted, and never learn that backups had stopped.
- *
- * Parented to `win` when there is one: macOS does not display an open-dialog's `title`
- * at all, so an unparented picker is a bare Finder window with nothing saying which app
- * wants it or why. A sheet on the Auftakt window at least answers "which app".
  */
 async function promptForDirectory(win: BrowserWindow | null): Promise<string | null> {
-  const opts = {
+  const r = await openDialog(win, {
     title: 'Backup-Ordner wählen (z. B. Google Drive)',
-    properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'>,
-  };
-  const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    properties: ['openDirectory', 'createDirectory'],
+  });
   const dir = r.canceled ? null : (r.filePaths[0] ?? null);
   if (!dir) return null;
   const problem = backupDirProblem(dir);
   if (problem) {
-    const box = { type: 'error' as const, message: 'Dieser Ordner kann nicht verwendet werden.', detail: problem };
-    await (win ? dialog.showMessageBox(win, box) : dialog.showMessageBox(box));
+    await messageBox(win, {
+      type: 'error',
+      message: 'Dieser Ordner kann nicht verwendet werden.',
+      detail: problem,
+    });
     return null;
   }
   return dir;
@@ -222,8 +263,9 @@ async function promptForDirectory(win: BrowserWindow | null): Promise<string | n
  */
 async function reportBackupProblem(err: unknown): Promise<void> {
   console.error('Backup übersprungen:', err);
-  if (!liveWindow()) return;
-  await dialog.showMessageBox({
+  const win = liveWindow();
+  if (!win) return;
+  await messageBox(win, {
     type: 'error',
     message: 'Es wurde keine Sicherung angelegt.',
     detail: `${(err as Error).message}\n\nEinstellungen → „Saison & Daten“ → „Backup-Ordner“ prüfen. Ohne funktionierenden Backup-Ordner werden beim Start keine Sicherungen erstellt.`,
@@ -261,7 +303,7 @@ async function chooseBackupDir(win: BrowserWindow | null): Promise<void> {
   } catch (err) {
     // No notify here: telling the windows to refresh would show the old (or empty) folder
     // as if nothing had happened.
-    await dialog.showMessageBox({
+    await messageBox(win, {
       type: 'error',
       message: 'Der Backup-Ordner konnte nicht gespeichert werden.',
       detail: `${(err as Error).message}\n\nEs werden weiterhin keine automatischen Sicherungen angelegt. Bitte erneut versuchen.`,
@@ -319,13 +361,13 @@ async function seasonLabel(seasonId?: number): Promise<string> {
   }
 }
 
-async function exportDatabase(seasonId?: number): Promise<void> {
+async function exportDatabase(seasonId: number | undefined, win: BrowserWindow | null): Promise<void> {
   // Name the season everywhere the user can see it — dialog, filename, confirmation — the way
   // importDatabase already names the one it replaces. Half of PR50-03: the resolution can fall
   // back to the registry default, and a fallback that names itself is recoverable where a
   // silent one hands out the wrong season's data with nothing on screen contradicting it.
   const label = await seasonLabel(seasonId);
-  const r = await dialog.showSaveDialog({
+  const r = await saveDialog(win, {
     title: label ? `„${label}“ exportieren` : 'Datenbank exportieren',
     // Local wall-clock time, the same helper the server's backup folders use: a UTC stamp
     // named the export after the previous day for anyone east of Greenwich (ELP-09).
@@ -334,17 +376,17 @@ async function exportDatabase(seasonId?: number): Promise<void> {
   if (r.canceled || !r.filePath) return;
   try {
     await post(seasonPath('backup/export', seasonId), { path: r.filePath });
-    await dialog.showMessageBox({
+    await messageBox(win, {
       message: label ? `„${label}“ wurde exportiert.` : 'Datenbank wurde exportiert.',
       type: 'info',
     });
   } catch (err) {
-    await dialog.showMessageBox({ type: 'error', message: `Export fehlgeschlagen: ${(err as Error).message}` });
+    await messageBox(win, { type: 'error', message: `Export fehlgeschlagen: ${(err as Error).message}` });
   }
 }
 
-async function importDatabase(seasonId?: number): Promise<void> {
-  const r = await dialog.showOpenDialog({
+async function importDatabase(seasonId: number | undefined, win: BrowserWindow | null): Promise<void> {
+  const r = await openDialog(win, {
     title: 'Datenbank importieren',
     properties: ['openFile'],
     filters: [{ name: 'SQLite-Datenbank', extensions: ['db', 'sqlite'] }],
@@ -356,18 +398,18 @@ async function importDatabase(seasonId?: number): Promise<void> {
   try {
     const check = await post<{ ok: boolean; error?: string }>('backup/import/check', { path: r.filePaths[0] });
     if (!check.ok) {
-      await dialog.showMessageBox({ type: 'error', message: check.error ?? 'Die Datei kann nicht importiert werden.' });
+      await messageBox(win, { type: 'error', message: check.error ?? 'Die Datei kann nicht importiert werden.' });
       return;
     }
   } catch (err) {
-    await dialog.showMessageBox({ type: 'error', message: `Prüfung fehlgeschlagen: ${(err as Error).message}` });
+    await messageBox(win, { type: 'error', message: `Prüfung fehlgeschlagen: ${(err as Error).message}` });
     return;
   }
 
   // Name the season the import will replace: with per-window seasons, „die aktuelle
   // Datenbank" no longer says which one that is.
   const label = await seasonLabel(seasonId);
-  const confirm = await dialog.showMessageBox({
+  const confirm = await messageBox(win, {
     type: 'warning',
     buttons: ['Abbrechen', 'Importieren'],
     defaultId: 1,
@@ -380,7 +422,7 @@ async function importDatabase(seasonId?: number): Promise<void> {
 
   try {
     const { backup } = await post<{ backup: string }>(seasonPath('backup/import', seasonId), { path: r.filePaths[0] });
-    await dialog.showMessageBox({
+    await messageBox(win, {
       type: 'info',
       message: 'Import abgeschlossen. Alle Fenster werden geschlossen und die App wird neu gestartet.',
       detail: backup ? `Die bisherige Datenbank wurde gesichert:\n${backup}` : undefined,
@@ -388,7 +430,7 @@ async function importDatabase(seasonId?: number): Promise<void> {
     app.relaunch();
     app.exit(0);
   } catch (err) {
-    await dialog.showMessageBox({
+    await messageBox(win, {
       type: 'error',
       message: `Import fehlgeschlagen: ${(err as Error).message}`,
       detail: 'Die bisherige Datenbank wurde nicht verändert.',
@@ -739,11 +781,11 @@ app.whenReady().then(async () => {
       // resolved once, at the click, rather than again inside each helper.
       onExport: () => {
         const win = BrowserWindow.getFocusedWindow();
-        void windowSeason(win).then((id) => exportDatabase(id));
+        void windowSeason(win).then((id) => exportDatabase(id, win));
       },
       onImport: () => {
         const win = BrowserWindow.getFocusedWindow();
-        void windowSeason(win).then((id) => importDatabase(id));
+        void windowSeason(win).then((id) => importDatabase(id, win));
       },
       onChooseBackup: () => void chooseBackupDir(BrowserWindow.getFocusedWindow()),
     }),
@@ -807,8 +849,14 @@ app.on('window-all-closed', () => {
 
 // Preload bridge → main. React never touches Electron APIs directly.
 ipcMain.handle('open-external', (_e, url: string) => openExternalSafely(url));
-ipcMain.handle('export-db', (_e, seasonId: unknown) => exportDatabase(asSeasonId(seasonId)));
-ipcMain.handle('import-db', (_e, seasonId: unknown) => importDatabase(asSeasonId(seasonId)));
+// The renderer sends its own pin, so no peek is needed here — but the dialogs still have to
+// belong to the window that asked, which is the one behind the IPC message (PR50-14).
+ipcMain.handle('export-db', (e, seasonId: unknown) =>
+  exportDatabase(asSeasonId(seasonId), BrowserWindow.fromWebContents(e.sender)),
+);
+ipcMain.handle('import-db', (e, seasonId: unknown) =>
+  importDatabase(asSeasonId(seasonId), BrowserWindow.fromWebContents(e.sender)),
+);
 ipcMain.handle('choose-backup-dir', (e) => chooseBackupDir(BrowserWindow.fromWebContents(e.sender)));
 ipcMain.handle('get-version', () => app.getVersion());
 ipcMain.handle('check-updates', (_e, refresh: boolean) => checkForUpdates(refresh));

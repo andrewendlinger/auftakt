@@ -156,6 +156,10 @@ focused-window season resolution. Run with at least two seasons present.
 - [ ] Close one of two windows → the other keeps working (menus, dialogs, edits). Close the last
       window with an unreachable backup folder configured → the quit grace still behaves: no
       orphan process, no dialog on an empty desktop.
+- [ ] **Windows**, with two windows open: Datei → „Datenbank importieren…", then click back into
+      a window. The confirmation must **not** be sendable behind them, and the menu item must not
+      open a second file picker over a pending one (PR50-14 — an unparented dialog is modal to
+      nothing on Windows; macOS hides this by making it app-modal).
 - [ ] Windows: double-click the shortcut while the app runs → a **new window**, not a raise.
       Ctrl+W closes one window; „Beenden" quits the app.
 - [ ] Type into an inline editor in A, focus B, edit a different row there, focus A again → the
