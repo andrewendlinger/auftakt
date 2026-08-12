@@ -29,6 +29,9 @@ export const LABEL_DEFAULTS = {
   'artist.stats': 'Aufgaben-Statistiken',
   'artist.aufmerksamkeit': 'Braucht Aufmerksamkeit',
   'artist.kontakte': 'Künstler-Kontakte',
+  // Its own section here, unlike the project page, where the same list sits inside `kontakte`
+  // (docs/DECISIONS.md, WP-36) — so this id names a section rather than a second heading.
+  'artist.links': 'Dokumente & Links',
   'artist.aufgaben': 'Allgemeine Aufgaben',
   // PDF-only: the one-pager lists project tasks under their own heading. There is no artist-page
   // section for it (the app shows project tasks as card stats), so it has no in-app ✎ — renaming

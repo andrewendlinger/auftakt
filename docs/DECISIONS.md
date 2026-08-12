@@ -706,6 +706,30 @@ sessionStorage); zoom is per-origin in the shared Electron session and leaks acr
 one window's heavy synchronous operation (backup `VACUUM INTO`, xlsx export) briefly freezes all
 windows, since the server shares the main process — pre-existing, now merely more visible.
 
+---
+
+## Artist links are their own section; the project page keeps them inside „Kontakte" (2026-08-12, WP-36)
+
+The project page renders contacts and documents side by side inside a single `kontakte` section:
+one label key names the section (`project.kontakte`), `project.links` names only the second
+heading, and one `nonEmptyKeys` clause ORs the two lists. Links there cannot be hidden, reordered
+or half-widthed on their own.
+
+The artist page got `links` as a **section of its own** — its own `SECTION_LABEL_KEYS` entry
+(`artist.links`), its own `eingabe` picker group, its own `nonEmptyKeys` clause. WP-36 exists
+because an artist with a single project is meant to be usable *without* creating that project, so
+the artist page is the whole page for those artists; a document list that can only be removed
+together with the contacts is the wrong default there.
+
+The cost is known and accepted: `Arranger` appends a key it has never seen to the **end** of the
+list, so every artist that already stores a `layout` finds „Dokumente & Links" at the bottom until
+they drag it. Only artists on the template get it in its intended position, next to Kontakte.
+Folding it into `kontakte` would have avoided that and was rejected for the reason above.
+
+**The project page is deliberately left as it is.** Splitting its `kontakte` in two would move the
+section on every existing project page for a symmetry nobody asked for. So the two pages differ on
+purpose — this is not drift to be tidied up.
+
 ## Known sharp edges with no owner
 
 Real, understood, and deliberately not scheduled. Each carries a comment at its own site; none is

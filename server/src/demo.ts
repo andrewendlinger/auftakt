@@ -348,6 +348,11 @@ const LINK_CATEGORIES = [
  * rows on purpose — one group with a single row can't show the drag-reorder (WP-26) — and
  * `notes` is set on some rows and left null on others, which are two different renderings:
  * the description, or the hover-only „+ hinzufügen" placeholder.
+ *
+ * Artist 1 repeats that spread on the artist page's own „Dokumente & Links" (WP-36), and it has
+ * to be artist 1: it carries no `layout` of its own, so it is the one that shows the section in
+ * its default position. Artist 2 stores a layout and therefore gets the section appended last —
+ * both states matter, and its single uncategorized link covers the ungrouped rendering.
  */
 const LINKS = [
   { id: 1, artist_id: null, project_id: 1, event_id: null, task_id: null, label: 'Technikrider (PDF)', url: 'https://example.org/rider.pdf', category: 'technik', notes: 'Stand März — gilt nur für die Quartettbesetzung.' },
@@ -365,6 +370,12 @@ const LINKS = [
   { id: 11, section_id: 4, label: 'Plakatmotiv (Druckdaten)', url: 'https://example.org/plakat.pdf', category: 'presse' },
   // Live link under the soft-deleted widget 5 — invisible in the app, counted in its trash row.
   { id: 12, section_id: 5, label: 'Verwaistes Dokument', url: 'https://example.org/verwaist' },
+  // Artist 1's documents (WP-36) — two „Vertrag" rows so the within-category drag has somewhere
+  // to go, one „Presse" row, and one without a category so „Ohne Kategorie" renders last.
+  { id: 13, artist_id: 1, label: 'Rahmenvertrag 2026', url: 'https://example.org/rahmenvertrag.pdf', category: 'vertrag', notes: 'Gilt für alle Projekte dieser Saison.' },
+  { id: 14, artist_id: 1, label: 'Honorarvereinbarung', url: 'https://example.org/honorar.pdf', category: 'vertrag' },
+  { id: 15, artist_id: 1, label: 'Pressefotos (Download)', url: 'https://example.org/pressefotos', category: 'presse' },
+  { id: 16, artist_id: 1, label: 'Kurzbiografie', url: null, notes: 'Liegt nur **auf Papier** vor — noch einscannen.' },
 ];
 
 /** Custom task columns — the only way to exercise the data-driven task table. */

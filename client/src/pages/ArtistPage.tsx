@@ -14,6 +14,7 @@ import { Card, DragHandle, SectionTitle, Spinner, EmptyState, ErrorState, LoadEr
 import { isValidId } from '../lib/routeParams';
 import { EventList } from '../components/EventList';
 import { ContactList } from '../components/ContactList';
+import { LinkList } from '../components/LinkList';
 import { InlineNotes } from '../components/InlineNotes';
 import {
   builtinPicker,
@@ -43,6 +44,7 @@ const SECTION_LABEL_KEYS: Record<string, LabelKey> = {
   aufmerksamkeit: 'artist.aufmerksamkeit',
   stats: 'artist.stats',
   kontakte: 'artist.kontakte',
+  links: 'artist.links',
   aufgaben: 'artist.aufgaben',
 };
 
@@ -51,6 +53,7 @@ const SECTION_GROUPS: Record<string, SectionGroup> = {
   projekte: 'eingabe',
   termine: 'eingabe',
   kontakte: 'eingabe',
+  links: 'eingabe',
   stats: 'einblicke',
   aufmerksamkeit: 'einblicke',
 };
@@ -82,6 +85,11 @@ export function ArtistPage() {
   const { data: contacts = [] } = useQuery({
     queryKey: ['artist', artistId, 'contacts'],
     queryFn: () => api.contacts.list({ artist_id: artistId }),
+    enabled: validId,
+  });
+  const { data: links = [] } = useQuery({
+    queryKey: ['artist', artistId, 'links'],
+    queryFn: () => api.links.list({ artist_id: artistId }),
     enabled: validId,
   });
   const { data: tasks = [] } = useQuery({
@@ -144,6 +152,7 @@ export function ArtistPage() {
     ...(projects.length > 0 ? ['projekte'] : []),
     ...(events.length > 0 ? ['termine'] : []),
     ...(contacts.length > 0 ? ['kontakte'] : []),
+    ...(links.length > 0 ? ['links'] : []),
   ];
   const color = artist.color;
 
@@ -198,6 +207,10 @@ export function ArtistPage() {
       </>
     ),
     kontakte: <ContactList contacts={contacts} parent={{ artist_id: artistId }} titleKey="artist.kontakte" />,
+    // Its own section, unlike the project page's `kontakte`, which holds contacts and links side
+    // by side — an artist without projects keeps their documents here, and a list that could only
+    // be removed together with the contacts is the wrong default for that (docs/DECISIONS.md).
+    links: <LinkList links={links} parent={{ artist_id: artistId }} titleKey="artist.links" />,
     aufgaben: (
       <>
         {/* resolved_artist_id, matching the page's own task query above — `artist_id` filters on
