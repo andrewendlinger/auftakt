@@ -143,11 +143,14 @@ export interface EventQuery {
   projectId?: unknown;
   artistId?: unknown;
   resolvedArtistId?: unknown;
+  /** Season-level events only: no artist, no project (WP-47). */
+  season?: boolean;
 }
 
 export function listEvents(db: Database.Database, q: EventQuery = {}): unknown[] {
   const where = ['e.deleted_at IS NULL', EVENT_PARENT_LIVE];
   const params: unknown[] = [];
+  if (q.season) where.push('e.artist_id IS NULL AND e.project_id IS NULL');
   if (q.projectId != null) {
     where.push('e.project_id = ?');
     params.push(q.projectId);

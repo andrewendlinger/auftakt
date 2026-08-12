@@ -842,6 +842,29 @@ append a key half-width, no spec sets it yet. Its known edge: `ensureEntry`
 (`lib/layoutEntries.ts`) still recreates a vanished entry full-width in the removal-undo arm,
 acceptable until a half-default key exists (WP-D).
 
+## Season scope parity: 0 parents = season-level (2026-08-12, WP-47, #57)
+
+Contacts, events and links used to demand exactly one parent while tasks and custom sections
+allowed zero — which is why the issue-#57 concept („every page is a scope, every scope hosts the
+same catalog") could not reach the Übersicht, and why the customer's „Allgemein" season had
+nowhere to hold general content. Decided: **full parity.** All three CHECKs read `<= 1`, zero
+parents means season-level, and `scope=season` lists those rows (spelled that way because
+`?season=` is the window pin — see ARCHITECTURE, CRUD factory).
+
+The boundaries of the decision, so they are not re-litigated per package:
+
+- **Copy groups.** Season contacts and events travel with their own group; parentless links have
+  no group and ride `settings`, like the parentless dashboard widgets whose placement also lives
+  in `dashboard_layout`. A season link is dashboard furniture, not artist data.
+- **The landing page stays registry-backed** (`seasons.json`), participating in the unified UX
+  only. Season-level rows live in the season file; the landing's sections are not rows at all.
+- **The WP-36 asymmetries stand.** No contacts/links roll-up on the artist page; the dashboard's
+  read-only „Nächste Termine" stays separate from the editable season sections WP-D adds.
+- **#58 (artist-scoped custom columns) stays deferred** — parity here is about parents, not about
+  widening the column system.
+- `search.ts`, `cascade.ts`, `export.ts` and `deleted.ts` needed no change; a season row in the
+  Papierkorb simply carries no sublabel. Accepted.
+
 ## Known sharp edges with no owner
 
 Real, understood, and deliberately not scheduled. Each carries a comment at its own site; none is

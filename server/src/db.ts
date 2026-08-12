@@ -886,8 +886,12 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
       (r.artist_id != null && artistIds.has(r.artist_id)) ||
       (r.project_id != null && projectIds.has(r.project_id));
 
-    if (o.contacts) copyRows(target, 'contacts', live('contacts').filter(kept));
-    const events = o.events ? live('events').filter(kept) : [];
+    // Contacts and events with no parent at all are season-level (WP-47); they travel with
+    // their own group. Season events feed `eventIds` below, so their links follow them.
+    const seasonLevel = (r: Record<string, unknown>): boolean =>
+      r.artist_id == null && r.project_id == null;
+    if (o.contacts) copyRows(target, 'contacts', live('contacts').filter((c) => kept(c) || seasonLevel(c)));
+    const events = o.events ? live('events').filter((e) => kept(e) || seasonLevel(e)) : [];
     copyRows(target, 'events', events);
     const eventIds = new Set(events.map((e) => e.id));
 
@@ -932,13 +936,17 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
     copyRows(target, 'custom_sections', sections);
     const sectionIds = new Set(sections.map((s) => s.id));
 
+    // A link with no parent at all sits on the season dashboard (WP-47). Links have no copy
+    // group of their own, so like the dashboard widgets above — whose placement also lives in
+    // `dashboard_layout`, a setting — the season-level ones travel with the settings group.
     const links = live('links').filter(
       (l) =>
         (l.artist_id != null && artistIds.has(l.artist_id)) ||
         (l.project_id != null && projectIds.has(l.project_id)) ||
         (l.event_id != null && eventIds.has(l.event_id)) ||
         (l.task_id != null && taskIds.has(l.task_id)) ||
-        (l.section_id != null && sectionIds.has(l.section_id)),
+        (l.section_id != null && sectionIds.has(l.section_id)) ||
+        (o.settings && seasonLevel(l) && l.event_id == null && l.task_id == null && l.section_id == null),
     );
     copyRows(target, 'links', links);
 
@@ -999,7 +1007,8 @@ CREATE TABLE IF NOT EXISTS contacts (
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   deleted_at TEXT,
-  CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) = 1)
+  -- 0 parents = a season-level contact, 1 = an artist- or project-level one.
+  CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) <= 1)
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -1017,7 +1026,8 @@ CREATE TABLE IF NOT EXISTS events (
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   deleted_at TEXT,
-  CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) = 1)
+  -- 0 parents = a season-level event, 1 = an artist- or project-level one.
+  CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) <= 1)
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -1099,7 +1109,8 @@ CREATE TABLE IF NOT EXISTS links (
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   deleted_at TEXT,
-  CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) + (event_id IS NOT NULL) + (task_id IS NOT NULL) + (section_id IS NOT NULL) = 1)
+  -- 0 parents = a season-level document/link, 1 = one owning row of the five kinds.
+  CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) + (event_id IS NOT NULL) + (task_id IS NOT NULL) + (section_id IS NOT NULL) <= 1)
 );
 
 CREATE INDEX IF NOT EXISTS idx_projects_artist  ON projects(artist_id);
@@ -1278,6 +1289,13 @@ function initDb(db: Database.Database, isFresh: boolean): void {
   // After the rebuild, not before — see migrateLinksNotes.
   migrateLinksNotes(db);
   migrateEntityLayout(db);
+  // The season-scope rebuilds (WP-47) run last on purpose: each copies its table's *current*
+  // full column set, which is only complete once every column-adding migration above has run —
+  // even on a legacy database jumping many versions in one open. Any future ensureColumn on
+  // contacts/events/links must be registered after these three.
+  migrateContactsAllowSeason(db);
+  migrateEventsAllowSeason(db);
+  migrateLinksAllowSeason(db);
 }
 
 export function getDb(): Database.Database {
@@ -1944,6 +1962,148 @@ function migrateLinksSectionParent(db: Database.Database): void {
         SELECT id, artist_id, project_id, event_id, task_id, label, url, color, category,
                sort_order, created_at, updated_at, deleted_at
         FROM links;
+      DROP TABLE links;
+      ALTER TABLE links_new RENAME TO links;
+      CREATE INDEX IF NOT EXISTS idx_links_parents ON links(artist_id, project_id, event_id, task_id);
+      CREATE INDEX IF NOT EXISTS idx_links_section ON links(section_id);
+    `);
+  });
+  rebuild();
+  db.pragma('foreign_keys = ON');
+}
+
+/**
+ * Relax the contacts parent CHECK from "= 1" to "<= 1" so season-level contacts with no
+ * artist/project are allowed (WP-47 scope parity). SQLite can't ALTER a CHECK, so rebuild the
+ * table (the standard 12-step). Idempotent: only runs while the old constraint is present.
+ * See initDb for why the three season-scope rebuilds are registered last.
+ */
+function migrateContactsAllowSeason(db: Database.Database): void {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'contacts'")
+    .get() as { sql?: string } | undefined;
+  if (!row?.sql || row.sql.includes('<= 1')) return; // already migrated (or fresh SCHEMA)
+
+  // foreign_keys must be toggled OUTSIDE the transaction to take effect.
+  db.pragma('foreign_keys = OFF');
+  const rebuild = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE contacts_new (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        artist_id  INTEGER REFERENCES artists(id),
+        project_id INTEGER REFERENCES projects(id),
+        role       TEXT,
+        name       TEXT NOT NULL,
+        email      TEXT,
+        phone      TEXT,
+        notes      TEXT,
+        color      TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+        deleted_at TEXT,
+        CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) <= 1)
+      );
+      INSERT INTO contacts_new SELECT
+        id, artist_id, project_id, role, name, email, phone, notes, color,
+        sort_order, created_at, updated_at, deleted_at
+      FROM contacts;
+      DROP TABLE contacts;
+      ALTER TABLE contacts_new RENAME TO contacts;
+      CREATE INDEX IF NOT EXISTS idx_contacts_artist  ON contacts(artist_id);
+      CREATE INDEX IF NOT EXISTS idx_contacts_project ON contacts(project_id);
+    `);
+  });
+  rebuild();
+  db.pragma('foreign_keys = ON');
+}
+
+/**
+ * Relax the events parent CHECK from "= 1" to "<= 1" so season-level events with no
+ * artist/project are allowed (WP-47 scope parity). Same rebuild shape as the contacts one
+ * above; see initDb for why the three season-scope rebuilds are registered last.
+ */
+function migrateEventsAllowSeason(db: Database.Database): void {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'")
+    .get() as { sql?: string } | undefined;
+  if (!row?.sql || row.sql.includes('<= 1')) return; // already migrated (or fresh SCHEMA)
+
+  // foreign_keys must be toggled OUTSIDE the transaction to take effect.
+  db.pragma('foreign_keys = OFF');
+  const rebuild = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE events_new (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        artist_id  INTEGER REFERENCES artists(id),
+        project_id INTEGER REFERENCES projects(id),
+        type       TEXT NOT NULL,
+        title      TEXT NOT NULL,
+        start_at   TEXT,
+        end_at     TEXT,
+        all_day    INTEGER NOT NULL DEFAULT 0,
+        location   TEXT,
+        notes      TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+        deleted_at TEXT,
+        CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) <= 1)
+      );
+      INSERT INTO events_new SELECT
+        id, artist_id, project_id, type, title, start_at, end_at, all_day, location, notes,
+        sort_order, created_at, updated_at, deleted_at
+      FROM events;
+      DROP TABLE events;
+      ALTER TABLE events_new RENAME TO events;
+      CREATE INDEX IF NOT EXISTS idx_events_artist  ON events(artist_id);
+      CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id);
+      CREATE INDEX IF NOT EXISTS idx_events_start   ON events(start_at);
+    `);
+  });
+  rebuild();
+  db.pragma('foreign_keys = ON');
+}
+
+/**
+ * Relax the five-way links parent CHECK from "= 1" to "<= 1" so season-level documents with no
+ * parent at all are allowed (WP-47 scope parity). Same rebuild shape as the contacts one above;
+ * see initDb for why the three season-scope rebuilds are registered last. idx_links_section is
+ * recreated here as well as in migrateLinksSectionParent: DROP TABLE takes it down, and SCHEMA
+ * deliberately doesn't carry it.
+ */
+function migrateLinksAllowSeason(db: Database.Database): void {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'links'")
+    .get() as { sql?: string } | undefined;
+  if (!row?.sql || row.sql.includes('<= 1')) return; // already migrated (or fresh SCHEMA)
+
+  // foreign_keys must be toggled OUTSIDE the transaction to take effect.
+  db.pragma('foreign_keys = OFF');
+  const rebuild = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE links_new (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        artist_id  INTEGER REFERENCES artists(id),
+        project_id INTEGER REFERENCES projects(id),
+        event_id   INTEGER REFERENCES events(id),
+        task_id    INTEGER REFERENCES tasks(id),
+        section_id INTEGER REFERENCES custom_sections(id),
+        label      TEXT NOT NULL,
+        url        TEXT,
+        color      TEXT,
+        category   TEXT,
+        notes      TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+        deleted_at TEXT,
+        CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) + (event_id IS NOT NULL) + (task_id IS NOT NULL) + (section_id IS NOT NULL) <= 1)
+      );
+      INSERT INTO links_new SELECT
+        id, artist_id, project_id, event_id, task_id, section_id, label, url, color, category,
+        notes, sort_order, created_at, updated_at, deleted_at
+      FROM links;
       DROP TABLE links;
       ALTER TABLE links_new RENAME TO links;
       CREATE INDEX IF NOT EXISTS idx_links_parents ON links(artist_id, project_id, event_id, task_id);
