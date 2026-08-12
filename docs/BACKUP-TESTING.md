@@ -144,8 +144,12 @@ focused-window season resolution. Run with at least two seasons present.
       `.db` file is actually gone from the data dir — an open pooled handle used to make that
       unlink fail silently.
 - [ ] Export from a window pinned to a non-default season (both the Einstellungen button and the
-      Datei menu) → the exported file contains *that* season's rows. The import confirmation
+      Datei menu) → the exported file contains *that* season's rows, and the save dialog, the
+      proposed filename and the confirmation all **name that season**. The import confirmation
       names the season it will replace; after an import, **all** windows close and one returns.
+- [ ] Minimize every window, then use the Datei menu to export (macOS: the app menu stays
+      active) → the dialog names the **default** season, which is what it will write (PR50-03 —
+      it used to silently pick the oldest window's season and name nothing).
 - [ ] „Backup-Ordner wählen…" (both the Einstellungen button and the Datei menu) → every open
       window shows the new folder **without reloading**. Type into an inline editor in the other
       window first: that draft must still be there afterwards (PR50-05 — the reload ate it).

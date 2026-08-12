@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { fileStamp } from '../shared/time';
 import { buildMenu } from './menu';
 import { backupDirProblem, runStartupBackup } from './backup';
+import { exportFileName } from './exportName';
 import { writeBootReport } from './bootLog';
 import { checkForUpdates, downloadAndInstallUpdate, startSilentStartupCheck } from './updater';
 
@@ -284,14 +285,22 @@ function seasonPath(path: string, seasonId?: number): string {
 }
 
 /**
- * The season pinned in the focused window, for the MENU-initiated export/import — the
- * Einstellungen buttons pass their window's pin through IPC instead. A read-only peek;
- * undefined (→ the default season) when there is no window, no pin, or the peek fails.
+ * The season pinned in `win`, for the MENU-initiated export/import — the Einstellungen buttons
+ * pass their own window's pin through IPC instead. A read-only peek; undefined (→ the default
+ * season) when there is no window, no pin, or the peek fails.
+ *
+ * The caller passes `BrowserWindow.getFocusedWindow()` and nothing else. This used to resolve
+ * through `liveWindow()`, whose fallback is the *oldest* live window: with two windows on two
+ * seasons and neither focused (both minimized, the app menu still active on macOS), the export
+ * silently wrote the other window's season into the file the user had named for this one
+ * (PR50-03). No focus now means undefined — the registry default — and the export names the
+ * season it resolved, so a fallback is visible rather than silent.
  */
-async function focusedWindowSeason(): Promise<number | undefined> {
-  const win = liveWindow();
-  if (!win) return undefined;
+async function windowSeason(win: BrowserWindow | null): Promise<number | undefined> {
+  if (!win || win.isDestroyed()) return undefined;
   try {
+    // The renderer's own key, `KEY` in client/src/lib/season.ts. Grep is the only coupling
+    // between the two spellings — see the comment there before renaming either.
     const raw: unknown = await win.webContents.executeJavaScript('sessionStorage.getItem("auftakt-season")');
     return asSeasonId(Number(raw));
   } catch {
@@ -311,16 +320,24 @@ async function seasonLabel(seasonId?: number): Promise<string> {
 }
 
 async function exportDatabase(seasonId?: number): Promise<void> {
+  // Name the season everywhere the user can see it — dialog, filename, confirmation — the way
+  // importDatabase already names the one it replaces. Half of PR50-03: the resolution can fall
+  // back to the registry default, and a fallback that names itself is recoverable where a
+  // silent one hands out the wrong season's data with nothing on screen contradicting it.
+  const label = await seasonLabel(seasonId);
   const r = await dialog.showSaveDialog({
-    title: 'Datenbank exportieren',
+    title: label ? `„${label}“ exportieren` : 'Datenbank exportieren',
     // Local wall-clock time, the same helper the server's backup folders use: a UTC stamp
     // named the export after the previous day for anyone east of Greenwich (ELP-09).
-    defaultPath: `auftakt-${fileStamp()}.db`,
+    defaultPath: exportFileName(label, fileStamp()),
   });
   if (r.canceled || !r.filePath) return;
   try {
     await post(seasonPath('backup/export', seasonId), { path: r.filePath });
-    await dialog.showMessageBox({ message: 'Datenbank wurde exportiert.', type: 'info' });
+    await dialog.showMessageBox({
+      message: label ? `„${label}“ wurde exportiert.` : 'Datenbank wurde exportiert.',
+      type: 'info',
+    });
   } catch (err) {
     await dialog.showMessageBox({ type: 'error', message: `Export fehlgeschlagen: ${(err as Error).message}` });
   }
@@ -718,9 +735,16 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(
     buildMenu({
       onNewWindow: () => void createWindow(),
-      // Menu clicks carry no renderer context, so the season comes from the focused window.
-      onExport: () => void focusedWindowSeason().then(exportDatabase),
-      onImport: () => void focusedWindowSeason().then(importDatabase),
+      // Menu clicks carry no renderer context, so the season comes from the focused window —
+      // resolved once, at the click, rather than again inside each helper.
+      onExport: () => {
+        const win = BrowserWindow.getFocusedWindow();
+        void windowSeason(win).then((id) => exportDatabase(id));
+      },
+      onImport: () => {
+        const win = BrowserWindow.getFocusedWindow();
+        void windowSeason(win).then((id) => importDatabase(id));
+      },
       onChooseBackup: () => void chooseBackupDir(BrowserWindow.getFocusedWindow()),
     }),
   );
