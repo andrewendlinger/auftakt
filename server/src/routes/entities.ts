@@ -83,20 +83,49 @@ function dependentsRoute(table: 'artists' | 'projects'): RequestHandler {
 artistsRouter.get('/:id/dependents', dependentsRoute('artists'));
 projectsRouter.get('/:id/dependents', dependentsRoute('projects'));
 
+/**
+ * List handler for a table whose rows may sit directly on the season — every parent FK NULL
+ * (WP-47). The equality-only `filters` can't express "no parent at all", so this replaces them:
+ * `scope=season` selects the parentless rows, and each FK keeps `defaultList`'s filter reading
+ * verbatim (lib/crud.ts) — empty means "no filter" (SDL-09), a non-scalar param is a 400
+ * (SRV-09), and a garbage string binds and matches nothing rather than failing open. The scope
+ * keyword is deliberately not `?season=`: that query param is the season middleware's window
+ * pin (index.ts), where a non-integer value answers 410 before any route runs.
+ */
+function seasonScopedList(table: string, fks: string[]): RequestHandler {
+  return (req, res) => {
+    const where = ['deleted_at IS NULL'];
+    const params: unknown[] = [];
+    for (const fk of fks) {
+      const val = req.query[fk];
+      if (val === undefined || val === '') continue;
+      if (typeof val !== 'string') throw new HttpError(400, 'Ungültiger Filterparameter');
+      where.push(`${fk} = ?`);
+      params.push(val);
+    }
+    if (req.query.scope === 'season') where.push(fks.map((fk) => `${fk} IS NULL`).join(' AND '));
+    res.json(
+      getDb()
+        .prepare(`SELECT * FROM ${table} WHERE ${where.join(' AND ')} ORDER BY sort_order ASC, id ASC`)
+        .all(...params),
+    );
+  };
+}
+
 export const contactsRouter = crudRouter({
   table: 'contacts',
   writable: ['artist_id', 'project_id', 'role', 'name', 'email', 'phone', 'notes', 'color', 'sort_order'],
   required: ['name'],
-  filters: ['artist_id', 'project_id'],
   order: 'sort_order ASC, id ASC',
+  customList: seasonScopedList('contacts', ['artist_id', 'project_id']),
 });
 
 export const linksRouter = crudRouter({
   table: 'links',
   writable: ['artist_id', 'project_id', 'event_id', 'task_id', 'section_id', 'label', 'url', 'color', 'category', 'notes', 'sort_order'],
   required: ['label'],
-  filters: ['artist_id', 'project_id', 'event_id', 'task_id', 'section_id'],
   order: 'sort_order ASC, id ASC',
+  customList: seasonScopedList('links', ['artist_id', 'project_id', 'event_id', 'task_id', 'section_id']),
 });
 
 /**
@@ -613,6 +642,8 @@ export const eventsRouter = crudRouter({
         projectId: num(req.query.project_id),
         artistId: num(req.query.artist_id),
         resolvedArtistId: num(req.query.resolved_artist_id),
+        // `scope=season`, not `?season=` — see seasonScopedList above.
+        season: req.query.scope === 'season',
       }),
     );
   },
