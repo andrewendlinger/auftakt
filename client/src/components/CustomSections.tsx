@@ -4,7 +4,8 @@ import { api } from '../api/client';
 import type { CustomSection } from '../api/types';
 import { Card, SectionTitle, Btn, PickerRow } from './ui';
 import { Label, Modal, TextInput } from './fields';
-import { SECTION_TYPES } from '../lib/sections';
+import { SECTION_TYPES, type SectionGroup } from '../lib/sections';
+import type { HiddenBuiltin } from '../lib/sectionSpecs';
 import { InlineNotes } from './InlineNotes';
 import { EditableText } from './EditableText';
 import { LinkList } from './LinkList';
@@ -28,15 +29,10 @@ export function sectionKey(s: CustomSection): string {
   return `cs${s.id}`;
 }
 
-/** Which group of the add picker a built-in section belongs to. */
-export type SectionGroup = 'eingabe' | 'einblicke';
-
-/** A hidden built-in section the picker can re-add. */
-export interface HiddenBuiltin {
-  key: string;
-  labelKey: LabelKey;
-  group: SectionGroup;
-}
+// Both types moved to lib/ with the section catalog (WP-46); re-exported so callers keep one
+// import surface for the picker wiring that stays in this file.
+export type { SectionGroup } from '../lib/sections';
+export type { HiddenBuiltin } from '../lib/sectionSpecs';
 
 /**
  * The arranger-strip 🗑 handler for custom widgets: soft-delete the row **and drop its layout
