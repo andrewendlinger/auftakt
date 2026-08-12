@@ -134,6 +134,10 @@ focused-window season resolution. Run with at least two seasons present.
 - [ ] „Neues Fenster" / Cmd+N (Ctrl+N) opens a second window, cascaded off the first — not
       perfectly stacked — and **without** the boot gesture. `boot-log.jsonl` gains a
       `skip / secondary` line; a reload of that window logs `skip / warm`.
+- [ ] Press it **four times on a laptop panel** (1440×900 or smaller): four windows you can
+      tell apart, none of them under the menu bar or past the screen edge. The old wrap reset
+      to one fixed anchor, so from the second onward they were pixel-identical (PR50-06).
+      `client/src/lib/cascade.test.ts` pins the arithmetic; this checks the real displays.
 - [ ] Edit a task in window A → window B (same season) shows it without any interaction. Then
       break the fast path once: edit in A and merely *focus* B — the focus refetch is the
       backstop and must also bring the edit in.
@@ -144,12 +148,25 @@ focused-window season resolution. Run with at least two seasons present.
       `.db` file is actually gone from the data dir — an open pooled handle used to make that
       unlink fail silently.
 - [ ] Export from a window pinned to a non-default season (both the Einstellungen button and the
-      Datei menu) → the exported file contains *that* season's rows. The import confirmation
+      Datei menu) → the exported file contains *that* season's rows, and the save dialog, the
+      proposed filename and the confirmation all **name that season**. The import confirmation
       names the season it will replace; after an import, **all** windows close and one returns.
-- [ ] „Backup-Ordner wählen…" → every open window reloads, and each shows the new folder.
+- [ ] Minimize every window, then use the Datei menu to export (macOS: the app menu stays
+      active) → the dialog names the **default** season, which is what it will write (PR50-03 —
+      it used to silently pick the oldest window's season and name nothing).
+- [ ] „Backup-Ordner wählen…" (both the Einstellungen button and the Datei menu) → every open
+      window shows the new folder **without reloading**. Type into an inline editor in the other
+      window first: that draft must still be there afterwards (PR50-05 — the reload ate it).
 - [ ] Close one of two windows → the other keeps working (menus, dialogs, edits). Close the last
       window with an unreachable backup folder configured → the quit grace still behaves: no
       orphan process, no dialog on an empty desktop.
+- [ ] **Windows**, with two windows open: Datei → „Datenbank importieren…", then click back into
+      the *other* window. The confirmation must **not** be sendable behind the windows — it now
+      belongs to one of them (PR50-14; an unparented dialog is modal to nothing on Windows, which
+      macOS hides by making it app-modal).
+- [ ] From that other window, trigger the import again while the first confirmation is open →
+      „Es läuft bereits ein Import." A parented dialog is window-modal, so it does not block the
+      second window on its own, and two import flows both end in a relaunch after replacing files.
 - [ ] Windows: double-click the shortcut while the app runs → a **new window**, not a raise.
       Ctrl+W closes one window; „Beenden" quits the app.
 - [ ] Type into an inline editor in A, focus B, edit a different row there, focus A again → the

@@ -1,10 +1,24 @@
-import { app, BrowserWindow, Menu, contentTracing, dialog, ipcMain, screen, shell } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  contentTracing,
+  dialog,
+  ipcMain,
+  screen,
+  shell,
+  type MessageBoxOptions,
+  type OpenDialogOptions,
+  type SaveDialogOptions,
+} from 'electron';
 import { enableCompileCache } from 'node:module';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { fileStamp } from '../shared/time';
 import { buildMenu } from './menu';
 import { backupDirProblem, runStartupBackup } from './backup';
+import { cascadeBounds, fittedSize } from './cascade';
+import { exportFileName } from './exportName';
 import { writeBootReport } from './bootLog';
 import { checkForUpdates, downloadAndInstallUpdate, startSilentStartupCheck } from './updater';
 
@@ -183,26 +197,55 @@ async function saveBackupDir(dir: string): Promise<void> {
 }
 
 /**
+ * Every dialog hangs off the window that asked for it, when there still is one.
+ *
+ * Parenting is not decoration. macOS does not display an open-dialog's `title` at all, so an
+ * unparented picker is a bare Finder window with nothing saying which app wants it or why; and
+ * with several windows open, „„Festival 2026" wird zuerst gesichert und dann ersetzt" has to
+ * belong to a window or it does not say whose season that is. On Windows an unparented dialog
+ * is modal to nothing: it can be sent behind the windows, the user clicks the menu item again
+ * thinking nothing happened, and a second file picker opens over a pending destructive confirm
+ * (PR50-14). macOS hides that half — an unparented dialog is app-modal there.
+ *
+ * The `isDestroyed` check is per call, not once at entry: importDatabase awaits an HTTP check
+ * and a confirmation between its dialogs, and parenting to a window closed in the meantime
+ * throws.
+ */
+function alive(win: BrowserWindow | null): win is BrowserWindow {
+  return win !== null && !win.isDestroyed();
+}
+
+function messageBox(win: BrowserWindow | null, opts: MessageBoxOptions) {
+  return alive(win) ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts);
+}
+
+function saveDialog(win: BrowserWindow | null, opts: SaveDialogOptions) {
+  return alive(win) ? dialog.showSaveDialog(win, opts) : dialog.showSaveDialog(opts);
+}
+
+function openDialog(win: BrowserWindow | null, opts: OpenDialogOptions) {
+  return alive(win) ? dialog.showOpenDialog(win, opts) : dialog.showOpenDialog(opts);
+}
+
+/**
  * Pick a backup folder, rejecting one the startup backup could not use (ELP-03).
  * Validating here rather than only in runStartupBackup is the point: a Windows user
  * could pick a NAS share, see it accepted, and never learn that backups had stopped.
- *
- * Parented to `win` when there is one: macOS does not display an open-dialog's `title`
- * at all, so an unparented picker is a bare Finder window with nothing saying which app
- * wants it or why. A sheet on the Auftakt window at least answers "which app".
  */
 async function promptForDirectory(win: BrowserWindow | null): Promise<string | null> {
-  const opts = {
+  const r = await openDialog(win, {
     title: 'Backup-Ordner wählen (z. B. Google Drive)',
-    properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'>,
-  };
-  const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    properties: ['openDirectory', 'createDirectory'],
+  });
   const dir = r.canceled ? null : (r.filePaths[0] ?? null);
   if (!dir) return null;
   const problem = backupDirProblem(dir);
   if (problem) {
-    const box = { type: 'error' as const, message: 'Dieser Ordner kann nicht verwendet werden.', detail: problem };
-    await (win ? dialog.showMessageBox(win, box) : dialog.showMessageBox(box));
+    await messageBox(win, {
+      type: 'error',
+      message: 'Dieser Ordner kann nicht verwendet werden.',
+      detail: problem,
+    });
     return null;
   }
   return dir;
@@ -221,31 +264,56 @@ async function promptForDirectory(win: BrowserWindow | null): Promise<string | n
  */
 async function reportBackupProblem(err: unknown): Promise<void> {
   console.error('Backup übersprungen:', err);
-  if (!liveWindow()) return;
-  await dialog.showMessageBox({
+  const win = liveWindow();
+  if (!win) return;
+  await messageBox(win, {
     type: 'error',
     message: 'Es wurde keine Sicherung angelegt.',
     detail: `${(err as Error).message}\n\nEinstellungen → „Saison & Daten“ → „Backup-Ordner“ prüfen. Ohne funktionierenden Backup-Ordner werden beim Start keine Sicherungen erstellt.`,
   });
 }
 
-async function chooseBackupDir(): Promise<void> {
-  const dir = await promptForDirectory(liveWindow());
+/**
+ * The folder lives in the registry, so every window's Einstellungen shows it and every window
+ * has to hear about a change — including the one that asked, whose click is fire-and-forget
+ * (`window.auftakt.chooseBackupDir()` awaits nothing).
+ *
+ * This used to be `for (…) w.webContents.reload()`, which discarded unsaved drafts in windows
+ * the user never touched: editors persist on blur and there is no `beforeunload` anywhere, so
+ * a half-typed note in window B died when window A picked a folder (PR50-05). The renderers
+ * already have a non-destructive way to refresh — the coalesced blanket invalidate behind the
+ * BroadcastChannel — so main only has to say "something changed" and let them run it.
+ *
+ * The one main-initiated event in the app, hence the only `webContents.send`: the other
+ * direction is all `ipcRenderer.invoke`, because everything else starts in a renderer.
+ * BroadcastChannel cannot carry this — main is not a renderer and has no channel object.
+ */
+function notifyBackupConfigChanged(): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send('backup-config-changed');
+  }
+}
+
+async function chooseBackupDir(win: BrowserWindow | null): Promise<void> {
+  // No liveWindow() fallback, deliberately. It returns any non-destroyed window, including a
+  // *minimized* one — and a sheet on a window that is not on screen is a picker the user never
+  // sees, i.e. a folder chooser that reads as a hang. Unparented is the better of the two: on
+  // macOS it is app-modal and visible, which is also what export/import do with a null window.
+  const dir = await promptForDirectory(win);
   if (!dir) return;
   try {
     await saveBackupDir(dir);
   } catch (err) {
-    // Reloading here would show the old (or empty) folder as if nothing had happened.
-    await dialog.showMessageBox({
+    // No notify here: telling the windows to refresh would show the old (or empty) folder
+    // as if nothing had happened.
+    await messageBox(win, {
       type: 'error',
       message: 'Der Backup-Ordner konnte nicht gespeichert werden.',
       detail: `${(err as Error).message}\n\nEs werden weiterhin keine automatischen Sicherungen angelegt. Bitte erneut versuchen.`,
     });
     return;
   }
-  // Every window shows the folder in its Einstellungen — reload them all, not just the
-  // one the click came from.
-  for (const w of BrowserWindow.getAllWindows()) w.webContents.reload();
+  notifyBackupConfigChanged();
 }
 
 /** An IPC argument is untrusted: only a positive integer passes, anything else → default. */
@@ -262,14 +330,25 @@ function seasonPath(path: string, seasonId?: number): string {
 }
 
 /**
- * The season pinned in the focused window, for the MENU-initiated export/import — the
- * Einstellungen buttons pass their window's pin through IPC instead. A read-only peek;
- * undefined (→ the default season) when there is no window, no pin, or the peek fails.
+ * The season pinned in `win`, for the MENU-initiated export/import — the Einstellungen buttons
+ * pass their own window's pin through IPC instead. A read-only peek; undefined (→ the default
+ * season) when there is no window, no pin, or the peek fails.
+ *
+ * The caller passes `BrowserWindow.getFocusedWindow()` and nothing else. This used to resolve
+ * through `liveWindow()`, whose fallback is the *oldest* live window: with two windows on two
+ * seasons and neither focused (both minimized, the app menu still active on macOS), the export
+ * silently wrote the other window's season into the file the user had named for this one
+ * (PR50-03). No focus now means undefined — the registry default — and the export names the
+ * season it resolved, so a fallback is visible rather than silent.
  */
-async function focusedWindowSeason(): Promise<number | undefined> {
-  const win = liveWindow();
-  if (!win) return undefined;
+async function windowSeason(win: BrowserWindow | null): Promise<number | undefined> {
+  if (!win || win.isDestroyed()) return undefined;
   try {
+    // The renderer's own pin key, spelled `KEY` in client/src/lib/season.ts. This process
+    // cannot import it — electron/tsconfig.json is `include: ["*.ts"]`, so nothing type-checks
+    // across the boundary — which makes **grep the only coupling** between the two literals.
+    // Rename one without the other and this silently returns undefined, i.e. the registry
+    // default, and Datei → „Datenbank importieren…" replaces the wrong season's file (PR50-10).
     const raw: unknown = await win.webContents.executeJavaScript('sessionStorage.getItem("auftakt-season")');
     return asSeasonId(Number(raw));
   } catch {
@@ -277,10 +356,17 @@ async function focusedWindowSeason(): Promise<number | undefined> {
   }
 }
 
-/** The registry label of `seasonId` (or of the default), for naming dialogs. Best-effort. */
+/**
+ * The registry label of `seasonId` (or of the default), for naming dialogs. Best-effort — and
+ * timed out, because since PR50-03 the *export* resolves it before opening its save dialog, so
+ * this call sits between the user's click and anything appearing on screen. The bundled server
+ * shares this process's event loop with `runStartupBackup`'s per-season `VACUUM INTO`, so it
+ * can be slow to answer at exactly the wrong moment. An empty label is a working dialog with a
+ * generic name; no dialog at all reads as a broken menu item.
+ */
 async function seasonLabel(seasonId?: number): Promise<string> {
   try {
-    const r = await fetch(`${ORIGIN}/api/seasons`);
+    const r = await fetch(`${ORIGIN}/api/seasons`, { signal: AbortSignal.timeout(1500) });
     const reg = (await r.json()) as { activeId: number; seasons: Array<{ id: number; label: string }> };
     return reg.seasons.find((s) => s.id === (seasonId ?? reg.activeId))?.label ?? '';
   } catch {
@@ -288,24 +374,62 @@ async function seasonLabel(seasonId?: number): Promise<string> {
   }
 }
 
-async function exportDatabase(seasonId?: number): Promise<void> {
-  const r = await dialog.showSaveDialog({
-    title: 'Datenbank exportieren',
+async function exportDatabase(seasonId: number | undefined, win: BrowserWindow | null): Promise<void> {
+  // Name the season everywhere the user can see it — dialog, filename, confirmation — the way
+  // importDatabase already names the one it replaces. Half of PR50-03: the resolution can fall
+  // back to the registry default, and a fallback that names itself is recoverable where a
+  // silent one hands out the wrong season's data with nothing on screen contradicting it.
+  const label = await seasonLabel(seasonId);
+  const r = await saveDialog(win, {
+    title: label ? `„${label}“ exportieren` : 'Datenbank exportieren',
     // Local wall-clock time, the same helper the server's backup folders use: a UTC stamp
     // named the export after the previous day for anyone east of Greenwich (ELP-09).
-    defaultPath: `auftakt-${fileStamp()}.db`,
+    defaultPath: exportFileName(label, fileStamp()),
   });
   if (r.canceled || !r.filePath) return;
   try {
     await post(seasonPath('backup/export', seasonId), { path: r.filePath });
-    await dialog.showMessageBox({ message: 'Datenbank wurde exportiert.', type: 'info' });
+    await messageBox(win, {
+      message: label ? `„${label}“ wurde exportiert.` : 'Datenbank wurde exportiert.',
+      type: 'info',
+    });
   } catch (err) {
-    await dialog.showMessageBox({ type: 'error', message: `Export fehlgeschlagen: ${(err as Error).message}` });
+    await messageBox(win, { type: 'error', message: `Export fehlgeschlagen: ${(err as Error).message}` });
   }
 }
 
-async function importDatabase(seasonId?: number): Promise<void> {
-  const r = await dialog.showOpenDialog({
+/**
+ * One import at a time, across every window.
+ *
+ * Parenting the dialogs (PR50-14) makes each one belong to the window that asked, but a
+ * parented dialog is window-*modal*: it blocks its own window and nothing else. With two
+ * windows open, the user can still start a second import from the other one while the first is
+ * sitting on „…wird zuerst gesichert und dann ersetzt", and both flows end in
+ * `app.relaunch(); app.exit(0)` after replacing database files. Parenting narrows the window
+ * for that; it does not close it, and this is the destructive path, so it gets a latch.
+ */
+let importPending = false;
+
+async function importDatabase(seasonId: number | undefined, win: BrowserWindow | null): Promise<void> {
+  if (importPending) {
+    await messageBox(win, {
+      type: 'info',
+      message: 'Es läuft bereits ein Import.',
+      detail: 'Bitte zuerst das offene Import-Fenster abschließen oder abbrechen.',
+    });
+    return;
+  }
+  importPending = true;
+  try {
+    await runImport(seasonId, win);
+  } finally {
+    // Not on the success path, which never returns here — app.exit(0) ends the process.
+    importPending = false;
+  }
+}
+
+async function runImport(seasonId: number | undefined, win: BrowserWindow | null): Promise<void> {
+  const r = await openDialog(win, {
     title: 'Datenbank importieren',
     properties: ['openFile'],
     filters: [{ name: 'SQLite-Datenbank', extensions: ['db', 'sqlite'] }],
@@ -317,18 +441,18 @@ async function importDatabase(seasonId?: number): Promise<void> {
   try {
     const check = await post<{ ok: boolean; error?: string }>('backup/import/check', { path: r.filePaths[0] });
     if (!check.ok) {
-      await dialog.showMessageBox({ type: 'error', message: check.error ?? 'Die Datei kann nicht importiert werden.' });
+      await messageBox(win, { type: 'error', message: check.error ?? 'Die Datei kann nicht importiert werden.' });
       return;
     }
   } catch (err) {
-    await dialog.showMessageBox({ type: 'error', message: `Prüfung fehlgeschlagen: ${(err as Error).message}` });
+    await messageBox(win, { type: 'error', message: `Prüfung fehlgeschlagen: ${(err as Error).message}` });
     return;
   }
 
   // Name the season the import will replace: with per-window seasons, „die aktuelle
   // Datenbank" no longer says which one that is.
   const label = await seasonLabel(seasonId);
-  const confirm = await dialog.showMessageBox({
+  const confirm = await messageBox(win, {
     type: 'warning',
     buttons: ['Abbrechen', 'Importieren'],
     defaultId: 1,
@@ -341,7 +465,7 @@ async function importDatabase(seasonId?: number): Promise<void> {
 
   try {
     const { backup } = await post<{ backup: string }>(seasonPath('backup/import', seasonId), { path: r.filePaths[0] });
-    await dialog.showMessageBox({
+    await messageBox(win, {
       type: 'info',
       message: 'Import abgeschlossen. Alle Fenster werden geschlossen und die App wird neu gestartet.',
       detail: backup ? `Die bisherige Datenbank wurde gesichert:\n${backup}` : undefined,
@@ -349,7 +473,7 @@ async function importDatabase(seasonId?: number): Promise<void> {
     app.relaunch();
     app.exit(0);
   } catch (err) {
-    await dialog.showMessageBox({
+    await messageBox(win, {
       type: 'error',
       message: `Import fehlgeschlagen: ${(err as Error).message}`,
       detail: 'Die bisherige Datenbank wurde nicht verändert.',
@@ -357,37 +481,36 @@ async function importDatabase(seasonId?: number): Promise<void> {
   }
 }
 
-/** Default window size — also the wrap bound for the cascade below; keep them together. */
-const WIN_W = 1440;
-const WIN_H = 900;
+/** The window size the app asks for; `fittedSize` shrinks it to whatever the display allows. */
+const PREFERRED = { width: 1440, height: 900 };
+/** Enforced by Electron itself, so the placement arithmetic must never go below it. */
+const MINIMUM = { width: 1024, height: 680 };
 
 async function createWindow(): Promise<void> {
   // Sampled BEFORE construction — a moment later the count would include this window.
   // A secondary window cascades off the focused one and skips the boot gesture (its
   // ?noboot flag; see client/index.html): the gesture already played in the first window,
-  // and without an offset every window opens 1440×900 centered — perfectly stacked.
+  // and without an offset every window opens centered — perfectly stacked.
   const others = BrowserWindow.getAllWindows();
   const isSecondary = others.length > 0;
-  let position: { x: number; y: number } | undefined;
+  let bounds;
   if (isSecondary) {
+    // getDisplayMatching keeps the cascade on the monitor the user is working on, and the
+    // windows already open are the state that decides where this one may go — a counter drifts
+    // out of step with them and never frees the place a closed window left (see cascade.ts).
     const src = (BrowserWindow.getFocusedWindow() ?? others[others.length - 1]!).getBounds();
-    // Wrap, don't clamp — a clamp stacks every further window into the same corner.
-    // getDisplayMatching keeps the cascade on the monitor the user is working on.
-    const wa = screen.getDisplayMatching(src).workArea;
-    const CASCADE = 28;
-    let x = src.x + CASCADE;
-    let y = src.y + CASCADE;
-    if (x + WIN_W > wa.x + wa.width) x = wa.x + CASCADE;
-    if (y + WIN_H > wa.y + wa.height) y = wa.y + CASCADE;
-    position = { x, y };
+    const taken = others.filter((w) => !w.isDestroyed()).map((w) => w.getBounds());
+    bounds = cascadeBounds(src, screen.getDisplayMatching(src).workArea, PREFERRED, MINIMUM, taken);
+  } else {
+    // Size only: with no window to match a display against, Electron's own centering is the
+    // better answer than guessing which monitor of several the user is sitting at.
+    bounds = fittedSize(screen.getPrimaryDisplay().workArea, PREFERRED, MINIMUM);
   }
 
   const win = new BrowserWindow({
-    width: WIN_W,
-    height: WIN_H,
-    ...position,
-    minWidth: 1024,
-    minHeight: 680,
+    ...bounds,
+    minWidth: MINIMUM.width,
+    minHeight: MINIMUM.height,
     title: 'Auftakt',
     // Created hidden. A window shown at construction is on screen before loadURL has
     // fetched anything, so the user gets an empty rectangle for the whole renderer boot
@@ -508,6 +631,10 @@ async function ensureBackupDir(): Promise<string> {
   if (!chosen) return '';
   await saveBackupDir(chosen);
   await post('backup/prompted', {});
+  // Same signal as the Einstellungen and menu paths: this prompt runs while a window is
+  // already on screen, so an open Einstellungen panel would otherwise keep reading
+  // „(noch nicht gewählt)" until something else happened to refetch the settings.
+  notifyBackupConfigChanged();
   return chosen;
 }
 
@@ -529,10 +656,11 @@ let chores: Promise<unknown> | null = null;
  * React had just mounted, inside the gesture's first second, on every launch.
  *
  * Idempotent because it has four callers: the renderer's signal, the 8 s fallback, a
- * renderer that reloads itself (a season switch, or the reload after saving a backup
- * folder) and signals a second time, and the last window closing. It returns the same
- * promise to all of them rather than nothing, because that last caller has to know when
- * the backup is finished — it is on its way to app.quit().
+ * renderer that reloads itself (a season switch — picking a backup folder used to reload
+ * too, until PR50-05 replaced that with an invalidate) and signals a second time, and the
+ * last window closing. It returns the same promise to all of them rather than nothing,
+ * because that last caller has to know when the backup is finished — it is on its way to
+ * app.quit().
  */
 function runStartupChores(): Promise<unknown> {
   if (chores) return chores;
@@ -692,10 +820,17 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(
     buildMenu({
       onNewWindow: () => void createWindow(),
-      // Menu clicks carry no renderer context, so the season comes from the focused window.
-      onExport: () => void focusedWindowSeason().then(exportDatabase),
-      onImport: () => void focusedWindowSeason().then(importDatabase),
-      onChooseBackup: chooseBackupDir,
+      // Menu clicks carry no renderer context, so the season comes from the focused window —
+      // resolved once, at the click, rather than again inside each helper.
+      onExport: () => {
+        const win = BrowserWindow.getFocusedWindow();
+        void windowSeason(win).then((id) => exportDatabase(id, win));
+      },
+      onImport: () => {
+        const win = BrowserWindow.getFocusedWindow();
+        void windowSeason(win).then((id) => importDatabase(id, win));
+      },
+      onChooseBackup: () => void chooseBackupDir(BrowserWindow.getFocusedWindow()),
     }),
   );
   await createWindow();
@@ -757,9 +892,15 @@ app.on('window-all-closed', () => {
 
 // Preload bridge → main. React never touches Electron APIs directly.
 ipcMain.handle('open-external', (_e, url: string) => openExternalSafely(url));
-ipcMain.handle('export-db', (_e, seasonId: unknown) => exportDatabase(asSeasonId(seasonId)));
-ipcMain.handle('import-db', (_e, seasonId: unknown) => importDatabase(asSeasonId(seasonId)));
-ipcMain.handle('choose-backup-dir', () => chooseBackupDir());
+// The renderer sends its own pin, so no peek is needed here — but the dialogs still have to
+// belong to the window that asked, which is the one behind the IPC message (PR50-14).
+ipcMain.handle('export-db', (e, seasonId: unknown) =>
+  exportDatabase(asSeasonId(seasonId), BrowserWindow.fromWebContents(e.sender)),
+);
+ipcMain.handle('import-db', (e, seasonId: unknown) =>
+  importDatabase(asSeasonId(seasonId), BrowserWindow.fromWebContents(e.sender)),
+);
+ipcMain.handle('choose-backup-dir', (e) => chooseBackupDir(BrowserWindow.fromWebContents(e.sender)));
 ipcMain.handle('get-version', () => app.getVersion());
 ipcMain.handle('check-updates', (_e, refresh: boolean) => checkForUpdates(refresh));
 ipcMain.handle('install-update', () => downloadAndInstallUpdate());

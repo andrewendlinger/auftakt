@@ -15,6 +15,14 @@
 import { api } from '../api/client';
 import { postBroadcast } from './broadcast';
 
+/**
+ * Read in one other place, across a process boundary no typecheck spans: `windowSeason()` in
+ * `electron/main.ts` peeks it with `executeJavaScript` to route the menu's export/import at the
+ * focused window's season. `electron/tsconfig.json` has `include: ["*.ts"]`, so main cannot
+ * import this module and `npm run typecheck` can never relate the two spellings — **grep is the
+ * whole coupling.** Rename here alone and the peek silently resolves undefined, which sends a
+ * destructive import to the *default* season while the confirmation names it (PR50-10).
+ */
 const KEY = 'auftakt-season';
 /** Relay for the „Saison wurde gelöscht" toast — a toast cannot survive the reload. */
 const GONE_KEY = 'auftakt-season-gone';

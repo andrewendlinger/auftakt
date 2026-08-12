@@ -12,10 +12,26 @@ contextBridge.exposeInMainWorld('auftakt', {
   getVersion: () => ipcRenderer.invoke('get-version'),
   checkForUpdates: (refresh: boolean) => ipcRenderer.invoke('check-updates', refresh),
   installUpdate: () => ipcRenderer.invoke('install-update'),
-  // Fire-and-forget, but invoke rather than send: this file is one shape, and a second
-  // idiom for the sake of one unread reply on a local channel is not worth it. The
+  // Fire-and-forget, but invoke rather than send: everything above is renderer→main, and a
+  // second idiom for the sake of one unread reply on a local channel is not worth it. The
   // argument is the boot report (see client/index.html); main treats it as untrusted.
   bootSettled: (report?: unknown) => ipcRenderer.invoke('boot-settled', report),
+  /**
+   * The one main→renderer direction, hence the one `ipcRenderer.on`: the backup folder is
+   * registry-wide, so a pick in any window (or from the menu, or from the first-launch
+   * prompt) has to reach all of them. `invoke` cannot express it — main is the one starting
+   * the conversation — and BroadcastChannel is renderer-only.
+   *
+   * The listener is wrapped rather than passed through: `ipcRenderer.on` hands its callback
+   * an `IpcRendererEvent` carrying `sender`, and contextIsolation exists precisely so the
+   * renderer never gets a handle on that. The payload is empty by design — a pure signal,
+   * like the broadcast messages; the renderer refetches rather than being told a value.
+   */
+  onBackupConfigChanged: (cb: () => void) => {
+    const listener = () => cb();
+    ipcRenderer.on('backup-config-changed', listener);
+    return () => ipcRenderer.off('backup-config-changed', listener);
+  },
   // Static value, not IPC — the Settings card picks platform-specific install copy.
   platform: process.platform,
 });

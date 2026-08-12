@@ -22,6 +22,13 @@ declare global {
       exportDatabase?: (seasonId?: number) => void;
       importDatabase?: (seasonId?: number) => void;
       chooseBackupDir?: () => void;
+      /**
+       * Main→renderer: the registry-wide backup folder changed (any window's picker, the
+       * Datei menu, or the first-launch prompt). A pure signal — refetch, it carries no
+       * value. Returns its own unsubscribe. The sole listener lives in `main.tsx`, next to
+       * the BroadcastChannel one and sharing its coalesced invalidate.
+       */
+      onBackupConfigChanged?: (cb: () => void) => () => void;
       getVersion?: () => Promise<string>;
       /** refresh=false → cached silent startup check (null if it failed); true → fresh check, may reject. */
       checkForUpdates?: (refresh: boolean) => Promise<UpdateStatus | null>;

@@ -338,8 +338,8 @@ Which module owns which invariant. Reach for these rather than rebuilding the be
 | `useGuardedAction()` / `useErrorToast()` (hooks.ts) | the failure arm for any write. `guard(fallback, () => api.x(…))` returns `true` when the call resolved, so a caller can gate its success toast or dialog close on it. Wording policy lives in `client/src/lib/errors.ts`: the German sentence leads, an `ApiError`'s server text follows in parentheses; anything else goes to `console.error`. |
 | `pushWithToast(entry, message)` (UndoProvider) | pairing a stack entry with its toast. Never call `push` *and* wire a toast `onAction` — doing both is TTU-13, where the toast ran `revert` behind the stack's back. `DERIVED_INVERSE_KEYS` (hooks.ts) maps a resource to the columns the server derives. |
 | `useUndoableDelete()` (hooks.ts) | soft-delete + undo stack + toast, returning whether the row is actually gone. A delete endpoint that does not answer `{deleted:false}` on a no-op silently opts out of the „war bereits gelöscht" check — teach it in `nothingDeleted()`. **Deleting a row that has a page of its own passes `gone: [kind, id]`** — its keys go stale but are never refetched. Without it the blanket invalidate asks for the deleted row while its page is still mounted (the redirect is a router transition and does not commit first), the server answers 404, and the user gets an error toast next to the „gelöscht" one. |
-| `lib/season.ts` | the window's season boundary: the sessionStorage pin, the response-echo adoption, the 410 recovery (`seasonGone()` → landing + relayed toast) and `switchSeason()` — **the only legal way to change seasons from the client.** Calling `api.activateSeason` directly moves the default without switching anything. `switchSeason()` yields when its own activate comes back 410: the recovery has already navigated, and a second navigation over it left the relay flag latched and the window unable to recover from any later 410 (PR50-01). Nothing else reads `sessionStorage['auftakt-season']`. |
-| `lib/broadcast.ts` | cross-window signalling. **One channel object per window, for posting AND listening — the singleton IS the self-suppression**: BroadcastChannel skips delivery only to the posting object, so a second `new BroadcastChannel('auftakt')` makes a window hear its own writes and loop every invalidate. Messages are versioned pure signals, never data. `useInvalidateAll` posts; the sole listener lives in `main.tsx`. |
+| `lib/season.ts` | the window's season boundary: the sessionStorage pin, the response-echo adoption, the 410 recovery (`seasonGone()` → landing + relayed toast) and `switchSeason()` — **the only legal way to change seasons from the client.** Calling `api.activateSeason` directly moves the default without switching anything. `switchSeason()` yields when its own activate comes back 410: the recovery has already navigated, and a second navigation over it left the relay flag latched and the window unable to recover from any later 410 (PR50-01). `sessionStorage['auftakt-season']` has exactly one other reader, and it is in another process: `windowSeason()` in `electron/main.ts` peeks it via `executeJavaScript` to route the Datei menu's export/import. `electron/tsconfig.json` includes only `electron/*.ts`, so no typecheck spans the two spellings — **grep is the whole coupling**, and renaming the key means renaming both (PR50-10). |
+| `lib/broadcast.ts` | cross-window signalling. **One channel object per window, for posting AND listening — the singleton IS the self-suppression**: BroadcastChannel skips delivery only to the posting object, so a second `new BroadcastChannel('auftakt')` makes a window hear its own writes and loop every invalidate. Messages are versioned pure signals, never data. `useInvalidateAll` posts; the sole listener lives in `main.tsx`, where it shares one coalesced blanket invalidate with the `backup-config-changed` bridge event (see „Windows (plural)"). |
 | `useAnchoredPopover()` (`lib/popover.ts`) | any new popover: anchor rect, flip-above, clamp, height cap, close on scroll/resize, Escape. Escape is a **capture-phase window listener, not a React `onKeyDown`** — a popover opened by a click has no focus inside its menu. |
 | `InlineInput` + `useCommitOnUnmount` (hooks.ts) | click-to-edit that commits on blur. React delegates focus events at the root, so a detached node never reaches `onBlur`. `useCommitOnUnmount`'s `active` argument is load-bearing: a constant `true` makes StrictMode's mount-time cleanup fire the commit while the editor is still open. Pick an `EmptyPolicy` (`ignore`/`clear`/`raw`) explicitly. |
 | `normalizeUrl` (`lib/url.ts`) | URL shaping at the **storage and render** boundaries, never inside `openExternal` — `normalizeUrl('/foo')` yields `https:///foo`, which the allowlist would then accept. `openExternal`'s protocol allowlist stays the one place that decides what may open. |
@@ -369,9 +369,23 @@ N `BrowserWindow`s over the one in-process server, each pinned to its own season
 `createWindow()` (`electron/main.ts`) is the only constructor — the `setWindowOpenHandler` deny
 stays, since a child window would not inherit the preload. Secondary windows cascade off the
 focused one and load with `?noboot` (they skip the boot gesture; the flag lives in the search
-component, where HashRouter never looks). New windows open unpinned and adopt the registry
+component, where HashRouter never looks). Placement is `electron/cascade.ts`, kept pure so
+`check:unit` can drive it: the window size is **fitted to the work area** first — 1440×900 on a
+1440×875 laptop panel leaves zero pixels to offset into — and the wrap **advances** through the
+anchors that fit instead of resetting to one, which is what made every Cmd+N past the second
+land on the same pixel (PR50-06). New windows open unpinned and adopt the registry
 default from the first response echo — `switchSeason()` moves that default, so Cmd+N opens the
-last-switched season, not necessarily the opener's. The startup chores are memoized, so N
+last-switched season, not necessarily the opener's.
+
+**Main never reloads a window to refresh it.** The one thing main knows and the renderers do not
+— the registry-wide backup folder changed, from any window's picker, the Datei menu or the
+first-launch prompt — travels as `backup-config-changed`, the app's only `webContents.send` and
+only `ipcRenderer.on` (`electron/preload.ts` → `onBackupConfigChanged`). Renderers answer it with
+the same coalesced blanket invalidate the BroadcastChannel listener runs. A reload would be the
+one path in the app that destroys another window's unsaved editor drafts, which have no
+`beforeunload` behind them (PR50-05).
+
+The startup chores are memoized, so N
 `boot-settled` calls are one run; `window-all-closed` only fires when the last window closes, so
 the quit grace is window-count-agnostic; a second app launch opens a new window
 (`second-instance`). The single-instance lock stays — two *processes* would race the port and
