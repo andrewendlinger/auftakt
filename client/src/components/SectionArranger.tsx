@@ -505,6 +505,12 @@ export interface SectionArrangerProps {
   defaultHidden?: string[];
   /** Sections that can't be set to half width (always full, no width toggle) — e.g. the task table. */
   fullWidthKeys?: string[];
+  /**
+   * Width a key gets when it is first appended to a stored layout (default `'full'`). For
+   * sections that should arrive half-width — a pair meant to sit side by side on pages whose
+   * layout predates it. No key sets this yet.
+   */
+  defaultWidths?: Record<string, 'full' | 'half'>;
   /** Sections that still hold content — their 🗑 confirms first instead of acting at once. */
   nonEmptyKeys?: string[];
   /** Render the toolbar row *after* this section instead of above everything (the dashboard's Künstler grid). */
@@ -566,6 +572,7 @@ function Arranger({
   mandatoryKeys,
   defaultHidden = [],
   fullWidthKeys = [],
+  defaultWidths = {},
   nonEmptyKeys = [],
   toolbarAfterKey,
   onRemoveCustom,
@@ -595,6 +602,9 @@ function Arranger({
 
   const mandatorySig = mandatoryKeys.join(' ');
   const defaultHiddenSig = defaultHidden.join(' ');
+  const defaultWidthsSig = Object.entries(defaultWidths)
+    .map(([k, w]) => `${k}:${w}`)
+    .join(' ');
 
   const { full, display, hiddenKeys } = useMemo(() => {
     const known = Object.keys(sections);
@@ -616,7 +626,11 @@ function Arranger({
     }
     for (const k of known) {
       if (!seen.has(k)) {
-        full.push({ key: k, width: 'full', ...(defaultHidden.includes(k) ? { hidden: true } : {}) });
+        full.push({
+          key: k,
+          width: defaultWidths[k] ?? 'full',
+          ...(defaultHidden.includes(k) ? { hidden: true } : {}),
+        });
       }
     }
     const display = full
@@ -625,7 +639,7 @@ function Arranger({
     const hiddenKeys = full.filter((e) => known.includes(e.key) && e.hidden).map((e) => e.key);
     return { full, display, hiddenKeys };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the *Sig strings capture the only content used
-  }, [sectionSig, layout, fullWidthSig, mandatorySig, defaultHiddenSig]);
+  }, [sectionSig, layout, fullWidthSig, mandatorySig, defaultHiddenSig, defaultWidthsSig]);
 
   const idxInFull = (key: string) => full.findIndex((e) => e.key === key);
 
@@ -679,7 +693,7 @@ function Arranger({
    * sits inside the grid (the dashboard's Künstler grid stays first), else position 0.
    */
   const prepend = (key: string) => {
-    const entry: LayoutEntry = { key, width: 'full' };
+    const entry: LayoutEntry = { key, width: defaultWidths[key] ?? 'full' };
     // Any entry already carrying this key goes first. A landing section id *is* reused — the
     // registry's counter is `max(surviving ids) + 1`, so deleting `lt3` and adding a Textfeld
     // yields `lt3` again — and without this the array is persisted holding the key twice, one
