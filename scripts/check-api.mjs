@@ -134,6 +134,8 @@ const seasonFile = (name) => join(dataDir, name);
 /** Carried across the stop/start boundary, where the purge and the on-disk checks run. */
 let copyTarget = null;
 let projectCopyTarget = null;
+let seasonScopeCopy = null;
+let seasonScopeBare = null;
 /**
  * Row ids the purge section plants before the restart and asserts on after it. Typed as a bag
  * because it is filled across two statements — `{ parentId, kidId }` then `.loneId` — and
@@ -257,6 +259,45 @@ try {
 
     const empty = await ok('GET', '/contacts?artist_id=');
     check('an empty filter means "no filter", not "match 0" (SDL-09)', empty.length >= 1, `${empty.length} rows`);
+  }
+
+  // ------------------------------------------------------------------ season scope (WP-47)
+  // Contacts, events and links may sit directly on the season — every parent FK NULL — like
+  // tasks and custom sections before them. `scope=season` is the only way to list them: an
+  // equality filter cannot express "no parent at all", and `?season=` already means a window
+  // pin (the middleware answers 410 for a non-integer value before any route runs).
+  console.log('\n== season scope: parentless contacts, events and links (WP-47)');
+  {
+    const artist = await ok('POST', '/artists', { name: 'Saison-Ebene' });
+    const project = await ok('POST', '/projects', { artist_id: artist.id, name: 'Saison-Projekt', code: 'SZ1' });
+    const cases = [
+      { path: '/contacts', seasonBody: { name: 'Saison-Kontakt' }, parentedBody: { name: 'Künstler-Kontakt', artist_id: artist.id }, fks: ['artist_id', 'project_id'] },
+      { path: '/events', seasonBody: { type: 'Auftritt', title: 'Saison-Termin', start_at: '2026-09-10', all_day: 1 }, parentedBody: { type: 'Auftritt', title: 'Künstler-Termin', artist_id: artist.id, start_at: '2026-09-11', all_day: 1 }, fks: ['artist_id', 'project_id'] },
+      { path: '/links', seasonBody: { label: 'Saison-Dokument', url: 'https://e.org/saison' }, parentedBody: { label: 'Künstler-Dokument', url: 'https://e.org/kuenstler', artist_id: artist.id }, fks: ['artist_id', 'project_id', 'event_id', 'task_id', 'section_id'] },
+    ];
+    for (const { path, seasonBody, parentedBody, fks } of cases) {
+      const row = await ok('POST', path, seasonBody);
+      check(`${path}: a parentless create is accepted`, fks.every((fk) => row[fk] === null), JSON.stringify(row));
+      await ok('POST', path, parentedBody);
+
+      const scoped = await ok('GET', `${path}?scope=season`);
+      check(`${path}?scope=season returns the season row`, scoped.some((r) => r.id === row.id), `${scoped.length} rows`);
+      check(`${path}?scope=season returns only parentless rows`, scoped.every((r) => fks.every((fk) => r[fk] === null)), JSON.stringify(scoped));
+      const all = await ok('GET', path);
+      check(`${path}: the unscoped list keeps carrying everything`, all.some((r) => r.id === row.id) && all.length > scoped.length, `${all.length} vs ${scoped.length} rows`);
+
+      await ok('DELETE', `${path}/${row.id}`);
+      const gone = await ok('GET', `${path}?scope=season`);
+      check(`${path}: a deleted season row leaves the scoped list`, !gone.some((r) => r.id === row.id), `${gone.length} rows`);
+      await ok('POST', `${path}/${row.id}/restore`);
+      const back = await ok('GET', `${path}?scope=season`);
+      check(`${path}: restore brings it back season-scoped`, back.some((r) => r.id === row.id), `${back.length} rows`);
+
+      // The relaxation is "at most one parent", not "any": two still violate the CHECK, which
+      // the error middleware maps to a 400.
+      const two = await req('POST', path, { ...seasonBody, artist_id: artist.id, project_id: project.id });
+      check(`${path}: two parents are still refused`, two.status === 400, String(two.status));
+    }
   }
 
   // ------------------------------------------------ /reorder follows the allowlist (WP-35)
@@ -752,6 +793,25 @@ try {
     projectCopyTarget = seasonFile(withProjects.file);
   }
 
+  // ------------------------------------------- season copy, season-level rows (WP-47)
+  // Parentless rows travel with their groups: contacts with includeContacts, events with
+  // includeEvents (whose ids feed the event-link edge), and parentless links with
+  // includeSettings — like the dashboard widgets, their placement lives in dashboard_layout,
+  // which is a setting. Asserted on disk after the shutdown, next to the DBW-06 checks.
+  console.log('\n== season copy carries season-level rows with their groups (WP-47)');
+  {
+    const seasonEvent = (await ok('GET', '/events?scope=season')).find((e) => e.title === 'Saison-Termin');
+    await ok('POST', '/links', { event_id: seasonEvent.id, label: 'Dokument am Saison-Termin', url: 'https://e.org/termin' });
+
+    const withGroups = await ok('POST', '/seasons', { label: 'Kopie Saison-Ebene', copyFrom: 1, includeContacts: true, includeEvents: true, includeSettings: true });
+    check('the with-groups copy reported no error', withGroups.copyError === undefined, String(withGroups.copyError));
+    seasonScopeCopy = seasonFile(withGroups.file);
+
+    const withoutGroups = await ok('POST', '/seasons', { label: 'Kopie ohne Saison-Ebene', copyFrom: 1, includeArtists: true });
+    check('the without-groups copy reported no error', withoutGroups.copyError === undefined, String(withoutGroups.copyError));
+    seasonScopeBare = seasonFile(withoutGroups.file);
+  }
+
   // ----------------------------------------------------------- per-window season routing
   // A window pins its season and sends it with every request (X-Auftakt-Season, or ?season=
   // for the one <a href> download); no header means the registry default. Each assertion is
@@ -936,6 +996,27 @@ try {
     db.close();
   }
 
+  // ------------------------------------ season-level rows in the copies, on disk (WP-47)
+  {
+    const db = new Database(seasonScopeCopy, { readonly: true });
+    check('foreign_key_check is clean on the season-scope copy', db.prepare('PRAGMA foreign_key_check').all().length === 0);
+    const contact = db.prepare("SELECT * FROM contacts WHERE name = 'Saison-Kontakt'").get();
+    check('the season contact travelled with includeContacts', contact != null && contact.artist_id === null && contact.project_id === null, JSON.stringify(contact));
+    const event = db.prepare("SELECT * FROM events WHERE title = 'Saison-Termin'").get();
+    check('the season event travelled with includeEvents', event != null && event.artist_id === null && event.project_id === null, JSON.stringify(event));
+    const eventLink = db.prepare("SELECT * FROM links WHERE label = 'Dokument am Saison-Termin'").get();
+    check('a link on the season event followed it', eventLink != null && eventLink.event_id === event?.id, JSON.stringify(eventLink));
+    const seasonLink = db.prepare("SELECT * FROM links WHERE label = 'Saison-Dokument'").get();
+    check('the parentless link rode the settings group', seasonLink != null, String(seasonLink));
+    db.close();
+
+    const bare = new Database(seasonScopeBare, { readonly: true });
+    check('without its group the season contact stays behind', bare.prepare("SELECT COUNT(*) c FROM contacts WHERE name = 'Saison-Kontakt'").get().c === 0);
+    check('…the season event stays behind', bare.prepare("SELECT COUNT(*) c FROM events WHERE title = 'Saison-Termin'").get().c === 0);
+    check('…and without includeSettings the parentless link stays behind', bare.prepare("SELECT COUNT(*) c FROM links WHERE label = 'Saison-Dokument'").get().c === 0);
+    bare.close();
+  }
+
   // ------------------------------- backdate, and plant a deep tree the API would have refused
   {
     const db = new Database(seasonFile('auftakt.db'));
@@ -1091,6 +1172,103 @@ try {
       const row = db2.prepare(`SELECT layout FROM ${table} LIMIT 1`).get();
       check(`a ${table} row from before the column reads NULL, not ""`, row?.layout === null, String(row?.layout));
     }
+    db2.close();
+  }
+
+  // The season-scope rebuilds (WP-47): a legacy "exactly one parent" CHECK on contacts, events
+  // or links must relax to "<= 1" on the next launch, keeping every row and — because DROP
+  // TABLE takes the indexes down and SCHEMA only re-runs on the boot after — every index.
+  // idx_links_section is the sharp one: it lives outside SCHEMA, so only the rebuild itself
+  // can bring it back.
+  console.log('\n== legacy parent CHECKs relax to the season scope (WP-47)');
+  {
+    const db = new Database(seasonFile('auftakt.db'));
+    // The raw connection enforces FKs (better-sqlite3 default); links rows reference events
+    // and tasks, so the drops below need them off, exactly like the migration itself.
+    db.pragma('foreign_keys = OFF');
+    db.exec(`
+      DROP TABLE contacts;
+      CREATE TABLE contacts (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        artist_id  INTEGER REFERENCES artists(id),
+        project_id INTEGER REFERENCES projects(id),
+        role       TEXT,
+        name       TEXT NOT NULL,
+        email      TEXT,
+        phone      TEXT,
+        notes      TEXT,
+        color      TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        deleted_at TEXT,
+        CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) = 1)
+      );
+      INSERT INTO contacts (id, artist_id, name, role, sort_order)
+        VALUES (1, (SELECT id FROM artists WHERE deleted_at IS NULL LIMIT 1), 'Altkontakt', 'Technik', 2);
+      DROP TABLE events;
+      CREATE TABLE events (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        artist_id  INTEGER REFERENCES artists(id),
+        project_id INTEGER REFERENCES projects(id),
+        type       TEXT NOT NULL,
+        title      TEXT NOT NULL,
+        start_at   TEXT,
+        end_at     TEXT,
+        all_day    INTEGER NOT NULL DEFAULT 0,
+        location   TEXT,
+        notes      TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        deleted_at TEXT,
+        CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) = 1)
+      );
+      INSERT INTO events (id, artist_id, type, title, start_at, all_day, sort_order)
+        VALUES (1, (SELECT id FROM artists WHERE deleted_at IS NULL LIMIT 1), 'Auftritt', 'Alttermin', '2026-05-01', 1, 4);
+      DROP TABLE links;
+      CREATE TABLE links (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        artist_id  INTEGER REFERENCES artists(id),
+        project_id INTEGER REFERENCES projects(id),
+        event_id   INTEGER REFERENCES events(id),
+        task_id    INTEGER REFERENCES tasks(id),
+        section_id INTEGER REFERENCES custom_sections(id),
+        label      TEXT NOT NULL,
+        url        TEXT,
+        color      TEXT,
+        category   TEXT,
+        notes      TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        deleted_at TEXT,
+        CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) + (event_id IS NOT NULL) + (task_id IS NOT NULL) + (section_id IS NOT NULL) = 1)
+      );
+      INSERT INTO links (id, task_id, label, url, category, notes, sort_order)
+        VALUES (1, ${deepTree[0]}, 'Altdokument II', 'https://e.org/b', 'technik', 'Notiz', 5);
+    `);
+    db.close();
+
+    await startServer();
+    await stopServer();
+
+    const db2 = new Database(seasonFile('auftakt.db'), { readonly: true });
+    for (const table of ['contacts', 'events', 'links']) {
+      const sql = db2.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table).sql;
+      check(`${table}: the CHECK now allows season-level rows`, sql.includes('<= 1'), sql);
+    }
+    const contact = db2.prepare('SELECT * FROM contacts WHERE id = 1').get();
+    check('the planted contact came through intact', contact?.name === 'Altkontakt' && contact?.role === 'Technik' && contact?.sort_order === 2, JSON.stringify(contact));
+    const event = db2.prepare('SELECT * FROM events WHERE id = 1').get();
+    check('the planted event came through intact', event?.title === 'Alttermin' && event?.all_day === 1 && event?.sort_order === 4, JSON.stringify(event));
+    const link = db2.prepare('SELECT * FROM links WHERE id = 1').get();
+    check('the planted link came through intact', link?.label === 'Altdokument II' && link?.notes === 'Notiz' && link?.sort_order === 5, JSON.stringify(link));
+    const indexes = db2.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%'").all().map((r) => r.name);
+    for (const idx of ['idx_contacts_artist', 'idx_contacts_project', 'idx_events_artist', 'idx_events_project', 'idx_events_start', 'idx_links_parents', 'idx_links_section']) {
+      check(`${idx} survives the rebuild`, indexes.includes(idx), indexes.join(','));
+    }
+    check('the rebuilds left no dangling rows', db2.prepare('PRAGMA foreign_key_check').all().length === 0);
     db2.close();
   }
 } catch (err) {
