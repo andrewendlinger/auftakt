@@ -714,8 +714,9 @@ windows, since the server shares the main process — pre-existing, now merely m
 
 ## Cross-window season races are bounded, not closed (2026-08-12, PR #50 review)
 
-A finding of that review describes a real race between windows, and it is left as it is. What
-bounds it is the **coalesced blanket invalidate** (`client/src/main.tsx`, 150 ms).
+Two findings of that review describe real cross-window behaviour, and both are left as they are.
+They share an answer, which is why they share an entry: the **coalesced blanket invalidate**
+(`client/src/main.tsx`, 150 ms) is what bounds the first and what pays for the second.
 
 **A fresh window's bootstrap burst can straddle a default-season move (PR50-08 / PR50-16).** A new
 window mounts unpinned and fires its dashboard queries in parallel; the `/api` middleware resolves
@@ -732,6 +733,17 @@ failure — a mixed cache that survives the invalidate. Recorded, not merely dro
 PR50-16 is the same race with a sharper trigger (the switch happening *during* Cmd+N's burst) and
 was the one candidate of that review no verifier ever judged: its verifier died mid-run. It is
 filed as decided, not as unread.
+
+**The invalidate broadcast carries no season id (PR50-15).** Every write posts a bare
+`{ v: 1, type: 'invalidate' }`, so a window pinned to another season refetches on a write that
+cannot have touched its data. Tagging the message with the poster's season looks like a one-field
+fix and is not: `['seasons']` is genuinely cross-season state — the default moved — which is
+exactly why `switchSeason()` posts this same signal, so filtering by season needs a second,
+season-agnostic channel beside the first. Against that, the cost is already bounded: the receiver
+coalesces to at most one invalidate per 150 ms no matter how fast a drag reorder posts, the
+refetch set is a handful of queries, and the database is a local file. **Revisit with numbers** —
+two windows on two seasons, sustained editing in one, the other's request volume and interaction
+latency measured. Not with a fresh reading of the same code.
 
 ---
 
