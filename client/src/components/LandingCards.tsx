@@ -44,6 +44,27 @@ export function nonEmptyLandingKeys(landing: LandingContent): string[] {
 }
 
 /**
+ * The landing content as it is *now*, with the cache guaranteed warm first.
+ *
+ * `current()` alone is only half of „now": react-query empties `['landing']` `gcTime` after the
+ * page unmounts — five minutes, the default — and the landing is its only reader, so an undo
+ * pressed from another screen reads `undefined`. Every reader here turns that into `?? []` and
+ * then *writes* what it read, which is why the miss is not a blank list but a wipe: one
+ * „Rückgängig" posts the restored row back as the only one the registry has, and there is no
+ * Papierkorb behind seasons.json (SHL-03).
+ *
+ * So a late closure reads the blob through this, or awaits `refresh()` itself before its own
+ * reads — which is what `useRemoveLandingSection` does, having three of them across two slices.
+ */
+function useReadLanding(): () => Promise<LandingContent | undefined> {
+  const { current, refresh } = useLanding();
+  return async () => {
+    await refresh();
+    return current();
+  };
+}
+
+/**
  * Replace the landing's sections, computed from the list as it is *now*.
  *
  * The `all` prop this replaced was a render snapshot shared by every section on the page, so a
@@ -52,9 +73,10 @@ export function nonEmptyLandingKeys(landing: LandingContent): string[] {
  * had typed in between (SHL-01, SHL-02).
  */
 function usePatchSections() {
-  const { current, patch } = useLanding();
+  const readLanding = useReadLanding();
+  const { patch } = useLanding();
   return async (update: (sections: LandingSection[]) => LandingSectionInput[]) => {
-    await patch({ sections: update(current()?.sections ?? []) });
+    await patch({ sections: update((await readLanding())?.sections ?? []) });
   };
 }
 
@@ -99,8 +121,12 @@ function DocList({
   onPatch,
 }: {
   docs: LandingDoc[];
-  /** The current contents of the list `onPatch` writes to. */
-  read: () => LandingDoc[];
+  /**
+   * The current contents of the list `onPatch` writes to. Async so it can go through
+   * `useReadLanding`: the undo arms below run after the landing has unmounted, by which time a
+   * plain cache read can answer „no documents" for a list that has three.
+   */
+  read: () => Promise<LandingDoc[]>;
   /** The "+ Dokument" button lives in the section title — the parent owns this state. */
   creating: boolean;
   onCloseCreate: () => void;
@@ -113,7 +139,7 @@ function DocList({
     const label = values.label ?? '';
     // Same field, same rule as LinkList: store a scheme so the row is openable (CCL-09).
     const url = values.url ? normalizeUrl(values.url) : null;
-    const now = read();
+    const now = await read();
     if (editing) {
       await onPatch(now.map((d) => (d.id === editing.id ? { ...d, label, url } : d)));
     } else {
@@ -130,9 +156,10 @@ function DocList({
     const index = docs.findIndex((d) => d.id === doc.id);
     return del({
       label: `Dokument „${doc.label}“`,
-      remove: () => onPatch(read().filter((d) => d.id !== doc.id)),
-      restore: () => {
-        const next = [...read()];
+      // `remove` is the redo arm as well, so both of these run long after the click.
+      remove: async () => onPatch((await read()).filter((d) => d.id !== doc.id)),
+      restore: async () => {
+        const next = [...(await read())];
         next.splice(index < 0 ? next.length : Math.min(index, next.length), 0, doc);
         return onPatch(next);
       },
@@ -182,7 +209,8 @@ function DocList({
 
 /** The builtin Dokumente section, backed by the top-level `landing.documents`. */
 export function LandingDocsSection({ landing }: { landing: LandingContent }) {
-  const { current, patch } = useLanding();
+  const readLanding = useReadLanding();
+  const { patch } = useLanding();
   const [creating, setCreating] = useState(false);
   return (
     <div>
@@ -191,7 +219,7 @@ export function LandingDocsSection({ landing }: { landing: LandingContent }) {
       </SectionTitle>
       <DocList
         docs={landing.documents}
-        read={() => current()?.documents ?? []}
+        read={async () => (await readLanding())?.documents ?? []}
         creating={creating}
         onCloseCreate={() => setCreating(false)}
         onPatch={async (documents) => {
@@ -229,7 +257,7 @@ export function LandingTextSection({ section }: { section: LandingSection }) {
 
 /** One custom Dokumente list: renameable title, its own documents inside the section row. */
 export function LandingLinksSection({ section }: { section: LandingSection }) {
-  const { current } = useLanding();
+  const readLanding = useReadLanding();
   const patchSections = usePatchSections();
   const [creating, setCreating] = useState(false);
   return (
@@ -245,7 +273,9 @@ export function LandingLinksSection({ section }: { section: LandingSection }) {
       </SectionTitle>
       <DocList
         docs={section.documents ?? []}
-        read={() => current()?.sections.find((s) => s.id === section.id)?.documents ?? []}
+        read={async () =>
+          (await readLanding())?.sections.find((s) => s.id === section.id)?.documents ?? []
+        }
         creating={creating}
         onCloseCreate={() => setCreating(false)}
         onPatch={(documents) =>

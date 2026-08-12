@@ -344,7 +344,10 @@ screens later is exactly the case that hits it. The same `refresh()` guards the 
 removals (`useRemoveCustomSection`, `useRemoveLandingSection`), whose arms write what they read —
 so a cold cache there is not a refused undo but a wrong array persisted: the whole
 `dashboard_layout` replaced by the one entry being restored, or `landing.sections` replaced by
-the one section, which has no Papierkorb behind it.
+the one section, which has no Papierkorb behind it. The landing has the same rule one level
+further in, where the blob itself is the store: every late reader goes through `useReadLanding`
+(or awaits `refresh()` itself), because `usePatchSections` writes back the whole `sections` array
+— so an undone *document* delete read from a cold cache took every Bereich on the page with it.
 
 Since WP-46 a page declares its built-ins as **one `SectionSpec[]`** (`lib/sectionSpecs.ts`,
 re-exported through `components/SectionCatalog.tsx`): spec order is the default section order for
