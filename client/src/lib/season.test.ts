@@ -68,6 +68,55 @@ describe('window season pin', () => {
 });
 
 /**
+ * seasonGone() navigates, so it needs the same window.location recorder switchSeason does.
+ * The module is re-imported per test because the „am I the document being replaced" latch is
+ * module state — a shared instance would leak the latch into whatever ran next.
+ */
+describe('seasonGone', () => {
+  const nav: string[] = [];
+
+  beforeEach(() => {
+    sessionStorage.clear();
+    nav.length = 0;
+    vi.resetModules();
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { replace: (url: string) => nav.push(url), reload: () => nav.push('reload') },
+    });
+  });
+
+  it('drops the pin, relays the toast and restarts on the landing page', async () => {
+    const fresh = await import('./season');
+    fresh.setWindowSeason(3);
+    fresh.seasonGone();
+    expect(fresh.getWindowSeason()).toBeNull();
+    expect(sessionStorage.getItem('auftakt-season-gone')).toBe('1');
+    expect(nav).toEqual(['#/', 'reload']);
+  });
+
+  it('makes a burst of 410s one reload', async () => {
+    const fresh = await import('./season');
+    fresh.seasonGone();
+    fresh.seasonGone();
+    fresh.seasonGone();
+    expect(nav).toEqual(['#/', 'reload']);
+  });
+
+  it('does not spend the relay flag in the document it is leaving', async () => {
+    const fresh = await import('./season');
+    fresh.seasonGone();
+    // replace('#/') fires a hashchange here, so LandingPage mounts in THIS document and asks.
+    // Answering yes spends the flag on a toast the pending reload is about to wipe.
+    expect(fresh.consumeSeasonGone()).toBe(false);
+    expect(sessionStorage.getItem('auftakt-season-gone')).toBe('1');
+    // The reloaded document is a fresh module instance, and it gets the answer.
+    vi.resetModules();
+    const reloaded = await import('./season');
+    expect(reloaded.consumeSeasonGone()).toBe(true);
+  });
+});
+
+/**
  * switchSeason is the only legal way to change seasons, and its failure branch decides whether
  * a window that clicked a just-deleted season recovers or is left pinned to nothing. jsdom does
  * not implement navigation, so window.location is replaced with a recorder — which is also the

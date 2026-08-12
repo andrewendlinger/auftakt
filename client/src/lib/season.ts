@@ -58,6 +58,13 @@ export function pinFromResponse(header: string | null): void {
 }
 
 /**
+ * Set by seasonGone() in the document it is navigating away from — module state, so the
+ * reloaded document starts false again. sessionStorage cannot express this: both documents
+ * share it, and „which document am I" is exactly the question.
+ */
+let leaving = false;
+
+/**
  * This window's season no longer exists (a 410 — deleted, possibly from another window):
  * drop the pin, leave the toast relay flag and start over on the landing page, where the
  * next requests resolve the default season.
@@ -69,12 +76,23 @@ export function seasonGone(): void {
   if (s?.getItem(GONE_KEY)) return;
   clearWindowSeason();
   s?.setItem(GONE_KEY, '1');
+  leaving = true;
   window.location.replace('#/');
   window.location.reload();
 }
 
-/** Read-and-clear the relay flag; true exactly once after a seasonGone() reload. */
+/**
+ * Read-and-clear the relay flag; true exactly once after a seasonGone() reload.
+ *
+ * Never in the document seasonGone() just left. That document is not dead yet: the hash-only
+ * `replace('#/')` above fires a hashchange, HashRouter mounts LandingPage in it, and its
+ * effect read the flag a beat before the reload wiped the toast off the screen — so the flag
+ * was spent, the reloaded document had nothing to say, and the user arrived on the landing
+ * page with no explanation of why. Whether that happened at all was a race between React's
+ * effect flush and the navigation commit, which is why it only sometimes swallowed the toast.
+ */
 export function consumeSeasonGone(): boolean {
+  if (leaving) return false;
   const s = storage();
   if (!s?.getItem(GONE_KEY)) return false;
   s.removeItem(GONE_KEY);
