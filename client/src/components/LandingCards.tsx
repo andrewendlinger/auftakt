@@ -265,10 +265,17 @@ export function LandingLinksSection({ section }: { section: LandingSection }) {
  * typed into a neighbouring Textfeld, a heading renamed through `EditableText`, a second Bereich
  * deleted on purpose. Registry sections have no `deleted_at` and never appear in „Archiv", so
  * none of that was recoverable (SHL-02).
+ *
+ * „As they are when they run" needs `refresh()` to be true, though — `current()` reads a query
+ * cache react-query empties five minutes after the landing unmounts, and a miss answers `[]`,
+ * which here is not a refusal but the whole registry: the redo arm would `PATCH` `sections: []`
+ * and take every other Bereich with it, and the undo arm would post this one back as the only
+ * one there is. Still SHL-02, reached by a different route and with the same absence of a
+ * Papierkorb behind it.
  */
 export function useRemoveLandingSection(): (key: string) => void {
   const del = useUndoableDelete();
-  const { current, patch } = useLanding();
+  const { current, refresh, patch } = useLanding();
   return (key) => {
     const sections = () => current()?.sections ?? [];
     const layout = () => current()?.layout ?? [];
@@ -286,12 +293,16 @@ export function useRemoveLandingSection(): (key: string) => void {
     const layoutEntry = layout()[layoutIndex];
     void del({
       label: `Bereich „${s.name}“`,
-      remove: () =>
-        patch({
+      // Both arms refresh first: `remove` is the redo arm as well, so it runs late too.
+      remove: async () => {
+        await refresh();
+        return patch({
           sections: sections().filter((x) => x.id !== s.id),
           layout: layout().filter((e) => e.key !== key),
-        }),
-      restore: () => {
+        });
+      },
+      restore: async () => {
+        await refresh();
         // `s` carries its id, so the server keeps it and the entry put back below still points
         // at the restored row.
         const next = [...sections()];

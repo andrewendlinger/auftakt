@@ -49,13 +49,21 @@ export type { HiddenBuiltin } from '../lib/sectionSpecs';
  * `current()` rather than the rendered array, for the reason `useLanding` documents: the undo
  * arm runs up to six seconds later, and rebuilding from a render snapshot would roll back every
  * layout change the user made in between.
+ *
+ * …and `refresh()` before each of those reads, for the reason `LayoutStore` documents: `current()`
+ * reads a query cache that react-query empties five minutes after the page unmounts, and a miss
+ * reads as an empty store. Both arms here *write* what they read, so a miss is not a refused undo
+ * but a wrong array persisted — on the dashboard, whose store is `['settings']`, restoring a
+ * widget from a cold cache would have replaced the whole `dashboard_layout` with the single entry
+ * being put back. The delete itself runs from a mounted page and finds the entry cached, so this
+ * costs nothing on the path that is actually common.
  */
 export function useRemoveCustomSection(
   sections: CustomSection[],
   store: LayoutStore,
 ): (key: string) => void {
   const del = useUndoableDelete();
-  const { current, write } = store;
+  const { current, refresh, write } = store;
   return (key) => {
     const s = sections.find((x) => sectionKey(x) === key);
     if (!s) return;
@@ -65,8 +73,10 @@ export function useRemoveCustomSection(
     const entry = current()[index];
     void del({
       label: `Bereich „${s.name}“`,
+      // Both arms refresh first: `remove` is the redo arm as well, so it runs late too.
       remove: async () => {
         const res = await api.customSections.remove(s.id);
+        await refresh?.();
         // Only when the entry is actually stored. On an entity page still following the template
         // `current()` *is* the template, and writing a filtered copy of it back would freeze it
         // onto this artist as its own layout — an arrangement the user never made (WP-25).
@@ -75,6 +85,7 @@ export function useRemoveCustomSection(
       },
       restore: async () => {
         const res = await api.customSections.restore(s.id);
+        await refresh?.();
         if (entry) {
           const next = [...current()];
           next.splice(index < 0 ? next.length : Math.min(index, next.length), 0, entry);
