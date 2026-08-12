@@ -27,13 +27,17 @@ import { usageRouter } from './routes/usage';
 
 const PORT = Number(process.env.AUFTAKT_PORT ?? 4317);
 
-// Hard-delete rows soft-deleted more than 30 days ago. Boot-only and default-season-only —
-// deliberately NOT in getDb's pool-miss path: check-dates' migration harness plants legacy
-// soft-deleted fixtures and re-opens the file expecting them converted, not purged, and an
-// open-time sweep would also tax the first request a window sends to a freshly pinned
-// season. Non-default seasons purge when they next boot as the default, exactly as an
-// inactive season always has. Never fatal: a purge blocked by a lingering FK reference must
-// not keep the whole app from starting.
+// Hard-delete rows soft-deleted more than 30 days ago. Two sweeps share the retention
+// promise: this boot call covers the registry default (opened storeless right here), and
+// getDb() sweeps every other season on its first request-context open in this process
+// (PR50-07) — before that, a season worked in from a pinned window never purged at all.
+// The line is drawn at the AsyncLocalStorage store, not the HTTP header: in-process
+// programmatic opens (seed/demo, the check scripts, the Notion importer) never sweep,
+// which is what keeps check-dates' migration harness valid — it plants expired
+// soft-deleted fixtures and re-opens the file expecting them converted, not purged. The
+// open-time sweep's cost lands on the first request a window sends to a freshly pinned
+// season, which already pays the full migration chain on that same pool miss. Never
+// fatal: a purge blocked by a lingering FK reference must not keep the app from starting.
 const db = getDb();
 try {
   purgeExpired(db);
@@ -149,7 +153,9 @@ app.use('/api', (req: Request, res: Response, next: NextFunction) => {
     }
   }
   res.setHeader('X-Auftakt-Season', String(id));
-  runWithSeason(id, next);
+  // The row is guaranteed present: the header branch just checked membership, and the
+  // default branch derived `id` from this same array.
+  runWithSeason(reg.seasons.find((s) => s.id === id)!, next);
 });
 
 app.use('/api/artists', artistsRouter);

@@ -175,7 +175,11 @@ paths use typed payload mappers rather than casts.
 ## Soft delete, archive, undo
 
 Every table has `deleted_at`; deletes are soft, lists filter `deleted_at IS NULL`, and
-`purgeExpired()` hard-deletes after `PURGE_AFTER_DAYS` (30) on server startup. On the client,
+`purgeExpired()` hard-deletes after `PURGE_AFTER_DAYS` (30) — at server startup for the default
+season, and when a request opens any season whose handle is not yet pooled (`getDb()`'s pool-miss
+path, so the default sweeps again too whenever its handle was evicted). Two opens are exempt:
+in-process programmatic ones (seed/demo, check scripts, the Notion importer), and the first one
+after an import — a restored backup's trash is usually what the import was *for*. On the client,
 deletes go through `useUndoableDelete()` so every deletion surfaces an undo toast backed by the
 `/restore` endpoint — keep new delete affordances on that path.
 

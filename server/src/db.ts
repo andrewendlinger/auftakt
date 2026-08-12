@@ -14,7 +14,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fileStamp, localStamp } from '../../shared/time';
 import { CHILD_EDGES, DELETE_ORDER } from './lib/cascade';
-import { currentSeasonId } from './seasonContext';
+import { currentSeasonId, currentSeasonRef } from './seasonContext';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -76,6 +76,14 @@ export interface LandingContent {
 interface Registry {
   activeId: number;
   seasons: Season[];
+  /**
+   * Monotonic id counter for createSeason — never max(ids)+1, which recycles the id of a
+   * just-deleted max-id season and silently reroutes a still-pinned window into the new
+   * season's DB, bypassing the 410 recovery (PR50-02). Optional: legacy files lack it;
+   * normalizeRegistry derives and persists it on every read. (Landing section ids are a
+   * separate, still-reused namespace — see DECISIONS.md "Known sharp edges".)
+   */
+  nextSeasonId?: number;
   /** Old files lack the newer keys — every read goes through defaults. */
   landing?: Partial<LandingContent>;
   /** App-global, not landing content: the header switcher shows it on every page. */
@@ -116,18 +124,31 @@ export function registryPath(): string {
 }
 
 /**
- * Rewrite any `createdAt` still stored as a UTC ISO string into the naive-local space format
- * every other timestamp uses (see shared/time.ts). The landing page renders it as a plain
- * calendar day, so a UTC value showed "Angelegt am" a day early for a season created after
- * local midnight (PGS-12). Runs once — a converted registry no longer matches.
+ * Read-time registry repair — every read passes through here, each step runs once (a
+ * repaired registry no longer matches its trigger).
+ *
+ * - Rewrite any `createdAt` still stored as a UTC ISO string into the naive-local space
+ *   format every other timestamp uses (see shared/time.ts). The landing page renders it as
+ *   a plain calendar day, so a UTC value showed "Angelegt am" a day early for a season
+ *   created after local midnight (PGS-12).
+ * - Derive `nextSeasonId` for files that predate it (PR50-02). At READ time, not lazily in
+ *   createSeason: a legacy {1,2,3} that deletes 3 before the counter exists would still
+ *   recycle 3 — deleteSeason itself starts with readRegistry(), so the counter is stamped
+ *   before the row can go. The clamp also self-heals a registry an older app version
+ *   created a season in (it ignores the key but preserves it on write).
  */
-function normalizeRegistryStamps(reg: Registry): Registry {
+function normalizeRegistry(reg: Registry): Registry {
   let changed = false;
   for (const s of reg.seasons) {
     if (typeof s.createdAt !== 'string' || !s.createdAt.includes('T')) continue;
     const d = new Date(s.createdAt);
     if (Number.isNaN(d.getTime())) continue;
     s.createdAt = localStamp(d);
+    changed = true;
+  }
+  const minNext = Math.max(0, ...reg.seasons.map((s) => s.id)) + 1;
+  if (typeof reg.nextSeasonId !== 'number' || reg.nextSeasonId < minNext) {
+    reg.nextSeasonId = minNext;
     changed = true;
   }
   if (changed) saveRegistry(reg);
@@ -137,7 +158,7 @@ function normalizeRegistryStamps(reg: Registry): Registry {
 function readRegistry(): Registry {
   try {
     const reg = JSON.parse(readFileSync(registryPath(), 'utf8')) as Registry;
-    if (reg && Array.isArray(reg.seasons) && reg.seasons.length) return normalizeRegistryStamps(reg);
+    if (reg && Array.isArray(reg.seasons) && reg.seasons.length) return normalizeRegistry(reg);
   } catch {
     /* bootstrap below */
   }
@@ -153,9 +174,11 @@ function readRegistry(): Registry {
     }
   }
   // First run: register the (possibly pre-existing) legacy DB as the first season.
+  // nextSeasonId set here too — the bootstrap path returns without passing normalizeRegistry.
   const reg: Registry = {
     activeId: 1,
     seasons: [{ id: 1, label: DEFAULT_SEASON_LABEL, file: legacyFileName(), createdAt: localStamp() }],
+    nextSeasonId: 2,
   };
   saveRegistry(reg);
   return reg;
@@ -222,26 +245,41 @@ export interface SeasonStats {
 }
 
 /**
- * Kennzahlen per season for the landing page. Inactive seasons are opened raw and
- * read-write (same reason as copySeasonData: a read-only handle can't create the WAL
- * shared-memory file) and may carry a legacy schema, since migrations only run on the
- * active DB — so each season is wrapped in try/catch and reports null instead of
+ * Kennzahlen per season for the landing page. Seasons other than the request's are opened
+ * raw and read-write (same reason as copySeasonData: a read-only handle can't create the
+ * WAL shared-memory file) and may carry a legacy schema, since migrations only run where
+ * getDb() opens — so each season is wrapped in try/catch and reports null instead of
  * failing the whole response.
  */
 export function seasonStats(): Record<number, SeasonStats | null> {
   const reg = readRegistry();
+  // getDb() resolves the REQUEST's season, so that — not reg.activeId — decides which row
+  // may use it. Comparing against the default here read the pinned season's counts under
+  // the default's id and never opened the default's own file at all (#53).
+  //
+  // currentSeason() throws for a context id this registry read no longer carries — possible
+  // when another process rewrites seasons.json between the middleware's read and this one.
+  // A throw here would 500 the whole response and blank every card, the opposite of the
+  // per-season degrade below; with no resolvable current season no row is the pooled one and
+  // every season is simply read raw.
+  let current: Season | null = null;
+  try {
+    current = currentSeason(reg);
+  } catch {
+    /* season vanished mid-request — fall through with none marked current */
+  }
   const out: Record<number, SeasonStats | null> = {};
   for (const s of reg.seasons) {
-    const active = s.id === reg.activeId;
+    const isCurrent = s.id === current?.id;
     const path = join(dataDir(), s.file);
     // Guard: new Database() would create a stray empty file for a missing season.
-    if (!active && !existsSync(path)) {
+    if (!isCurrent && !existsSync(path)) {
       out[s.id] = null;
       continue;
     }
     let db: Database.Database | null = null;
     try {
-      db = active ? getDb() : new Database(path);
+      db = isCurrent ? getDb() : new Database(path);
       const count = (sql: string, ...args: unknown[]): number =>
         (db!.prepare(sql).get(...args) as { n: number }).n;
       // date() parses both storage forms: YYYY-MM-DD (all-day) and YYYY-MM-DDTHH:MM (timed).
@@ -272,7 +310,7 @@ export function seasonStats(): Record<number, SeasonStats | null> {
     } catch {
       out[s.id] = null; // legacy schema / unreadable file → the card degrades gracefully
     } finally {
-      if (db && !active) db.close();
+      if (db && !isCurrent) db.close();
     }
   }
   return out;
@@ -281,7 +319,12 @@ export function seasonStats(): Record<number, SeasonStats | null> {
 /**
  * Create a fully-initialised new season DB and register it (does not activate it).
  *
- * The id must not name a file that still exists. deleteSeason unlinks best-effort, so a
+ * Ids come from the registry's monotonic counter, never max(ids)+1: deleting the max-id
+ * season would free its id for the very next create, and a window still pinned to it would
+ * be silently routed into the new season's DB — the 410 recovery only fires for ids the
+ * registry does not know (PR50-02).
+ *
+ * The id must also not name a file that still exists. deleteSeason unlinks best-effort, so a
  * failed unlink (Windows lock/EPERM) leaves `season-<id>.db` behind while freeing that id —
  * and every step below is a no-op on an existing database (`CREATE TABLE IF NOT EXISTS`,
  * ensureDefaultSettings, ensureBuiltinColumns), so the "blank" season would open populated
@@ -294,7 +337,8 @@ export function createSeason(label: string): Season {
   const registered = new Set(reg.seasons.map((s) => s.file));
   const taken = (file: string): boolean =>
     registered.has(file) || ['', '-wal', '-shm'].some((sfx) => existsSync(join(dataDir(), file + sfx)));
-  let id = Math.max(0, ...reg.seasons.map((s) => s.id)) + 1;
+  // normalizeRegistry guarantees the counter; the fallback is belt-and-braces only.
+  let id = reg.nextSeasonId ?? Math.max(0, ...reg.seasons.map((s) => s.id)) + 1;
   while (taken(`season-${id}.db`)) id++;
   const season: Season = { id, label, file: `season-${id}.db`, createdAt: localStamp() };
   const fresh = new Database(join(dataDir(), season.file));
@@ -305,6 +349,9 @@ export function createSeason(label: string): Season {
   setSetting(fresh, 'saison', label);
   fresh.close();
   reg.seasons.push(season);
+  // From the post-loop id, not nextSeasonId + 1: a DBW-03 leftover file can push `id` past
+  // the counter, and a skipped id must never be handed out later.
+  reg.nextSeasonId = id + 1;
   saveRegistry(reg);
   return season;
 }
@@ -343,7 +390,15 @@ export function updateSeason(id: number, patch: SeasonPatch): void {
     else delete s.period;
   }
   saveRegistry(reg);
-  if (patch.label !== undefined && id === reg.activeId) setSetting(getDb(), 'saison', patch.label);
+  // Mirror the label into the *renamed* season's own file, whatever season the request is
+  // pinned to. The old `id === reg.activeId` guard predates per-window seasons: it let a
+  // pinned request write the default's new label into the pinned season's DB, and never
+  // synced a non-default rename at all (#52). Best-effort, after the registry save — a
+  // settings-write failure must not 400 a rename that already succeeded.
+  if (patch.label !== undefined) {
+    const label = patch.label;
+    withSeasonDb(s.id, s.file, (db) => setSetting(db, 'saison', label));
+  }
 }
 
 /** Persist a manual card order: reorder reg.seasons itself — array order IS the order. */
@@ -414,6 +469,9 @@ export function setBackupPrompted(): void {
  *
  * Called once from the server bootstrap, not from readRegistry(): every getDb() reads the
  * registry, and this opens every season file.
+ *
+ * The `reg.activeId` comparisons below are deliberate, not a missed #53: this runs at boot
+ * outside any request context, where getDb() genuinely resolves the registry default.
  */
 export function adoptLegacyBackupConfig(): void {
   const reg = readRegistry();
@@ -1171,6 +1229,17 @@ export const ARCHIVE_AFTER_DAYS = 30;
 const pool = new Map<number, Database.Database>();
 
 /**
+ * Seasons whose next request-context open must *not* sweep. getDb() purges on a season's first
+ * such open and uses the pool entry as the once-per-process guard, so every eviction re-arms
+ * it. That is right after a delete and wrong after an import: the file that lands is usually an
+ * older backup, and its expired soft-deleted rows are often exactly what the user imported it to
+ * recover — sweeping on the very next request destroys them before the Papierkorb can list them.
+ * Pre-PR50-07 they survived until the next launch (default season) or indefinitely; this keeps
+ * that. One-shot, so the season purges normally from its second open on.
+ */
+const skipPurgeOnOpen = new Set<number>();
+
+/**
  * Bring a just-opened season file up to date: pragmas, schema, defaults, built-in columns and
  * every migration. **The single initialisation path** — `getDb()` and `createSeason()` both go
  * through here.
@@ -1212,15 +1281,44 @@ function initDb(db: Database.Database, isFresh: boolean): void {
 }
 
 export function getDb(): Database.Database {
-  const season = currentSeason();
+  // Inside a request, the /api middleware already resolved and validated the season —
+  // reading it off the store instead of re-parsing seasons.json restores the fast path the
+  // pool removed (PR50-09). Storeless callers keep re-reading the registry per call; the
+  // check scripts' in-process activate-then-getDb pattern depends on that (DECISIONS.md).
+  const season = currentSeasonRef() ?? currentSeason();
   const cached = pool.get(season.id);
   if (cached?.open) return cached;
+  // Pool miss with a store: the snapshot may predate a concurrent delete, and opening would
+  // resurrect the season's file. Re-check against disk — failing beats silently recreating
+  // it (the same reasoning as currentSeason()'s throw, which the snapshot bypasses). A pool
+  // hit needs no check: deleteSeason evicts synchronously via closeSeason.
+  if (currentSeasonRef() !== null && !readRegistry().seasons.some((s) => s.id === season.id)) {
+    throw new Error(`unknown season ${season.id}`);
+  }
   const path = join(dataDir(), season.file);
   mkdirSync(dirname(path), { recursive: true });
   const isFresh = !existsSync(path);
   const db = new Database(path);
   initDb(db, isFresh);
   pool.set(season.id, db);
+  // First request-context open of this season in this process: sweep expired soft-deleted
+  // rows. Boot only covers the registry default, so without this a season worked in from a
+  // pinned window would never purge (PR50-07). The pool entry is the once-per-process
+  // guard (handles never idle-close; a re-sweep after closeSeason is wanted for a delete,
+  // and explicitly not for an import — see skipPurgeOnOpen; `delete` is the consume, and
+  // short-circuit keeps it to the opens that would actually sweep). Gated on the
+  // AsyncLocalStorage store, not on getDb() itself: in-process programmatic opens
+  // (seed/demo, check scripts, the Notion importer) must stay non-destructive —
+  // check-dates' migration harness re-opens planted expired fixtures expecting them
+  // converted, not purged. After initDb, so legacy stamps are local before the cutoff
+  // comparison; never fatal, same rationale as the boot call.
+  if (currentSeasonRef() !== null && !skipPurgeOnOpen.delete(season.id)) {
+    try {
+      purgeExpired(db);
+    } catch (err) {
+      console.error('purgeExpired failed (continuing without purge):', err);
+    }
+  }
   return db;
 }
 
@@ -1241,6 +1339,29 @@ export function closeSeason(id: number): void {
   const db = pool.get(id);
   if (db?.open) db.close();
   pool.delete(id);
+}
+
+/**
+ * Run `fn` against one season's database, best-effort: the pooled handle when some window
+ * has the season open, else a raw open of the existing file. Deliberately never creates a
+ * file and never runs the migration chain — that is getDb()'s job, and it would be a heavy
+ * (post-PR50-07: also purging) side effect for the metadata writes this serves. A missing,
+ * legacy-schema or unreadable file simply contributes nothing, same treatment as
+ * seasonStats: the registry stays authoritative, the in-DB mirror is a courtesy.
+ */
+function withSeasonDb(id: number, file: string, fn: (db: Database.Database) => void): void {
+  const pooled = pool.get(id);
+  const path = join(dataDir(), file);
+  // Guard: new Database() would create a stray empty file for a season never opened.
+  if (!pooled?.open && !existsSync(path)) return;
+  let raw: Database.Database | null = null;
+  try {
+    fn(pooled?.open ? pooled : (raw = new Database(path)));
+  } catch (err) {
+    console.warn(`Saison-Datenbank nicht beschreibbar: ${file}`, err);
+  } finally {
+    raw?.close();
+  }
 }
 
 /*
@@ -1359,6 +1480,9 @@ export function importIntoCurrentSeason(candidatePath: string, backupDir: string
   }
 
   closeSeason(season.id);
+  // The eviction above re-arms getDb()'s open-sweep, which must not fire on a file the user
+  // just imported to recover trashed rows from — disarm it for the next open.
+  skipPurgeOnOpen.add(season.id);
   renameSync(staged, dest);
   for (const suffix of ['-wal', '-shm']) {
     try {
@@ -1873,7 +1997,10 @@ export function setSetting(db: Database.Database, key: string, value: string): v
   ).run(key, value);
 }
 
-/** Hard-delete rows whose deleted_at is older than PURGE_AFTER_DAYS. Runs on startup. */
+/**
+ * Hard-delete rows whose deleted_at is older than PURGE_AFTER_DAYS. Runs at startup for
+ * the default season and on every other season's first request-context open (getDb).
+ */
 export function purgeExpired(db: Database.Database): void {
   // Purge ONLY rows whose OWN deleted_at expired (SDL-01/DBW-01). The SRV-01 shape rooted at
   // every expired row and hard-deleted its whole collect() closure — including still-live

@@ -142,6 +142,12 @@ let projectCopyTarget = null;
  */
 let purge = {};
 let deepTree = [];
+/**
+ * Same shape for the non-default-season sweep (PR50-07): planted before the restart,
+ * backdated on disk, asserted around the second boot.
+ * @type {Record<string, number | string>}
+ */
+let sweep = {};
 
 function cleanup() {
   rmSync(dataDir, { recursive: true, force: true });
@@ -794,6 +800,84 @@ try {
     await ok('POST', '/seasons/1/activate'); // restore: later sections purge the default season's file
   }
 
+  // ---------------------------------------- a rename writes into the renamed season's file
+  // updateSeason used to guard the settings.saison sync with `id === reg.activeId` while
+  // getDb() resolved the request's pin — so a pinned rename of the default wrote the label
+  // into the pinned season's DB, and a non-default rename synced nothing at all (#52).
+  console.log("\n== a season rename writes into the renamed season's file (#52)");
+  {
+    const reg = await ok('GET', '/seasons');
+    const defaultId = reg.activeId;
+    const defaultLabel = reg.seasons.find((s) => s.id === defaultId).label;
+    // withSeasonDb has two branches and the pinned cases below only reach the pooled one.
+    // Renaming a season no window has open — the ordinary case — takes the raw open instead,
+    // and createSeason leaves exactly that state: the file is written and initialised but
+    // never pooled, so this PATCH is the first thing to touch it.
+    const cold = await ok('POST', '/seasons', { label: 'Kalt' });
+    await ok('PATCH', `/seasons/${cold.id}`, { label: 'Kalt umbenannt' });
+    const coldRead = await ok('GET', '/settings', undefined, { 'x-auftakt-season': String(cold.id) });
+    check('renaming a never-opened season reaches its file', coldRead.saison === 'Kalt umbenannt', String(coldRead.saison));
+    await ok('DELETE', `/seasons/${cold.id}`);
+
+    const other = await ok('POST', '/seasons', { label: 'Anderes Fenster' });
+    const pin = { 'x-auftakt-season': String(other.id) };
+
+    // Renaming the DEFAULT from a window pinned elsewhere must not touch the pinned file.
+    await ok('PATCH', `/seasons/${defaultId}`, { label: 'Standard umbenannt' }, pin);
+    const pinned = await ok('GET', '/settings', undefined, pin);
+    check("the pinned season's settings.saison is untouched", pinned.saison === 'Anderes Fenster', String(pinned.saison));
+    const dflt = await ok('GET', '/settings');
+    check("the renamed default's own file follows", dflt.saison === 'Standard umbenannt', String(dflt.saison));
+
+    // Renaming a NON-default season used to write no settings row at all.
+    await ok('PATCH', `/seasons/${other.id}`, { label: 'Anderes Fenster II' });
+    const renamed = await ok('GET', '/settings', undefined, pin);
+    check('a non-default rename reaches its own file too', renamed.saison === 'Anderes Fenster II', String(renamed.saison));
+
+    await ok('PATCH', `/seasons/${defaultId}`, { label: defaultLabel }); // restore the shared fixture
+  }
+
+  // --------------------------------------------------------- seasonStats is pin-independent
+  // seasonStats decided getDb()-vs-raw with `s.id === reg.activeId` while getDb() resolved
+  // the request's pin — so under a pinned request the default's card carried the pinned
+  // season's counts and the default's own file was never opened (#53).
+  console.log('\n== seasonStats is pin-independent (#53)');
+  {
+    const s = await ok('POST', '/seasons', { label: 'Statistik' });
+    const pin = { 'x-auftakt-season': String(s.id) };
+    await ok('POST', '/artists', { name: 'Stat A' }, pin);
+    await ok('POST', '/artists', { name: 'Stat B' }, pin);
+
+    const headerless = await ok('GET', '/seasons/stats');
+    const pinned = await ok('GET', '/seasons/stats', undefined, pin);
+    const defaultId = (await ok('GET', '/seasons')).activeId;
+    check(
+      'fixture: the two seasons are distinguishable',
+      headerless[defaultId].artists !== headerless[s.id].artists,
+      `${headerless[defaultId].artists} vs ${headerless[s.id].artists}`,
+    );
+    check(
+      'a pinned stats read equals the headerless one',
+      JSON.stringify(pinned) === JSON.stringify(headerless),
+      JSON.stringify({ pinned: pinned[defaultId], headerless: headerless[defaultId] }),
+    );
+    check('the pinned season counts its own rows', pinned[s.id].artists === 2, String(pinned[s.id].artists));
+  }
+
+  // ------------------------------------------------ deleted season ids are never recycled
+  // max(ids)+1 handed a just-deleted max id straight back out, and a window still pinned to
+  // it was silently routed into the new season's DB — the 410 recovery only fires for ids
+  // the registry does not know (PR50-02). The registry's nextSeasonId is monotonic instead.
+  console.log("\n== a deleted season's id is never recycled (PR50-02)");
+  {
+    const first = await ok('POST', '/seasons', { label: 'Wegwerf A' }); // takes the current max id
+    await ok('DELETE', `/seasons/${first.id}`); // frees the id and unlinks the file
+    const second = await ok('POST', '/seasons', { label: 'Wegwerf B' });
+    check('the freed max id is not handed out again', second.id !== first.id, `${first.id} → ${second.id}`);
+    check('ids are strictly increasing', second.id > first.id, `${first.id} → ${second.id}`);
+    await ok('DELETE', `/seasons/${second.id}`); // leave no litter for later sections
+  }
+
   // ------------------------------------------------------- purge fixtures (SDL-01 / DBW-02)
   console.log('\n== purge fixtures');
   {
@@ -810,6 +894,19 @@ try {
     // below — „…and its live child is untouched" asserts that against the file, not the API.
     const hidden = await req('GET', `/projects/${kid.id}`);
     check('the fixture is set up: parent trashed, child hidden behind it', hidden.status === 404, String(hidden.status));
+  }
+
+  // ------------------------------------- purge fixture in a NON-default season (PR50-07)
+  // Boot only sweeps the registry default; a season lived in from a pinned window purges
+  // on its first request-context open instead. Planted here, backdated after the stop,
+  // asserted around the second boot below.
+  console.log('\n== purge fixture, non-default season');
+  {
+    const s = await ok('POST', '/seasons', { label: 'Kehr-Saison' });
+    const pin = { 'x-auftakt-season': String(s.id) };
+    const a = await ok('POST', '/artists', { name: 'Abgelaufen' }, pin);
+    await ok('DELETE', `/artists/${a.id}`, undefined, pin);
+    sweep = { seasonId: s.id, artistId: a.id, file: seasonFile(s.file) };
   }
 
   await stopServer();
@@ -857,9 +954,33 @@ try {
     db.close();
   }
 
-  console.log('\n== purge never destroys live children (SDL-01)');
-  await startServer(); // purgeExpired() runs here
+  // The non-default season's fixture, same backdating (read-write open recovers the killed
+  // run's WAL; the clean close checkpoints it away).
+  {
+    const db = new Database(sweep.file);
+    db.prepare(`UPDATE artists SET deleted_at = datetime('now', 'localtime', '-60 days') WHERE id = ?`).run(sweep.artistId);
+    db.close();
+  }
+
+  console.log('\n== purge never destroys live children (SDL-01) / reaches a pinned season (PR50-07)');
+  await startServer(); // boot purgeExpired() runs here — default season only
+  {
+    // The server has not touched this file yet (boot opens only the default), so a direct
+    // readonly peek is safe while it runs. Without this check, a boot that swept every
+    // season would also pass the assertion after the pinned request.
+    const db = new Database(sweep.file, { readonly: true });
+    const there = db.prepare('SELECT COUNT(*) c FROM artists WHERE id = ?').get(sweep.artistId).c === 1;
+    db.close();
+    check('the boot sweep leaves a non-default season alone', there);
+  }
+  await ok('GET', '/artists', undefined, { 'x-auftakt-season': String(sweep.seasonId) }); // first pinned open
   await stopServer();
+  {
+    const db = new Database(sweep.file, { readonly: true });
+    const gone = db.prepare('SELECT COUNT(*) c FROM artists WHERE id = ?').get(sweep.artistId).c === 0;
+    db.close();
+    check('one pinned request swept the season on first open (PR50-07)', gone);
+  }
   {
     // Read the file, not the API: `GET /:id` 404s on soft-deleted rows too (crud.ts), so over
     // HTTP a parked row and a purged one look identical. The whole point is telling them apart.

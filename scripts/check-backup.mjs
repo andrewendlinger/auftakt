@@ -169,10 +169,10 @@ async function waitForServer() {
 }
 
 /** Count rows in a snapshot on disk — the whole point is that copies are not empty. */
-function rows(path, table) {
+function rows(path, table, where = '') {
   const db = new Database(path, { readonly: true });
   try {
-    return db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n;
+    return db.prepare(`SELECT COUNT(*) AS n FROM ${table}${where ? ` WHERE ${where}` : ''}`).get().n;
   } finally {
     db.close();
   }
@@ -263,6 +263,11 @@ const incoming = join(workDir, 'incoming.db');
   db.exec(schema);
   const ins = db.prepare('INSERT INTO artists (name, notes) VALUES (?, ?)');
   for (let i = 0; i < 2000; i++) ins.run(`Importiert ${i}`, 'x'.repeat(300));
+  // One long-expired soft-deleted row — the item a user imports an old backup to recover.
+  // Marked rather than added, so the 2000-row count below still holds.
+  db.prepare(`UPDATE artists SET deleted_at = datetime('now', 'localtime', '-60 days') WHERE name = ?`).run(
+    'Importiert 0',
+  );
   db.close();
 }
 
@@ -295,6 +300,19 @@ check(
   'pre-import backup lands in the backup folder',
   (imported.body.backup ?? '').startsWith(backupDir),
   imported.body.backup,
+);
+
+// --- [2c] the first request after an import must not purge the imported trash ---
+// getDb() sweeps a season's expired soft-deleted rows on its first request-context open
+// (PR50-07) and the import evicts the pooled handle, so the very next request re-opened the
+// freshly imported file and hard-deleted its 60-day-old trash — the very rows a user imports
+// an old backup to recover, gone before the Papierkorb could list them. skipPurgeOnOpen
+// disarms exactly that one open; the season purges normally again from the next one.
+await fetch(api('artists')); // the first request-context open of the imported file
+check(
+  'an import survives the first request with its trash intact',
+  rows(activePath, 'artists', 'deleted_at IS NOT NULL') === 1,
+  `${rows(activePath, 'artists', 'deleted_at IS NOT NULL')} im Papierkorb`,
 );
 
 // --- [2b] a failing copy must not destroy the live database (DBW-04) ---
