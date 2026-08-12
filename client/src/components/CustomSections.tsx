@@ -5,11 +5,10 @@ import type { CustomSection } from '../api/types';
 import { Card, SectionTitle, Btn, PickerRow } from './ui';
 import { Label, Modal, TextInput } from './fields';
 import { SECTION_TYPES, type SectionGroup } from '../lib/sections';
-import type { HiddenBuiltin } from '../lib/sectionSpecs';
+import { pickerBuiltins, type HiddenBuiltin, type SectionSpec } from '../lib/sectionSpecs';
 import { InlineNotes } from './InlineNotes';
 import { EditableText } from './EditableText';
 import { LinkList } from './LinkList';
-import type { LabelKey } from '../lib/labels';
 import type { LayoutStore } from './SectionArranger';
 import { useInvalidateAll, useLabel, useUndoableDelete, useUndoablePatch } from '../hooks';
 
@@ -103,43 +102,30 @@ export function useNonEmptyCustomSections(sections: CustomSection[]): string[] {
 
 /**
  * `SectionArranger`'s `addAction` for a page with built-in sections — the whole picker wiring
- * given the page's own label/group tables and the parent a new widget hangs off.
+ * given the page's section catalog and the parent a new widget hangs off.
  *
  * The three pages that have built-ins (Dashboard, Künstler, Projekt) used to spell out the same
- * twelve-line block, byte-identical apart from `parent`. Adding a third picker group or changing
- * the `HiddenBuiltin` shape meant editing all three, and missing one left that page's „+ Bereich"
- * picker mis-grouping (PGS-28). The per-page `labelKeys`/`groups` tables genuinely differ and
- * stay in their pages.
- *
- * A key with no entry in either table is dropped rather than asserted: `hiddenKeys` comes from
- * the stored layout, which can carry a key this page does not know — the previous
- * `SECTION_LABEL_KEYS[k]!` turned that into an unnamed picker entry or a crash.
+ * twelve-line block, byte-identical apart from `parent` (PGS-28). Since WP-46 the picker rows
+ * come straight from the page's specs — `pickerBuiltins` drops keys a stored layout carries but
+ * the page does not know, and the spec type itself guarantees every removable section names its
+ * group.
  */
 export function builtinPicker(
-  labelKeys: Record<string, LabelKey>,
-  groups: Record<string, SectionGroup>,
+  specs: SectionSpec[],
   parent: SectionParent,
 ): (ctx: {
   hiddenKeys: string[];
   restore: (key: string) => void;
   prepend: (key: string) => void;
 }) => ReactNode {
-  return ({ hiddenKeys, restore, prepend }) => {
-    const hiddenBuiltins: HiddenBuiltin[] = [];
-    for (const key of hiddenKeys) {
-      const labelKey = labelKeys[key];
-      const group = groups[key];
-      if (labelKey && group) hiddenBuiltins.push({ key, labelKey, group });
-    }
-    return (
-      <AddSectionButton
-        parent={parent}
-        onRestore={restore}
-        onPrepend={prepend}
-        hiddenBuiltins={hiddenBuiltins}
-      />
-    );
-  };
+  return ({ hiddenKeys, restore, prepend }) => (
+    <AddSectionButton
+      parent={parent}
+      onRestore={restore}
+      onPrepend={prepend}
+      hiddenBuiltins={pickerBuiltins(specs, hiddenKeys)}
+    />
+  );
 }
 
 /**

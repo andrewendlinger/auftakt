@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
@@ -9,7 +9,6 @@ import { Markdown } from '../components/Markdown';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { LayoutMenu, SectionArranger, useEntityLayout } from '../components/SectionArranger';
 import { EditableLabel } from '../components/EditableLabel';
-import type { LabelKey } from '../lib/labels';
 import { Card, DragHandle, SectionTitle, Spinner, EmptyState, ErrorState, LoadError } from '../components/ui';
 import { isValidId } from '../lib/routeParams';
 import { EventList } from '../components/EventList';
@@ -21,11 +20,15 @@ import {
   customSectionEntries,
   useNonEmptyCustomSections,
   useRemoveCustomSection,
-  type SectionGroup,
 } from '../components/CustomSections';
 import { TaskTable } from '../components/TaskTable';
 import { TaskStatChips } from '../components/TaskStatChips';
-import { AttentionSection, StatsSection } from '../components/SectionCatalog';
+import {
+  arrangerConfig,
+  AttentionSection,
+  StatsSection,
+  type SectionSpec,
+} from '../components/SectionCatalog';
 import { EditArtistButton, NewProjectButton } from '../components/EntityButtons';
 import { ProjectStatusPill } from '../components/ProjectStatusPill';
 import { ExcelButton } from '../components/ExcelButton';
@@ -35,27 +38,6 @@ import {
   useGlobalColumns,
   useUndoablePatch,
 } from '../hooks';
-
-/** Which heading names each section in the "Bereiche bearbeiten" strip. */
-const SECTION_LABEL_KEYS: Record<string, LabelKey> = {
-  projekte: 'artist.projekte',
-  termine: 'artist.termine',
-  aufmerksamkeit: 'artist.aufmerksamkeit',
-  stats: 'artist.stats',
-  kontakte: 'artist.kontakte',
-  links: 'artist.links',
-  aufgaben: 'artist.aufgaben',
-};
-
-/** Picker group of each optional built-in. */
-const SECTION_GROUPS: Record<string, SectionGroup> = {
-  projekte: 'eingabe',
-  termine: 'eingabe',
-  kontakte: 'eingabe',
-  links: 'eingabe',
-  stats: 'einblicke',
-  aufmerksamkeit: 'einblicke',
-};
 
 export function ArtistPage() {
   const { id } = useParams<{ id: string }>();
@@ -159,56 +141,96 @@ export function ArtistPage() {
   // on the same side of the split.
   const generalTasks = tasks.filter((t) => !t.project_id);
 
-  // Insertion order = default section order for fresh layouts: Projekte first, directly
-  // under the artist header (user decision).
-  const sections: Record<string, ReactNode> = {
-    projekte: (
-      <>
-        <SectionTitle right={<NewProjectButton artistId={artistId} artistColor={color} />}>
-          <EditableLabel k="artist.projekte" />
-        </SectionTitle>
-        {projects.length === 0 ? (
-          <EmptyState>Noch keine Projekte.</EmptyState>
-        ) : (
-          <ProjectGrid
-            projects={projects}
-            artistColor={color}
-            tasksByProject={statsByProject}
-          />
-        )}
-      </>
-    ),
-    termine: (
-      <EventList
-        titleKey="artist.termine"
-        events={events}
-        parent={{ artist_id: artistId }}
-        eventTypes={eventTypes}
-        showProject
-        emptyLabel="Keine Termine für diesen Künstler."
-      />
-    ),
-    aufmerksamkeit: <AttentionSection labelKey="artist.aufmerksamkeit" tasks={tasks} />,
-    stats: <StatsSection labelKey="artist.stats" tasks={statsTasks} />,
-    kontakte: <ContactList contacts={contacts} parent={{ artist_id: artistId }} titleKey="artist.kontakte" />,
+  // Spec order = default section order for fresh layouts: Projekte first, directly under the
+  // artist header (user decision). Aufmerksamkeit deliberately sits before Statistiken here,
+  // the reverse of the project page.
+  const specs: SectionSpec[] = [
+    {
+      key: 'projekte',
+      labelKey: 'artist.projekte',
+      group: 'eingabe',
+      node: (
+        <>
+          <SectionTitle right={<NewProjectButton artistId={artistId} artistColor={color} />}>
+            <EditableLabel k="artist.projekte" />
+          </SectionTitle>
+          {projects.length === 0 ? (
+            <EmptyState>Noch keine Projekte.</EmptyState>
+          ) : (
+            <ProjectGrid
+              projects={projects}
+              artistColor={color}
+              tasksByProject={statsByProject}
+            />
+          )}
+        </>
+      ),
+    },
+    {
+      key: 'termine',
+      labelKey: 'artist.termine',
+      group: 'eingabe',
+      node: (
+        <EventList
+          titleKey="artist.termine"
+          events={events}
+          parent={{ artist_id: artistId }}
+          eventTypes={eventTypes}
+          showProject
+          emptyLabel="Keine Termine für diesen Künstler."
+        />
+      ),
+    },
+    {
+      key: 'aufmerksamkeit',
+      labelKey: 'artist.aufmerksamkeit',
+      group: 'einblicke',
+      fullWidth: true,
+      node: <AttentionSection labelKey="artist.aufmerksamkeit" tasks={tasks} />,
+    },
+    {
+      key: 'stats',
+      labelKey: 'artist.stats',
+      group: 'einblicke',
+      defaultHidden: true,
+      node: <StatsSection labelKey="artist.stats" tasks={statsTasks} />,
+    },
+    {
+      key: 'kontakte',
+      labelKey: 'artist.kontakte',
+      group: 'eingabe',
+      node: <ContactList contacts={contacts} parent={{ artist_id: artistId }} titleKey="artist.kontakte" />,
+    },
     // Its own section, unlike the project page's `kontakte`, which holds contacts and links side
     // by side — an artist without projects keeps their documents here, and a list that could only
     // be removed together with the contacts is the wrong default for that (docs/DECISIONS.md).
-    links: <LinkList links={links} parent={{ artist_id: artistId }} titleKey="artist.links" />,
-    aufgaben: (
-      <>
-        {/* resolved_artist_id, matching the page's own task query above — `artist_id` filters on
-            `t.artist_id` alone, so the export silently dropped every task that belongs to this
-            artist through its project (PGS-31). */}
-        <SectionTitle right={<ExcelButton params={{ resolved_artist_id: artistId }} />}>
-          <EditableLabel k="artist.aufgaben" />
-        </SectionTitle>
-        <TaskTable tasks={generalTasks} customColumns={customColumns} parent={{ artist_id: artistId }} />
-      </>
-    ),
-  };
+    {
+      key: 'links',
+      labelKey: 'artist.links',
+      group: 'eingabe',
+      node: <LinkList links={links} parent={{ artist_id: artistId }} titleKey="artist.links" />,
+    },
+    {
+      key: 'aufgaben',
+      labelKey: 'artist.aufgaben',
+      mandatory: true,
+      fullWidth: true,
+      node: (
+        <>
+          {/* resolved_artist_id, matching the page's own task query above — `artist_id` filters on
+              `t.artist_id` alone, so the export silently dropped every task that belongs to this
+              artist through its project (PGS-31). */}
+          <SectionTitle right={<ExcelButton params={{ resolved_artist_id: artistId }} />}>
+            <EditableLabel k="artist.aufgaben" />
+          </SectionTitle>
+          <TaskTable tasks={generalTasks} customColumns={customColumns} parent={{ artist_id: artistId }} />
+        </>
+      ),
+    },
+  ];
+  const cfg = arrangerConfig(specs);
   const custom = customSectionEntries(customSections);
-  Object.assign(sections, custom.nodes);
+  const sections = { ...cfg.sections, ...custom.nodes };
 
   return (
     <div className="space-y-8">
@@ -268,14 +290,15 @@ export function ArtistPage() {
       <SectionArranger
         store={layout}
         sections={sections}
-        labelKeys={SECTION_LABEL_KEYS}
+        labelKeys={cfg.labelKeys}
         titles={custom.titles}
-        mandatoryKeys={['aufgaben']}
-        defaultHidden={['stats']}
-        fullWidthKeys={['aufgaben', 'aufmerksamkeit']}
+        mandatoryKeys={cfg.mandatoryKeys}
+        defaultHidden={cfg.defaultHidden}
+        fullWidthKeys={cfg.fullWidthKeys}
+        defaultWidths={cfg.defaultWidths}
         nonEmptyKeys={nonEmptyKeys}
         onRemoveCustom={removeCustomSection}
-        addAction={builtinPicker(SECTION_LABEL_KEYS, SECTION_GROUPS, { artist_id: artistId })}
+        addAction={builtinPicker(specs, { artist_id: artistId })}
         layoutAction={({ full }) => (
           // `artist.kicker`, not `dash.artists`: this menu sits on the artist page, under that
           // heading, so it follows that rename — the same rule EditArtistButton states.

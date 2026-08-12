@@ -10,7 +10,12 @@ import { Card, DragHandle, SectionTitle, Spinner, EmptyState, ErrorState } from 
 import { ProjectBadge } from '../components/ProjectBadge';
 import { TaskTable } from '../components/TaskTable';
 import { TaskStatChips } from '../components/TaskStatChips';
-import { AttentionSection, StatsSection } from '../components/SectionCatalog';
+import {
+  arrangerConfig,
+  AttentionSection,
+  StatsSection,
+  type SectionSpec,
+} from '../components/SectionCatalog';
 import { NewArtistButton } from '../components/EntityButtons';
 import { EditableLabel } from '../components/EditableLabel';
 import { SectionArranger, parseLayoutEntries } from '../components/SectionArranger';
@@ -20,9 +25,7 @@ import {
   customSectionEntries,
   useNonEmptyCustomSections,
   useRemoveCustomSection,
-  type SectionGroup,
 } from '../components/CustomSections';
-import type { LabelKey } from '../lib/labels';
 import {
   useAllTasks,
   useEventWindowDays,
@@ -30,15 +33,6 @@ import {
   useLabel,
   useSettingsArray,
 } from '../hooks';
-
-/** Which heading names each section in the "Bereiche bearbeiten" strip. */
-const SECTION_LABEL_KEYS: Record<string, LabelKey> = {
-  artists: 'dash.artists',
-  events: 'dash.events',
-  stats: 'dash.stats',
-  tasks: 'dash.tasks',
-  aufmerksamkeit: 'dash.aufmerksamkeit',
-};
 
 /**
  * Rows a block shows before it collapses the rest behind „+ N weitere anzeigen" — the cap
@@ -52,13 +46,6 @@ const SECTION_LABEL_KEYS: Record<string, LabelKey> = {
  * 365 is a legal setting and the window then holds the season.
  */
 const PREVIEW_ROWS = 8;
-
-/** Picker group of each optional built-in — everything here is computed, hence „Einblicke". */
-const SECTION_GROUPS: Record<string, SectionGroup> = {
-  events: 'einblicke',
-  stats: 'einblicke',
-  aufmerksamkeit: 'einblicke',
-};
 
 export function Dashboard() {
   const { data, isLoading, isError, refetch } = useQuery({
@@ -121,9 +108,14 @@ export function Dashboard() {
   // carries the only create surface for this scope.
   const festivalTasks = data.tasks.filter((t) => !t.artist_id && !t.project_id && !t.resolved_artist_id);
 
-  const sections: Record<string, ReactNode> = {
-    artists: (
-      <section>
+  // Spec order = default section order for fresh layouts.
+  const specs: SectionSpec[] = [
+    {
+      key: 'artists',
+      labelKey: 'dash.artists',
+      mandatory: true,
+      node: (
+        <section>
         <SectionTitle right={<NewArtistButton />}>
           <EditableLabel k="dash.artists" />
         </SectionTitle>
@@ -141,10 +133,15 @@ export function Dashboard() {
             ))}
           </div>
         )}
-      </section>
-    ),
-    events: (
-      <section>
+        </section>
+      ),
+    },
+    {
+      key: 'events',
+      labelKey: 'dash.events',
+      group: 'einblicke',
+      node: (
+        <section>
         <SectionTitle hint="Übersicht aus allen Künstlern & Projekten — wird automatisch befüllt.">
           <EditableLabel k="dash.events" />
         </SectionTitle>
@@ -173,41 +170,62 @@ export function Dashboard() {
             )}
           </div>
         )}
-      </section>
-    ),
+        </section>
+      ),
+    },
     // Festival-wide KPIs at a glance — the scannable overview that replaced the long table.
-    stats: <StatsSection labelKey="dash.stats" tasks={allTasks} />,
-    tasks: (
-      <section className="space-y-6">
-        <SectionTitle>
-          <EditableLabel k="dash.tasks" />
-        </SectionTitle>
-        <div>
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
-            <EditableLabel k="dash.festival" />
-          </h3>
-          <TaskTable tasks={festivalTasks} customColumns={customColumns} parent={{ general: true }} />
-        </div>
-      </section>
-    ),
-    aufmerksamkeit: <AttentionSection labelKey="dash.aufmerksamkeit" tasks={data.tasks} />,
-  };
+    {
+      key: 'stats',
+      labelKey: 'dash.stats',
+      group: 'einblicke',
+      node: <StatsSection labelKey="dash.stats" tasks={allTasks} />,
+    },
+    {
+      key: 'tasks',
+      labelKey: 'dash.tasks',
+      mandatory: true,
+      fullWidth: true,
+      node: (
+        <section className="space-y-6">
+          <SectionTitle>
+            <EditableLabel k="dash.tasks" />
+          </SectionTitle>
+          <div>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+              <EditableLabel k="dash.festival" />
+            </h3>
+            <TaskTable tasks={festivalTasks} customColumns={customColumns} parent={{ general: true }} />
+          </div>
+        </section>
+      ),
+    },
+    {
+      key: 'aufmerksamkeit',
+      labelKey: 'dash.aufmerksamkeit',
+      group: 'einblicke',
+      fullWidth: true,
+      node: <AttentionSection labelKey="dash.aufmerksamkeit" tasks={data.tasks} />,
+    },
+  ];
+  const cfg = arrangerConfig(specs);
   const custom = customSectionEntries(customSections);
-  Object.assign(sections, custom.nodes);
+  const sections = { ...cfg.sections, ...custom.nodes };
 
   return (
     <div className="space-y-8">
       <SectionArranger
         layoutKey="dashboard_layout"
         sections={sections}
-        labelKeys={SECTION_LABEL_KEYS}
+        labelKeys={cfg.labelKeys}
         titles={custom.titles}
-        mandatoryKeys={['artists', 'tasks']}
-        fullWidthKeys={['tasks', 'aufmerksamkeit']}
+        mandatoryKeys={cfg.mandatoryKeys}
+        defaultHidden={cfg.defaultHidden}
+        fullWidthKeys={cfg.fullWidthKeys}
+        defaultWidths={cfg.defaultWidths}
         nonEmptyKeys={nonEmptyKeys}
         toolbarAfterKey="artists"
         onRemoveCustom={removeCustomSection}
-        addAction={builtinPicker(SECTION_LABEL_KEYS, SECTION_GROUPS, {})}
+        addAction={builtinPicker(specs, {})}
       />
     </div>
   );
