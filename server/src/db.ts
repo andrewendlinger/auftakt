@@ -886,8 +886,12 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
       (r.artist_id != null && artistIds.has(r.artist_id)) ||
       (r.project_id != null && projectIds.has(r.project_id));
 
-    if (o.contacts) copyRows(target, 'contacts', live('contacts').filter(kept));
-    const events = o.events ? live('events').filter(kept) : [];
+    // Contacts and events with no parent at all are season-level (WP-47); they travel with
+    // their own group. Season events feed `eventIds` below, so their links follow them.
+    const seasonLevel = (r: Record<string, unknown>): boolean =>
+      r.artist_id == null && r.project_id == null;
+    if (o.contacts) copyRows(target, 'contacts', live('contacts').filter((c) => kept(c) || seasonLevel(c)));
+    const events = o.events ? live('events').filter((e) => kept(e) || seasonLevel(e)) : [];
     copyRows(target, 'events', events);
     const eventIds = new Set(events.map((e) => e.id));
 
@@ -932,13 +936,17 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
     copyRows(target, 'custom_sections', sections);
     const sectionIds = new Set(sections.map((s) => s.id));
 
+    // A link with no parent at all sits on the season dashboard (WP-47). Links have no copy
+    // group of their own, so like the dashboard widgets above — whose placement also lives in
+    // `dashboard_layout`, a setting — the season-level ones travel with the settings group.
     const links = live('links').filter(
       (l) =>
         (l.artist_id != null && artistIds.has(l.artist_id)) ||
         (l.project_id != null && projectIds.has(l.project_id)) ||
         (l.event_id != null && eventIds.has(l.event_id)) ||
         (l.task_id != null && taskIds.has(l.task_id)) ||
-        (l.section_id != null && sectionIds.has(l.section_id)),
+        (l.section_id != null && sectionIds.has(l.section_id)) ||
+        (o.settings && seasonLevel(l) && l.event_id == null && l.task_id == null && l.section_id == null),
     );
     copyRows(target, 'links', links);
 
