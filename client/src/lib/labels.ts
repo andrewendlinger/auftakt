@@ -21,6 +21,11 @@ export const LABEL_DEFAULTS = {
   'dash.festival': 'Festival-Aufgaben',
   'dash.stats': 'Aufgaben-Statistiken',
   'dash.aufmerksamkeit': 'Braucht Aufmerksamkeit',
+  // The editable season-level lists (WP-48) — `dash.termine` is the editable twin next to the
+  // read-only `dash.events` roll-up, hence the „Saison-" prefix that tells them apart.
+  'dash.termine': 'Saison-Termine',
+  'dash.kontakte': 'Saison-Kontakte',
+  'dash.links': 'Dokumente & Links',
 
   /** The kicker above the artist H1, not the page title (which is the artist's name). */
   'artist.kicker': 'Künstler',

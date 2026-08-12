@@ -39,6 +39,7 @@ export function ContactList({
   /** Heading id — the text itself lives in `lib/labels.ts` and is user-renameable. */
   titleKey: LabelKey;
   contacts: Contact[];
+  /** Where a new contact hangs: exactly one id, or neither — the empty object is season-level (WP-47). */
   parent: { artist_id?: number; project_id?: number };
 }) {
   const invalidate = useInvalidateAll();
