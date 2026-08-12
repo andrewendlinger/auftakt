@@ -66,9 +66,11 @@ database and local on a new one.
 `server/src/db.ts` is the single source of truth for data location. A `seasons.json` registry in
 the data dir lists seasons and the **default** one (`activeId` — what new windows and headerless
 callers resolve; `activateSeason()` is a registry write only). Each window pins its own season
-(`client/src/lib/season.ts`, sessionStorage) and sends it with every request — `X-Auftakt-Season`
-via the one `http()` wrapper, or `?season=` for the plain `<a href>` downloads that cannot carry a
-header. The `/api` middleware (`server/src/index.ts`) validates the id, answers **410** for a
+(`client/src/lib/season.ts`, sessionStorage) and sends it with every request as
+`X-Auftakt-Season` — **every** request, downloads included, since the header is also what carries
+the 410 recovery (PR50-04). The middleware still accepts `?season=` as an equivalent leg, but its
+only caller is the main process's own HTTP (`seasonPath()` in `electron/main.ts`), which has no
+window pin to read. The `/api` middleware (`server/src/index.ts`) validates the id, answers **410** for a
 season that no longer exists (distinct from row-level 404s; `no-store`, and every `/api` response
 carries `Vary: X-Auftakt-Season` — a heuristically-cached 410 replayed after recovery was an
 infinite reload loop), echoes the resolved id — an unpinned window adopts the first echo — and
