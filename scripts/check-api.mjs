@@ -848,6 +848,20 @@ try {
     check('the pinned season counts its own rows', pinned[s.id].artists === 2, String(pinned[s.id].artists));
   }
 
+  // ------------------------------------------------ deleted season ids are never recycled
+  // max(ids)+1 handed a just-deleted max id straight back out, and a window still pinned to
+  // it was silently routed into the new season's DB — the 410 recovery only fires for ids
+  // the registry does not know (PR50-02). The registry's nextSeasonId is monotonic instead.
+  console.log("\n== a deleted season's id is never recycled (PR50-02)");
+  {
+    const first = await ok('POST', '/seasons', { label: 'Wegwerf A' }); // takes the current max id
+    await ok('DELETE', `/seasons/${first.id}`); // frees the id and unlinks the file
+    const second = await ok('POST', '/seasons', { label: 'Wegwerf B' });
+    check('the freed max id is not handed out again', second.id !== first.id, `${first.id} → ${second.id}`);
+    check('ids are strictly increasing', second.id > first.id, `${first.id} → ${second.id}`);
+    await ok('DELETE', `/seasons/${second.id}`); // leave no litter for later sections
+  }
+
   // ------------------------------------------------------- purge fixtures (SDL-01 / DBW-02)
   console.log('\n== purge fixtures');
   {

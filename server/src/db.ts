@@ -76,6 +76,14 @@ export interface LandingContent {
 interface Registry {
   activeId: number;
   seasons: Season[];
+  /**
+   * Monotonic id counter for createSeason — never max(ids)+1, which recycles the id of a
+   * just-deleted max-id season and silently reroutes a still-pinned window into the new
+   * season's DB, bypassing the 410 recovery (PR50-02). Optional: legacy files lack it;
+   * normalizeRegistry derives and persists it on every read. (Landing section ids are a
+   * separate, still-reused namespace — see DECISIONS.md "Known sharp edges".)
+   */
+  nextSeasonId?: number;
   /** Old files lack the newer keys — every read goes through defaults. */
   landing?: Partial<LandingContent>;
   /** App-global, not landing content: the header switcher shows it on every page. */
@@ -116,18 +124,31 @@ export function registryPath(): string {
 }
 
 /**
- * Rewrite any `createdAt` still stored as a UTC ISO string into the naive-local space format
- * every other timestamp uses (see shared/time.ts). The landing page renders it as a plain
- * calendar day, so a UTC value showed "Angelegt am" a day early for a season created after
- * local midnight (PGS-12). Runs once — a converted registry no longer matches.
+ * Read-time registry repair — every read passes through here, each step runs once (a
+ * repaired registry no longer matches its trigger).
+ *
+ * - Rewrite any `createdAt` still stored as a UTC ISO string into the naive-local space
+ *   format every other timestamp uses (see shared/time.ts). The landing page renders it as
+ *   a plain calendar day, so a UTC value showed "Angelegt am" a day early for a season
+ *   created after local midnight (PGS-12).
+ * - Derive `nextSeasonId` for files that predate it (PR50-02). At READ time, not lazily in
+ *   createSeason: a legacy {1,2,3} that deletes 3 before the counter exists would still
+ *   recycle 3 — deleteSeason itself starts with readRegistry(), so the counter is stamped
+ *   before the row can go. The clamp also self-heals a registry an older app version
+ *   created a season in (it ignores the key but preserves it on write).
  */
-function normalizeRegistryStamps(reg: Registry): Registry {
+function normalizeRegistry(reg: Registry): Registry {
   let changed = false;
   for (const s of reg.seasons) {
     if (typeof s.createdAt !== 'string' || !s.createdAt.includes('T')) continue;
     const d = new Date(s.createdAt);
     if (Number.isNaN(d.getTime())) continue;
     s.createdAt = localStamp(d);
+    changed = true;
+  }
+  const minNext = Math.max(0, ...reg.seasons.map((s) => s.id)) + 1;
+  if (typeof reg.nextSeasonId !== 'number' || reg.nextSeasonId < minNext) {
+    reg.nextSeasonId = minNext;
     changed = true;
   }
   if (changed) saveRegistry(reg);
@@ -137,7 +158,7 @@ function normalizeRegistryStamps(reg: Registry): Registry {
 function readRegistry(): Registry {
   try {
     const reg = JSON.parse(readFileSync(registryPath(), 'utf8')) as Registry;
-    if (reg && Array.isArray(reg.seasons) && reg.seasons.length) return normalizeRegistryStamps(reg);
+    if (reg && Array.isArray(reg.seasons) && reg.seasons.length) return normalizeRegistry(reg);
   } catch {
     /* bootstrap below */
   }
@@ -153,9 +174,11 @@ function readRegistry(): Registry {
     }
   }
   // First run: register the (possibly pre-existing) legacy DB as the first season.
+  // nextSeasonId set here too — the bootstrap path returns without passing normalizeRegistry.
   const reg: Registry = {
     activeId: 1,
     seasons: [{ id: 1, label: DEFAULT_SEASON_LABEL, file: legacyFileName(), createdAt: localStamp() }],
+    nextSeasonId: 2,
   };
   saveRegistry(reg);
   return reg;
@@ -285,7 +308,12 @@ export function seasonStats(): Record<number, SeasonStats | null> {
 /**
  * Create a fully-initialised new season DB and register it (does not activate it).
  *
- * The id must not name a file that still exists. deleteSeason unlinks best-effort, so a
+ * Ids come from the registry's monotonic counter, never max(ids)+1: deleting the max-id
+ * season would free its id for the very next create, and a window still pinned to it would
+ * be silently routed into the new season's DB — the 410 recovery only fires for ids the
+ * registry does not know (PR50-02).
+ *
+ * The id must also not name a file that still exists. deleteSeason unlinks best-effort, so a
  * failed unlink (Windows lock/EPERM) leaves `season-<id>.db` behind while freeing that id —
  * and every step below is a no-op on an existing database (`CREATE TABLE IF NOT EXISTS`,
  * ensureDefaultSettings, ensureBuiltinColumns), so the "blank" season would open populated
@@ -298,7 +326,8 @@ export function createSeason(label: string): Season {
   const registered = new Set(reg.seasons.map((s) => s.file));
   const taken = (file: string): boolean =>
     registered.has(file) || ['', '-wal', '-shm'].some((sfx) => existsSync(join(dataDir(), file + sfx)));
-  let id = Math.max(0, ...reg.seasons.map((s) => s.id)) + 1;
+  // normalizeRegistry guarantees the counter; the fallback is belt-and-braces only.
+  let id = reg.nextSeasonId ?? Math.max(0, ...reg.seasons.map((s) => s.id)) + 1;
   while (taken(`season-${id}.db`)) id++;
   const season: Season = { id, label, file: `season-${id}.db`, createdAt: localStamp() };
   const fresh = new Database(join(dataDir(), season.file));
@@ -309,6 +338,9 @@ export function createSeason(label: string): Season {
   setSetting(fresh, 'saison', label);
   fresh.close();
   reg.seasons.push(season);
+  // From the post-loop id, not nextSeasonId + 1: a DBW-03 leftover file can push `id` past
+  // the counter, and a skipped id must never be handed out later.
+  reg.nextSeasonId = id + 1;
   saveRegistry(reg);
   return season;
 }

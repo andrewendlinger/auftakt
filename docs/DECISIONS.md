@@ -740,7 +740,9 @@ finding one does not read as a discovery.
   deleting the highest-numbered section and adding one hands out the same `lt<id>` again. Every
   holder of the key survives that today — the undo restores the row carrying its own id, `prepend`
   replaces an existing entry rather than adding a second. A monotonic counter in `seasons.json`
-  would close it properly.
+  would close it properly. (*Season* ids have exactly that counter since PR50-02 —
+  `nextSeasonId` — because a recycled season id reroutes a pinned window's requests; landing
+  ids still reuse.)
 - **`RecordFormModal` is not generic over its field names.** That is what would close the rest of
   CCL-24's excess-property gap; judged disproportionate against typed payload mappers, which
   already cover the four form paths.
