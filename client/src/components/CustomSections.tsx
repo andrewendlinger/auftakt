@@ -2,9 +2,8 @@ import { useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { CustomSection } from '../api/types';
-import { Card, SectionTitle, Btn, PickerRow } from './ui';
-import { Label, Modal, TextInput } from './fields';
-import { SECTION_TYPES, type SectionGroup } from '../lib/sections';
+import { Card, SectionTitle, Btn } from './ui';
+import { SectionPickerModal } from './SectionPickerModal';
 import { pickerBuiltins, type HiddenBuiltin, type SectionSpec } from '../lib/sectionSpecs';
 import { InlineNotes } from './InlineNotes';
 import { EditableText } from './EditableText';
@@ -129,10 +128,11 @@ export function builtinPicker(
 }
 
 /**
- * The "+ Bereich" button (edit mode only), opening a grouped picker: „Eingabe" holds the two
- * custom widget types (needing a name) plus this page's hidden built-in input sections;
- * „Einblicke" holds the hidden computed sections. Built-ins are singletons — clicking one
- * restores it immediately; picking a custom type reveals the name field.
+ * The "+ Bereich" button (in the toolbar, outside edit mode since WP-45), opening a grouped
+ * picker: „Eingabe" holds the two custom widget types (needing a name) plus this page's hidden
+ * built-in input sections; „Einblicke" holds the hidden computed sections. Built-ins are
+ * singletons — clicking one restores it immediately; picking a custom type reveals the name
+ * field.
  */
 export function AddSectionButton({
   parent,
@@ -180,103 +180,23 @@ function AddSectionModal({
 }) {
   const invalidate = useInvalidateAll();
   const label = useLabel();
-  const [chosen, setChosen] = useState<CustomSection['type'] | null>(null);
-  const [name, setName] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const create = async () => {
-    if (!name.trim() || !chosen || busy) return;
-    setBusy(true);
-    try {
-      const row = await api.customSections.create({
-        name: name.trim(),
-        type: chosen,
-        artist_id: parent.artist_id ?? null,
-        project_id: parent.project_id ?? null,
-      });
-      await invalidate();
-      onPrepend(sectionKey(row));
-      onClose();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const groupHeading = 'mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-400';
-  const builtinsOf = (group: SectionGroup) => hiddenBuiltins.filter((b) => b.group === group);
-
   return (
-    <Modal
-      title="Bereich hinzufügen"
+    <SectionPickerModal
+      grouped
+      builtins={hiddenBuiltins.map((b) => ({ key: b.key, name: label(b.labelKey), group: b.group }))}
+      onRestore={onRestore}
+      onCreate={async (type, name) => {
+        const row = await api.customSections.create({
+          name,
+          type,
+          artist_id: parent.artist_id ?? null,
+          project_id: parent.project_id ?? null,
+        });
+        await invalidate();
+        onPrepend(sectionKey(row));
+      }}
       onClose={onClose}
-      footer={
-        chosen && (
-          <>
-            <Btn onClick={onClose}>Abbrechen</Btn>
-            <Btn variant="primary" onClick={create} disabled={!name.trim() || busy}>
-              Hinzufügen
-            </Btn>
-          </>
-        )
-      }
-    >
-      <div className="space-y-4">
-        <div>
-          <div className={groupHeading}>Eingabe</div>
-          <div className="space-y-1.5">
-            {SECTION_TYPES.map((t) => (
-              <PickerRow key={t.type} selected={chosen === t.type} onClick={() => setChosen(t.type)}>
-                {t.label}
-                <span className="ml-2 text-xs text-neutral-400">neu, mit eigenem Namen</span>
-              </PickerRow>
-            ))}
-            {builtinsOf('eingabe').map((b) => (
-              <PickerRow
-                key={b.key}
-                onClick={() => {
-                  onRestore(b.key);
-                  onClose();
-                }}
-              >
-                {label(b.labelKey)}
-              </PickerRow>
-            ))}
-          </div>
-        </div>
-        {builtinsOf('einblicke').length > 0 && (
-          <div>
-            <div className={groupHeading}>Einblicke</div>
-            <div className="space-y-1.5">
-              {builtinsOf('einblicke').map((b) => (
-                <PickerRow
-                  key={b.key}
-                  onClick={() => {
-                    onRestore(b.key);
-                    onClose();
-                  }}
-                >
-                  {label(b.labelKey)}
-                </PickerRow>
-              ))}
-            </div>
-          </div>
-        )}
-        {chosen && (
-          <div>
-            <Label>Name</Label>
-            <TextInput
-              autoFocus
-              value={name}
-              placeholder="z. B. Reiseplanung"
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void create();
-              }}
-            />
-          </div>
-        )}
-      </div>
-    </Modal>
+    />
   );
 }
 

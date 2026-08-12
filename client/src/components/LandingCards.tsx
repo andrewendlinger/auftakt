@@ -6,10 +6,10 @@ import type {
   LandingSection,
   LandingSectionInput,
 } from '../api/types';
-import { Card, SectionTitle, Btn, DocumentRow, EmptyState, PickerRow } from './ui';
-import { SECTION_TYPES } from '../lib/sections';
+import { Card, SectionTitle, Btn, DocumentRow, EmptyState } from './ui';
+import { SectionPickerModal } from './SectionPickerModal';
 import { normalizeUrl } from '../lib/url';
-import { Modal, Label, TextInput, RecordFormModal, type FieldDef } from './fields';
+import { RecordFormModal, type FieldDef } from './fields';
 import { EditableLabel } from './EditableLabel';
 import { EditableText } from './EditableText';
 import { InlineNotes } from './InlineNotes';
@@ -307,11 +307,10 @@ export function useRemoveLandingSection(): (key: string) => void {
 }
 
 /**
- * The landing's "+ Bereich" picker. Modeled on CustomSections' AddSectionModal but not
- * reusing it — that one creates per-season `custom_sections` rows, while landing
- * sections live in the registry. Offers the two custom types plus the hidden
- * built-ins to restore. The type list and the option row *are* shared: neither depends on
- * where the section is persisted (SHL-29).
+ * The landing's "+ Bereich" picker: the shared shell in flat mode (the landing has no picker
+ * groups), with its own persistence — landing sections live in the registry, not in a season's
+ * `custom_sections` table, and that split stays (SHL-29). Hidden built-ins arrive
+ * already-named because the landing's two label keys are resolved at the call site.
  */
 export function AddLandingSectionButton({
   hiddenKeys,
@@ -327,32 +326,6 @@ export function AddLandingSectionButton({
 }) {
   const { current, patch } = useLanding();
   const [open, setOpen] = useState(false);
-  const [chosen, setChosen] = useState<LandingSection['type'] | null>(null);
-  const [name, setName] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const close = () => {
-    setOpen(false);
-    setChosen(null);
-    setName('');
-  };
-
-  const create = async () => {
-    if (!name.trim() || !chosen || busy) return;
-    setBusy(true);
-    try {
-      // Appended to the sections as they are now: a section added or deleted since this modal
-      // opened would otherwise be undone by the act of adding another one.
-      const res = await patch({
-        sections: [...(current()?.sections ?? []), { name: name.trim(), type: chosen, value: null }],
-      });
-      const created = res.sections.reduce((a, b) => (a.id > b.id ? a : b));
-      onPrepend(landingSectionKey(created));
-      close();
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <>
@@ -360,56 +333,22 @@ export function AddLandingSectionButton({
         + Bereich
       </Btn>
       {open && (
-        <Modal
-          title="Bereich hinzufügen"
-          onClose={close}
-          footer={
-            chosen && (
-              <>
-                <Btn onClick={close}>Abbrechen</Btn>
-                <Btn variant="primary" onClick={create} disabled={!name.trim() || busy}>
-                  Hinzufügen
-                </Btn>
-              </>
-            )
-          }
-        >
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              {SECTION_TYPES.map((t) => (
-                <PickerRow key={t.type} selected={chosen === t.type} onClick={() => setChosen(t.type)}>
-                  {t.label}
-                  <span className="ml-2 text-xs text-neutral-400">neu, mit eigenem Namen</span>
-                </PickerRow>
-              ))}
-              {hiddenKeys.map((k) => (
-                <PickerRow
-                  key={k}
-                  onClick={() => {
-                    onRestore(k);
-                    close();
-                  }}
-                >
-                  {hiddenNames[k] ?? k}
-                </PickerRow>
-              ))}
-            </div>
-            {chosen && (
-              <div>
-                <Label>Name</Label>
-                <TextInput
-                  autoFocus
-                  value={name}
-                  placeholder={chosen === 'links' ? 'z. B. Verträge' : 'z. B. Kontakte & Adressen'}
-                  onChange={(e) => setName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void create();
-                  }}
-                />
-              </div>
-            )}
-          </div>
-        </Modal>
+        <SectionPickerModal
+          grouped={false}
+          builtins={hiddenKeys.map((k) => ({ key: k, name: hiddenNames[k] ?? k }))}
+          namePlaceholder={(type) => (type === 'links' ? 'z. B. Verträge' : 'z. B. Kontakte & Adressen')}
+          onRestore={onRestore}
+          onCreate={async (type, name) => {
+            // Appended to the sections as they are now: a section added or deleted since this
+            // modal opened would otherwise be undone by the act of adding another one.
+            const res = await patch({
+              sections: [...(current()?.sections ?? []), { name, type, value: null }],
+            });
+            const created = res.sections.reduce((a, b) => (a.id > b.id ? a : b));
+            onPrepend(landingSectionKey(created));
+          }}
+          onClose={() => setOpen(false)}
+        />
       )}
     </>
   );
