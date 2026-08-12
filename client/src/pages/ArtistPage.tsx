@@ -201,9 +201,6 @@ export function ArtistPage() {
       group: 'eingabe',
       node: <ContactList contacts={contacts} parent={{ artist_id: artistId }} titleKey="artist.kontakte" />,
     },
-    // Its own section, unlike the project page's `kontakte`, which holds contacts and links side
-    // by side — an artist without projects keeps their documents here, and a list that could only
-    // be removed together with the contacts is the wrong default for that (docs/DECISIONS.md).
     {
       key: 'links',
       labelKey: 'artist.links',

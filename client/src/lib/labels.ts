@@ -34,8 +34,6 @@ export const LABEL_DEFAULTS = {
   'artist.stats': 'Aufgaben-Statistiken',
   'artist.aufmerksamkeit': 'Braucht Aufmerksamkeit',
   'artist.kontakte': 'Künstler-Kontakte',
-  // Its own section here, unlike the project page, where the same list sits inside `kontakte`
-  // (docs/DECISIONS.md, WP-36) — so this id names a section rather than a second heading.
   'artist.links': 'Dokumente & Links',
   'artist.aufgaben': 'Allgemeine Aufgaben',
   // PDF-only: the one-pager lists project tasks under their own heading. There is no artist-page
@@ -45,8 +43,6 @@ export const LABEL_DEFAULTS = {
 
   'project.kicker': 'Projekt',
   'project.termine': 'Wichtige Termine',
-  // The project page's `kontakte` section renders two lists side by side, so it owns two
-  // ids — renaming one leaves the other alone.
   'project.kontakte': 'Projekt-Kontakte',
   'project.links': 'Dokumente & Links',
   'project.stats': 'Aufgaben-Statistiken',
