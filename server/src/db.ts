@@ -1218,6 +1218,17 @@ export const ARCHIVE_AFTER_DAYS = 30;
 const pool = new Map<number, Database.Database>();
 
 /**
+ * Seasons whose next request-context open must *not* sweep. getDb() purges on a season's first
+ * such open and uses the pool entry as the once-per-process guard, so every eviction re-arms
+ * it. That is right after a delete and wrong after an import: the file that lands is usually an
+ * older backup, and its expired soft-deleted rows are often exactly what the user imported it to
+ * recover — sweeping on the very next request destroys them before the Papierkorb can list them.
+ * Pre-PR50-07 they survived until the next launch (default season) or indefinitely; this keeps
+ * that. One-shot, so the season purges normally from its second open on.
+ */
+const skipPurgeOnOpen = new Set<number>();
+
+/**
  * Bring a just-opened season file up to date: pragmas, schema, defaults, built-in columns and
  * every migration. **The single initialisation path** — `getDb()` and `createSeason()` both go
  * through here.
@@ -1282,13 +1293,15 @@ export function getDb(): Database.Database {
   // First request-context open of this season in this process: sweep expired soft-deleted
   // rows. Boot only covers the registry default, so without this a season worked in from a
   // pinned window would never purge (PR50-07). The pool entry is the once-per-process
-  // guard (handles never idle-close; a re-sweep after closeSeason — delete, import — is
-  // wanted). Gated on the AsyncLocalStorage store, not on getDb() itself: in-process
-  // programmatic opens (seed/demo, check scripts, the Notion importer) must stay
-  // non-destructive — check-dates' migration harness re-opens planted expired fixtures
-  // expecting them converted, not purged. After initDb, so legacy stamps are local before
-  // the cutoff comparison; never fatal, same rationale as the boot call.
-  if (currentSeasonRef() !== null) {
+  // guard (handles never idle-close; a re-sweep after closeSeason is wanted for a delete,
+  // and explicitly not for an import — see skipPurgeOnOpen; `delete` is the consume, and
+  // short-circuit keeps it to the opens that would actually sweep). Gated on the
+  // AsyncLocalStorage store, not on getDb() itself: in-process programmatic opens
+  // (seed/demo, check scripts, the Notion importer) must stay non-destructive —
+  // check-dates' migration harness re-opens planted expired fixtures expecting them
+  // converted, not purged. After initDb, so legacy stamps are local before the cutoff
+  // comparison; never fatal, same rationale as the boot call.
+  if (currentSeasonRef() !== null && !skipPurgeOnOpen.delete(season.id)) {
     try {
       purgeExpired(db);
     } catch (err) {
@@ -1456,6 +1469,9 @@ export function importIntoCurrentSeason(candidatePath: string, backupDir: string
   }
 
   closeSeason(season.id);
+  // The eviction above re-arms getDb()'s open-sweep, which must not fire on a file the user
+  // just imported to recover trashed rows from — disarm it for the next open.
+  skipPurgeOnOpen.add(season.id);
   renameSync(staged, dest);
   for (const suffix of ['-wal', '-shm']) {
     try {
