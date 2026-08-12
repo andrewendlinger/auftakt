@@ -129,8 +129,10 @@ app.get('/api/health', (_req, res) => {
 // default. A season that no longer exists answers 410, not 404: row-level 404s are
 // meaningful to the client, and nothing else uses 410, so the client can read it as "this
 // window's season is gone" without body-sniffing. Every response echoes the resolved id;
-// a window with no pin yet adopts the first echo it sees, which is consistent by
-// construction (all its pre-pin requests resolved to the same default). Mounted after
+// a window with no pin yet adopts the first echo it sees. That is consistent as long as the
+// default holds still: another window moving it mid-burst splits one window's pre-pin
+// requests across two seasons — bounded by the blanket invalidate, see DECISIONS.md
+// ("Cross-window season races are bounded, not closed", PR50-08). Mounted after
 // /api/health (season-free — waitForServer polls it before any season exists client-side).
 app.use('/api', (req: Request, res: Response, next: NextFunction) => {
   const raw = req.get('x-auftakt-season') ?? (typeof req.query.season === 'string' ? req.query.season : undefined);

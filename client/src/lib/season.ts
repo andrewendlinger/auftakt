@@ -55,9 +55,11 @@ export function clearWindowSeason(): void {
 
 /**
  * Adopt the server's echo — but only when unpinned. Every response names the season it
- * resolved to; a fresh window's pre-pin requests all resolved to the same default, so the
- * first echo pins the window consistently without an extra bootstrap request. Once pinned,
- * later echoes (all equal to what we sent) must not overwrite a switch in flight.
+ * resolved to; a fresh window's pre-pin requests resolve the same default, so the first echo
+ * pins the window without an extra bootstrap request. Same default, unless another window
+ * moves it mid-burst — then the echoes disagree and this pins whichever landed first, which
+ * the blanket invalidate then refetches under (DECISIONS.md, PR50-08). Once pinned, later
+ * echoes (all equal to what we sent) must not overwrite a switch in flight.
  */
 export function pinFromResponse(header: string | null): void {
   if (header === null || getWindowSeason() !== null) return;

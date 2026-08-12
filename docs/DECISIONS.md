@@ -712,6 +712,29 @@ windows, since the server shares the main process — pre-existing, now merely m
 
 ---
 
+## Cross-window season races are bounded, not closed (2026-08-12, PR #50 review)
+
+A finding of that review describes a real race between windows, and it is left as it is. What
+bounds it is the **coalesced blanket invalidate** (`client/src/main.tsx`, 150 ms).
+
+**A fresh window's bootstrap burst can straddle a default-season move (PR50-08 / PR50-16).** A new
+window mounts unpinned and fires its dashboard queries in parallel; the `/api` middleware resolves
+the registry default per request, so another window's `switchSeason()` landing
+`POST /seasons/:id/activate` mid-burst splits them — early responses echo the old default, later
+ones the new — and `pinFromResponse()` adopts whichever echo arrives first. The window can render
+one page built from two seasons. Accepted: the window is the few milliseconds between a single
+burst's first and last response, `switchSeason()` immediately broadcasts, and the receiving
+window's blanket invalidate refetches everything under the now-adopted pin — so the mixed render is
+transient, not a stuck state. Making it impossible means correlating an unpinned window's requests
+server-side, and there is no cheap mechanism for that: the client sends no header until a pin
+exists, which is the whole point of echo adoption. **Revisit** on a reproduced, non-transient
+failure — a mixed cache that survives the invalidate. Recorded, not merely dropped, because
+PR50-16 is the same race with a sharper trigger (the switch happening *during* Cmd+N's burst) and
+was the one candidate of that review no verifier ever judged: its verifier died mid-run. It is
+filed as decided, not as unread.
+
+---
+
 ## Artist links are their own section; the project page keeps them inside „Kontakte" (2026-08-12, WP-36)
 
 The project page renders contacts and documents side by side inside a single `kontakte` section:
