@@ -369,7 +369,11 @@ N `BrowserWindow`s over the one in-process server, each pinned to its own season
 `createWindow()` (`electron/main.ts`) is the only constructor — the `setWindowOpenHandler` deny
 stays, since a child window would not inherit the preload. Secondary windows cascade off the
 focused one and load with `?noboot` (they skip the boot gesture; the flag lives in the search
-component, where HashRouter never looks). New windows open unpinned and adopt the registry
+component, where HashRouter never looks). Placement is `electron/cascade.ts`, kept pure so
+`check:unit` can drive it: the window size is **fitted to the work area** first — 1440×900 on a
+1440×875 laptop panel leaves zero pixels to offset into — and the wrap **advances** through the
+anchors that fit instead of resetting to one, which is what made every Cmd+N past the second
+land on the same pixel (PR50-06). New windows open unpinned and adopt the registry
 default from the first response echo — `switchSeason()` moves that default, so Cmd+N opens the
 last-switched season, not necessarily the opener's.
 

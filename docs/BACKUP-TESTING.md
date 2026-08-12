@@ -134,6 +134,10 @@ focused-window season resolution. Run with at least two seasons present.
 - [ ] „Neues Fenster" / Cmd+N (Ctrl+N) opens a second window, cascaded off the first — not
       perfectly stacked — and **without** the boot gesture. `boot-log.jsonl` gains a
       `skip / secondary` line; a reload of that window logs `skip / warm`.
+- [ ] Press it **four times on a laptop panel** (1440×900 or smaller): four windows you can
+      tell apart, none of them under the menu bar or past the screen edge. The old wrap reset
+      to one fixed anchor, so from the second onward they were pixel-identical (PR50-06).
+      `client/src/lib/cascade.test.ts` pins the arithmetic; this checks the real displays.
 - [ ] Edit a task in window A → window B (same season) shows it without any interaction. Then
       break the fast path once: edit in A and merely *focus* B — the focus refetch is the
       backstop and must also bring the edit in.

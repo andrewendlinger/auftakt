@@ -17,6 +17,7 @@ import { pathToFileURL } from 'node:url';
 import { fileStamp } from '../shared/time';
 import { buildMenu } from './menu';
 import { backupDirProblem, runStartupBackup } from './backup';
+import { cascadeBounds, fittedSize } from './cascade';
 import { exportFileName } from './exportName';
 import { writeBootReport } from './bootLog';
 import { checkForUpdates, downloadAndInstallUpdate, startSilentStartupCheck } from './updater';
@@ -438,37 +439,38 @@ async function importDatabase(seasonId: number | undefined, win: BrowserWindow |
   }
 }
 
-/** Default window size — also the wrap bound for the cascade below; keep them together. */
-const WIN_W = 1440;
-const WIN_H = 900;
+/** The window size the app asks for; `fittedSize` shrinks it to whatever the display allows. */
+const PREFERRED = { width: 1440, height: 900 };
+/** Enforced by Electron itself, so the placement arithmetic must never go below it. */
+const MINIMUM = { width: 1024, height: 680 };
+
+/** Which anchor the next wrapped window takes. Module state, deliberately — see cascade.ts. */
+let wrapSlot = 0;
 
 async function createWindow(): Promise<void> {
   // Sampled BEFORE construction — a moment later the count would include this window.
   // A secondary window cascades off the focused one and skips the boot gesture (its
   // ?noboot flag; see client/index.html): the gesture already played in the first window,
-  // and without an offset every window opens 1440×900 centered — perfectly stacked.
+  // and without an offset every window opens centered — perfectly stacked.
   const others = BrowserWindow.getAllWindows();
   const isSecondary = others.length > 0;
-  let position: { x: number; y: number } | undefined;
+  let bounds;
   if (isSecondary) {
-    const src = (BrowserWindow.getFocusedWindow() ?? others[others.length - 1]!).getBounds();
-    // Wrap, don't clamp — a clamp stacks every further window into the same corner.
     // getDisplayMatching keeps the cascade on the monitor the user is working on.
-    const wa = screen.getDisplayMatching(src).workArea;
-    const CASCADE = 28;
-    let x = src.x + CASCADE;
-    let y = src.y + CASCADE;
-    if (x + WIN_W > wa.x + wa.width) x = wa.x + CASCADE;
-    if (y + WIN_H > wa.y + wa.height) y = wa.y + CASCADE;
-    position = { x, y };
+    const src = (BrowserWindow.getFocusedWindow() ?? others[others.length - 1]!).getBounds();
+    const placed = cascadeBounds(src, screen.getDisplayMatching(src).workArea, PREFERRED, MINIMUM, wrapSlot);
+    wrapSlot = placed.nextWrapSlot;
+    bounds = placed.bounds;
+  } else {
+    // Size only: with no window to match a display against, Electron's own centering is the
+    // better answer than guessing which monitor of several the user is sitting at.
+    bounds = fittedSize(screen.getPrimaryDisplay().workArea, PREFERRED, MINIMUM);
   }
 
   const win = new BrowserWindow({
-    width: WIN_W,
-    height: WIN_H,
-    ...position,
-    minWidth: 1024,
-    minHeight: 680,
+    ...bounds,
+    minWidth: MINIMUM.width,
+    minHeight: MINIMUM.height,
     title: 'Auftakt',
     // Created hidden. A window shown at construction is on screen before loadURL has
     // fetched anything, so the user gets an empty rectangle for the whole renderer boot
