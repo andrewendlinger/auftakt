@@ -821,6 +821,33 @@ try {
     await ok('PATCH', `/seasons/${defaultId}`, { label: defaultLabel }); // restore the shared fixture
   }
 
+  // --------------------------------------------------------- seasonStats is pin-independent
+  // seasonStats decided getDb()-vs-raw with `s.id === reg.activeId` while getDb() resolved
+  // the request's pin — so under a pinned request the default's card carried the pinned
+  // season's counts and the default's own file was never opened (#53).
+  console.log('\n== seasonStats is pin-independent (#53)');
+  {
+    const s = await ok('POST', '/seasons', { label: 'Statistik' });
+    const pin = { 'x-auftakt-season': String(s.id) };
+    await ok('POST', '/artists', { name: 'Stat A' }, pin);
+    await ok('POST', '/artists', { name: 'Stat B' }, pin);
+
+    const headerless = await ok('GET', '/seasons/stats');
+    const pinned = await ok('GET', '/seasons/stats', undefined, pin);
+    const defaultId = (await ok('GET', '/seasons')).activeId;
+    check(
+      'fixture: the two seasons are distinguishable',
+      headerless[defaultId].artists !== headerless[s.id].artists,
+      `${headerless[defaultId].artists} vs ${headerless[s.id].artists}`,
+    );
+    check(
+      'a pinned stats read equals the headerless one',
+      JSON.stringify(pinned) === JSON.stringify(headerless),
+      JSON.stringify({ pinned: pinned[defaultId], headerless: headerless[defaultId] }),
+    );
+    check('the pinned season counts its own rows', pinned[s.id].artists === 2, String(pinned[s.id].artists));
+  }
+
   // ------------------------------------------------------- purge fixtures (SDL-01 / DBW-02)
   console.log('\n== purge fixtures');
   {

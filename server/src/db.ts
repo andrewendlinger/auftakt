@@ -222,26 +222,30 @@ export interface SeasonStats {
 }
 
 /**
- * Kennzahlen per season for the landing page. Inactive seasons are opened raw and
- * read-write (same reason as copySeasonData: a read-only handle can't create the WAL
- * shared-memory file) and may carry a legacy schema, since migrations only run on the
- * active DB — so each season is wrapped in try/catch and reports null instead of
+ * Kennzahlen per season for the landing page. Seasons other than the request's are opened
+ * raw and read-write (same reason as copySeasonData: a read-only handle can't create the
+ * WAL shared-memory file) and may carry a legacy schema, since migrations only run where
+ * getDb() opens — so each season is wrapped in try/catch and reports null instead of
  * failing the whole response.
  */
 export function seasonStats(): Record<number, SeasonStats | null> {
   const reg = readRegistry();
+  // getDb() resolves the REQUEST's season, so that — not reg.activeId — decides which row
+  // may use it. Comparing against the default here read the pinned season's counts under
+  // the default's id and never opened the default's own file at all (#53).
+  const current = currentSeason(reg);
   const out: Record<number, SeasonStats | null> = {};
   for (const s of reg.seasons) {
-    const active = s.id === reg.activeId;
+    const isCurrent = s.id === current.id;
     const path = join(dataDir(), s.file);
     // Guard: new Database() would create a stray empty file for a missing season.
-    if (!active && !existsSync(path)) {
+    if (!isCurrent && !existsSync(path)) {
       out[s.id] = null;
       continue;
     }
     let db: Database.Database | null = null;
     try {
-      db = active ? getDb() : new Database(path);
+      db = isCurrent ? getDb() : new Database(path);
       const count = (sql: string, ...args: unknown[]): number =>
         (db!.prepare(sql).get(...args) as { n: number }).n;
       // date() parses both storage forms: YYYY-MM-DD (all-day) and YYYY-MM-DDTHH:MM (timed).
@@ -272,7 +276,7 @@ export function seasonStats(): Record<number, SeasonStats | null> {
     } catch {
       out[s.id] = null; // legacy schema / unreadable file → the card degrades gracefully
     } finally {
-      if (db && !active) db.close();
+      if (db && !isCurrent) db.close();
     }
   }
   return out;
@@ -422,6 +426,9 @@ export function setBackupPrompted(): void {
  *
  * Called once from the server bootstrap, not from readRegistry(): every getDb() reads the
  * registry, and this opens every season file.
+ *
+ * The `reg.activeId` comparisons below are deliberate, not a missed #53: this runs at boot
+ * outside any request context, where getDb() genuinely resolves the registry default.
  */
 export function adoptLegacyBackupConfig(): void {
   const reg = readRegistry();
