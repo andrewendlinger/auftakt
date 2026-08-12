@@ -11,7 +11,7 @@ import { Btn, DragHandle } from './ui';
 import { Modal } from './fields';
 import { TrashIcon } from './icons';
 import { useToast } from './Toast';
-import { useUndo } from './UndoProvider';
+import { useUndo, type UndoEntry } from './UndoProvider';
 import type { LabelKey } from '../lib/labels';
 import { useGuardedAction, useInvalidateAll, useLabel, useSettingsArray } from '../hooks';
 
@@ -74,6 +74,13 @@ export interface LayoutStore {
   /** The array as it is *now* — for a closure (an undo) that runs after the render that made it. */
   current: () => LayoutEntry[];
   write: (next: LayoutEntry[]) => Promise<boolean>;
+  /**
+   * Whether the page holds its own stored arrangement *right now* — `false` on an entity page
+   * that is (again) following the standard, whose `current()` then answers with the standard's
+   * array. The removal undo refuses to write when this answers false (see `removalUndoEntry`);
+   * stores without a template concept omit it.
+   */
+  owned?: () => boolean;
 }
 
 export interface EntityLayoutStore extends LayoutStore {
@@ -134,12 +141,15 @@ export function useEntityLayout(
   const savedCurrent = saved.current;
   const savedWrite = saved.write;
 
+  const ownRows = useCallback(
+    () =>
+      parseEntityLayout((qc.getQueryData([kind, id]) as { layout?: unknown } | undefined)?.layout),
+    [qc, kind, id],
+  );
   const current = useCallback(() => {
-    const stored = parseEntityLayout(
-      (qc.getQueryData([kind, id]) as { layout?: unknown } | undefined)?.layout,
-    );
+    const stored = ownRows();
     return stored.length ? stored : standardCurrent();
-  }, [qc, kind, id, standardCurrent]);
+  }, [ownRows, standardCurrent]);
 
   const patch = useCallback(
     async (next: LayoutEntry[] | null, fallback: string) => {
@@ -185,12 +195,58 @@ export function useEntityLayout(
     value: hasOwn ? own : standard.value,
     current,
     write,
+    owned: () => ownRows().length > 0,
     hasOwn,
     hasSaved: saved.value.length > 0,
     saveLayout,
     applySaved,
     saveAsDefault,
     resetToDefault,
+  };
+}
+
+/**
+ * The undo entry for one built-in removal — a module-level factory so the closures capture only
+ * the store, the key and the display name. Built inline in `Arranger` they would share that
+ * render's activation context and strand its `sections` Record of ReactNode trees in the
+ * ref-backed undo stack for the entry's lifetime (up to 50 entries, app-wide).
+ *
+ * Both arms signal failure by THROWING — `UndoProvider.perform` knows no other channel — and
+ * every `LayoutStore.write` is guard-wrapped and resolves `false` instead of rejecting, so the
+ * boolean is turned back into a throw here; otherwise a failed write toasts „rückgängig gemacht"
+ * and moves the entry to the redo stack for a state change that never happened.
+ *
+ * Both arms also refuse a page that no longer `owned`s its arrangement: after „Auf Standard
+ * zurücksetzen", `current()` answers with the *standard's* array, which may well carry a
+ * tombstone for this key too — a tombstone check alone would pass against the wrong array and
+ * write it into the entity column, freezing the standard onto a page the user just reset (the
+ * template-freeze rule, WP-25).
+ */
+function removalUndoEntry(store: LayoutStore, key: string, name: string): UndoEntry {
+  const assertOwned = () => {
+    if (store.owned && !store.owned()) {
+      throw new Error(`page no longer holds its own layout (${key})`);
+    }
+  };
+  return {
+    label: `Bereich „${name}“`,
+    apply: async () => {
+      assertOwned();
+      if (!(await store.write(markHidden(ensureEntry(store.current(), key), key)))) {
+        throw new Error(`re-removing ${key} was not saved`);
+      }
+    },
+    revert: async () => {
+      assertOwned();
+      const cur = store.current();
+      // The tombstone can be gone by now — another window, an applied saved layout.
+      if (!cur.some((e) => e.key === key && e.hidden === true)) {
+        throw new Error(`layout entry ${key} is no longer hidden`);
+      }
+      if (!(await store.write(clearHidden(cur, key)))) {
+        throw new Error(`restoring ${key} was not saved`);
+      }
+    },
   };
 }
 
@@ -598,43 +654,23 @@ function Arranger({
    * so position and width survive for „+ Bereich" — and, unlike every other layout write, it is
    * undoable (issue #57: removal is the destructive-feeling gesture, and it used to be the least
    * guarded one). The initial write computes from `full` — only `full` knows the on-screen
-   * position of a key the store never held, e.g. a section a later build appended. The undo arms
-   * run seconds later and read `store.current()` instead, for the reason `useLanding` documents.
+   * position of a key the store never held, e.g. a section a later build appended. The undo
+   * arms live in `removalUndoEntry`, which reads `store.current()` instead, for the reason
+   * `useLanding` documents.
    */
-  const removeBuiltin = (key: string) => {
+  const removeBuiltin = async (key: string) => {
     const name = label(labelKeys[key]!);
-    void persist(markHidden(full, key));
-    undo.pushWithToast(
-      {
-        label: `Bereich „${name}“`,
-        apply: async () => {
-          await store.write(markHidden(ensureEntry(store.current(), key), key));
-        },
-        revert: async () => {
-          const cur = store.current();
-          // The tombstone can be gone by now — „Auf Standard zurücksetzen", another window.
-          // Throwing lets UndoProvider toast the failure instead of writing an arrangement
-          // this page no longer has (the template-freeze rule, WP-25).
-          if (!cur.some((e) => e.key === key && e.hidden === true)) {
-            throw new Error(`layout entry ${key} is no longer hidden`);
-          }
-          await store.write(clearHidden(cur, key));
-        },
-      },
-      `Bereich „${name}“ entfernt.`,
-    );
+    // The write publishes before awaiting (SHL-10), so the section leaves the screen at once —
+    // only the toast and the stack entry wait for the resolved path. A removal that failed to
+    // save (the guard has toasted it) must not offer „Rückgängig" for a state change that never
+    // happened (PGS-09 family).
+    if (!(await persist(markHidden(full, key)))) return;
+    undo.pushWithToast(removalUndoEntry(store, key, name), `Bereich „${name}“ entfernt.`);
   };
 
   /** Re-add a hidden built-in at its remembered position and width. */
   const restore = (key: string) => {
-    void persist(
-      full.map((e) => {
-        if (e.key !== key) return e;
-        const { hidden, ...rest } = e;
-        void hidden;
-        return rest;
-      }),
-    );
+    void persist(clearHidden(full, key));
   };
 
   /**
@@ -763,7 +799,7 @@ function Arranger({
                         // page (undo toast). Filled ones confirm first — same two paths after.
                         onClick={() => {
                           if (nonEmptyKeys.includes(key)) setRemoving(key);
-                          else if (key in labelKeys) removeBuiltin(key);
+                          else if (key in labelKeys) void removeBuiltin(key);
                           else onRemoveCustom?.(key);
                         }}
                       >
@@ -795,7 +831,7 @@ function Arranger({
                 <Btn
                   variant="primary"
                   onClick={() => {
-                    removeBuiltin(removing);
+                    void removeBuiltin(removing);
                     setRemoving(null);
                   }}
                 >
