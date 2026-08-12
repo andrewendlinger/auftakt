@@ -27,9 +27,17 @@ export function clearHidden(entries: LayoutEntry[], key: string): LayoutEntry[] 
   });
 }
 
-/** The array with an entry for `key`, appended `full` when no stored entry carries it yet. */
-export function ensureEntry(entries: LayoutEntry[], key: string): LayoutEntry[] {
-  return entries.some((e) => e.key === key) ? entries : [...entries, { key, width: 'full' }];
+/**
+ * The array with an entry for `key`, appended at `width` when no stored entry carries it yet —
+ * pass the key's spec default so a recreated entry matches what the arranger's own append paths
+ * would have written (`defaultWidths`, WP-46/48).
+ */
+export function ensureEntry(
+  entries: LayoutEntry[],
+  key: string,
+  width: 'full' | 'half' = 'full',
+): LayoutEntry[] {
+  return entries.some((e) => e.key === key) ? entries : [...entries, { key, width }];
 }
 
 /**

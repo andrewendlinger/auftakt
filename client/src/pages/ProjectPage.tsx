@@ -120,16 +120,18 @@ export function ProjectPage() {
   const shade = projectShade(artistColor, project.color, project.id);
   const columns = [...globalCols, ...projectCols];
 
-  // A filled section can't be binned (nonEmptyKeys) — `kontakte` holds both lists, so
-  // either contacts or project links count. The computed Einblicke stay freely removable.
+  // A filled section can't be binned (nonEmptyKeys). The computed Einblicke stay freely removable.
   const nonEmptyKeys = [
     ...nonEmptyCustom,
     ...(events.length > 0 ? ['termine'] : []),
-    ...(contacts.length > 0 || links.length > 0 ? ['kontakte'] : []),
+    ...(contacts.length > 0 ? ['kontakte'] : []),
+    ...(links.length > 0 ? ['links'] : []),
   ];
 
-  // Spec order = default section order for fresh layouts. `kontakte` holds two lists side by
-  // side; its contacts heading is the one that names the section.
+  // Spec order = default section order for fresh layouts. `kontakte` and `links` were one welded
+  // section until WP-48 split them (docs/DECISIONS.md); the half defaults keep the pair sitting
+  // side by side on fresh and template pages, while a stored layout finds `links` appended at the
+  // bottom — the same arrival WP-36 gave the artist page's links.
   const specs: SectionSpec[] = [
     {
       key: 'termine',
@@ -148,12 +150,17 @@ export function ProjectPage() {
       key: 'kontakte',
       labelKey: 'project.kontakte',
       group: 'eingabe',
+      defaultWidth: 'half',
       node: (
-        <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-          <ContactList contacts={contacts} parent={{ project_id: projectId }} titleKey="project.kontakte" />
-          <LinkList links={links} parent={{ project_id: projectId }} titleKey="project.links" />
-        </div>
+        <ContactList contacts={contacts} parent={{ project_id: projectId }} titleKey="project.kontakte" />
       ),
+    },
+    {
+      key: 'links',
+      labelKey: 'project.links',
+      group: 'eingabe',
+      defaultWidth: 'half',
+      node: <LinkList links={links} parent={{ project_id: projectId }} titleKey="project.links" />,
     },
     {
       key: 'stats',

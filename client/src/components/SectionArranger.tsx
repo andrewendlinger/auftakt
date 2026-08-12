@@ -265,12 +265,16 @@ export function useEntityLayout(
  * @param released the page's arrangement before the removal, when the removal is what made the
  *   page own one at all; `null` on a page that already had its own (and on the stores with no
  *   template concept, which is every store but `useEntityLayout`'s).
+ * @param width the key's spec default width, for the redo arm's `ensureEntry` — the entry it
+ *   re-creates when the tombstone vanished in between must match what the arranger's own append
+ *   paths would write, not a hardcoded `full` (WP-48 closes the WP-46 edge).
  */
 function removalUndoEntry(
   store: LayoutStore,
   key: string,
   name: string,
   released: LayoutEntry[] | null,
+  width: 'full' | 'half',
 ): UndoEntry {
   const assertOwned = () => {
     if (store.owned && !store.owned()) {
@@ -284,7 +288,7 @@ function removalUndoEntry(
       // Not when `released` is set: the state a redo starts from is then the un-owned one its
       // own revert produced, and re-freezing the standard is precisely what this entry redoes.
       if (!released) assertOwned();
-      if (!(await store.write(markHidden(ensureEntry(store.current(), key), key)))) {
+      if (!(await store.write(markHidden(ensureEntry(store.current(), key, width), key)))) {
         throw new Error(`re-removing ${key} was not saved`);
       }
     },
@@ -664,7 +668,7 @@ function Arranger({
   const defaultHiddenSig = defaultHidden.join(' ');
   const defaultWidthsSig = Object.entries(defaultWidths)
     .map(([k, w]) => `${k}:${w}`)
-    .join(' ');
+    .join('\u0000');
 
   const { full, display, hiddenKeys } = useMemo(() => {
     const known = Object.keys(sections);
@@ -744,7 +748,10 @@ function Arranger({
     // save (the guard has toasted it) must not offer „Rückgängig" for a state change that never
     // happened (PGS-09 family).
     if (!(await persist(markHidden(full, key)))) return;
-    undo.pushWithToast(removalUndoEntry(store, key, name, released), `Bereich „${name}“ entfernt.`);
+    undo.pushWithToast(
+      removalUndoEntry(store, key, name, released, defaultWidths[key] ?? 'full'),
+      `Bereich „${name}“ entfernt.`,
+    );
   };
 
   /** Re-add a hidden built-in at its remembered position and width. */

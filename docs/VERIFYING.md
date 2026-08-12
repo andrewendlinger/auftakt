@@ -393,16 +393,18 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   same-rank block in `demo.ts` (tasks 41–45) is no longer the only place a drop is accepted; task 45
   is the odd rank there, and it is odd by *status* now, not by priority.
 - **The dashboard's „Nächste Termine" has three blocks, and which one a row is in is the
-  assertion**: event 8 under „Datum offen", then 2/5/1/10 inside the 14 days, then 4/3/7 under
+  assertion**: event 8 under „Datum offen", then 2/5/1/10/11 inside the 14 days, then 4/3/7 under
   „Danach". Event 10 is the one to check after touching the split: it starts at 23:00 on day 14
   and ends at 01:00 on day 15, and it belongs to the *near* block, because a row is bucketed by
   its **start** day. All three blocks cap at 8 rows, but **none of them collapses on the demo** —
-  the largest holds four — so „+ N weitere anzeigen" is not reachable here without POSTing more
+  the largest holds five — so „+ N weitere anzeigen" is not reachable here without POSTing more
   events first. Event 6 is nine days past and event 9 is soft-deleted; **both must be
   absent**, and either one appearing is a real bug, not a fixture quirk. Assert on block
   membership, not on a total — the event fixtures grow. And every offset is relative to the
   **seed day**, so a `.demo` built days ago drifts rows across the window boundary; rebuild with
-  `npm run demo` first.
+  `npm run demo` first. Event 11 („Team-Sitzung Saisonplanung") is season-level (WP-47): its
+  roll-up row links to `#/dashboard`, not to an artist or project page — a `/artist/null` href
+  there is the regression WP-48 fixed, not a fixture quirk.
 - **The project and artist pages ship `defaultHidden={['stats', …]}`**, so the „Fortschritt" tile
   is *not on screen* until a layout that names it is written. The dashboard's is.
 - **Artist 2 and project 3 ship their own `layout`; artists 1/3/4 and every other project are
@@ -411,6 +413,22 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   because asserting against artist 2 proves nothing. Artist 2 also un-hides `stats` **and
   tombstones `aufmerksamkeit`** (`hidden: true`, WP-45) — so its „+ Bereich" picker starts with
   „Braucht Aufmerksamkeit" on offer, and `aufmerksamkeit` is *not* in its `[data-section]` list.
+- **The project split (WP-48) is in two states on the demo, and project 3 is the appended one.**
+  Projects with `layout: NULL` render `kontakte` and `links` as separate half sections side by
+  side (spec order); project 3's stored layout predates the split, so its `links` auto-appends
+  **last** in its `[data-section]` list at `data-width="half"`. A check that the two sections act
+  independently (🗑 one, keep the other) belongs on a `NULL`-layout project, not on project 3.
+- **The demo seeds `dashboard_layout` with the season sections opted in** — `termine` full-width
+  after the roll-up, `kontakte`+`links` as a half pair. On any *non-demo* database all three ship
+  `defaultHidden`: not in `[data-section]`, only in the „+ Bereich" picker. To drive the
+  picker-restore path on the demo, blank the layout first
+  (`PATCH /api/settings {"dashboard_layout": []}` — a real JSON array; a string is a 400,
+  „muss eine Liste sein") and reload; the three then start hidden like everywhere else. „Saison-Termine" (`termine`, editable) and
+  „Nächste Termine" (`events`, read-only roll-up) are different sections — asserting a created
+  event into the roll-up or a roll-up row into the editable list fails against working code.
+- **A season contact's GlobalSearch hit navigates to `#/dashboard`** („Greta Simoneit" on the
+  demo) — asserting an artist or project URL there fails against working code (WP-47 rows have
+  no parent to land on).
 - **A layout assertion reads `[data-section]`/`[data-width]`, not the headings** — the arranger
   stamps both on every rendered section, and in arrange mode the in-card heading is hidden anyway.
 - **The demo seeds `artist_layout_saved` but leaves `artist_layout` unset**, so „Gespeichertes

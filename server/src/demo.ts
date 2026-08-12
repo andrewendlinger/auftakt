@@ -190,6 +190,9 @@ const CONTACTS = [
   { id: 7, artist_id: null, project_id: 1, role: 'Technik', name: 'Tobias Reinke', email: 'tobias.reinke@example.org', phone: '+49 151 0000003', color: '#f59e0b' },
   { id: 8, artist_id: null, project_id: 1, role: 'Abendspielleitung', name: 'Wanda Groß', email: null, phone: '+49 151 0000004', notes: 'Nur am Konzerttag erreichbar.' },
   { id: 9, artist_id: 1, project_id: null, role: 'Backline', name: 'Sven Ostermann', email: 'sven@example.org', phone: null },
+  // Season-level contact (no parent at all, WP-47) — fills the Übersicht's „Saison-Kontakte"
+  // section, and its GlobalSearch hit must land on /dashboard, not an artist or project page.
+  { id: 10, artist_id: null, project_id: null, role: 'Festivalbüro', name: 'Greta Simoneit', email: 'buero@example.org', phone: '+49 151 0000005' },
 ];
 
 /** Mix of all-day (date-only start) and timed rows — the UI renders them differently. */
@@ -208,6 +211,11 @@ const EVENTS = [
   { id: 10, artist_id: null, project_id: 1, type: 'Auftritt', title: 'Aftershow-Set', start_at: at(14, '23:00'), end_at: at(15, '01:00'), all_day: 0, location: 'Club' },
   // Soft-deleted event — a leaf in the trash.
   { id: 9, artist_id: null, project_id: 3, type: 'Termin', title: 'Abgesagter Soundcheck', start_at: days(9), end_at: null, all_day: 1, location: null, deleted_at: stamp(-8) },
+  // Season-level event (no parent at all, WP-47) — fills „Saison-Termine" on the Übersicht and
+  // joins the „Nächste Termine" roll-up as the row whose link stays on /dashboard (WP-48). Dated
+  // inside the default 14-day window so both appearances are on the first screen; the season
+  // copy passes `events: true`, so it also exercises the parentless copy arm into Demofest 2027.
+  { id: 11, artist_id: null, project_id: null, type: 'Termin', title: 'Team-Sitzung Saisonplanung', start_at: days(6), end_at: null, all_day: 1, location: 'Festivalbüro' },
 ];
 
 interface DemoTask {
@@ -379,6 +387,9 @@ const LINKS = [
   { id: 14, artist_id: 1, label: 'Honorarvereinbarung', url: 'https://example.org/honorar.pdf', category: 'vertrag' },
   { id: 15, artist_id: 1, label: 'Pressefotos (Download)', url: 'https://example.org/pressefotos', category: 'presse' },
   { id: 16, artist_id: 1, label: 'Kurzbiografie', url: null, notes: 'Liegt nur **auf Papier** vor — noch einscannen.' },
+  // Season-level link (all five parent FKs NULL, WP-47) — fills the Übersicht's
+  // „Dokumente & Links" section; as a parentless link it rides the `settings` copy group.
+  { id: 17, label: 'Förderantrag 2026 (bewilligt)', url: 'https://example.org/foerderantrag.pdf', category: 'vertrag' },
 ];
 
 /** Custom task columns — the only way to exercise the data-driven task table. */
@@ -532,6 +543,28 @@ function main(): void {
       { key: 'kontakte', width: 'half' },
       { key: 'projekte', width: 'full' },
       { key: 'aufgaben', width: 'full' },
+    ]),
+  );
+  // The Übersicht's layout, opting the three season sections in — they ship `defaultHidden`, so
+  // without this row the fixtures above would sit invisibly behind „+ Bereich". Order matches
+  // the spec order a fresh dashboard produces (widgets cs1/cs2 auto-append last), with `termine`
+  // right after the read-only roll-up so the two hint-line states sit together, and the
+  // kontakte/links pair half-width — the arrangement the picker's re-add cannot produce on its
+  // own, only the width toggle can.
+  setSetting(
+    db,
+    'dashboard_layout',
+    JSON.stringify([
+      { key: 'artists', width: 'full' },
+      { key: 'events', width: 'full' },
+      { key: 'termine', width: 'full' },
+      { key: 'kontakte', width: 'half' },
+      { key: 'links', width: 'half' },
+      { key: 'stats', width: 'full' },
+      { key: 'tasks', width: 'full' },
+      { key: 'aufmerksamkeit', width: 'full' },
+      { key: 'cs1', width: 'full' },
+      { key: 'cs2', width: 'full' },
     ]),
   );
 

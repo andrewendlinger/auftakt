@@ -21,6 +21,11 @@ export const LABEL_DEFAULTS = {
   'dash.festival': 'Festival-Aufgaben',
   'dash.stats': 'Aufgaben-Statistiken',
   'dash.aufmerksamkeit': 'Braucht Aufmerksamkeit',
+  // The editable season-level lists (WP-48) — `dash.termine` is the editable twin next to the
+  // read-only `dash.events` roll-up, hence the „Saison-" prefix that tells them apart.
+  'dash.termine': 'Saison-Termine',
+  'dash.kontakte': 'Saison-Kontakte',
+  'dash.links': 'Dokumente & Links',
 
   /** The kicker above the artist H1, not the page title (which is the artist's name). */
   'artist.kicker': 'Künstler',
@@ -29,8 +34,6 @@ export const LABEL_DEFAULTS = {
   'artist.stats': 'Aufgaben-Statistiken',
   'artist.aufmerksamkeit': 'Braucht Aufmerksamkeit',
   'artist.kontakte': 'Künstler-Kontakte',
-  // Its own section here, unlike the project page, where the same list sits inside `kontakte`
-  // (docs/DECISIONS.md, WP-36) — so this id names a section rather than a second heading.
   'artist.links': 'Dokumente & Links',
   'artist.aufgaben': 'Allgemeine Aufgaben',
   // PDF-only: the one-pager lists project tasks under their own heading. There is no artist-page
@@ -40,8 +43,6 @@ export const LABEL_DEFAULTS = {
 
   'project.kicker': 'Projekt',
   'project.termine': 'Wichtige Termine',
-  // The project page's `kontakte` section renders two lists side by side, so it owns two
-  // ids — renaming one leaves the other alone.
   'project.kontakte': 'Projekt-Kontakte',
   'project.links': 'Dokumente & Links',
   'project.stats': 'Aufgaben-Statistiken',

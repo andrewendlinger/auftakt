@@ -17,6 +17,7 @@ import {
 } from '../lib/eventTime';
 import { useGuardedAction, useInvalidateAll, useUndoablePatch } from '../hooks';
 
+/** Where a new event hangs: exactly one id, or neither — the empty object is season-level (WP-47). */
 export interface EventParent {
   artist_id?: number;
   project_id?: number;

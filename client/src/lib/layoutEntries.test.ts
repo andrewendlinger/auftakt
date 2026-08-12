@@ -65,6 +65,10 @@ describe('ensureEntry', () => {
     expect(ensureEntry([e('a')], 'b')).toEqual([e('a'), e('b')]);
   });
 
+  it('appends at the given width — the spec default the redo arm threads through (WP-48)', () => {
+    expect(ensureEntry([e('a')], 'b', 'half')).toEqual([e('a'), e('b', 'half')]);
+  });
+
   it('returns the array unchanged when the key exists — even hidden', () => {
     // The redo arm calls ensureEntry before markHidden; an existing tombstone must not be
     // duplicated, or the layout carries the key twice and the first occurrence wins forever.

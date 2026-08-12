@@ -163,7 +163,9 @@ and custom sections before them (WP-47). Those rows are listed with `?scope=seas
 spelling is deliberate: **`?season=` is taken** — the `/api` middleware reads it as a window pin
 and answers 410 for a non-integer value before any route runs, so a scope param named `?season=`
 would never reach a list. Creates need nothing special: the clients send explicit `null`s and the
-CHECKs read „at most one parent", with two still refused (`SQLITE_CONSTRAINT` → 400).
+CHECKs read „at most one parent", with two still refused (`SQLITE_CONSTRAINT` → 400). The client
+consumers are the Übersicht's three season sections (WP-48): `Dashboard.tsx` lists each table
+with `scope=season` and hosts the shared list components with an empty `parent`.
 
 Behaviour keyed off the allowlist rather than a separate flag: `/reorder` mounts when `sort_order`
 is writable, and `color` is hex-validated when `color` is. A new table gets both by construction.
@@ -372,8 +374,10 @@ fresh layouts, and `arrangerConfig(specs)` derives the arranger's parallel props
 (`sections`/`labelKeys`/`mandatoryKeys`/`defaultHidden`/`fullWidthKeys`/`defaultWidths`) from it.
 A removable spec must name its picker group — the type forbids „removable but ungroupable", so a
 key can no longer silently drop out of the „+ Bereich" picker (the PGS-28 class). `defaultWidths`
-lets a key arrive half-width when first appended to a stored layout; no key uses it yet
-(reserved for section pairs meant to sit side by side, WP-D).
+lets a key arrive half-width when first appended to a stored layout; the project page's
+`kontakte`/`links` pair is its user (WP-48) — two adjacent half specs reproduce the welded
+section's side-by-side look on fresh pages, and every append path including the removal-redo's
+`ensureEntry` writes the spec width.
 
 Two things that look like tidiness and are not. A layout write must **publish to its query cache
 before awaiting**, because most arrange mutations fire as `void write(…)` (SHL-10) — the removal

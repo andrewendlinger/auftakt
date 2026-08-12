@@ -55,10 +55,10 @@ describe('arrangerConfig', () => {
     expect(arrangerConfig(specs).defaultWidths).toEqual({});
   });
 
-  it('carries a half defaultWidth through — the dormant WP-D mechanism', () => {
+  it('carries a half defaultWidth through — the project pair is the live user (WP-48)', () => {
     const withHalf: SectionSpec[] = [
       ...specs,
-      { key: 'kontakte', labelKey: 'dash.artists', group: 'eingabe', defaultWidth: 'half', node: null },
+      { key: 'kontakte', labelKey: 'dash.kontakte', group: 'eingabe', defaultWidth: 'half', node: null },
     ];
     expect(arrangerConfig(withHalf).defaultWidths).toEqual({ kontakte: 'half' });
   });

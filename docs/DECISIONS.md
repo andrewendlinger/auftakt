@@ -769,6 +769,11 @@ Folding it into `kontakte` would have avoided that and was rejected for the reas
 section on every existing project page for a symmetry nobody asked for. So the two pages differ on
 purpose — this is not drift to be tidied up.
 
+*The last paragraph was superseded on the same day it was confirmed*: the unified-sections
+concept (issue #57) made „every scope hosts the same catalog" the rule, and the user decided the
+project page joins it — see „The project page's Kontakte and Links are two sections" (WP-48)
+below. The artist-page half of this entry stands.
+
 ## One 🗑, one outcome: removing a built-in is a tombstone, and it is undoable (2026-08-12, WP-45, #57)
 
 Issue #57 documented four different outcomes behind the same 🗑 — silent vanish, refusal
@@ -838,9 +843,10 @@ dashboard's „Nächste Termine" carry a muted, non-renameable line under the re
 („Wird automatisch …"), because a removed computed section used to be indistinguishable from a
 list the user forgot to fill — and the line becomes load-bearing when an editable twin appears
 next to the read-only roll-up (WP-D). And **`defaultWidths` ships dormant**: the arranger can
-append a key half-width, no spec sets it yet. Its known edge: `ensureEntry`
-(`lib/layoutEntries.ts`) still recreates a vanished entry full-width in the removal-undo arm,
-acceptable until a half-default key exists (WP-D).
+append a key half-width, no spec sets it yet. Its known edge — `ensureEntry`
+(`lib/layoutEntries.ts`) recreating a vanished entry full-width in the removal-undo arm — was
+acceptable only while no half-default key existed; WP-48 introduced two and closed it by
+threading the spec width through `removalUndoEntry`.
 
 ## Season scope parity: 0 parents = season-level (2026-08-12, WP-47, #57)
 
@@ -865,7 +871,34 @@ The boundaries of the decision, so they are not re-litigated per package:
 - `search.ts`, `cascade.ts`, `export.ts` and `deleted.ts` needed no change; a season row in the
   Papierkorb simply carries no sublabel. Accepted.
 
-## Known sharp edges with no owner
+## The season sections are opt-in, and the roll-up keeps parentless events (2026-08-12, WP-48, #57)
+
+The Übersicht's `termine`/`kontakte`/`links` specs ship `defaultHidden`: every dashboard —
+existing or fresh — keeps its arrangement, and the sections arrive as „+ Bereich" picker entries
+via the tombstone auto-append. Shipping them visible was rejected: three new empty lists on every
+installation's first screen is the kind of unasked-for rearrangement WP-45 was about preventing.
+Their label ids are `dash.*` like every dashboard section, with „Saison-" defaults so the
+editable `dash.termine` reads apart from the read-only `dash.events` roll-up beside it — the
+WP-46 hint line carries the rest of that distinction.
+
+The roll-up itself **keeps** season-level events. `upcomingEvents` never had a has-a-parent
+condition, so they appear the moment they exist; excluding them was rejected because a season
+deadline is exactly what „Nächste Termine" is for. What had to change was the row's link, which
+interpolated a NULL `resolved_artist_id` into `/artist/null` (the SHL-07 class) — parentless
+rows now stay on `/dashboard`, the same fallback GlobalSearch has always used, and the section
+hint no longer claims the list draws only from Künstler & Projekten.
+
+## The project page's Kontakte and Links are two sections (2026-08-12, WP-48, #57)
+
+Supersedes the WP-36 paragraph „the project page is deliberately left as it is" — by user
+decision (2026-08-12), the two lists welded into one `kontakte` section split into independent
+`kontakte` and `links` specs, matching the artist page. What the weld cost — links not hideable,
+not reorderable, not half-widthable on their own, one `nonEmptyKeys` clause ORing both lists —
+outweighed the cost WP-36 wanted to avoid, and that cost shrank to the known WP-36 arrival:
+a stored project layout finds „Dokumente & Links" appended at the bottom until dragged, while
+fresh and template pages reproduce the side-by-side look through the pair's `defaultWidth:
+'half'` (the first live user of WP-46's dormant mechanism). `project.links` already named the
+weld's second heading, so it now names the section and existing renames survive unchanged.
 
 Real, understood, and deliberately not scheduled. Each carries a comment at its own site; none is
 worth a backlog entry, because the cost of the fix exceeds what it buys today. Listed so that

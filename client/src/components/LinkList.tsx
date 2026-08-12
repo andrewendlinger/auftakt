@@ -53,6 +53,7 @@ function linkPayload(v: Record<string, string | null>): LinkCreate {
   return { label: v.label ?? '', url: v.url ? normalizeUrl(v.url) : v.url, category: v.category };
 }
 
+/** Where a new link hangs: exactly one id, or none at all — the empty object is season-level (WP-47). */
 export type LinkParent = {
   artist_id?: number;
   project_id?: number;
