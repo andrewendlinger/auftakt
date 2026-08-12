@@ -808,6 +808,29 @@ in view mode, „⌂ Layout" joining in edit mode. „⌂ Layout" stays gated: i
 arrangements, which is edit-mode business. A „N Bereiche ausgeblendet" hint was considered in #57
 and rejected — it makes the third state visible instead of removing it.
 
+## One spec per section; the picker modal is shared, its persistence is not (2026-08-12, WP-46)
+
+A page's built-ins are declared as one `SectionSpec[]` (`lib/sectionSpecs.ts`), replacing the
+per-page `SECTION_LABEL_KEYS`/`SECTION_GROUPS` tables and the inline flag literals. The spec
+type couples „removable" to „has a picker group", so the PGS-28 failure — a key missing from the
+groups table silently vanishing from the picker — is unrepresentable rather than merely fixed.
+
+This also supersedes **half** of SHL-29. SHL-29 hoisted `SECTION_TYPES` and `PickerRow` but
+declined to share the „Bereich hinzufügen" modal because the two pickers persist differently.
+That reasoning's live half stands: `SectionPickerModal` is presentation only (an `onCreate`
+callback), and `AddSectionModal` (per-season `custom_sections` rows) and
+`AddLandingSectionButton` (registry sections, flat list, own placeholders) keep their own
+persistence. What fell was only the duplicated modal markup, which had already drifted.
+
+Two deliberate details. **Computed sections say so**: `StatsSection`/`AttentionSection` and the
+dashboard's „Nächste Termine" carry a muted, non-renameable line under the renameable heading
+(„Wird automatisch …"), because a removed computed section used to be indistinguishable from a
+list the user forgot to fill — and the line becomes load-bearing when an editable twin appears
+next to the read-only roll-up (WP-D). And **`defaultWidths` ships dormant**: the arranger can
+append a key half-width, no spec sets it yet. Its known edge: `ensureEntry`
+(`lib/layoutEntries.ts`) still recreates a vanished entry full-width in the removal-undo arm,
+acceptable until a half-default key exists (WP-D).
+
 ## Known sharp edges with no owner
 
 Real, understood, and deliberately not scheduled. Each carries a comment at its own site; none is
