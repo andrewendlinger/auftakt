@@ -18,6 +18,11 @@ Then drive `http://localhost:5317/#/artist/1`, `#/project/1`, `#/archiv`, `#/ein
 Use headless Playwright or curl — **not** `npm run electron:dev`, which opens a real window on the
 user's desktop.
 
+Playwright is not a dependency of this repository (`docs/DECISIONS.md` records a committed suite
+as the eventual plan). Until that lands, keep **one** install outside the working tree and reuse
+it — one per session in a temp directory costs an npm tree every time, and a stray
+`PLAYWRIGHT_BROWSERS_PATH` re-downloads half a gigabyte of browsers that were already cached.
+
 **The Übersicht is `#/dashboard`. `#/` is the season landing page** — a different screen with no
 task tiles and no „Nächste Termine". Asserting dashboard content against `#/` fails against
 working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id`.
