@@ -799,6 +799,17 @@ zurücksetzen", another window — so `UndoProvider` toasts the failure instead 
 arrangement onto a template-following page. Reorder, width, and every `LayoutMenu` action stay
 off the undo stack; the picker's re-add too, its inverse being the 🗑 itself.
 
+That throw only covers the case where the *user* left the template. The removal itself is the
+other one: on a page still following the standard it has to persist the whole array to have
+somewhere to put the tombstone, so „Rückgängig" restoring the array restores the picture and
+leaves the page detached — looking identical, saying „rückgängig gemacht", and never inheriting
+again, with „Auf Standard zurücksetzen" the only way back and no reason to look for it. Decided:
+the revert **hands the template back** (`resetToDefault()`) whenever the store still holds exactly
+what the removal wrote, and keeps the layout otherwise — an arrangement made between the removal
+and the undo is the user's own and outranks the reset. The same reading of „current" also made
+`refresh()` part of `LayoutStore`: `current()`/`owned()` read a query cache with a five-minute
+`gcTime`, and an undo pressed after that reads an eviction as an empty store.
+
 ## „+ Bereich" lives in the toolbar, outside edit mode (2026-08-12, WP-45, #57)
 
 The picker is the only way back to a removed section, and a route that exists only behind

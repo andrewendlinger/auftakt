@@ -312,8 +312,8 @@ toolbar, whose heading names the scope through `useLabel` — **appended, never 
 „Ensemblesseiten-Layout".
 
 Which store a page uses is the page's business, and all of them expose the same `LayoutStore`
-shape (`value` / `current()` / `write()`), so `useRemoveCustomSection` prunes a `cs<id>` without
-knowing where the array lives: `useEntityLayout` for artists and projects, `useSettingsArray` for
+shape (`value` / `current()` / `refresh()` / `write()`), so `useRemoveCustomSection` prunes a
+`cs<id>` without knowing where the array lives: `useEntityLayout` for artists and projects, `useSettingsArray` for
 the dashboard, `useLanding` (behind a small adapter in `LandingPage`) for the landing. Since WP-45
 `SectionArranger` takes that store itself — the `store` prop, or `layoutKey` for the settings
 arm — because the removal undo needs `current()`, not just a write. Settings whose values are
@@ -329,6 +329,18 @@ layout write**: its undo arms are built on `store.current()` (`lib/layoutEntries
 pure helpers). Everything else — reorder, width, the whole `LayoutMenu` — stays off the undo
 stack. „+ Bereich" renders outside edit mode, because the picker is the only way back to a
 removed section.
+
+Two things that removal undo has to get right, both of them invisible when it gets them wrong.
+On a page that was still **following the standard**, the removal is also what gives it a layout of
+its own: the tombstone can only be persisted with the array around it. Writing that array back
+would restore the picture and not the state — the page would look untouched while quietly holding
+a frozen copy of the standard — so the revert calls `resetToDefault()` instead and the page keeps
+inheriting. Only while nothing else was arranged in between: `sameLayout` compares the store
+against what the removal wrote, and an arrangement of the user's own outranks the reset. And both
+arms `await store.refresh?.()` before reading, because `current()`/`owned()` read a query cache
+that react-query empties `gcTime` (five minutes) after the page unmounts — a miss is
+indistinguishable from a store with nothing in it, and an undo pressed from the keyboard three
+screens later is exactly the case that hits it.
 
 Since WP-46 a page declares its built-ins as **one `SectionSpec[]`** (`lib/sectionSpecs.ts`,
 re-exported through `components/SectionCatalog.tsx`): spec order is the default section order for

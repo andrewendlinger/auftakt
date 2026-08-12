@@ -470,6 +470,21 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   `termine` 🗑 toasts „Bereich „Wichtige Termine“ entfernt." — asserting „Bereich „Termine““
   matches nothing (and `getByText` substring matching does not save you, the `„` is in the way).
   Take the expected name from `labels.ts`' default for that page's label key.
+- **`aufmerksamkeit` is never in `nonEmptyKeys`** — the computed Einblicke sections cannot be
+  „filled" — so it is the one built-in whose 🗑 always removes at once, with no confirm to click
+  through. That makes it the target of choice for anything about removal and its undo.
+- **Whether the undo leaves a `layout` behind is the assertion, not whether the section is back.**
+  Undoing a removal on a template-following page (artists 1/3/4) must put `artists.layout` back to
+  `NULL`; on a page with its own layout (artist 2) it must not. Both look identical on screen —
+  the section returns either way — so read the column: `curl -s localhost:4317/api/artists/1`.
+  Removing anything on a template-following page writes a layout *first*, which is what the undo
+  then has to give back.
+- **`TextInput` renders a bare `<input>` with no `type` attribute**, so `input[type="text"]`
+  matches nothing anywhere in this app — not in the section picker, not in any `RecordFormModal`.
+  Scope to the dialog and take `input` (`topDialog(page).locator('input')`).
+- **A failed write is reachable without breaking the server**: `page.route('**/api/…', r =>
+  r.abort('failed'))` is how the „konnte nicht" paths get driven at all. Filter the toast on
+  `'konnte nicht'` rather than on the full sentence — the wording is per call site.
 - **The link dialog's „Kategorie" is `type: 'pills'`, not a `<select>`** — `selectOption` finds
   nothing. The options are `[aria-pressed]` buttons and the current value is
   `[aria-pressed="true"]`; a second click on it clears the field.

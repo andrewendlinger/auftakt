@@ -384,6 +384,8 @@ export function useSettingsArray<K extends SettingsArrayKey>(
   value: SettingsArrayValue<K>;
   /** The array as it is now, not as it was when the caller rendered — the `useLanding` twin. */
   current: () => SettingsArrayValue<K>;
+  /** Put `['settings']` back in the cache first, so `current()` cannot read an eviction as empty. */
+  refresh: () => Promise<void>;
   write: (next: SettingsArrayValue<K>) => Promise<boolean>;
 } {
   const qc = useQueryClient();
@@ -400,6 +402,14 @@ export function useSettingsArray<K extends SettingsArrayKey>(
     () => parse(qc.getQueryData<Settings>(['settings'])?.[key]),
     [qc, key, parse],
   );
+  // …and the other half of that: react-query drops a query `gcTime` after its last observer
+  // unmounts (five minutes, the default — `main.tsx` sets only `staleTime`), and `current()`
+  // then reads the miss as an empty array. A closure that outlives its page — the section
+  // removal undo, pressed from the keyboard elsewhere in the app — awaits this first.
+  // `ensureQueryData` returns what is cached without a request, so the usual path is free.
+  const refresh = useCallback(async () => {
+    await qc.ensureQueryData({ queryKey: ['settings'], queryFn: api.getSettings });
+  }, [qc]);
   const write = useCallback(
     async (next: SettingsArrayValue<K>) => {
       // `{ [key]: next }` with a generic key infers a string index signature, not
@@ -417,7 +427,7 @@ export function useSettingsArray<K extends SettingsArrayKey>(
     },
     [qc, key, guard, invalidate],
   );
-  return { value, current, write };
+  return { value, current, refresh, write };
 }
 
 /**
@@ -448,12 +458,21 @@ export function useLanding(): {
   data: LandingContent | undefined;
   /** The content as it is now, not as it was when the caller rendered. */
   current: () => LandingContent | undefined;
+  /** Put `['landing']` back in the cache first, so `current()` cannot read an eviction as absent. */
+  refresh: () => Promise<void>;
   patch: (next: LandingPatch) => Promise<LandingContent>;
 } {
   const qc = useQueryClient();
   const invalidate = useInvalidateAll();
   const { data } = useQuery({ queryKey: ['landing'], queryFn: api.landing.get });
   const current = useCallback(() => qc.getQueryData<LandingContent>(['landing']), [qc]);
+  // The `useSettingsArray.refresh` twin, and the landing needs it more: `current()` answering
+  // `undefined` is not merely a refused undo there — the arranger's store adapter falls back to
+  // `DEFAULT_LANDING_LAYOUT`, so a redo computed from an evicted cache would write that default
+  // over the arrangement the user actually has.
+  const refresh = useCallback(async () => {
+    await qc.ensureQueryData({ queryKey: ['landing'], queryFn: api.landing.get });
+  }, [qc]);
   const patch = useCallback(
     async (next: LandingPatch) => {
       // Publish before awaiting so the next reader — including an editor the user clicks 200 ms
@@ -477,7 +496,7 @@ export function useLanding(): {
     },
     [qc, invalidate],
   );
-  return { data, current, patch };
+  return { data, current, refresh, patch };
 }
 
 /** Whether every row this patch carries already has a server-assigned id. */

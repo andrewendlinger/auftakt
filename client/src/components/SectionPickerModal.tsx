@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Btn, PickerRow } from './ui';
 import { Label, Modal, TextInput } from './fields';
 import { SECTION_TYPES, type SectionGroup, type SectionType } from '../lib/sections';
+import { useErrorToast } from '../hooks';
 
 /** One hidden built-in on offer, its display name already resolved by the caller. */
 export interface PickerBuiltinRow {
@@ -40,13 +41,25 @@ export function SectionPickerModal({
   const [chosen, setChosen] = useState<SectionType | null>(null);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const report = useErrorToast();
 
+  /**
+   * The report lives here rather than in either `onCreate`, because neither of them guards:
+   * `api.customSections.create` is unwrapped, and `useLanding.patch` throws by design (its
+   * callers own the catch). Both rejections used to land nowhere at all — from the button they
+   * were an unhandled promise, from Enter a `void`-ed one — so a failed „Hinzufügen" left the
+   * modal sitting there unchanged with no message, and in the packaged app there is no console
+   * to find the reason in. Staying open with the typed name intact is the point: the retry is
+   * pressing the button again.
+   */
   const create = async () => {
     if (!name.trim() || !chosen || busy) return;
     setBusy(true);
     try {
       await onCreate(chosen, name.trim());
       onClose();
+    } catch (err) {
+      report(err, 'Der Bereich konnte nicht angelegt werden.');
     } finally {
       setBusy(false);
     }

@@ -50,7 +50,12 @@ const DEFAULT_LANDING_LAYOUT: LayoutEntry[] = [
 export function LandingPage() {
   const { data, isLoading, isError, refetch } = useSeasons();
   const { data: stats } = useQuery({ queryKey: ['seasonStats'], queryFn: api.seasonStats });
-  const { data: landing, current: landingCurrent, patch: patchLanding } = useLanding();
+  const {
+    data: landing,
+    current: landingCurrent,
+    refresh: refreshLanding,
+    patch: patchLanding,
+  } = useLanding();
   const navigate = useNavigate();
   const toast = useToast();
   const report = useErrorToast();
@@ -149,12 +154,16 @@ export function LandingPage() {
         const cur = landingCurrent()?.layout ?? [];
         return cur.length ? cur : DEFAULT_LANDING_LAYOUT;
       },
+      // The fallback above is why: an evicted `['landing']` reads exactly like a landing that
+      // has never been arranged, and an undo arm computing from `DEFAULT_LANDING_LAYOUT` would
+      // persist it over the real one. The undo awaits this before it reads.
+      refresh: refreshLanding,
       write: (next: LayoutEntry[]) =>
         guard('Die Anordnung konnte nicht gespeichert werden.', () =>
           patchLanding({ layout: next }),
         ),
     }),
-    [landing, landingCurrent, patchLanding, guard],
+    [landing, landingCurrent, refreshLanding, patchLanding, guard],
   );
 
   const seasonGrid =
