@@ -127,12 +127,15 @@ const RICH_EVENT_NOTES = `Doors 19:00, Beginn **19:30**. Zugabe ist abgesprochen
  * A per-entity section arrangement (WP-25). Only artist 2 and project 3 carry one; everyone else
  * stays `NULL` and follows the `artist_layout`/`project_layout` template, so the two states — and
  * the fact that arranging one artist leaves the others alone — are both on screen. Artist 2 also
- * un-hides `stats`, which both entity pages ship as `defaultHidden`.
+ * un-hides `stats`, which both entity pages ship as `defaultHidden`, and tombstones
+ * `aufmerksamkeit` (a removed section, WP-45) so „+ Bereich" has something to offer back and the
+ * removed state is eyeballable without removing anything first.
  */
 const ARTIST_2_LAYOUT = JSON.stringify([
   { key: 'kontakte', width: 'half' },
   { key: 'stats', width: 'half' },
   { key: 'termine', width: 'full' },
+  { key: 'aufmerksamkeit', width: 'full', hidden: true },
   { key: 'projekte', width: 'full' },
   { key: 'aufgaben', width: 'full' },
 ]);

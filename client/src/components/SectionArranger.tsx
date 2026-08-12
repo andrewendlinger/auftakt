@@ -4,12 +4,14 @@ import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Artist, LayoutEntry, Project } from '../api/types';
 import { arrayMoveTo } from '../lib/arrays';
+import { clearHidden, ensureEntry, markHidden } from '../lib/layoutEntries';
 import { useDragReorder } from '../lib/dragReorder';
 import { useAnchoredPopover } from '../lib/popover';
 import { Btn, DragHandle } from './ui';
 import { Modal } from './fields';
 import { TrashIcon } from './icons';
 import { useToast } from './Toast';
+import { useUndo, type UndoEntry } from './UndoProvider';
 import type { LabelKey } from '../lib/labels';
 import { useGuardedAction, useInvalidateAll, useLabel, useSettingsArray } from '../hooks';
 
@@ -72,6 +74,13 @@ export interface LayoutStore {
   /** The array as it is *now* — for a closure (an undo) that runs after the render that made it. */
   current: () => LayoutEntry[];
   write: (next: LayoutEntry[]) => Promise<boolean>;
+  /**
+   * Whether the page holds its own stored arrangement *right now* — `false` on an entity page
+   * that is (again) following the standard, whose `current()` then answers with the standard's
+   * array. The removal undo refuses to write when this answers false (see `removalUndoEntry`);
+   * stores without a template concept omit it.
+   */
+  owned?: () => boolean;
 }
 
 export interface EntityLayoutStore extends LayoutStore {
@@ -101,7 +110,8 @@ export interface EntityLayoutStore extends LayoutStore {
  * `useSettingsArray` does it and `Arranger` restates: five of the six arrange mutations fire as
  * `void persist(…)`, so a second click inside the invalidate → refetch window would otherwise be
  * computed from the pre-first-click array and silently replace it (SHL-10). `useUndoablePatch` is
- * deliberately not used here — it does not publish, and no layout write has ever been undoable.
+ * deliberately not used here — it does not publish. The one undoable layout write, removing a
+ * built-in section, lives in `Arranger` and builds its own undo arms on `current()` (WP-45).
  */
 export function useEntityLayout(
   kind: 'artist' | 'project',
@@ -131,12 +141,15 @@ export function useEntityLayout(
   const savedCurrent = saved.current;
   const savedWrite = saved.write;
 
+  const ownRows = useCallback(
+    () =>
+      parseEntityLayout((qc.getQueryData([kind, id]) as { layout?: unknown } | undefined)?.layout),
+    [qc, kind, id],
+  );
   const current = useCallback(() => {
-    const stored = parseEntityLayout(
-      (qc.getQueryData([kind, id]) as { layout?: unknown } | undefined)?.layout,
-    );
+    const stored = ownRows();
     return stored.length ? stored : standardCurrent();
-  }, [qc, kind, id, standardCurrent]);
+  }, [ownRows, standardCurrent]);
 
   const patch = useCallback(
     async (next: LayoutEntry[] | null, fallback: string) => {
@@ -182,12 +195,58 @@ export function useEntityLayout(
     value: hasOwn ? own : standard.value,
     current,
     write,
+    owned: () => ownRows().length > 0,
     hasOwn,
     hasSaved: saved.value.length > 0,
     saveLayout,
     applySaved,
     saveAsDefault,
     resetToDefault,
+  };
+}
+
+/**
+ * The undo entry for one built-in removal — a module-level factory so the closures capture only
+ * the store, the key and the display name. Built inline in `Arranger` they would share that
+ * render's activation context and strand its `sections` Record of ReactNode trees in the
+ * ref-backed undo stack for the entry's lifetime (up to 50 entries, app-wide).
+ *
+ * Both arms signal failure by THROWING — `UndoProvider.perform` knows no other channel — and
+ * every `LayoutStore.write` is guard-wrapped and resolves `false` instead of rejecting, so the
+ * boolean is turned back into a throw here; otherwise a failed write toasts „rückgängig gemacht"
+ * and moves the entry to the redo stack for a state change that never happened.
+ *
+ * Both arms also refuse a page that no longer `owned`s its arrangement: after „Auf Standard
+ * zurücksetzen", `current()` answers with the *standard's* array, which may well carry a
+ * tombstone for this key too — a tombstone check alone would pass against the wrong array and
+ * write it into the entity column, freezing the standard onto a page the user just reset (the
+ * template-freeze rule, WP-25).
+ */
+function removalUndoEntry(store: LayoutStore, key: string, name: string): UndoEntry {
+  const assertOwned = () => {
+    if (store.owned && !store.owned()) {
+      throw new Error(`page no longer holds its own layout (${key})`);
+    }
+  };
+  return {
+    label: `Bereich „${name}“`,
+    apply: async () => {
+      assertOwned();
+      if (!(await store.write(markHidden(ensureEntry(store.current(), key), key)))) {
+        throw new Error(`re-removing ${key} was not saved`);
+      }
+    },
+    revert: async () => {
+      assertOwned();
+      const cur = store.current();
+      // The tombstone can be gone by now — another window, an applied saved layout.
+      if (!cur.some((e) => e.key === key && e.hidden === true)) {
+        throw new Error(`layout entry ${key} is no longer hidden`);
+      }
+      if (!(await store.write(clearHidden(cur, key)))) {
+        throw new Error(`restoring ${key} was not saved`);
+      }
+    },
   };
 }
 
@@ -264,9 +323,10 @@ export function LayoutMenu({
   };
 
   /**
-   * The two page-changing actions confirm — they discard this page's arrangement at once and no
-   * layout write goes on the undo stack. Only when there *is* one: on a page still following the
-   * standard nothing is lost, and the dialog would be pure friction.
+   * The two page-changing actions confirm — they discard this page's arrangement at once and
+   * none of this menu's writes goes on the undo stack (only removing a built-in section is
+   * undoable, and that lives in `Arranger`). Only when there *is* one: on a page still
+   * following the standard nothing is lost, and the dialog would be pure friction.
    */
   const ask = (action: PendingLayoutAction) => {
     closePopover();
@@ -404,10 +464,11 @@ export function LayoutMenu({
  * never handed back inside a season and a stale entry can never be reclaimed by a later widget,
  * which is the hazard `useRemoveLandingSection` has to close for the reusable `lt<id>`.
  *
- * Sections are optional unless listed in `mandatoryKeys`: edit mode offers a 🗑 that hides a
- * built-in (`hidden: true` on its entry) or soft-deletes a custom widget (`onRemoveCustom`).
- * Hidden sections are simply not rendered — re-adding goes through the "+ Bereich" picker,
- * which `addAction` receives the hidden keys and a restore callback for.
+ * Sections are optional unless listed in `mandatoryKeys`: edit mode offers a 🗑 that tombstones
+ * a built-in (`hidden: true` on its entry, undoable) or soft-deletes a custom widget
+ * (`onRemoveCustom`). A removed section is simply not rendered — the way back is the
+ * "+ Bereich" picker, which `addAction` receives the hidden keys and a restore callback for,
+ * and which is deliberately visible outside edit mode (issue #57).
  *
  * **Every mutation is computed from `full` and `full` has to be current**, which is why both
  * persistence arms publish the value they write before awaiting it. An arrange action is a
@@ -417,15 +478,16 @@ export function LayoutMenu({
  * the drag was lost; 🗑 a section then toggle a width — the removed section is back (SHL-10).
  */
 export interface SectionArrangerProps {
-  /** Settings key holding the layout — the default persistence. Omit when `layout` + `onPersist` are given. */
+  /** Settings key holding the layout — the default persistence. Omit when `store` is given. */
   layoutKey?: LayoutKey;
-  /** Stored entries when the page persists elsewhere (the landing: seasons.json via /api/landing). */
-  layout?: LayoutEntry[];
   /**
-   * Write-back override, paired with `layout`. Must report its own failures and must publish the
-   * value it writes before awaiting, the way `useSettingsArray` does — see `Arranger`.
+   * The page's layout store when it persists elsewhere — an entity's `layout` column
+   * (`useEntityLayout`) or the landing's seasons.json blob behind an adapter. `write` must
+   * report its own failures and publish the value it writes before awaiting, the way
+   * `useSettingsArray` does — see `Arranger`; `current()` is what the removal undo reads,
+   * because its arms run seconds after the render that created them.
    */
-  onPersist?: (next: LayoutEntry[]) => Promise<unknown>;
+  store?: LayoutStore;
   sections: Record<string, ReactNode>;
   /**
    * Section key → the heading id it is named by, so the strip below shows whatever the user
@@ -443,7 +505,7 @@ export interface SectionArrangerProps {
   defaultHidden?: string[];
   /** Sections that can't be set to half width (always full, no width toggle) — e.g. the task table. */
   fullWidthKeys?: string[];
-  /** Sections that still hold content — their 🗑 is disabled so filled data can't vanish. */
+  /** Sections that still hold content — their 🗑 confirms first instead of acting at once. */
   nonEmptyKeys?: string[];
   /** Render the toolbar row *after* this section instead of above everything (the dashboard's Künstler grid). */
   toolbarAfterKey?: string;
@@ -456,7 +518,11 @@ export interface SectionArrangerProps {
    * of offering a recovery that does not exist (SHL-03).
    */
   removeCustomCopy?: { body: string; confirm: string };
-  /** The "+ Bereich" button, rendered only in edit mode, fed the hidden built-ins to offer. */
+  /**
+   * The "+ Bereich" button, always in the toolbar — not gated on edit mode, because the picker
+   * is the only way back to a removed section and a route that exists only behind „✎ Bereiche
+   * bearbeiten" is a route users don't find (issue #57). Fed the hidden built-ins to offer.
+   */
   addAction?: (ctx: {
     hiddenKeys: string[];
     restore: (key: string) => void;
@@ -471,30 +537,29 @@ export interface SectionArrangerProps {
 }
 
 /**
- * Two persistence modes, one view. A page either names a settings key or brings its own layout
- * and write-back; the split is here rather than inside the view so the settings hook is called
+ * Two persistence modes, one view. A page either names a settings key or brings its own
+ * `LayoutStore`; the split is here rather than inside the view so the settings hook is called
  * unconditionally in the arm that has a key. No hooks run in this function, so the guard below
  * is a plain argument check.
  */
 export function SectionArranger(props: SectionArrangerProps) {
-  const { layoutKey, layout, onPersist } = props;
-  if (!layoutKey && !onPersist) throw new Error('SectionArranger needs layoutKey or layout+onPersist');
+  const { layoutKey, store } = props;
+  if (!layoutKey && !store) throw new Error('SectionArranger needs layoutKey or store');
   return layoutKey ? (
     <SettingsArranger {...props} layoutKey={layoutKey} />
   ) : (
-    <Arranger {...props} layout={layout ?? []} onPersist={onPersist!} />
+    <Arranger {...props} store={store!} />
   );
 }
 
 /** The settings-backed arm: `useSettingsArray` owns the write, the cache publish and the toast. */
 function SettingsArranger({ layoutKey, ...rest }: SectionArrangerProps & { layoutKey: LayoutKey }) {
-  const { value, write } = useSettingsArray(layoutKey, parseLayoutEntries);
-  return <Arranger {...rest} layout={value} onPersist={write} />;
+  const store = useSettingsArray(layoutKey, parseLayoutEntries);
+  return <Arranger {...rest} store={store} />;
 }
 
 function Arranger({
-  layout,
-  onPersist: persist,
+  store,
   sections,
   labelKeys,
   titles = {},
@@ -511,13 +576,15 @@ function Arranger({
   },
   addAction,
 }: SectionArrangerProps & {
-  layout: LayoutEntry[];
-  onPersist: (next: LayoutEntry[]) => Promise<unknown>;
+  store: LayoutStore;
 }) {
   const label = useLabel();
+  const undo = useUndo();
+  const layout = store.value;
+  const persist = store.write;
   const [arranging, setArranging] = useState(false);
-  // 🗑 on a *filled* section opens a dialog first: built-ins get a "must be emptied"
-  // explanation, custom widgets a confirm that their content moves to the trash with them.
+  // 🗑 on a *filled* section opens a confirm first: built-ins state that the content stays and
+  // the section is re-addable, custom widgets that their content moves to the trash with them.
   const [removing, setRemoving] = useState<string | null>(null);
 
   // `sections` (fresh ReactNodes) and an inline `fullWidthKeys` literal change identity
@@ -582,21 +649,28 @@ function Arranger({
     void persist(next);
   };
 
-  /** Remove a built-in section: it stays in the layout, flagged hidden, re-addable via the picker. */
-  const hide = (key: string) => {
-    void persist(full.map((e) => (e.key === key ? { ...e, hidden: true } : e)));
+  /**
+   * Remove a built-in section: its entry stays in the layout as a tombstone (`hidden: true`),
+   * so position and width survive for „+ Bereich" — and, unlike every other layout write, it is
+   * undoable (issue #57: removal is the destructive-feeling gesture, and it used to be the least
+   * guarded one). The initial write computes from `full` — only `full` knows the on-screen
+   * position of a key the store never held, e.g. a section a later build appended. The undo
+   * arms live in `removalUndoEntry`, which reads `store.current()` instead, for the reason
+   * `useLanding` documents.
+   */
+  const removeBuiltin = async (key: string) => {
+    const name = label(labelKeys[key]!);
+    // The write publishes before awaiting (SHL-10), so the section leaves the screen at once —
+    // only the toast and the stack entry wait for the resolved path. A removal that failed to
+    // save (the guard has toasted it) must not offer „Rückgängig" for a state change that never
+    // happened (PGS-09 family).
+    if (!(await persist(markHidden(full, key)))) return;
+    undo.pushWithToast(removalUndoEntry(store, key, name), `Bereich „${name}“ entfernt.`);
   };
 
   /** Re-add a hidden built-in at its remembered position and width. */
   const restore = (key: string) => {
-    void persist(
-      full.map((e) => {
-        if (e.key !== key) return e;
-        const { hidden, ...rest } = e;
-        void hidden;
-        return rest;
-      }),
-    );
+    void persist(clearHidden(full, key));
   };
 
   /**
@@ -642,7 +716,9 @@ function Arranger({
 
   const toolbar = (
     <div className="flex flex-wrap items-center justify-end gap-2">
-      {arranging && addAction?.({ hiddenKeys, restore, prepend })}
+      {/* „+ Bereich" is not gated on edit mode — see the `addAction` prop doc. „⌂ Layout" is:
+          its actions replace whole arrangements, which is edit-mode business. */}
+      {addAction?.({ hiddenKeys, restore, prepend })}
       {arranging && layoutAction?.({ full })}
       <Btn variant="subtle" onClick={() => setArranging((a) => !a)}>
         {arranging ? '✓ Fertig' : '✎ Bereiche bearbeiten'}
@@ -718,12 +794,12 @@ function Arranger({
                       <button
                         className="rounded px-2 py-1 text-neutral-500 hover:bg-neutral-200 hover:text-red-600"
                         title="Bereich entfernen"
-                        // Empty sections go right away: built-ins (they have a LabelKey) are
-                        // hidden and re-addable via the picker; custom widgets are soft-deleted
-                        // by the page (undo toast). Filled ones get an explaining dialog first.
+                        // Empty sections go right away: built-ins (they have a LabelKey) get a
+                        // tombstone entry + undo toast, custom widgets are soft-deleted by the
+                        // page (undo toast). Filled ones confirm first — same two paths after.
                         onClick={() => {
                           if (nonEmptyKeys.includes(key)) setRemoving(key);
-                          else if (key in labelKeys) hide(key);
+                          else if (key in labelKeys) void removeBuiltin(key);
                           else onRemoveCustom?.(key);
                         }}
                       >
@@ -742,19 +818,31 @@ function Arranger({
       </div>
       {removing != null &&
         (removing in labelKeys ? (
-          // Built-in with rows: hiding it would make real data invisible — explain, no action.
+          // Built-in with rows: the data stays in the database either way, so this is a plain
+          // confirm — `primary`, not `danger`, because nothing is destroyed. The old dialog
+          // refused outright („Bereich ist nicht leer"), which was one of the four 🗑 outcomes
+          // issue #57 exists to collapse.
           <Modal
-            title="Bereich ist nicht leer"
+            title="Bereich entfernen"
             onClose={() => setRemoving(null)}
             footer={
-              <Btn variant="primary" onClick={() => setRemoving(null)}>
-                Verstanden
-              </Btn>
+              <>
+                <Btn onClick={() => setRemoving(null)}>Abbrechen</Btn>
+                <Btn
+                  variant="primary"
+                  onClick={() => {
+                    void removeBuiltin(removing);
+                    setRemoving(null);
+                  }}
+                >
+                  Entfernen
+                </Btn>
+              </>
             }
           >
             <p className="text-sm text-neutral-600">
-              „{label(labelKeys[removing]!)}“ enthält noch Einträge und kann erst ausgeblendet
-              werden, wenn er leer ist. Bitte zuerst die Inhalte löschen oder verschieben.
+              „{label(labelKeys[removing]!)}“ wird von der Seite entfernt. Die Inhalte bleiben
+              erhalten — der Bereich lässt sich jederzeit über „+ Bereich“ wieder hinzufügen.
             </p>
           </Modal>
         ) : (

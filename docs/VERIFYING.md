@@ -408,7 +408,9 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **Artist 2 and project 3 ship their own `layout`; artists 1/3/4 and every other project are
   `NULL`** and follow the `artist_layout`/`project_layout` template (WP-25). So the two states are
   both on the demo — and a check that arranges one artist must assert against a *different* one,
-  because asserting against artist 2 proves nothing. Artist 2 also un-hides `stats`.
+  because asserting against artist 2 proves nothing. Artist 2 also un-hides `stats` **and
+  tombstones `aufmerksamkeit`** (`hidden: true`, WP-45) — so its „+ Bereich" picker starts with
+  „Braucht Aufmerksamkeit" on offer, and `aufmerksamkeit` is *not* in its `[data-section]` list.
 - **A layout assertion reads `[data-section]`/`[data-width]`, not the headings** — the arranger
   stamps both on every rendered section, and in arrange mode the in-card heading is hidden anyway.
 - **The demo seeds `artist_layout_saved` but leaves `artist_layout` unset**, so „Gespeichertes
@@ -453,8 +455,17 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **`paletteFor('Deadline')` is `#fee2e2`, the same colour `LEGACY_EVENT_COLORS` holds for it**, so
   „Deadline" cannot distinguish the two code paths. „Termin" can (legacy `#e2e8f0` vs palette
   `#dcfce7`).
-- **Hiding a *filled* built-in opens the „Bereich ist nicht leer" dialog**, whose overlay then eats
-  every following click. An *empty* custom widget skips the dialog entirely.
+- **Removing a *filled* built-in opens the „Bereich entfernen" confirm** (WP-45 — the old
+  „Bereich ist nicht leer" refusal is gone), whose overlay eats every following click until
+  „Entfernen" or „Abbrechen" is pressed. An *empty* built-in skips the dialog and removes at
+  once, with an undo toast. An *empty* custom widget skips the dialog entirely.
+- **„+ Bereich" is in the toolbar *outside* edit mode** (WP-45). A script that infers arrange
+  mode from that button's presence is wrong now — the mode signal is „✓ Fertig" vs
+  „✎ Bereiche bearbeiten", or the strip (`.section-title` hidden, dashed outlines).
+- **An undo toast appears a React tick *before* the section unmounts.** The toast's setState and
+  TanStack's cache notification land in different batches, so asserting a `[data-section]` is
+  gone right after `toast.waitFor()` races the second batch and fails against working code. Wait
+  for the node: `locator.waitFor({ state: 'detached' })` — `gone()` in the shared `drive.mjs`.
 - **The link dialog's „Kategorie" is `type: 'pills'`, not a `<select>`** — `selectOption` finds
   nothing. The options are `[aria-pressed]` buttons and the current value is
   `[aria-pressed="true"]`; a second click on it clears the field.
