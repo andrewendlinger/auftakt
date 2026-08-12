@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
@@ -65,22 +65,30 @@ export function LandingPage() {
   const currentId = useCurrentSeasonId();
 
   // seasonGone() lands here after its reload; the flag relays the explanation across it
-  // (a toast cannot survive a document reload). Read-and-clear, so it shows exactly once.
+  // (a toast cannot survive a document reload).
   //
-  // Held until ['seasons'] has answered, because the term is renameable and the reload threw
-  // the cache away: on mount `data` is undefined, so useSeasonTerm() hands back its hardcoded
-  // „Saison" and this one toast contradicted every other label on the page a moment later
-  // (PR50-13). `isError` is the other half of "answered" and is load-bearing — waiting for
-  // `data` alone would leave the flag unconsumed when the registry fetch fails, and a flag
-  // that stays set is exactly the latch that disables every later 410 in this window.
+  // Two steps, and the split is the point. **Consuming** happens on mount, unconditionally:
+  // the flag is what arms seasonGone()'s burst guard, so a flag left in sessionStorage is a
+  // window that can never recover from a later 410 (PR50-01) — it must not survive this page
+  // under any timing, including the user clicking „Übersicht" a moment after landing here.
+  // **Showing** waits for the registry, because the term is renameable and the reload threw
+  // the cache away: read on mount, `useSeasonTerm()` hands back its hardcoded „Saison" and
+  // this one toast contradicts every other label on the page a moment later (PR50-13).
+  const gone = useRef(false);
+  useEffect(() => {
+    // Latch, never assign: StrictMode runs this twice, and the second call finds the flag
+    // already consumed — a plain assignment would throw away what the first one read.
+    if (consumeSeasonGone()) gone.current = true;
+  }, []);
+
   const seasonsAnswered = data !== undefined || isError;
   useEffect(() => {
-    if (!seasonsAnswered) return;
-    if (consumeSeasonGone()) {
-      toast.show({ message: `${term.singular} wurde gelöscht — bitte neu wählen.` });
-    }
-    // Keyed on the answer, not on term/toast identity: consumeSeasonGone() is read-and-clear,
-    // so at most one run of this effect does anything.
+    if (!gone.current || !seasonsAnswered) return;
+    gone.current = false;
+    toast.show({ message: `${term.singular} wurde gelöscht — bitte neu wählen.` });
+    // Keyed on the answer alone, not on term/toast identity; the ref makes it show once.
+    // `isError` counts as an answer — there is then no registry to name a different term, so
+    // the „Saison" fallback is the honest word rather than a stale one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seasonsAnswered]);
 

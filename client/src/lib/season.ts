@@ -111,17 +111,13 @@ export function consumeSeasonGone(): boolean {
  * hash-only URL does not reload the document.
  */
 export function reloadToDashboard(): void {
+  // Never over a recovery. seasonGone() has already sent this document to the landing page,
+  // and replacing that with '#/dashboard' is what stopped LandingPage from ever mounting —
+  // relay flag unconsumed, every later 410 in the window swallowed by the burst guard
+  // (PR50-01). The guard sits here, on the navigation, because that is where the harm is.
+  if (leaving) return;
   window.location.replace('#/dashboard');
   window.location.reload();
-}
-
-/**
- * Was this rejection the 410 that means „the season is gone"? Read structurally rather than
- * with `instanceof ApiError`: the status code is the whole contract (see seasonGone above),
- * and the documented import cycle with api/client.ts is narrower with one binding than two.
- */
-function isSeasonGone(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as { status?: unknown }).status === 410;
 }
 
 /**
@@ -139,17 +135,16 @@ export async function switchSeason(id: number): Promise<void> {
   // before the reload, because a fetch fired from an unloading document is cancelled.
   try {
     await api.activateSeason(id);
-  } catch (err) {
-    // …with one exception: a 410 says the season we just pinned is already gone (another
-    // window deleted it and this window's list is still pre-delete). http() has already run
-    // seasonGone() for it — the pin is dropped, the relay flag is set and the document is on
-    // its way to the landing page. Falling through would replace that with '#/dashboard', so
-    // LandingPage never mounts, consumeSeasonGone() never runs and the flag stays set — which
-    // makes seasonGone()'s burst guard swallow every LATER 410 in this window, leaving it
-    // pinned to a dead season and toasting errors until it is closed (PR50-01).
-    if (isSeasonGone(err)) return;
+  } catch {
     /* keep the local switch */
   }
+  // Unless a 410 landed in this document while we were away — this activate's own (the season
+  // clicked was already deleted), or any query that raced it. seasonGone() has then dropped the
+  // pin and sent the document to the landing page, and everything below would talk over that
+  // recovery: the broadcast is about a switch that did not happen, and the reload would send a
+  // window that must land on '#/' to '#/dashboard' instead (PR50-01). Keyed on the recovery
+  // having started, not on the shape of our own rejection, because the 410 need not be ours.
+  if (leaving) return;
   // Other windows refresh their ['seasons'] markers (the default moved); their pins stay.
   postBroadcast({ v: 1, type: 'invalidate' });
   reloadToDashboard();

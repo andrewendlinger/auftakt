@@ -1,14 +1,11 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { api } from '../api/client';
-import { postBroadcast } from './broadcast';
 import {
   clearWindowSeason,
   consumeSeasonGone,
   getWindowSeason,
   pinFromResponse,
   setWindowSeason,
-  switchSeason,
 } from './season';
 
 // switchSeason's two collaborators. api/client is mocked rather than fetch-stubbed because the
@@ -117,19 +114,37 @@ describe('seasonGone', () => {
 });
 
 /**
- * switchSeason is the only legal way to change seasons, and its failure branch decides whether
- * a window that clicked a just-deleted season recovers or is left pinned to nothing. jsdom does
- * not implement navigation, so window.location is replaced with a recorder — which is also the
- * assertion: the 410 branch must navigate nowhere, because seasonGone() already did.
+ * switchSeason is the only legal way to change seasons, and what it does when a recovery is
+ * already under way decides whether the window lands on the landing page or on a dashboard it
+ * cannot explain. jsdom does not implement navigation, so window.location is a recorder — and
+ * that recording is the assertion: over a recovery, switchSeason must navigate nowhere.
  */
 describe('switchSeason', () => {
-  const activate = vi.mocked(api.activateSeason);
-  const broadcast = vi.mocked(postBroadcast);
   const nav: string[] = [];
+
+  /**
+   * A fresh module graph per test. „Am I the document being replaced" is module state, and the
+   * mocks are recreated with it, so nothing leaks from one test into the next.
+   */
+  const load = async () => {
+    vi.resetModules();
+    const [client, broadcast, season] = await Promise.all([
+      import('../api/client'),
+      import('./broadcast'),
+      import('./season'),
+    ]);
+    return {
+      activate: vi.mocked(client.api.activateSeason),
+      broadcast: vi.mocked(broadcast.postBroadcast),
+      ...season,
+    };
+  };
 
   beforeEach(() => {
     sessionStorage.clear();
     nav.length = 0;
+    // resetModules() gives a fresh season module but reuses the mocked ones, so call history
+    // outlives it — clear it here or a later test reads an earlier test's broadcast.
     vi.clearAllMocks();
     Object.defineProperty(window, 'location', {
       configurable: true,
@@ -141,38 +156,48 @@ describe('switchSeason', () => {
   });
 
   it('pins, moves the default and reloads', async () => {
-    activate.mockResolvedValue({ activeId: 7, activeFile: 's7.db', seasons: [] });
-    await switchSeason(7);
-    expect(getWindowSeason()).toBe(7);
-    expect(activate).toHaveBeenCalledWith(7);
-    expect(broadcast).toHaveBeenCalledWith({ v: 1, type: 'invalidate' });
+    const m = await load();
+    m.activate.mockResolvedValue({ activeId: 7, activeFile: 's7.db', seasons: [] });
+    await m.switchSeason(7);
+    expect(m.getWindowSeason()).toBe(7);
+    expect(m.activate).toHaveBeenCalledWith(7);
+    expect(m.broadcast).toHaveBeenCalledWith({ v: 1, type: 'invalidate' });
     expect(nav).toEqual(['#/dashboard', 'reload']);
   });
 
   it('keeps the switch when moving the default fails for any other reason', async () => {
-    activate.mockRejectedValue(Object.assign(new Error('kaputt'), { status: 500 }));
-    await switchSeason(7);
-    expect(getWindowSeason()).toBe(7);
-    expect(broadcast).toHaveBeenCalledWith({ v: 1, type: 'invalidate' });
+    const m = await load();
+    m.activate.mockRejectedValue(Object.assign(new Error('kaputt'), { status: 500 }));
+    await m.switchSeason(7);
+    expect(m.getWindowSeason()).toBe(7);
+    expect(m.broadcast).toHaveBeenCalledWith({ v: 1, type: 'invalidate' });
     expect(nav).toEqual(['#/dashboard', 'reload']);
   });
 
-  it('yields to the 410 recovery instead of overriding it', async () => {
-    // What http() does before it throws a 410: seasonGone() clears the pin, sets the relay
-    // flag and starts a navigation to the landing page.
-    activate.mockImplementation(() => {
-      clearWindowSeason();
-      sessionStorage.setItem('auftakt-season-gone', '1');
+  it('yields when its own activate comes back 410', async () => {
+    const m = await load();
+    // Exactly what http() does with a 410: run seasonGone(), then throw.
+    m.activate.mockImplementation(() => {
+      m.seasonGone();
       return Promise.reject(Object.assign(new Error('Saison existiert nicht mehr'), { status: 410 }));
     });
-    await switchSeason(5);
-    // No second navigation: '#/dashboard' here would override '#/' and LandingPage — the only
-    // consumer of the flag — would never mount (PR50-01).
+    await m.switchSeason(5);
+    // seasonGone's own navigation to the landing page, and nothing after it. A '#/dashboard'
+    // here means LandingPage — the only consumer of the relay flag — never mounts (PR50-01).
+    expect(nav).toEqual(['#/', 'reload']);
+    expect(m.broadcast).not.toHaveBeenCalled();
+    expect(m.getWindowSeason()).toBeNull();
+  });
+
+  it('yields to a recovery another request started, even when the activate succeeds', async () => {
+    const m = await load();
+    // A dashboard query 410'd first — the switch is to a season that still exists, so nothing
+    // about this call fails. Keying the yield on our own rejection would miss exactly this.
+    m.seasonGone();
+    nav.length = 0;
+    m.activate.mockResolvedValue({ activeId: 2, activeFile: 's2.db', seasons: [] });
+    await m.switchSeason(2);
     expect(nav).toEqual([]);
-    expect(broadcast).not.toHaveBeenCalled();
-    // So the recovery state survives for the landing page to pick up, instead of latching and
-    // making every later 410 in this window a no-op.
-    expect(getWindowSeason()).toBeNull();
-    expect(consumeSeasonGone()).toBe(true);
+    expect(m.broadcast).not.toHaveBeenCalled();
   });
 });
