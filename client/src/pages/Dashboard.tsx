@@ -10,7 +10,7 @@ import { Card, DragHandle, SectionTitle, Spinner, EmptyState, ErrorState } from 
 import { ProjectBadge } from '../components/ProjectBadge';
 import { TaskTable } from '../components/TaskTable';
 import { TaskStatChips } from '../components/TaskStatChips';
-import { AttentionList } from '../components/AttentionList';
+import { AttentionSection, StatsSection } from '../components/SectionCatalog';
 import { NewArtistButton } from '../components/EntityButtons';
 import { EditableLabel } from '../components/EditableLabel';
 import { SectionArranger, parseLayoutEntries } from '../components/SectionArranger';
@@ -29,7 +29,6 @@ import {
   useGlobalColumns,
   useLabel,
   useSettingsArray,
-  useTaskStatsConfig,
 } from '../hooks';
 
 /** Which heading names each section in the "Bereiche bearbeiten" strip. */
@@ -71,7 +70,6 @@ export function Dashboard() {
     queryKey: ['customSections', 'dashboard'],
     queryFn: () => api.customSections.list({ scope: 'dashboard' }),
   });
-  const { windowDays } = useTaskStatsConfig();
   const eventWindowDays = useEventWindowDays();
   const artistLabel = useLabel()('dash.artists');
   // Still the settings array: there is only one dashboard, so it has nothing to be per-entity
@@ -147,7 +145,7 @@ export function Dashboard() {
     ),
     events: (
       <section>
-        <SectionTitle>
+        <SectionTitle hint="Übersicht aus allen Künstlern & Projekten — wird automatisch befüllt.">
           <EditableLabel k="dash.events" />
         </SectionTitle>
         {/* Three blocks, each rendered on its own merits. „Danach" used to sit in the `else` of
@@ -178,14 +176,7 @@ export function Dashboard() {
       </section>
     ),
     // Festival-wide KPIs at a glance — the scannable overview that replaced the long table.
-    stats: (
-      <section>
-        <SectionTitle>
-          <EditableLabel k="dash.stats" />
-        </SectionTitle>
-        <TaskStatChips tasks={allTasks} variant="tiles" />
-      </section>
-    ),
+    stats: <StatsSection labelKey="dash.stats" tasks={allTasks} />,
     tasks: (
       <section className="space-y-6">
         <SectionTitle>
@@ -199,14 +190,7 @@ export function Dashboard() {
         </div>
       </section>
     ),
-    aufmerksamkeit: (
-      <section>
-        <SectionTitle>
-          <EditableLabel k="dash.aufmerksamkeit" />
-        </SectionTitle>
-        <AttentionList tasks={data.tasks} windowDays={windowDays} />
-      </section>
-    ),
+    aufmerksamkeit: <AttentionSection labelKey="dash.aufmerksamkeit" tasks={data.tasks} />,
   };
   const custom = customSectionEntries(customSections);
   Object.assign(sections, custom.nodes);

@@ -25,13 +25,11 @@ import {
   useRemoveCustomSection,
   type SectionGroup,
 } from '../components/CustomSections';
-import { TaskStatChips } from '../components/TaskStatChips';
-import { AttentionList } from '../components/AttentionList';
+import { AttentionSection, StatsSection } from '../components/SectionCatalog';
 import {
   useAllTasks,
   useEventTypeOptions,
   useGlobalColumns,
-  useTaskStatsConfig,
   useUndoablePatch,
 } from '../hooks';
 
@@ -109,7 +107,6 @@ export function ProjectPage() {
   const layout = useEntityLayout('project', project);
   const removeCustomSection = useRemoveCustomSection(customSections, layout);
   const nonEmptyCustom = useNonEmptyCustomSections(customSections);
-  const { windowDays } = useTaskStatsConfig();
 
   // „Fortschritt" counts finished work, and the list above is scope 'live' — the server has already
   // dropped whatever was done longer ago than ARCHIVE_AFTER_DAYS, so the percentage *fell* as the
@@ -163,22 +160,8 @@ export function ProjectPage() {
         <LinkList links={links} parent={{ project_id: projectId }} titleKey="project.links" />
       </div>
     ),
-    stats: (
-      <>
-        <SectionTitle>
-          <EditableLabel k="project.stats" />
-        </SectionTitle>
-        <TaskStatChips tasks={statsTasks} variant="tiles" />
-      </>
-    ),
-    aufmerksamkeit: (
-      <>
-        <SectionTitle>
-          <EditableLabel k="project.aufmerksamkeit" />
-        </SectionTitle>
-        <AttentionList tasks={tasks} windowDays={windowDays} />
-      </>
-    ),
+    stats: <StatsSection labelKey="project.stats" tasks={statsTasks} />,
+    aufmerksamkeit: <AttentionSection labelKey="project.aufmerksamkeit" tasks={tasks} />,
     aufgaben: (
       <>
         <SectionTitle

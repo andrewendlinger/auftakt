@@ -25,7 +25,7 @@ import {
 } from '../components/CustomSections';
 import { TaskTable } from '../components/TaskTable';
 import { TaskStatChips } from '../components/TaskStatChips';
-import { AttentionList } from '../components/AttentionList';
+import { AttentionSection, StatsSection } from '../components/SectionCatalog';
 import { EditArtistButton, NewProjectButton } from '../components/EntityButtons';
 import { ProjectStatusPill } from '../components/ProjectStatusPill';
 import { ExcelButton } from '../components/ExcelButton';
@@ -33,7 +33,6 @@ import {
   useAllTasks,
   useEventTypeOptions,
   useGlobalColumns,
-  useTaskStatsConfig,
   useUndoablePatch,
 } from '../hooks';
 
@@ -64,7 +63,6 @@ export function ArtistPage() {
   // `#/artist/abc` parses to NaN. Answer it here rather than asking the server for /artists/NaN.
   const validId = isValidId(artistId);
   const eventTypes = useEventTypeOptions();
-  const { windowDays } = useTaskStatsConfig();
   const undoablePatch = useUndoablePatch();
 
   const { data: artist, isLoading, isError, error, refetch } = useQuery({
@@ -190,22 +188,8 @@ export function ArtistPage() {
         emptyLabel="Keine Termine für diesen Künstler."
       />
     ),
-    aufmerksamkeit: (
-      <>
-        <SectionTitle>
-          <EditableLabel k="artist.aufmerksamkeit" />
-        </SectionTitle>
-        <AttentionList tasks={tasks} windowDays={windowDays} />
-      </>
-    ),
-    stats: (
-      <>
-        <SectionTitle>
-          <EditableLabel k="artist.stats" />
-        </SectionTitle>
-        <TaskStatChips tasks={statsTasks} variant="tiles" />
-      </>
-    ),
+    aufmerksamkeit: <AttentionSection labelKey="artist.aufmerksamkeit" tasks={tasks} />,
+    stats: <StatsSection labelKey="artist.stats" tasks={statsTasks} />,
     kontakte: <ContactList contacts={contacts} parent={{ artist_id: artistId }} titleKey="artist.kontakte" />,
     // Its own section, unlike the project page's `kontakte`, which holds contacts and links side
     // by side — an artist without projects keeps their documents here, and a list that could only
