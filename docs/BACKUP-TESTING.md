@@ -146,7 +146,9 @@ focused-window season resolution. Run with at least two seasons present.
 - [ ] Export from a window pinned to a non-default season (both the Einstellungen button and the
       Datei menu) → the exported file contains *that* season's rows. The import confirmation
       names the season it will replace; after an import, **all** windows close and one returns.
-- [ ] „Backup-Ordner wählen…" → every open window reloads, and each shows the new folder.
+- [ ] „Backup-Ordner wählen…" (both the Einstellungen button and the Datei menu) → every open
+      window shows the new folder **without reloading**. Type into an inline editor in the other
+      window first: that draft must still be there afterwards (PR50-05 — the reload ate it).
 - [ ] Close one of two windows → the other keeps working (menus, dialogs, edits). Close the last
       window with an unreachable backup folder configured → the quit grace still behaves: no
       orphan process, no dialog on an empty desktop.

@@ -229,13 +229,37 @@ async function reportBackupProblem(err: unknown): Promise<void> {
   });
 }
 
-async function chooseBackupDir(): Promise<void> {
-  const dir = await promptForDirectory(liveWindow());
+/**
+ * The folder lives in the registry, so every window's Einstellungen shows it and every window
+ * has to hear about a change — including the one that asked, whose click is fire-and-forget
+ * (`window.auftakt.chooseBackupDir()` awaits nothing).
+ *
+ * This used to be `for (…) w.webContents.reload()`, which discarded unsaved drafts in windows
+ * the user never touched: editors persist on blur and there is no `beforeunload` anywhere, so
+ * a half-typed note in window B died when window A picked a folder (PR50-05). The renderers
+ * already have a non-destructive way to refresh — the coalesced blanket invalidate behind the
+ * BroadcastChannel — so main only has to say "something changed" and let them run it.
+ *
+ * The one main-initiated event in the app, hence the only `webContents.send`: the other
+ * direction is all `ipcRenderer.invoke`, because everything else starts in a renderer.
+ * BroadcastChannel cannot carry this — main is not a renderer and has no channel object.
+ */
+function notifyBackupConfigChanged(): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send('backup-config-changed');
+  }
+}
+
+async function chooseBackupDir(win: BrowserWindow | null): Promise<void> {
+  // The picker parents on the initiating window when there is one, else on any live window:
+  // saying which *app* wants the folder matters more than which window (see promptForDirectory).
+  const dir = await promptForDirectory(win ?? liveWindow());
   if (!dir) return;
   try {
     await saveBackupDir(dir);
   } catch (err) {
-    // Reloading here would show the old (or empty) folder as if nothing had happened.
+    // No notify here: telling the windows to refresh would show the old (or empty) folder
+    // as if nothing had happened.
     await dialog.showMessageBox({
       type: 'error',
       message: 'Der Backup-Ordner konnte nicht gespeichert werden.',
@@ -243,9 +267,7 @@ async function chooseBackupDir(): Promise<void> {
     });
     return;
   }
-  // Every window shows the folder in its Einstellungen — reload them all, not just the
-  // one the click came from.
-  for (const w of BrowserWindow.getAllWindows()) w.webContents.reload();
+  notifyBackupConfigChanged();
 }
 
 /** An IPC argument is untrusted: only a positive integer passes, anything else → default. */
@@ -508,6 +530,10 @@ async function ensureBackupDir(): Promise<string> {
   if (!chosen) return '';
   await saveBackupDir(chosen);
   await post('backup/prompted', {});
+  // Same signal as the Einstellungen and menu paths: this prompt runs while a window is
+  // already on screen, so an open Einstellungen panel would otherwise keep reading
+  // „(noch nicht gewählt)" until something else happened to refetch the settings.
+  notifyBackupConfigChanged();
   return chosen;
 }
 
@@ -695,7 +721,7 @@ app.whenReady().then(async () => {
       // Menu clicks carry no renderer context, so the season comes from the focused window.
       onExport: () => void focusedWindowSeason().then(exportDatabase),
       onImport: () => void focusedWindowSeason().then(importDatabase),
-      onChooseBackup: chooseBackupDir,
+      onChooseBackup: () => void chooseBackupDir(BrowserWindow.getFocusedWindow()),
     }),
   );
   await createWindow();
@@ -759,7 +785,7 @@ app.on('window-all-closed', () => {
 ipcMain.handle('open-external', (_e, url: string) => openExternalSafely(url));
 ipcMain.handle('export-db', (_e, seasonId: unknown) => exportDatabase(asSeasonId(seasonId)));
 ipcMain.handle('import-db', (_e, seasonId: unknown) => importDatabase(asSeasonId(seasonId)));
-ipcMain.handle('choose-backup-dir', () => chooseBackupDir());
+ipcMain.handle('choose-backup-dir', (e) => chooseBackupDir(BrowserWindow.fromWebContents(e.sender)));
 ipcMain.handle('get-version', () => app.getVersion());
 ipcMain.handle('check-updates', (_e, refresh: boolean) => checkForUpdates(refresh));
 ipcMain.handle('install-update', () => downloadAndInstallUpdate());

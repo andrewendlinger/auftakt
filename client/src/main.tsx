@@ -94,14 +94,25 @@ focusManager.setEventListener((handleFocus) => {
  * posts one invalidate per dropped row); active queries refetch immediately, the rest just
  * go stale, and a window on another season merely refetches its own season's data.
  */
-onBroadcast(
-  (() => {
-    const invalidate = coalesced(() => void queryClient.invalidateQueries(), 150);
-    return (msg) => {
-      if (msg.type === 'invalidate') invalidate();
-    };
-  })(),
-);
+const invalidate = coalesced(() => void queryClient.invalidateQueries(), 150);
+
+onBroadcast((msg) => {
+  if (msg.type === 'invalidate') invalidate();
+});
+
+/**
+ * The second feed into that same invalidate, and the only signal that comes from *main*:
+ * the backup folder is registry-wide, so a pick in any window — or from the Datei menu, or
+ * from the first-launch prompt, neither of which has a renderer behind it — changes what
+ * every window's Einstellungen should show. Main used to reload all of them, which cost
+ * unsaved drafts in windows nobody had touched (PR50-05); this is the non-destructive half
+ * the broadcast channel already implements, reached from the other process.
+ *
+ * Optional-chained twice over: there is no bridge in browser dev, and an older packaged
+ * preload would not have this member. The unsubscribe is discarded on purpose — same as
+ * onBroadcast above, this listener lives exactly as long as the document.
+ */
+window.auftakt?.onBackupConfigChanged?.(invalidate);
 
 /**
  * Total collapse. A throw *above* ErrorBoundary — in ToastProvider, UndoProvider,
