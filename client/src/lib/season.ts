@@ -98,6 +98,15 @@ export function reloadToDashboard(): void {
 }
 
 /**
+ * Was this rejection the 410 that means „the season is gone"? Read structurally rather than
+ * with `instanceof ApiError`: the status code is the whole contract (see seasonGone above),
+ * and the documented import cycle with api/client.ts is narrower with one binding than two.
+ */
+function isSeasonGone(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { status?: unknown }).status === 410;
+}
+
+/**
  * Switch THIS window to another season — the only legal way to change seasons from the
  * client. Window-local: other windows keep their own pins and are merely nudged to refresh
  * their season lists. The reload is mandatory, not an optimisation — a fresh document means
@@ -112,7 +121,15 @@ export async function switchSeason(id: number): Promise<void> {
   // before the reload, because a fetch fired from an unloading document is cancelled.
   try {
     await api.activateSeason(id);
-  } catch {
+  } catch (err) {
+    // …with one exception: a 410 says the season we just pinned is already gone (another
+    // window deleted it and this window's list is still pre-delete). http() has already run
+    // seasonGone() for it — the pin is dropped, the relay flag is set and the document is on
+    // its way to the landing page. Falling through would replace that with '#/dashboard', so
+    // LandingPage never mounts, consumeSeasonGone() never runs and the flag stays set — which
+    // makes seasonGone()'s burst guard swallow every LATER 410 in this window, leaving it
+    // pinned to a dead season and toasting errors until it is closed (PR50-01).
+    if (isSeasonGone(err)) return;
     /* keep the local switch */
   }
   // Other windows refresh their ['seasons'] markers (the default moved); their pins stay.
