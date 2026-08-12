@@ -92,7 +92,9 @@ focusManager.setEventListener((handleFocus) => {
  * the QueryClient directly rather than useInvalidateAll — re-posting a received invalidate
  * would ping-pong between windows forever. The coalescer collapses bursts (a drag reorder
  * posts one invalidate per dropped row); active queries refetch immediately, the rest just
- * go stale, and a window on another season merely refetches its own season's data.
+ * go stale, and a window on another season merely refetches its own season's data — the
+ * message is season-agnostic on purpose, and the coalescer is what pays for it (DECISIONS.md,
+ * PR50-15).
  */
 const invalidate = coalesced(() => void queryClient.invalidateQueries(), 150);
 

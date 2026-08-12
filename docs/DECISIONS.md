@@ -701,10 +701,49 @@ last-write-wins between windows (the broadcast shrinks the window to ~millisecon
 undo was already ruled out once, see the category-reassignment entry); a write in flight at the
 exact moment its season is deleted or imported can land oddly (closing that fully means per-write
 season tokens — the architecture this entry rejects); Cmd+N inherits the *default* season, not
-necessarily the opener window's (main has no cheap, non-racy way to read the opener's
-sessionStorage); zoom is per-origin in the shared Electron session and leaks across windows; and
+necessarily the opener window's (**reading** the opener's pin is not the obstacle — `windowSeason()`
+in `electron/main.ts` peeks it via `executeJavaScript` and is trusted with the Datei menu's
+destructive import; **seeding** the new window is: injecting sessionStorage after `loadURL` races
+the renderer's first API call, and the client has no `?season=` adoption path — `pinFromResponse()`
+takes the echo or nothing, and the query leg exists for main's own header-less HTTP); zoom is
+per-origin in the shared Electron session and leaks across windows; and
 one window's heavy synchronous operation (backup `VACUUM INTO`, xlsx export) briefly freezes all
 windows, since the server shares the main process — pre-existing, now merely more visible.
+
+---
+
+## Cross-window season races are bounded, not closed (2026-08-12, PR #50 review)
+
+Two findings of that review describe real cross-window behaviour, and both are left as they are.
+They share an answer, which is why they share an entry: the **coalesced blanket invalidate**
+(`client/src/main.tsx`, 150 ms) is what bounds the first and what pays for the second.
+
+**A fresh window's bootstrap burst can straddle a default-season move (PR50-08 / PR50-16).** A new
+window mounts unpinned and fires its dashboard queries in parallel; the `/api` middleware resolves
+the registry default per request, so another window's `switchSeason()` landing
+`POST /seasons/:id/activate` mid-burst splits them — early responses echo the old default, later
+ones the new — and `pinFromResponse()` adopts whichever echo arrives first. The window can render
+one page built from two seasons. Accepted: the window is the few milliseconds between a single
+burst's first and last response, `switchSeason()` immediately broadcasts, and the receiving
+window's blanket invalidate refetches everything under the now-adopted pin — so the mixed render is
+transient, not a stuck state. Making it impossible means correlating an unpinned window's requests
+server-side, and there is no cheap mechanism for that: the client sends no header until a pin
+exists, which is the whole point of echo adoption. **Revisit** on a reproduced, non-transient
+failure — a mixed cache that survives the invalidate. Recorded, not merely dropped, because
+PR50-16 is the same race with a sharper trigger (the switch happening *during* Cmd+N's burst) and
+was the one candidate of that review no verifier ever judged: its verifier died mid-run. It is
+filed as decided, not as unread.
+
+**The invalidate broadcast carries no season id (PR50-15).** Every write posts a bare
+`{ v: 1, type: 'invalidate' }`, so a window pinned to another season refetches on a write that
+cannot have touched its data. Tagging the message with the poster's season looks like a one-field
+fix and is not: `['seasons']` is genuinely cross-season state — the default moved — which is
+exactly why `switchSeason()` posts this same signal, so filtering by season needs a second,
+season-agnostic channel beside the first. Against that, the cost is already bounded: the receiver
+coalesces to at most one invalidate per 150 ms no matter how fast a drag reorder posts, the
+refetch set is a handful of queries, and the database is a local file. **Revisit with numbers** —
+two windows on two seasons, sustained editing in one, the other's request volume and interaction
+latency measured. Not with a fresh reading of the same code.
 
 ---
 
