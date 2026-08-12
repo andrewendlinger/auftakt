@@ -809,6 +809,16 @@ try {
     const reg = await ok('GET', '/seasons');
     const defaultId = reg.activeId;
     const defaultLabel = reg.seasons.find((s) => s.id === defaultId).label;
+    // withSeasonDb has two branches and the pinned cases below only reach the pooled one.
+    // Renaming a season no window has open — the ordinary case — takes the raw open instead,
+    // and createSeason leaves exactly that state: the file is written and initialised but
+    // never pooled, so this PATCH is the first thing to touch it.
+    const cold = await ok('POST', '/seasons', { label: 'Kalt' });
+    await ok('PATCH', `/seasons/${cold.id}`, { label: 'Kalt umbenannt' });
+    const coldRead = await ok('GET', '/settings', undefined, { 'x-auftakt-season': String(cold.id) });
+    check('renaming a never-opened season reaches its file', coldRead.saison === 'Kalt umbenannt', String(coldRead.saison));
+    await ok('DELETE', `/seasons/${cold.id}`);
+
     const other = await ok('POST', '/seasons', { label: 'Anderes Fenster' });
     const pin = { 'x-auftakt-season': String(other.id) };
 
