@@ -15,3 +15,10 @@ export const SECTION_TYPES: Array<{ type: SectionType; label: string }> = [
   { type: 'text', label: 'Textfeld' },
   { type: 'links', label: 'Dokumente & Links' },
 ];
+
+/**
+ * Which group of the add picker a built-in section belongs to: „Eingabe" for sections the user
+ * fills, „Einblicke" for computed views. Lives here rather than in `CustomSections.tsx` so
+ * `lib/sectionSpecs.ts` can use it without a node test run importing a React component file.
+ */
+export type SectionGroup = 'eingabe' | 'einblicke';

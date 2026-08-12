@@ -6,10 +6,10 @@ import type {
   LandingSection,
   LandingSectionInput,
 } from '../api/types';
-import { Card, SectionTitle, Btn, DocumentRow, EmptyState, PickerRow } from './ui';
-import { SECTION_TYPES } from '../lib/sections';
+import { Card, SectionTitle, Btn, DocumentRow, EmptyState } from './ui';
+import { SectionPickerModal } from './SectionPickerModal';
 import { normalizeUrl } from '../lib/url';
-import { Modal, Label, TextInput, RecordFormModal, type FieldDef } from './fields';
+import { RecordFormModal, type FieldDef } from './fields';
 import { EditableLabel } from './EditableLabel';
 import { EditableText } from './EditableText';
 import { InlineNotes } from './InlineNotes';
@@ -44,6 +44,27 @@ export function nonEmptyLandingKeys(landing: LandingContent): string[] {
 }
 
 /**
+ * The landing content as it is *now*, with the cache guaranteed warm first.
+ *
+ * `current()` alone is only half of „now": react-query empties `['landing']` `gcTime` after the
+ * page unmounts — five minutes, the default — and the landing is its only reader, so an undo
+ * pressed from another screen reads `undefined`. Every reader here turns that into `?? []` and
+ * then *writes* what it read, which is why the miss is not a blank list but a wipe: one
+ * „Rückgängig" posts the restored row back as the only one the registry has, and there is no
+ * Papierkorb behind seasons.json (SHL-03).
+ *
+ * So a late closure reads the blob through this, or awaits `refresh()` itself before its own
+ * reads — which is what `useRemoveLandingSection` does, having three of them across two slices.
+ */
+function useReadLanding(): () => Promise<LandingContent | undefined> {
+  const { current, refresh } = useLanding();
+  return async () => {
+    await refresh();
+    return current();
+  };
+}
+
+/**
  * Replace the landing's sections, computed from the list as it is *now*.
  *
  * The `all` prop this replaced was a render snapshot shared by every section on the page, so a
@@ -52,9 +73,10 @@ export function nonEmptyLandingKeys(landing: LandingContent): string[] {
  * had typed in between (SHL-01, SHL-02).
  */
 function usePatchSections() {
-  const { current, patch } = useLanding();
+  const readLanding = useReadLanding();
+  const { patch } = useLanding();
   return async (update: (sections: LandingSection[]) => LandingSectionInput[]) => {
-    await patch({ sections: update(current()?.sections ?? []) });
+    await patch({ sections: update((await readLanding())?.sections ?? []) });
   };
 }
 
@@ -99,8 +121,12 @@ function DocList({
   onPatch,
 }: {
   docs: LandingDoc[];
-  /** The current contents of the list `onPatch` writes to. */
-  read: () => LandingDoc[];
+  /**
+   * The current contents of the list `onPatch` writes to. Async so it can go through
+   * `useReadLanding`: the undo arms below run after the landing has unmounted, by which time a
+   * plain cache read can answer „no documents" for a list that has three.
+   */
+  read: () => Promise<LandingDoc[]>;
   /** The "+ Dokument" button lives in the section title — the parent owns this state. */
   creating: boolean;
   onCloseCreate: () => void;
@@ -113,7 +139,7 @@ function DocList({
     const label = values.label ?? '';
     // Same field, same rule as LinkList: store a scheme so the row is openable (CCL-09).
     const url = values.url ? normalizeUrl(values.url) : null;
-    const now = read();
+    const now = await read();
     if (editing) {
       await onPatch(now.map((d) => (d.id === editing.id ? { ...d, label, url } : d)));
     } else {
@@ -130,9 +156,10 @@ function DocList({
     const index = docs.findIndex((d) => d.id === doc.id);
     return del({
       label: `Dokument „${doc.label}“`,
-      remove: () => onPatch(read().filter((d) => d.id !== doc.id)),
-      restore: () => {
-        const next = [...read()];
+      // `remove` is the redo arm as well, so both of these run long after the click.
+      remove: async () => onPatch((await read()).filter((d) => d.id !== doc.id)),
+      restore: async () => {
+        const next = [...(await read())];
         next.splice(index < 0 ? next.length : Math.min(index, next.length), 0, doc);
         return onPatch(next);
       },
@@ -182,7 +209,8 @@ function DocList({
 
 /** The builtin Dokumente section, backed by the top-level `landing.documents`. */
 export function LandingDocsSection({ landing }: { landing: LandingContent }) {
-  const { current, patch } = useLanding();
+  const readLanding = useReadLanding();
+  const { patch } = useLanding();
   const [creating, setCreating] = useState(false);
   return (
     <div>
@@ -191,7 +219,7 @@ export function LandingDocsSection({ landing }: { landing: LandingContent }) {
       </SectionTitle>
       <DocList
         docs={landing.documents}
-        read={() => current()?.documents ?? []}
+        read={async () => (await readLanding())?.documents ?? []}
         creating={creating}
         onCloseCreate={() => setCreating(false)}
         onPatch={async (documents) => {
@@ -229,7 +257,7 @@ export function LandingTextSection({ section }: { section: LandingSection }) {
 
 /** One custom Dokumente list: renameable title, its own documents inside the section row. */
 export function LandingLinksSection({ section }: { section: LandingSection }) {
-  const { current } = useLanding();
+  const readLanding = useReadLanding();
   const patchSections = usePatchSections();
   const [creating, setCreating] = useState(false);
   return (
@@ -245,7 +273,9 @@ export function LandingLinksSection({ section }: { section: LandingSection }) {
       </SectionTitle>
       <DocList
         docs={section.documents ?? []}
-        read={() => current()?.sections.find((s) => s.id === section.id)?.documents ?? []}
+        read={async () =>
+          (await readLanding())?.sections.find((s) => s.id === section.id)?.documents ?? []
+        }
         creating={creating}
         onCloseCreate={() => setCreating(false)}
         onPatch={(documents) =>
@@ -265,10 +295,17 @@ export function LandingLinksSection({ section }: { section: LandingSection }) {
  * typed into a neighbouring Textfeld, a heading renamed through `EditableText`, a second Bereich
  * deleted on purpose. Registry sections have no `deleted_at` and never appear in „Archiv", so
  * none of that was recoverable (SHL-02).
+ *
+ * „As they are when they run" needs `refresh()` to be true, though — `current()` reads a query
+ * cache react-query empties five minutes after the landing unmounts, and a miss answers `[]`,
+ * which here is not a refusal but the whole registry: the redo arm would `PATCH` `sections: []`
+ * and take every other Bereich with it, and the undo arm would post this one back as the only
+ * one there is. Still SHL-02, reached by a different route and with the same absence of a
+ * Papierkorb behind it.
  */
 export function useRemoveLandingSection(): (key: string) => void {
   const del = useUndoableDelete();
-  const { current, patch } = useLanding();
+  const { current, refresh, patch } = useLanding();
   return (key) => {
     const sections = () => current()?.sections ?? [];
     const layout = () => current()?.layout ?? [];
@@ -286,12 +323,16 @@ export function useRemoveLandingSection(): (key: string) => void {
     const layoutEntry = layout()[layoutIndex];
     void del({
       label: `Bereich „${s.name}“`,
-      remove: () =>
-        patch({
+      // Both arms refresh first: `remove` is the redo arm as well, so it runs late too.
+      remove: async () => {
+        await refresh();
+        return patch({
           sections: sections().filter((x) => x.id !== s.id),
           layout: layout().filter((e) => e.key !== key),
-        }),
-      restore: () => {
+        });
+      },
+      restore: async () => {
+        await refresh();
         // `s` carries its id, so the server keeps it and the entry put back below still points
         // at the restored row.
         const next = [...sections()];
@@ -307,11 +348,10 @@ export function useRemoveLandingSection(): (key: string) => void {
 }
 
 /**
- * The landing's "+ Bereich" picker. Modeled on CustomSections' AddSectionModal but not
- * reusing it — that one creates per-season `custom_sections` rows, while landing
- * sections live in the registry. Offers the two custom types plus the hidden
- * built-ins to restore. The type list and the option row *are* shared: neither depends on
- * where the section is persisted (SHL-29).
+ * The landing's "+ Bereich" picker: the shared shell in flat mode (the landing has no picker
+ * groups), with its own persistence — landing sections live in the registry, not in a season's
+ * `custom_sections` table, and that split stays (SHL-29). Hidden built-ins arrive
+ * already-named because the landing's two label keys are resolved at the call site.
  */
 export function AddLandingSectionButton({
   hiddenKeys,
@@ -327,32 +367,6 @@ export function AddLandingSectionButton({
 }) {
   const { current, patch } = useLanding();
   const [open, setOpen] = useState(false);
-  const [chosen, setChosen] = useState<LandingSection['type'] | null>(null);
-  const [name, setName] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const close = () => {
-    setOpen(false);
-    setChosen(null);
-    setName('');
-  };
-
-  const create = async () => {
-    if (!name.trim() || !chosen || busy) return;
-    setBusy(true);
-    try {
-      // Appended to the sections as they are now: a section added or deleted since this modal
-      // opened would otherwise be undone by the act of adding another one.
-      const res = await patch({
-        sections: [...(current()?.sections ?? []), { name: name.trim(), type: chosen, value: null }],
-      });
-      const created = res.sections.reduce((a, b) => (a.id > b.id ? a : b));
-      onPrepend(landingSectionKey(created));
-      close();
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <>
@@ -360,56 +374,22 @@ export function AddLandingSectionButton({
         + Bereich
       </Btn>
       {open && (
-        <Modal
-          title="Bereich hinzufügen"
-          onClose={close}
-          footer={
-            chosen && (
-              <>
-                <Btn onClick={close}>Abbrechen</Btn>
-                <Btn variant="primary" onClick={create} disabled={!name.trim() || busy}>
-                  Hinzufügen
-                </Btn>
-              </>
-            )
-          }
-        >
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              {SECTION_TYPES.map((t) => (
-                <PickerRow key={t.type} selected={chosen === t.type} onClick={() => setChosen(t.type)}>
-                  {t.label}
-                  <span className="ml-2 text-xs text-neutral-400">neu, mit eigenem Namen</span>
-                </PickerRow>
-              ))}
-              {hiddenKeys.map((k) => (
-                <PickerRow
-                  key={k}
-                  onClick={() => {
-                    onRestore(k);
-                    close();
-                  }}
-                >
-                  {hiddenNames[k] ?? k}
-                </PickerRow>
-              ))}
-            </div>
-            {chosen && (
-              <div>
-                <Label>Name</Label>
-                <TextInput
-                  autoFocus
-                  value={name}
-                  placeholder={chosen === 'links' ? 'z. B. Verträge' : 'z. B. Kontakte & Adressen'}
-                  onChange={(e) => setName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void create();
-                  }}
-                />
-              </div>
-            )}
-          </div>
-        </Modal>
+        <SectionPickerModal
+          grouped={false}
+          builtins={hiddenKeys.map((k) => ({ key: k, name: hiddenNames[k] ?? k }))}
+          namePlaceholder={(type) => (type === 'links' ? 'z. B. Verträge' : 'z. B. Kontakte & Adressen')}
+          onRestore={onRestore}
+          onCreate={async (type, name) => {
+            // Appended to the sections as they are now: a section added or deleted since this
+            // modal opened would otherwise be undone by the act of adding another one.
+            const res = await patch({
+              sections: [...(current()?.sections ?? []), { name, type, value: null }],
+            });
+            const created = res.sections.reduce((a, b) => (a.id > b.id ? a : b));
+            onPrepend(landingSectionKey(created));
+          }}
+          onClose={() => setOpen(false)}
+        />
       )}
     </>
   );

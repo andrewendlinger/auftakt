@@ -2,13 +2,12 @@ import { useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { CustomSection } from '../api/types';
-import { Card, SectionTitle, Btn, PickerRow } from './ui';
-import { Label, Modal, TextInput } from './fields';
-import { SECTION_TYPES } from '../lib/sections';
+import { Card, SectionTitle, Btn } from './ui';
+import { SectionPickerModal } from './SectionPickerModal';
+import { pickerBuiltins, type HiddenBuiltin, type SectionSpec } from '../lib/sectionSpecs';
 import { InlineNotes } from './InlineNotes';
 import { EditableText } from './EditableText';
 import { LinkList } from './LinkList';
-import type { LabelKey } from '../lib/labels';
 import type { LayoutStore } from './SectionArranger';
 import { useInvalidateAll, useLabel, useUndoableDelete, useUndoablePatch } from '../hooks';
 
@@ -28,15 +27,10 @@ export function sectionKey(s: CustomSection): string {
   return `cs${s.id}`;
 }
 
-/** Which group of the add picker a built-in section belongs to. */
-export type SectionGroup = 'eingabe' | 'einblicke';
-
-/** A hidden built-in section the picker can re-add. */
-export interface HiddenBuiltin {
-  key: string;
-  labelKey: LabelKey;
-  group: SectionGroup;
-}
+// Both types moved to lib/ with the section catalog (WP-46); re-exported so callers keep one
+// import surface for the picker wiring that stays in this file.
+export type { SectionGroup } from '../lib/sections';
+export type { HiddenBuiltin } from '../lib/sectionSpecs';
 
 /**
  * The arranger-strip 🗑 handler for custom widgets: soft-delete the row **and drop its layout
@@ -55,13 +49,21 @@ export interface HiddenBuiltin {
  * `current()` rather than the rendered array, for the reason `useLanding` documents: the undo
  * arm runs up to six seconds later, and rebuilding from a render snapshot would roll back every
  * layout change the user made in between.
+ *
+ * …and `refresh()` before each of those reads, for the reason `LayoutStore` documents: `current()`
+ * reads a query cache that react-query empties five minutes after the page unmounts, and a miss
+ * reads as an empty store. Both arms here *write* what they read, so a miss is not a refused undo
+ * but a wrong array persisted — on the dashboard, whose store is `['settings']`, restoring a
+ * widget from a cold cache would have replaced the whole `dashboard_layout` with the single entry
+ * being put back. The delete itself runs from a mounted page and finds the entry cached, so this
+ * costs nothing on the path that is actually common.
  */
 export function useRemoveCustomSection(
   sections: CustomSection[],
   store: LayoutStore,
 ): (key: string) => void {
   const del = useUndoableDelete();
-  const { current, write } = store;
+  const { current, refresh, write } = store;
   return (key) => {
     const s = sections.find((x) => sectionKey(x) === key);
     if (!s) return;
@@ -71,8 +73,10 @@ export function useRemoveCustomSection(
     const entry = current()[index];
     void del({
       label: `Bereich „${s.name}“`,
+      // Both arms refresh first: `remove` is the redo arm as well, so it runs late too.
       remove: async () => {
         const res = await api.customSections.remove(s.id);
+        await refresh?.();
         // Only when the entry is actually stored. On an entity page still following the template
         // `current()` *is* the template, and writing a filtered copy of it back would freeze it
         // onto this artist as its own layout — an arrangement the user never made (WP-25).
@@ -81,6 +85,7 @@ export function useRemoveCustomSection(
       },
       restore: async () => {
         const res = await api.customSections.restore(s.id);
+        await refresh?.();
         if (entry) {
           const next = [...current()];
           next.splice(index < 0 ? next.length : Math.min(index, next.length), 0, entry);
@@ -107,50 +112,38 @@ export function useNonEmptyCustomSections(sections: CustomSection[]): string[] {
 
 /**
  * `SectionArranger`'s `addAction` for a page with built-in sections — the whole picker wiring
- * given the page's own label/group tables and the parent a new widget hangs off.
+ * given the page's section catalog and the parent a new widget hangs off.
  *
  * The three pages that have built-ins (Dashboard, Künstler, Projekt) used to spell out the same
- * twelve-line block, byte-identical apart from `parent`. Adding a third picker group or changing
- * the `HiddenBuiltin` shape meant editing all three, and missing one left that page's „+ Bereich"
- * picker mis-grouping (PGS-28). The per-page `labelKeys`/`groups` tables genuinely differ and
- * stay in their pages.
- *
- * A key with no entry in either table is dropped rather than asserted: `hiddenKeys` comes from
- * the stored layout, which can carry a key this page does not know — the previous
- * `SECTION_LABEL_KEYS[k]!` turned that into an unnamed picker entry or a crash.
+ * twelve-line block, byte-identical apart from `parent` (PGS-28). Since WP-46 the picker rows
+ * come straight from the page's specs — `pickerBuiltins` drops keys a stored layout carries but
+ * the page does not know, and the spec type itself guarantees every removable section names its
+ * group.
  */
 export function builtinPicker(
-  labelKeys: Record<string, LabelKey>,
-  groups: Record<string, SectionGroup>,
+  specs: SectionSpec[],
   parent: SectionParent,
 ): (ctx: {
   hiddenKeys: string[];
   restore: (key: string) => void;
   prepend: (key: string) => void;
 }) => ReactNode {
-  return ({ hiddenKeys, restore, prepend }) => {
-    const hiddenBuiltins: HiddenBuiltin[] = [];
-    for (const key of hiddenKeys) {
-      const labelKey = labelKeys[key];
-      const group = groups[key];
-      if (labelKey && group) hiddenBuiltins.push({ key, labelKey, group });
-    }
-    return (
-      <AddSectionButton
-        parent={parent}
-        onRestore={restore}
-        onPrepend={prepend}
-        hiddenBuiltins={hiddenBuiltins}
-      />
-    );
-  };
+  return ({ hiddenKeys, restore, prepend }) => (
+    <AddSectionButton
+      parent={parent}
+      onRestore={restore}
+      onPrepend={prepend}
+      hiddenBuiltins={pickerBuiltins(specs, hiddenKeys)}
+    />
+  );
 }
 
 /**
- * The "+ Bereich" button (edit mode only), opening a grouped picker: „Eingabe" holds the two
- * custom widget types (needing a name) plus this page's hidden built-in input sections;
- * „Einblicke" holds the hidden computed sections. Built-ins are singletons — clicking one
- * restores it immediately; picking a custom type reveals the name field.
+ * The "+ Bereich" button (in the toolbar, outside edit mode since WP-45), opening a grouped
+ * picker: „Eingabe" holds the two custom widget types (needing a name) plus this page's hidden
+ * built-in input sections; „Einblicke" holds the hidden computed sections. Built-ins are
+ * singletons — clicking one restores it immediately; picking a custom type reveals the name
+ * field.
  */
 export function AddSectionButton({
   parent,
@@ -198,103 +191,23 @@ function AddSectionModal({
 }) {
   const invalidate = useInvalidateAll();
   const label = useLabel();
-  const [chosen, setChosen] = useState<CustomSection['type'] | null>(null);
-  const [name, setName] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const create = async () => {
-    if (!name.trim() || !chosen || busy) return;
-    setBusy(true);
-    try {
-      const row = await api.customSections.create({
-        name: name.trim(),
-        type: chosen,
-        artist_id: parent.artist_id ?? null,
-        project_id: parent.project_id ?? null,
-      });
-      await invalidate();
-      onPrepend(sectionKey(row));
-      onClose();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const groupHeading = 'mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-400';
-  const builtinsOf = (group: SectionGroup) => hiddenBuiltins.filter((b) => b.group === group);
-
   return (
-    <Modal
-      title="Bereich hinzufügen"
+    <SectionPickerModal
+      grouped
+      builtins={hiddenBuiltins.map((b) => ({ key: b.key, name: label(b.labelKey), group: b.group }))}
+      onRestore={onRestore}
+      onCreate={async (type, name) => {
+        const row = await api.customSections.create({
+          name,
+          type,
+          artist_id: parent.artist_id ?? null,
+          project_id: parent.project_id ?? null,
+        });
+        await invalidate();
+        onPrepend(sectionKey(row));
+      }}
       onClose={onClose}
-      footer={
-        chosen && (
-          <>
-            <Btn onClick={onClose}>Abbrechen</Btn>
-            <Btn variant="primary" onClick={create} disabled={!name.trim() || busy}>
-              Hinzufügen
-            </Btn>
-          </>
-        )
-      }
-    >
-      <div className="space-y-4">
-        <div>
-          <div className={groupHeading}>Eingabe</div>
-          <div className="space-y-1.5">
-            {SECTION_TYPES.map((t) => (
-              <PickerRow key={t.type} selected={chosen === t.type} onClick={() => setChosen(t.type)}>
-                {t.label}
-                <span className="ml-2 text-xs text-neutral-400">neu, mit eigenem Namen</span>
-              </PickerRow>
-            ))}
-            {builtinsOf('eingabe').map((b) => (
-              <PickerRow
-                key={b.key}
-                onClick={() => {
-                  onRestore(b.key);
-                  onClose();
-                }}
-              >
-                {label(b.labelKey)}
-              </PickerRow>
-            ))}
-          </div>
-        </div>
-        {builtinsOf('einblicke').length > 0 && (
-          <div>
-            <div className={groupHeading}>Einblicke</div>
-            <div className="space-y-1.5">
-              {builtinsOf('einblicke').map((b) => (
-                <PickerRow
-                  key={b.key}
-                  onClick={() => {
-                    onRestore(b.key);
-                    onClose();
-                  }}
-                >
-                  {label(b.labelKey)}
-                </PickerRow>
-              ))}
-            </div>
-          </div>
-        )}
-        {chosen && (
-          <div>
-            <Label>Name</Label>
-            <TextInput
-              autoFocus
-              value={name}
-              placeholder="z. B. Reiseplanung"
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void create();
-              }}
-            />
-          </div>
-        )}
-      </div>
-    </Modal>
+    />
   );
 }
 

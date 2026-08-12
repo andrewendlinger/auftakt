@@ -23,12 +23,33 @@ export function Card({
   );
 }
 
-export function SectionTitle({ children, right }: { children: ReactNode; right?: ReactNode }) {
+export function SectionTitle({
+  children,
+  right,
+  hint,
+}: {
+  children: ReactNode;
+  right?: ReactNode;
+  hint?: ReactNode;
+}) {
+  // `section-title` is a hook for SectionArranger: while a section is being arranged,
+  // its strip already names it, so the in-card heading hides to avoid the double title.
+  // The hint hides with it — it explains content, which is irrelevant while arranging.
+  const heading = (
+    <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">{children}</h2>
+  );
   return (
-    // `section-title` is a hook for SectionArranger: while a section is being arranged,
-    // its strip already names it, so the in-card heading hides to avoid the double title.
     <div className="section-title mb-3 flex items-center justify-between gap-3">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">{children}</h2>
+      {hint == null ? (
+        heading
+      ) : (
+        // The hint is a sibling of the h2, outside any EditableLabel in `children` — a
+        // computed section's "what fills me" line is not renameable, only its heading is.
+        <div>
+          {heading}
+          <div className="mt-0.5 text-xs text-neutral-400">{hint}</div>
+        </div>
+      )}
       {right}
     </div>
   );

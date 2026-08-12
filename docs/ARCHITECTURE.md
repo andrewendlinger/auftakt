@@ -312,8 +312,8 @@ toolbar, whose heading names the scope through `useLabel` — **appended, never 
 „Ensemblesseiten-Layout".
 
 Which store a page uses is the page's business, and all of them expose the same `LayoutStore`
-shape (`value` / `current()` / `write()`), so `useRemoveCustomSection` prunes a `cs<id>` without
-knowing where the array lives: `useEntityLayout` for artists and projects, `useSettingsArray` for
+shape (`value` / `current()` / `refresh()` / `write()`), so `useRemoveCustomSection` prunes a
+`cs<id>` without knowing where the array lives: `useEntityLayout` for artists and projects, `useSettingsArray` for
 the dashboard, `useLanding` (behind a small adapter in `LandingPage`) for the landing. Since WP-45
 `SectionArranger` takes that store itself — the `store` prop, or `layoutKey` for the settings
 arm — because the removal undo needs `current()`, not just a write. Settings whose values are
@@ -329,6 +329,34 @@ layout write**: its undo arms are built on `store.current()` (`lib/layoutEntries
 pure helpers). Everything else — reorder, width, the whole `LayoutMenu` — stays off the undo
 stack. „+ Bereich" renders outside edit mode, because the picker is the only way back to a
 removed section.
+
+Two things that removal undo has to get right, both of them invisible when it gets them wrong.
+On a page that was still **following the standard**, the removal is also what gives it a layout of
+its own: the tombstone can only be persisted with the array around it. Writing that array back
+would restore the picture and not the state — the page would look untouched while quietly holding
+a frozen copy of the standard — so the revert calls `resetToDefault()` instead and the page keeps
+inheriting. Only while nothing else was arranged in between: `sameLayout` compares the store
+against what the removal wrote, and an arrangement of the user's own outranks the reset. And both
+arms `await store.refresh?.()` before reading, because `current()`/`owned()` read a query cache
+that react-query empties `gcTime` (five minutes) after the page unmounts — a miss is
+indistinguishable from a store with nothing in it, and an undo pressed from the keyboard three
+screens later is exactly the case that hits it. The same `refresh()` guards the two *widget*
+removals (`useRemoveCustomSection`, `useRemoveLandingSection`), whose arms write what they read —
+so a cold cache there is not a refused undo but a wrong array persisted: the whole
+`dashboard_layout` replaced by the one entry being restored, or `landing.sections` replaced by
+the one section, which has no Papierkorb behind it. The landing has the same rule one level
+further in, where the blob itself is the store: every late reader goes through `useReadLanding`
+(or awaits `refresh()` itself), because `usePatchSections` writes back the whole `sections` array
+— so an undone *document* delete read from a cold cache took every Bereich on the page with it.
+
+Since WP-46 a page declares its built-ins as **one `SectionSpec[]`** (`lib/sectionSpecs.ts`,
+re-exported through `components/SectionCatalog.tsx`): spec order is the default section order for
+fresh layouts, and `arrangerConfig(specs)` derives the arranger's parallel props
+(`sections`/`labelKeys`/`mandatoryKeys`/`defaultHidden`/`fullWidthKeys`/`defaultWidths`) from it.
+A removable spec must name its picker group — the type forbids „removable but ungroupable", so a
+key can no longer silently drop out of the „+ Bereich" picker (the PGS-28 class). `defaultWidths`
+lets a key arrive half-width when first appended to a stored layout; no key uses it yet
+(reserved for section pairs meant to sit side by side, WP-D).
 
 Two things that look like tidiness and are not. A layout write must **publish to its query cache
 before awaiting**, because most arrange mutations fire as `void write(…)` (SHL-10) — the removal
@@ -353,6 +381,8 @@ Which module owns which invariant. Reach for these rather than rebuilding the be
 | `useUndoableDelete()` (hooks.ts) | soft-delete + undo stack + toast, returning whether the row is actually gone. A delete endpoint that does not answer `{deleted:false}` on a no-op silently opts out of the „war bereits gelöscht" check — teach it in `nothingDeleted()`. **Deleting a row that has a page of its own passes `gone: [kind, id]`** — its keys go stale but are never refetched. Without it the blanket invalidate asks for the deleted row while its page is still mounted (the redirect is a router transition and does not commit first), the server answers 404, and the user gets an error toast next to the „gelöscht" one. |
 | `lib/season.ts` | the window's season boundary: the sessionStorage pin, the response-echo adoption, the 410 recovery (`seasonGone()` → landing + relayed toast) and `switchSeason()` — **the only legal way to change seasons from the client.** Calling `api.activateSeason` directly moves the default without switching anything. `switchSeason()` yields when its own activate comes back 410: the recovery has already navigated, and a second navigation over it left the relay flag latched and the window unable to recover from any later 410 (PR50-01). `sessionStorage['auftakt-season']` has exactly one other reader, and it is in another process: `windowSeason()` in `electron/main.ts` peeks it via `executeJavaScript` to route the Datei menu's export/import. `electron/tsconfig.json` includes only `electron/*.ts`, so no typecheck spans the two spellings — **grep is the whole coupling**, and renaming the key means renaming both (PR50-10). |
 | `lib/broadcast.ts` | cross-window signalling. **One channel object per window, for posting AND listening — the singleton IS the self-suppression**: BroadcastChannel skips delivery only to the posting object, so a second `new BroadcastChannel('auftakt')` makes a window hear its own writes and loop every invalidate. Messages are versioned pure signals, never data. `useInvalidateAll` posts; the sole listener lives in `main.tsx`, where it shares one coalesced blanket invalidate with the `backup-config-changed` bridge event (see „Windows (plural)"). |
+| `lib/sectionSpecs.ts` (via `SectionCatalog.tsx`) | the section catalog: `SectionSpec[]` → `arrangerConfig` derives the arranger props, `pickerBuiltins` the „+ Bereich" rows. Spec order **is** the fresh-layout default order; a removable spec must carry its picker group (type-enforced). The derivation is pure and lives in `lib/` so `check:unit` reaches it without React; `SectionCatalog.tsx` re-exports it and holds the shared section bodies (`StatsSection`, `AttentionSection` — both computed sections say so in a hint line under the renameable heading). |
+| `SectionPickerModal` | the one „Bereich hinzufügen" presentation (type rows, restore rows, name field, Enter-to-create). Persistence stays with the wrappers — `AddSectionModal` creates `custom_sections` rows, `AddLandingSectionButton` registry sections (SHL-29's split). |
 | `useAnchoredPopover()` (`lib/popover.ts`) | any new popover: anchor rect, flip-above, clamp, height cap, close on scroll/resize, Escape. Escape is a **capture-phase window listener, not a React `onKeyDown`** — a popover opened by a click has no focus inside its menu. |
 | `InlineInput` + `useCommitOnUnmount` (hooks.ts) | click-to-edit that commits on blur. React delegates focus events at the root, so a detached node never reaches `onBlur`. `useCommitOnUnmount`'s `active` argument is load-bearing: a constant `true` makes StrictMode's mount-time cleanup fire the commit while the editor is still open. Pick an `EmptyPolicy` (`ignore`/`clear`/`raw`) explicitly. |
 | `normalizeUrl` (`lib/url.ts`) | URL shaping at the **storage and render** boundaries, never inside `openExternal` — `normalizeUrl('/foo')` yields `https:///foo`, which the allowlist would then accept. `openExternal`'s protocol allowlist stays the one place that decides what may open. |

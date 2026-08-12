@@ -799,6 +799,17 @@ zurücksetzen", another window — so `UndoProvider` toasts the failure instead 
 arrangement onto a template-following page. Reorder, width, and every `LayoutMenu` action stay
 off the undo stack; the picker's re-add too, its inverse being the 🗑 itself.
 
+That throw only covers the case where the *user* left the template. The removal itself is the
+other one: on a page still following the standard it has to persist the whole array to have
+somewhere to put the tombstone, so „Rückgängig" restoring the array restores the picture and
+leaves the page detached — looking identical, saying „rückgängig gemacht", and never inheriting
+again, with „Auf Standard zurücksetzen" the only way back and no reason to look for it. Decided:
+the revert **hands the template back** (`resetToDefault()`) whenever the store still holds exactly
+what the removal wrote, and keeps the layout otherwise — an arrangement made between the removal
+and the undo is the user's own and outranks the reset. The same reading of „current" also made
+`refresh()` part of `LayoutStore`: `current()`/`owned()` read a query cache with a five-minute
+`gcTime`, and an undo pressed after that reads an eviction as an empty store.
+
 ## „+ Bereich" lives in the toolbar, outside edit mode (2026-08-12, WP-45, #57)
 
 The picker is the only way back to a removed section, and a route that exists only behind
@@ -807,6 +818,29 @@ happened. So `addAction` renders whenever the toolbar does: `[+ Bereich] [✎ Be
 in view mode, „⌂ Layout" joining in edit mode. „⌂ Layout" stays gated: its actions replace whole
 arrangements, which is edit-mode business. A „N Bereiche ausgeblendet" hint was considered in #57
 and rejected — it makes the third state visible instead of removing it.
+
+## One spec per section; the picker modal is shared, its persistence is not (2026-08-12, WP-46)
+
+A page's built-ins are declared as one `SectionSpec[]` (`lib/sectionSpecs.ts`), replacing the
+per-page `SECTION_LABEL_KEYS`/`SECTION_GROUPS` tables and the inline flag literals. The spec
+type couples „removable" to „has a picker group", so the PGS-28 failure — a key missing from the
+groups table silently vanishing from the picker — is unrepresentable rather than merely fixed.
+
+This also supersedes **half** of SHL-29. SHL-29 hoisted `SECTION_TYPES` and `PickerRow` but
+declined to share the „Bereich hinzufügen" modal because the two pickers persist differently.
+That reasoning's live half stands: `SectionPickerModal` is presentation only (an `onCreate`
+callback), and `AddSectionModal` (per-season `custom_sections` rows) and
+`AddLandingSectionButton` (registry sections, flat list, own placeholders) keep their own
+persistence. What fell was only the duplicated modal markup, which had already drifted.
+
+Two deliberate details. **Computed sections say so**: `StatsSection`/`AttentionSection` and the
+dashboard's „Nächste Termine" carry a muted, non-renameable line under the renameable heading
+(„Wird automatisch …"), because a removed computed section used to be indistinguishable from a
+list the user forgot to fill — and the line becomes load-bearing when an editable twin appears
+next to the read-only roll-up (WP-D). And **`defaultWidths` ships dormant**: the arranger can
+append a key half-width, no spec sets it yet. Its known edge: `ensureEntry`
+(`lib/layoutEntries.ts`) still recreates a vanished entry full-width in the removal-undo arm,
+acceptable until a half-default key exists (WP-D).
 
 ## Known sharp edges with no owner
 

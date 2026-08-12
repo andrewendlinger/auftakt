@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
@@ -6,7 +6,6 @@ import { contrastText, projectShade, withAlpha } from '../lib/colors';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { LayoutMenu, SectionArranger, useEntityLayout } from '../components/SectionArranger';
 import { EditableLabel } from '../components/EditableLabel';
-import type { LabelKey } from '../lib/labels';
 import { Card, SectionTitle, Spinner, Btn, ErrorState, LoadError } from '../components/ui';
 import { isValidId } from '../lib/routeParams';
 import { EventList } from '../components/EventList';
@@ -23,37 +22,19 @@ import {
   customSectionEntries,
   useNonEmptyCustomSections,
   useRemoveCustomSection,
-  type SectionGroup,
 } from '../components/CustomSections';
-import { TaskStatChips } from '../components/TaskStatChips';
-import { AttentionList } from '../components/AttentionList';
+import {
+  arrangerConfig,
+  AttentionSection,
+  StatsSection,
+  type SectionSpec,
+} from '../components/SectionCatalog';
 import {
   useAllTasks,
   useEventTypeOptions,
   useGlobalColumns,
-  useTaskStatsConfig,
   useUndoablePatch,
 } from '../hooks';
-
-/**
- * Which heading names each section in the "Bereiche bearbeiten" strip. `kontakte` holds two
- * lists side by side; its contacts heading is the one that names the section.
- */
-const SECTION_LABEL_KEYS: Record<string, LabelKey> = {
-  termine: 'project.termine',
-  kontakte: 'project.kontakte',
-  stats: 'project.stats',
-  aufmerksamkeit: 'project.aufmerksamkeit',
-  aufgaben: 'project.aufgaben',
-};
-
-/** Picker group of each optional built-in. */
-const SECTION_GROUPS: Record<string, SectionGroup> = {
-  termine: 'eingabe',
-  kontakte: 'eingabe',
-  stats: 'einblicke',
-  aufmerksamkeit: 'einblicke',
-};
 
 export function ProjectPage() {
   const { id } = useParams<{ id: string }>();
@@ -109,7 +90,6 @@ export function ProjectPage() {
   const layout = useEntityLayout('project', project);
   const removeCustomSection = useRemoveCustomSection(customSections, layout);
   const nonEmptyCustom = useNonEmptyCustomSections(customSections);
-  const { windowDays } = useTaskStatsConfig();
 
   // „Fortschritt" counts finished work, and the list above is scope 'live' — the server has already
   // dropped whatever was done longer ago than ARCHIVE_AFTER_DAYS, so the percentage *fell* as the
@@ -148,57 +128,75 @@ export function ProjectPage() {
     ...(contacts.length > 0 || links.length > 0 ? ['kontakte'] : []),
   ];
 
-  const sections: Record<string, ReactNode> = {
-    termine: (
-      <EventList
-        titleKey="project.termine"
-        events={events}
-        parent={{ project_id: projectId }}
-        eventTypes={eventTypes}
-      />
-    ),
-    kontakte: (
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-        <ContactList contacts={contacts} parent={{ project_id: projectId }} titleKey="project.kontakte" />
-        <LinkList links={links} parent={{ project_id: projectId }} titleKey="project.links" />
-      </div>
-    ),
-    stats: (
-      <>
-        <SectionTitle>
-          <EditableLabel k="project.stats" />
-        </SectionTitle>
-        <TaskStatChips tasks={statsTasks} variant="tiles" />
-      </>
-    ),
-    aufmerksamkeit: (
-      <>
-        <SectionTitle>
-          <EditableLabel k="project.aufmerksamkeit" />
-        </SectionTitle>
-        <AttentionList tasks={tasks} windowDays={windowDays} />
-      </>
-    ),
-    aufgaben: (
-      <>
-        <SectionTitle
-          right={
-            <div className="flex items-center gap-2">
-              <ExcelButton params={{ project_id: projectId }} />
-              <Btn variant="subtle" onClick={() => setManagingColumns(true)}>
-                ⚙ Spalten
-              </Btn>
-            </div>
-          }
-        >
-          <EditableLabel k="project.aufgaben" />
-        </SectionTitle>
-        <TaskTable tasks={tasks} customColumns={columns} parent={{ project_id: projectId }} />
-      </>
-    ),
-  };
+  // Spec order = default section order for fresh layouts. `kontakte` holds two lists side by
+  // side; its contacts heading is the one that names the section.
+  const specs: SectionSpec[] = [
+    {
+      key: 'termine',
+      labelKey: 'project.termine',
+      group: 'eingabe',
+      node: (
+        <EventList
+          titleKey="project.termine"
+          events={events}
+          parent={{ project_id: projectId }}
+          eventTypes={eventTypes}
+        />
+      ),
+    },
+    {
+      key: 'kontakte',
+      labelKey: 'project.kontakte',
+      group: 'eingabe',
+      node: (
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
+          <ContactList contacts={contacts} parent={{ project_id: projectId }} titleKey="project.kontakte" />
+          <LinkList links={links} parent={{ project_id: projectId }} titleKey="project.links" />
+        </div>
+      ),
+    },
+    {
+      key: 'stats',
+      labelKey: 'project.stats',
+      group: 'einblicke',
+      defaultHidden: true,
+      node: <StatsSection labelKey="project.stats" tasks={statsTasks} />,
+    },
+    {
+      key: 'aufmerksamkeit',
+      labelKey: 'project.aufmerksamkeit',
+      group: 'einblicke',
+      defaultHidden: true,
+      fullWidth: true,
+      node: <AttentionSection labelKey="project.aufmerksamkeit" tasks={tasks} />,
+    },
+    {
+      key: 'aufgaben',
+      labelKey: 'project.aufgaben',
+      mandatory: true,
+      fullWidth: true,
+      node: (
+        <>
+          <SectionTitle
+            right={
+              <div className="flex items-center gap-2">
+                <ExcelButton params={{ project_id: projectId }} />
+                <Btn variant="subtle" onClick={() => setManagingColumns(true)}>
+                  ⚙ Spalten
+                </Btn>
+              </div>
+            }
+          >
+            <EditableLabel k="project.aufgaben" />
+          </SectionTitle>
+          <TaskTable tasks={tasks} customColumns={columns} parent={{ project_id: projectId }} />
+        </>
+      ),
+    },
+  ];
+  const cfg = arrangerConfig(specs);
   const custom = customSectionEntries(customSections);
-  Object.assign(sections, custom.nodes);
+  const sections = { ...cfg.sections, ...custom.nodes };
   return (
     <div className="space-y-8">
       <Breadcrumbs
@@ -259,14 +257,15 @@ export function ProjectPage() {
       <SectionArranger
         store={layout}
         sections={sections}
-        labelKeys={SECTION_LABEL_KEYS}
+        labelKeys={cfg.labelKeys}
         titles={custom.titles}
-        mandatoryKeys={['aufgaben']}
-        defaultHidden={['stats', 'aufmerksamkeit']}
-        fullWidthKeys={['aufgaben', 'aufmerksamkeit']}
+        mandatoryKeys={cfg.mandatoryKeys}
+        defaultHidden={cfg.defaultHidden}
+        fullWidthKeys={cfg.fullWidthKeys}
+        defaultWidths={cfg.defaultWidths}
         nonEmptyKeys={nonEmptyKeys}
         onRemoveCustom={removeCustomSection}
-        addAction={builtinPicker(SECTION_LABEL_KEYS, SECTION_GROUPS, { project_id: projectId })}
+        addAction={builtinPicker(specs, { project_id: projectId })}
         layoutAction={({ full }) => (
           <LayoutMenu store={layout} full={full} labelKey="project.kicker" />
         )}

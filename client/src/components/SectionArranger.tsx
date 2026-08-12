@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Artist, LayoutEntry, Project } from '../api/types';
 import { arrayMoveTo } from '../lib/arrays';
-import { clearHidden, ensureEntry, markHidden } from '../lib/layoutEntries';
+import { clearHidden, ensureEntry, markHidden, sameLayout } from '../lib/layoutEntries';
 import { useDragReorder } from '../lib/dragReorder';
 import { useAnchoredPopover } from '../lib/popover';
 import { Btn, DragHandle } from './ui';
@@ -75,12 +75,31 @@ export interface LayoutStore {
   current: () => LayoutEntry[];
   write: (next: LayoutEntry[]) => Promise<boolean>;
   /**
+   * Put the store's query back in the cache, so the two readers below answer from stored truth.
+   *
+   * `current()` and `owned()` read the query cache, and react-query evicts an entry `gcTime`
+   * after its last observer unmounts — five minutes, the default, since `main.tsx` sets only
+   * `staleTime`. A miss is indistinguishable from an empty store: an undo pressed after five
+   * minutes on another page found no `['artist', 1]` row, read that as „this page holds no
+   * layout of its own" and refused, and on the landing `current()` would have answered with
+   * `DEFAULT_LANDING_LAYOUT` and overwritten the real arrangement with it. The undo arms
+   * therefore await this first. It costs nothing while the entry is still cached —
+   * `ensureQueryData` only fetches on an actual miss.
+   */
+  refresh?: () => Promise<void>;
+  /**
    * Whether the page holds its own stored arrangement *right now* — `false` on an entity page
    * that is (again) following the standard, whose `current()` then answers with the standard's
    * array. The removal undo refuses to write when this answers false (see `removalUndoEntry`);
    * stores without a template concept omit it.
    */
   owned?: () => boolean;
+  /**
+   * Back to following the standard. Declared here, not only on `EntityLayoutStore`, because the
+   * removal undo needs it: on a page that owned no layout, the removal is what gave it one, and
+   * only this hands that back. Stores without a template concept omit it.
+   */
+  resetToDefault?: () => Promise<boolean>;
 }
 
 export interface EntityLayoutStore extends LayoutStore {
@@ -146,6 +165,16 @@ export function useEntityLayout(
       parseEntityLayout((qc.getQueryData([kind, id]) as { layout?: unknown } | undefined)?.layout),
     [qc, kind, id],
   );
+  const refresh = useCallback(async () => {
+    if (id == null) return;
+    await qc.ensureQueryData({
+      queryKey: [kind, id],
+      // Annotated, or the union collapses to whichever branch is written first and the other
+      // stops assigning — the same reason `patch` picks the resource with a ternary too.
+      queryFn: (): Promise<Artist | Project> =>
+        kind === 'artist' ? api.artists.get(id) : api.projects.get(id),
+    });
+  }, [qc, kind, id]);
   const current = useCallback(() => {
     const stored = ownRows();
     return stored.length ? stored : standardCurrent();
@@ -195,6 +224,7 @@ export function useEntityLayout(
     value: hasOwn ? own : standard.value,
     current,
     write,
+    refresh,
     owned: () => ownRows().length > 0,
     hasOwn,
     hasSaved: saved.value.length > 0,
@@ -221,8 +251,27 @@ export function useEntityLayout(
  * tombstone for this key too — a tombstone check alone would pass against the wrong array and
  * write it into the entity column, freezing the standard onto a page the user just reset (the
  * template-freeze rule, WP-25).
+ *
+ * `released` closes the other half of that rule. On a page that was *following* the standard,
+ * the removal is what gave it a layout of its own — the write has to persist the whole derived
+ * array, there is nowhere else to put the tombstone. Reverting with `clearHidden` then restores
+ * the picture but not the state: the page looks untouched and says „rückgängig gemacht" while
+ * silently holding a frozen copy of the standard, inheriting nothing ever again, and the way back
+ * („Auf Standard zurücksetzen") is one the user has no reason to look for. So the revert hands
+ * the layout back instead — but only while it is still exactly what the removal wrote. An
+ * arrangement made in between is the user's own and outranks the reset; keeping it and the
+ * ownership with it is then the lesser loss.
+ *
+ * @param released the page's arrangement before the removal, when the removal is what made the
+ *   page own one at all; `null` on a page that already had its own (and on the stores with no
+ *   template concept, which is every store but `useEntityLayout`'s).
  */
-function removalUndoEntry(store: LayoutStore, key: string, name: string): UndoEntry {
+function removalUndoEntry(
+  store: LayoutStore,
+  key: string,
+  name: string,
+  released: LayoutEntry[] | null,
+): UndoEntry {
   const assertOwned = () => {
     if (store.owned && !store.owned()) {
       throw new Error(`page no longer holds its own layout (${key})`);
@@ -231,17 +280,27 @@ function removalUndoEntry(store: LayoutStore, key: string, name: string): UndoEn
   return {
     label: `Bereich „${name}“`,
     apply: async () => {
-      assertOwned();
+      await store.refresh?.();
+      // Not when `released` is set: the state a redo starts from is then the un-owned one its
+      // own revert produced, and re-freezing the standard is precisely what this entry redoes.
+      if (!released) assertOwned();
       if (!(await store.write(markHidden(ensureEntry(store.current(), key), key)))) {
         throw new Error(`re-removing ${key} was not saved`);
       }
     },
     revert: async () => {
+      await store.refresh?.();
       assertOwned();
       const cur = store.current();
       // The tombstone can be gone by now — another window, an applied saved layout.
       if (!cur.some((e) => e.key === key && e.hidden === true)) {
         throw new Error(`layout entry ${key} is no longer hidden`);
+      }
+      if (released && store.resetToDefault && sameLayout(cur, markHidden(released, key))) {
+        if (!(await store.resetToDefault())) {
+          throw new Error(`releasing the layout after ${key} was not saved`);
+        }
+        return;
       }
       if (!(await store.write(clearHidden(cur, key)))) {
         throw new Error(`restoring ${key} was not saved`);
@@ -485,7 +544,8 @@ export interface SectionArrangerProps {
    * (`useEntityLayout`) or the landing's seasons.json blob behind an adapter. `write` must
    * report its own failures and publish the value it writes before awaiting, the way
    * `useSettingsArray` does — see `Arranger`; `current()` is what the removal undo reads,
-   * because its arms run seconds after the render that created them.
+   * because its arms run seconds after the render that created them, and `refresh()` is what
+   * keeps that read honest once the query cache has evicted the entry underneath it.
    */
   store?: LayoutStore;
   sections: Record<string, ReactNode>;
@@ -505,6 +565,12 @@ export interface SectionArrangerProps {
   defaultHidden?: string[];
   /** Sections that can't be set to half width (always full, no width toggle) — e.g. the task table. */
   fullWidthKeys?: string[];
+  /**
+   * Width a key gets when it is first appended to a stored layout (default `'full'`). For
+   * sections that should arrive half-width — a pair meant to sit side by side on pages whose
+   * layout predates it. No key sets this yet.
+   */
+  defaultWidths?: Record<string, 'full' | 'half'>;
   /** Sections that still hold content — their 🗑 confirms first instead of acting at once. */
   nonEmptyKeys?: string[];
   /** Render the toolbar row *after* this section instead of above everything (the dashboard's Künstler grid). */
@@ -566,6 +632,7 @@ function Arranger({
   mandatoryKeys,
   defaultHidden = [],
   fullWidthKeys = [],
+  defaultWidths = {},
   nonEmptyKeys = [],
   toolbarAfterKey,
   onRemoveCustom,
@@ -595,6 +662,9 @@ function Arranger({
 
   const mandatorySig = mandatoryKeys.join(' ');
   const defaultHiddenSig = defaultHidden.join(' ');
+  const defaultWidthsSig = Object.entries(defaultWidths)
+    .map(([k, w]) => `${k}:${w}`)
+    .join(' ');
 
   const { full, display, hiddenKeys } = useMemo(() => {
     const known = Object.keys(sections);
@@ -616,7 +686,11 @@ function Arranger({
     }
     for (const k of known) {
       if (!seen.has(k)) {
-        full.push({ key: k, width: 'full', ...(defaultHidden.includes(k) ? { hidden: true } : {}) });
+        full.push({
+          key: k,
+          width: defaultWidths[k] ?? 'full',
+          ...(defaultHidden.includes(k) ? { hidden: true } : {}),
+        });
       }
     }
     const display = full
@@ -625,7 +699,7 @@ function Arranger({
     const hiddenKeys = full.filter((e) => known.includes(e.key) && e.hidden).map((e) => e.key);
     return { full, display, hiddenKeys };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the *Sig strings capture the only content used
-  }, [sectionSig, layout, fullWidthSig, mandatorySig, defaultHiddenSig]);
+  }, [sectionSig, layout, fullWidthSig, mandatorySig, defaultHiddenSig, defaultWidthsSig]);
 
   const idxInFull = (key: string) => full.findIndex((e) => e.key === key);
 
@@ -660,12 +734,17 @@ function Arranger({
    */
   const removeBuiltin = async (key: string) => {
     const name = label(labelKeys[key]!);
+    // Read *before* the write, because the write is what changes the answer on a page that was
+    // still following the standard: persisting the tombstone has to persist the array around it,
+    // so the page ends up owning a layout it never asked for. `full` is that array; handing it
+    // to the undo is what lets the revert give the inheritance back (see `removalUndoEntry`).
+    const released = store.owned && !store.owned() ? full : null;
     // The write publishes before awaiting (SHL-10), so the section leaves the screen at once —
     // only the toast and the stack entry wait for the resolved path. A removal that failed to
     // save (the guard has toasted it) must not offer „Rückgängig" for a state change that never
     // happened (PGS-09 family).
     if (!(await persist(markHidden(full, key)))) return;
-    undo.pushWithToast(removalUndoEntry(store, key, name), `Bereich „${name}“ entfernt.`);
+    undo.pushWithToast(removalUndoEntry(store, key, name, released), `Bereich „${name}“ entfernt.`);
   };
 
   /** Re-add a hidden built-in at its remembered position and width. */
@@ -679,7 +758,7 @@ function Arranger({
    * sits inside the grid (the dashboard's Künstler grid stays first), else position 0.
    */
   const prepend = (key: string) => {
-    const entry: LayoutEntry = { key, width: 'full' };
+    const entry: LayoutEntry = { key, width: defaultWidths[key] ?? 'full' };
     // Any entry already carrying this key goes first. A landing section id *is* reused — the
     // registry's counter is `max(surviving ids) + 1`, so deleting `lt3` and adding a Textfeld
     // yields `lt3` again — and without this the array is persisted holding the key twice, one

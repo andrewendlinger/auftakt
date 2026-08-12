@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LayoutEntry } from '../api/types';
-import { clearHidden, ensureEntry, markHidden } from './layoutEntries';
+import { clearHidden, ensureEntry, markHidden, sameLayout } from './layoutEntries';
 
 /**
  * These three build section removal and its undo (`Arranger.removeBuiltin`). What matters is
@@ -77,5 +77,46 @@ describe('ensureEntry', () => {
     // result must be a tombstone entry, so the picker can offer the section back.
     const next = markHidden(ensureEntry([e('a')], 'b'), 'b');
     expect(next).toEqual([e('a'), { key: 'b', width: 'full', hidden: true }]);
+  });
+});
+
+/**
+ * The gate on the revert arm's second path: on a page that was following the standard, the
+ * removal is what gave it a layout of its own, and the undo hands that back — but only while
+ * nothing has been arranged since. So a `true` here has to survive a store round trip, and a
+ * `false` has to catch every edit the arranger can make (order, width, another section's
+ * removal), or the undo either freezes the standard onto the page or throws the user's own
+ * arrangement away.
+ */
+describe('sameLayout', () => {
+  it('ignores property order and an absent-vs-undefined hidden', () => {
+    // Both sides come back through a store: the entity column is JSON text, and
+    // parseEntityLayout rebuilds the objects key by key.
+    const a: LayoutEntry[] = [{ width: 'half', key: 'a' }, { key: 'b', width: 'full', hidden: undefined }];
+    expect(sameLayout(a, [e('a', 'half'), e('b')])).toBe(true);
+  });
+
+  it('is false on a reorder', () => {
+    expect(sameLayout([e('a'), e('b')], [e('b'), e('a')])).toBe(false);
+  });
+
+  it('is false on a width change', () => {
+    expect(sameLayout([e('a')], [e('a', 'half')])).toBe(false);
+  });
+
+  it('is false when another section was removed in between', () => {
+    expect(sameLayout([e('a'), e('b')], [e('a'), e('b', 'full', true)])).toBe(false);
+  });
+
+  it('is false on a length change either way', () => {
+    expect(sameLayout([e('a')], [e('a'), e('b')])).toBe(false);
+    expect(sameLayout([e('a'), e('b')], [e('a')])).toBe(false);
+  });
+
+  it('matches what the removal wrote against what the revert reads back', () => {
+    // The revert's own comparison: the array the page showed, tombstoned, against the store.
+    const before = [e('a'), e('b', 'half'), e('c')];
+    expect(sameLayout(markHidden(before, 'b'), markHidden(before, 'b'))).toBe(true);
+    expect(sameLayout(markHidden(before, 'b'), markHidden(before, 'c'))).toBe(false);
   });
 });
