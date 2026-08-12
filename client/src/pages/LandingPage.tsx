@@ -66,13 +66,23 @@ export function LandingPage() {
 
   // seasonGone() lands here after its reload; the flag relays the explanation across it
   // (a toast cannot survive a document reload). Read-and-clear, so it shows exactly once.
+  //
+  // Held until ['seasons'] has answered, because the term is renameable and the reload threw
+  // the cache away: on mount `data` is undefined, so useSeasonTerm() hands back its hardcoded
+  // „Saison" and this one toast contradicted every other label on the page a moment later
+  // (PR50-13). `isError` is the other half of "answered" and is load-bearing — waiting for
+  // `data` alone would leave the flag unconsumed when the registry fetch fails, and a flag
+  // that stays set is exactly the latch that disables every later 410 in this window.
+  const seasonsAnswered = data !== undefined || isError;
   useEffect(() => {
+    if (!seasonsAnswered) return;
     if (consumeSeasonGone()) {
       toast.show({ message: `${term.singular} wurde gelöscht — bitte neu wählen.` });
     }
-    // Run-once on mount is the point: the flag is consumed, a re-run finds it cleared.
+    // Keyed on the answer, not on term/toast identity: consumeSeasonGone() is read-and-clear,
+    // so at most one run of this effect does anything.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [seasonsAnswered]);
 
   const seasons = data?.seasons ?? []; // registry order — manual and stable
 
