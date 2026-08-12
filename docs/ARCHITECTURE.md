@@ -90,7 +90,11 @@ so FKs and `custom_values` keys stay linked. Every group is opt-in and **a row o
 the parent it hangs off did too**, so the function first closes the dependency graph the schema
 imposes (projects → artists, tasks → columns) rather than trusting the request body. Testing the
 group *flag* instead of whether the parent row actually arrived is DBW-06, and it copies children
-across dangling — invisible until a `PRAGMA foreign_key_check` or an export.
+across dangling — invisible until a `PRAGMA foreign_key_check` or an export. Season-level rows
+(no parent at all, WP-47) travel with their own group — contacts with `contacts`, events with
+`events`, season-wide todos with `tasks` — except links: they have no group of their own, so a
+parentless link rides `settings`, like the parentless dashboard widgets, whose placement also
+lives in `dashboard_layout`, a setting.
 
 Two groups are not plain row copies: **built-in columns** are matched by `key` and updated in
 place, because the target's own come from `ensureBuiltinColumns()` and `task_sort` refers to them
@@ -104,7 +108,11 @@ carried over by default — nothing to add there when you add one.
 go through it. Schema changes go in the `SCHEMA` constant **and** as an idempotent `migrateX(db)`
 called from `initDb`; existing user databases are never recreated. Use the `ensureColumn` helper
 for added columns; a changed CHECK constraint needs the full table rebuild (see
-`migrateTasksAllowGeneral`).
+`migrateTasksAllowGeneral`). A rebuild copies its table's *current* full column set and recreates
+its indexes itself (DROP TABLE takes them down; SCHEMA only re-runs on the next boot), which is
+why the three season-scope rebuilds (WP-47) sit **last** in `initDb`: their column lists are only
+complete once every column-adding migration has run. A future `ensureColumn` on contacts, events
+or links must be registered after them — the order-dependence `migrateLinksNotes` documents.
 
 Prefer a **self-detecting** migration — one whose WHERE clause simply matches nothing once it has
 run (`migrateFlattenDeepSubtasks` is the model). Reach for a settings-row marker only when the data
@@ -147,6 +155,15 @@ there can never be set by a client. Use `transform` for server-controlled derive
 stamping `tasks.erledigt_am` when status flips to done) rather than trusting the client, and
 `customList` when the list needs the denormalised joins in `server/src/lib/queries.ts` (which
 resolve each task/event to its owning artist via `COALESCE(t.artist_id, p.artist_id)`).
+
+Contacts, events and links may sit **directly on the season** — every parent FK NULL, like tasks
+and custom sections before them (WP-47). Those rows are listed with `?scope=season`
+(`seasonScopedList` in `routes/entities.ts`; the events route passes the same flag into
+`listEvents`), a custom list because an equality filter cannot express „no parent at all". The
+spelling is deliberate: **`?season=` is taken** — the `/api` middleware reads it as a window pin
+and answers 410 for a non-integer value before any route runs, so a scope param named `?season=`
+would never reach a list. Creates need nothing special: the clients send explicit `null`s and the
+CHECKs read „at most one parent", with two still refused (`SQLITE_CONSTRAINT` → 400).
 
 Behaviour keyed off the allowlist rather than a separate flag: `/reorder` mounts when `sort_order`
 is writable, and `color` is hex-validated when `color` is. A new table gets both by construction.
