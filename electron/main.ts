@@ -356,10 +356,17 @@ async function windowSeason(win: BrowserWindow | null): Promise<number | undefin
   }
 }
 
-/** The registry label of `seasonId` (or of the default), for naming dialogs. Best-effort. */
+/**
+ * The registry label of `seasonId` (or of the default), for naming dialogs. Best-effort — and
+ * timed out, because since PR50-03 the *export* resolves it before opening its save dialog, so
+ * this call sits between the user's click and anything appearing on screen. The bundled server
+ * shares this process's event loop with `runStartupBackup`'s per-season `VACUUM INTO`, so it
+ * can be slow to answer at exactly the wrong moment. An empty label is a working dialog with a
+ * generic name; no dialog at all reads as a broken menu item.
+ */
 async function seasonLabel(seasonId?: number): Promise<string> {
   try {
-    const r = await fetch(`${ORIGIN}/api/seasons`);
+    const r = await fetch(`${ORIGIN}/api/seasons`, { signal: AbortSignal.timeout(1500) });
     const reg = (await r.json()) as { activeId: number; seasons: Array<{ id: number; label: string }> };
     return reg.seasons.find((s) => s.id === (seasonId ?? reg.activeId))?.label ?? '';
   } catch {
