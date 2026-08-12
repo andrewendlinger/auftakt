@@ -142,7 +142,7 @@ export function Dashboard() {
       group: 'einblicke',
       node: (
         <section>
-        <SectionTitle hint="Übersicht aus allen Künstlern & Projekten — wird automatisch befüllt.">
+        <SectionTitle hint="Übersicht aller Termine der Saison — wird automatisch befüllt.">
           <EditableLabel k="dash.events" />
         </SectionTitle>
         {/* Three blocks, each rendered on its own merits. „Danach" used to sit in the `else` of
@@ -293,7 +293,14 @@ function UpcomingList({ events, cap }: { events: UpcomingEvent[]; cap: number })
   return (
     <ul className="space-y-2">
       {shown.map((ev) => {
-        const to = ev.project_id ? `/project/${ev.project_id}` : `/artist/${ev.resolved_artist_id}`;
+        // Season-level events (WP-47) carry neither id; interpolating the null would render a
+        // dead `/artist/null` link (the SHL-07 class) — they stay on the Übersicht, like
+        // GlobalSearch's parentless hits.
+        const to = ev.project_id
+          ? `/project/${ev.project_id}`
+          : ev.resolved_artist_id
+            ? `/artist/${ev.resolved_artist_id}`
+            : '/dashboard';
         return (
           <li key={ev.id}>
             <Link
