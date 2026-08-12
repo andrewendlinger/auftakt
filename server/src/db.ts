@@ -343,7 +343,15 @@ export function updateSeason(id: number, patch: SeasonPatch): void {
     else delete s.period;
   }
   saveRegistry(reg);
-  if (patch.label !== undefined && id === reg.activeId) setSetting(getDb(), 'saison', patch.label);
+  // Mirror the label into the *renamed* season's own file, whatever season the request is
+  // pinned to. The old `id === reg.activeId` guard predates per-window seasons: it let a
+  // pinned request write the default's new label into the pinned season's DB, and never
+  // synced a non-default rename at all (#52). Best-effort, after the registry save — a
+  // settings-write failure must not 400 a rename that already succeeded.
+  if (patch.label !== undefined) {
+    const label = patch.label;
+    withSeasonDb(s.id, s.file, (db) => setSetting(db, 'saison', label));
+  }
 }
 
 /** Persist a manual card order: reorder reg.seasons itself — array order IS the order. */
@@ -1252,6 +1260,29 @@ export function closeSeason(id: number): void {
   const db = pool.get(id);
   if (db?.open) db.close();
   pool.delete(id);
+}
+
+/**
+ * Run `fn` against one season's database, best-effort: the pooled handle when some window
+ * has the season open, else a raw open of the existing file. Deliberately never creates a
+ * file and never runs the migration chain — that is getDb()'s job, and it would be a heavy
+ * (post-PR50-07: also purging) side effect for the metadata writes this serves. A missing,
+ * legacy-schema or unreadable file simply contributes nothing, same treatment as
+ * seasonStats: the registry stays authoritative, the in-DB mirror is a courtesy.
+ */
+function withSeasonDb(id: number, file: string, fn: (db: Database.Database) => void): void {
+  const pooled = pool.get(id);
+  const path = join(dataDir(), file);
+  // Guard: new Database() would create a stray empty file for a season never opened.
+  if (!pooled?.open && !existsSync(path)) return;
+  let raw: Database.Database | null = null;
+  try {
+    fn(pooled?.open ? pooled : (raw = new Database(path)));
+  } catch (err) {
+    console.warn(`Saison-Datenbank nicht beschreibbar: ${file}`, err);
+  } finally {
+    raw?.close();
+  }
 }
 
 /*

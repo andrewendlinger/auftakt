@@ -794,6 +794,33 @@ try {
     await ok('POST', '/seasons/1/activate'); // restore: later sections purge the default season's file
   }
 
+  // ---------------------------------------- a rename writes into the renamed season's file
+  // updateSeason used to guard the settings.saison sync with `id === reg.activeId` while
+  // getDb() resolved the request's pin — so a pinned rename of the default wrote the label
+  // into the pinned season's DB, and a non-default rename synced nothing at all (#52).
+  console.log("\n== a season rename writes into the renamed season's file (#52)");
+  {
+    const reg = await ok('GET', '/seasons');
+    const defaultId = reg.activeId;
+    const defaultLabel = reg.seasons.find((s) => s.id === defaultId).label;
+    const other = await ok('POST', '/seasons', { label: 'Anderes Fenster' });
+    const pin = { 'x-auftakt-season': String(other.id) };
+
+    // Renaming the DEFAULT from a window pinned elsewhere must not touch the pinned file.
+    await ok('PATCH', `/seasons/${defaultId}`, { label: 'Standard umbenannt' }, pin);
+    const pinned = await ok('GET', '/settings', undefined, pin);
+    check("the pinned season's settings.saison is untouched", pinned.saison === 'Anderes Fenster', String(pinned.saison));
+    const dflt = await ok('GET', '/settings');
+    check("the renamed default's own file follows", dflt.saison === 'Standard umbenannt', String(dflt.saison));
+
+    // Renaming a NON-default season used to write no settings row at all.
+    await ok('PATCH', `/seasons/${other.id}`, { label: 'Anderes Fenster II' });
+    const renamed = await ok('GET', '/settings', undefined, pin);
+    check('a non-default rename reaches its own file too', renamed.saison === 'Anderes Fenster II', String(renamed.saison));
+
+    await ok('PATCH', `/seasons/${defaultId}`, { label: defaultLabel }); // restore the shared fixture
+  }
+
   // ------------------------------------------------------- purge fixtures (SDL-01 / DBW-02)
   console.log('\n== purge fixtures');
   {
