@@ -167,7 +167,7 @@ export function Dashboard() {
       group: 'einblicke',
       node: (
         <section>
-        <SectionTitle hint="Übersicht aller Termine der Saison — wird automatisch befüllt.">
+        <SectionTitle hint="Alle anstehenden Termine der Saison — wird automatisch befüllt.">
           <EditableLabel k="dash.events" />
         </SectionTitle>
         {/* Three blocks, each rendered on its own merits. „Danach" used to sit in the `else` of
