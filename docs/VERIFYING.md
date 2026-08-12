@@ -222,6 +222,10 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   cheapest way to get it out of the way.
 - **`page.goto` to the same hash is a no-op** under `HashRouter`, so a dialog left open by the
   previous scenario silently eats every click. Call `reload()` after `goto`.
+- **`html[data-app-ready]` survives an in-app hash navigation**, so after a `goto` to a *different*
+  hash it resolves instantly and says nothing about the page you just asked for. It is a
+  document-load signal, not a route signal. Either `reload()` after the `goto` (which also makes
+  the pin apply, below) or wait for something the target route actually renders.
 - **Several "windows" are several pages in ONE BrowserContext.** BroadcastChannel is partitioned
   per context, so two contexts never deliver — and a cross-window-freshness check against them
   "passes" vacuously, since nothing arrives and nothing was expected to. `context.newPage()`
@@ -240,6 +244,14 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   client reacts to a 410 by dropping its pin and restarting on the landing page with a toast; the
   server marks it `no-store` and varies every `/api` response on `X-Auftakt-Season` — a cached
   410 replayed after recovery was an infinite reload loop, found by exactly this scenario.
+- **The „…gelöscht" toast lands one query later than the page**, since it waits for `['seasons']`
+  to answer so it can name a renamed term. Wait for the toast text; do not sample the toast stack
+  after `data-app-ready`, and do not sleep for it either — toasts hold six seconds, so a fixed
+  wait can miss it from either side.
+- **Reproducing the 410 needs the delete to be out-of-band.** `curl -X DELETE /api/seasons/<id>`
+  posts no invalidate, so the pinned window keeps believing in its season until it asks — which
+  is the state every 410 bug needs. Deleting through a second window's UI instead broadcasts, and
+  the window recovers before the step under test.
 - **The demo seeds several seasons** (three at the time of writing) and their ids shift as
   fixtures accumulate. Create your own fixture season over the API and use the returned id;
   a hardcoded "season 2" assertion matches a different database on every run.
