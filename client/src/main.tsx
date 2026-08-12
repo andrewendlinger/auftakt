@@ -64,9 +64,16 @@ const queryClient = new QueryClient({
  * listens to `visibilitychange` only, and two windows side by side on two screens are BOTH
  * permanently visible — switching between them never fires it. Feed the manager real
  * window focus as well, which is exactly the multi-window case the flag exists for here.
+ *
+ * **onFocus passes no argument on purpose.** A boolean routes to the manager's
+ * `setFocused(focused)`, which is a no-op when `#focused` already holds that value — and with
+ * both windows permanently visible nothing ever sets it back to false, so `handleFocus(true)`
+ * was swallowed from the second focus onwards and this whole backstop was dead (#54). No
+ * argument runs query-core's unconditional `onFocus()` instead. The `visibilitychange` handler
+ * below is the one that legitimately reports a state, so it keeps its boolean.
  */
 focusManager.setEventListener((handleFocus) => {
-  const onFocus = () => handleFocus(true);
+  const onFocus = () => handleFocus();
   const onVisibility = () => handleFocus(document.visibilityState === 'visible');
   window.addEventListener('focus', onFocus);
   document.addEventListener('visibilitychange', onVisibility);

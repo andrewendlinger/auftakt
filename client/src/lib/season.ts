@@ -58,6 +58,13 @@ export function pinFromResponse(header: string | null): void {
 }
 
 /**
+ * Set by seasonGone() in the document it is navigating away from — module state, so the
+ * reloaded document starts false again. sessionStorage cannot express this: both documents
+ * share it, and „which document am I" is exactly the question.
+ */
+let leaving = false;
+
+/**
  * This window's season no longer exists (a 410 — deleted, possibly from another window):
  * drop the pin, leave the toast relay flag and start over on the landing page, where the
  * next requests resolve the default season.
@@ -69,12 +76,23 @@ export function seasonGone(): void {
   if (s?.getItem(GONE_KEY)) return;
   clearWindowSeason();
   s?.setItem(GONE_KEY, '1');
+  leaving = true;
   window.location.replace('#/');
   window.location.reload();
 }
 
-/** Read-and-clear the relay flag; true exactly once after a seasonGone() reload. */
+/**
+ * Read-and-clear the relay flag; true exactly once after a seasonGone() reload.
+ *
+ * Never in the document seasonGone() just left. That document is not dead yet: the hash-only
+ * `replace('#/')` above fires a hashchange, HashRouter mounts LandingPage in it, and its
+ * effect read the flag a beat before the reload wiped the toast off the screen — so the flag
+ * was spent, the reloaded document had nothing to say, and the user arrived on the landing
+ * page with no explanation of why. Whether that happened at all was a race between React's
+ * effect flush and the navigation commit, which is why it only sometimes swallowed the toast.
+ */
 export function consumeSeasonGone(): boolean {
+  if (leaving) return false;
   const s = storage();
   if (!s?.getItem(GONE_KEY)) return false;
   s.removeItem(GONE_KEY);
@@ -93,6 +111,11 @@ export function consumeSeasonGone(): boolean {
  * hash-only URL does not reload the document.
  */
 export function reloadToDashboard(): void {
+  // Never over a recovery. seasonGone() has already sent this document to the landing page,
+  // and replacing that with '#/dashboard' is what stopped LandingPage from ever mounting —
+  // relay flag unconsumed, every later 410 in the window swallowed by the burst guard
+  // (PR50-01). The guard sits here, on the navigation, because that is where the harm is.
+  if (leaving) return;
   window.location.replace('#/dashboard');
   window.location.reload();
 }
@@ -115,6 +138,13 @@ export async function switchSeason(id: number): Promise<void> {
   } catch {
     /* keep the local switch */
   }
+  // Unless a 410 landed in this document while we were away — this activate's own (the season
+  // clicked was already deleted), or any query that raced it. seasonGone() has then dropped the
+  // pin and sent the document to the landing page, and everything below would talk over that
+  // recovery: the broadcast is about a switch that did not happen, and the reload would send a
+  // window that must land on '#/' to '#/dashboard' instead (PR50-01). Keyed on the recovery
+  // having started, not on the shape of our own rejection, because the 410 need not be ours.
+  if (leaving) return;
   // Other windows refresh their ['seasons'] markers (the default moved); their pins stay.
   postBroadcast({ v: 1, type: 'invalidate' });
   reloadToDashboard();

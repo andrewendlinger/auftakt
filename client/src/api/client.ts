@@ -54,45 +54,92 @@ export class ApiError extends Error {
   }
 }
 
-async function http<T>(method: string, path: string, body?: unknown): Promise<T> {
+/**
+ * The window's season as a request header — every call out of this module carries it. Unpinned
+ * requests send nothing, resolve the server's default and pin from the echo (see applySeason).
+ */
+function seasonHeader(): Record<string, string> {
   const season = getWindowSeason();
+  return season !== null ? { 'x-auftakt-season': String(season) } : {};
+}
+
+/**
+ * The season half of every response. 410 means this window's season was deleted (410 is
+ * reserved for exactly that; row-level misses stay 404): drop the pin and restart on the
+ * landing page. No echo to pin from — the middleware rejects before setting it.
+ *
+ * **Any request that skips this is a request the app cannot recover from.** That was PR50-04:
+ * the .xlsx export was a plain `<a href>`, so its 410 arrived as a navigation instead, and the
+ * window sat on the raw JSON with no pin cleared and no way back.
+ */
+function applySeason(res: Response): void {
+  if (res.status === 410) seasonGone();
+  else pinFromResponse(res.headers.get('x-auftakt-season'));
+}
+
+/** A non-ok response as the thrown error, preferring the server's German `error` over the status text. */
+async function failure(res: Response): Promise<ApiError> {
+  let msg = res.statusText;
+  try {
+    const j = (await res.json()) as { error?: string };
+    if (j?.error) msg = j.error;
+  } catch {
+    /* ignore */
+  }
+  return new ApiError(res.status, msg);
+}
+
+async function http<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(BASE + path, {
     method,
     headers: {
       ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-      // The window's season travels with every request; unpinned requests resolve the
-      // server's default and pin from the echo below. The .xlsx export link cannot go
-      // through here — ExcelButton carries ?season= instead.
-      ...(season !== null ? { 'x-auftakt-season': String(season) } : {}),
+      ...seasonHeader(),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  // 410 means this window's season was deleted (410 is reserved for exactly that; row-level
-  // misses stay 404): drop the pin and restart on the landing page. No echo to pin from —
-  // the middleware rejects before setting it.
-  if (res.status === 410) seasonGone();
-  else pinFromResponse(res.headers.get('x-auftakt-season'));
-  if (!res.ok) {
-    let msg = res.statusText;
-    try {
-      const j = (await res.json()) as { error?: string };
-      if (j?.error) msg = j.error;
-    } catch {
-      /* ignore */
-    }
-    throw new ApiError(res.status, msg);
-  }
+  applySeason(res);
+  if (!res.ok) throw await failure(res);
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
+/** `attachment; filename="auftakt-aufgaben.xlsx"` → the name, so the server keeps owning it. */
+function dispositionName(header: string | null): string | undefined {
+  return /filename="?([^";]+)"?/i.exec(header ?? '')?.[1];
+}
+
 /**
- * The one query-string encoder. Exported because the .xlsx export is a plain `<a href>` rather
- * than a `fetch`, so it builds its URL itself — and had grown a second copy of this that
- * disagreed about which values are droppable (SHL-30). Anything that changes here (array
- * values, repeated keys, `URLSearchParams`) has to reach that link too.
+ * Fetch a file and hand it to the browser's download machinery — the same layer as every other
+ * request, on purpose: `seasonHeader()` routes it and `applySeason()` recovers it. The
+ * alternative, a plain `<a href>` to the endpoint, cannot send a header and has no recovery at
+ * all; a 410 answer is JSON with no `Content-Disposition`, so Chromium renders it and the
+ * Electron window — no address bar, no Back, and Reload re-fetches the same `no-store` 410 —
+ * is stranded until it is closed (PR50-04).
  */
-export function qs(params?: Record<string, unknown>): string {
+async function download(path: string, fallbackName: string): Promise<void> {
+  const res = await fetch(BASE + path, { headers: seasonHeader() });
+  applySeason(res);
+  if (!res.ok) throw await failure(res);
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = dispositionName(res.headers.get('content-disposition')) ?? fallbackName;
+  // Attached before the click: a detached anchor is not reliably actionable, and revoking on
+  // the next task rather than inline keeps the URL alive until the download has taken it.
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+/**
+ * The one query-string encoder. Module-private again since the .xlsx export stopped building
+ * its own URL: it was the only outside caller, and the second copy it once carried disagreed
+ * about which values are droppable (SHL-30). Keep it that way — a URL built out there is a URL
+ * built without `seasonHeader()`.
+ */
+function qs(params?: Record<string, unknown>): string {
   if (!params) return '';
   const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null);
   if (entries.length === 0) return '';
@@ -121,6 +168,14 @@ function resource<T, Create, Update>(path: string) {
 export const api = {
   dashboard: () => http<Dashboard>('GET', '/dashboard'),
   search: (q: string) => http<SearchResults>('GET', `/search${qs({ q })}`),
+  /**
+   * The task export. A file rather than JSON, but an ordinary member here on purpose — it is
+   * `params` the caller varies, never the season, which rides the header like everything else.
+   * The filename comes back in `Content-Disposition` (`server/src/routes/export.ts`); the
+   * argument is only the fallback.
+   */
+  exportTasks: (params?: Record<string, unknown>) =>
+    download(`/export/tasks.xlsx${qs(params)}`, 'auftakt-aufgaben.xlsx'),
   getSettings: () => http<Settings>('GET', '/settings'),
   patchSettings: (patch: Partial<WritableSettings>) => http<Settings>('PATCH', '/settings', patch),
 

@@ -768,7 +768,10 @@ try {
     check('headerless requests stay on the default season', headerless.saison !== 'Routing-Saison', String(headerless.saison));
 
     const viaQuery = await ok('GET', `/settings?season=${routing.id}`);
-    check('?season= routes like the header (the <a href> leg)', viaQuery.saison === 'Routing-Saison', String(viaQuery.saison));
+    // The header's equivalent for callers that cannot set one — today only the main process's
+    // own HTTP (seasonPath() in electron/main.ts). The .xlsx export used to be the other, as a
+    // plain <a href>, until a 410 answered as a navigation stranded the window (PR50-04).
+    check('?season= routes like the header', viaQuery.saison === 'Routing-Saison', String(viaQuery.saison));
 
     // The echo is what a fresh window pins itself from — it must name the resolved season.
     const echo = await fetch(`${API}/settings`, { headers: { 'x-auftakt-season': String(routing.id) } });

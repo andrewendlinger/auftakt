@@ -170,12 +170,12 @@ export function useCurrentSeasonId(): number | undefined {
 
 /**
  * The window's season's name, read from the seasons.json registry — the one place a rename
- * always lands. The per-season `settings.saison` row is *not* it: renaming a season on the
- * landing page while it is not open updates the registry only (updateSeason can write the
- * setting solely for the season it has open), so that row keeps the old name and every
- * consumer here — the season-scope label in the task table, the kicker on the printed
- * one-pagers — disagreed with the switcher and the landing card, with no in-app way to
- * repair it (CCL-06). The setting stays as the file's own self-description (seed/demo).
+ * always lands. The per-season `settings.saison` row is *not* it: it is a mirror the rename
+ * writes best-effort into the season's own file, after the registry save and without failing
+ * the rename if it does not land. Reading that row instead left the season-scope label in the
+ * task table and the kicker on the printed one-pagers disagreeing with the switcher and the
+ * landing card, with no in-app way to repair it (CCL-06). The setting stays as the file's own
+ * self-description (seed/demo).
  *
  * Rides on the ['seasons'] query the header switcher already fetches on every page.
  *
@@ -186,7 +186,9 @@ export function useCurrentSeasonId(): number | undefined {
  */
 export function useSaison(): string {
   const { data } = useSeasons();
-  const current = getWindowSeason() ?? data?.activeId;
+  // useCurrentSeasonId owns the pin-with-default rule; spelling it out a second time here left
+  // the header chip and this label free to disagree the moment the rule changed (PR50-11).
+  const current = useCurrentSeasonId();
   return data?.seasons.find((s) => s.id === current)?.label ?? '';
 }
 
