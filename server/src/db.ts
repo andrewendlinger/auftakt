@@ -1279,6 +1279,22 @@ export function getDb(): Database.Database {
   const db = new Database(path);
   initDb(db, isFresh);
   pool.set(season.id, db);
+  // First request-context open of this season in this process: sweep expired soft-deleted
+  // rows. Boot only covers the registry default, so without this a season worked in from a
+  // pinned window would never purge (PR50-07). The pool entry is the once-per-process
+  // guard (handles never idle-close; a re-sweep after closeSeason — delete, import — is
+  // wanted). Gated on the AsyncLocalStorage store, not on getDb() itself: in-process
+  // programmatic opens (seed/demo, check scripts, the Notion importer) must stay
+  // non-destructive — check-dates' migration harness re-opens planted expired fixtures
+  // expecting them converted, not purged. After initDb, so legacy stamps are local before
+  // the cutoff comparison; never fatal, same rationale as the boot call.
+  if (currentSeasonRef() !== null) {
+    try {
+      purgeExpired(db);
+    } catch (err) {
+      console.error('purgeExpired failed (continuing without purge):', err);
+    }
+  }
   return db;
 }
 
@@ -1954,7 +1970,10 @@ export function setSetting(db: Database.Database, key: string, value: string): v
   ).run(key, value);
 }
 
-/** Hard-delete rows whose deleted_at is older than PURGE_AFTER_DAYS. Runs on startup. */
+/**
+ * Hard-delete rows whose deleted_at is older than PURGE_AFTER_DAYS. Runs at startup for
+ * the default season and on every other season's first request-context open (getDb).
+ */
 export function purgeExpired(db: Database.Database): void {
   // Purge ONLY rows whose OWN deleted_at expired (SDL-01/DBW-01). The SRV-01 shape rooted at
   // every expired row and hard-deleted its whole collect() closure — including still-live

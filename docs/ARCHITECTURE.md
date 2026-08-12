@@ -175,7 +175,9 @@ paths use typed payload mappers rather than casts.
 ## Soft delete, archive, undo
 
 Every table has `deleted_at`; deletes are soft, lists filter `deleted_at IS NULL`, and
-`purgeExpired()` hard-deletes after `PURGE_AFTER_DAYS` (30) on server startup. On the client,
+`purgeExpired()` hard-deletes after `PURGE_AFTER_DAYS` (30) — at server startup for the default
+season, and when a request first opens any other season in that process (`getDb()`'s pool-miss
+path; in-process programmatic opens never sweep). On the client,
 deletes go through `useUndoableDelete()` so every deletion surfaces an undo toast backed by the
 `/restore` endpoint — keep new delete affordances on that path.
 

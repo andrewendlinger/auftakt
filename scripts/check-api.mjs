@@ -142,6 +142,12 @@ let projectCopyTarget = null;
  */
 let purge = {};
 let deepTree = [];
+/**
+ * Same shape for the non-default-season sweep (PR50-07): planted before the restart,
+ * backdated on disk, asserted around the second boot.
+ * @type {Record<string, number | string>}
+ */
+let sweep = {};
 
 function cleanup() {
   rmSync(dataDir, { recursive: true, force: true });
@@ -880,6 +886,19 @@ try {
     check('the fixture is set up: parent trashed, child hidden behind it', hidden.status === 404, String(hidden.status));
   }
 
+  // ------------------------------------- purge fixture in a NON-default season (PR50-07)
+  // Boot only sweeps the registry default; a season lived in from a pinned window purges
+  // on its first request-context open instead. Planted here, backdated after the stop,
+  // asserted around the second boot below.
+  console.log('\n== purge fixture, non-default season');
+  {
+    const s = await ok('POST', '/seasons', { label: 'Kehr-Saison' });
+    const pin = { 'x-auftakt-season': String(s.id) };
+    const a = await ok('POST', '/artists', { name: 'Abgelaufen' }, pin);
+    await ok('DELETE', `/artists/${a.id}`, undefined, pin);
+    sweep = { seasonId: s.id, artistId: a.id, file: seasonFile(s.file) };
+  }
+
   await stopServer();
 
   // ------------------------------------------------------------------ the copy, on disk
@@ -925,9 +944,33 @@ try {
     db.close();
   }
 
-  console.log('\n== purge never destroys live children (SDL-01)');
-  await startServer(); // purgeExpired() runs here
+  // The non-default season's fixture, same backdating (read-write open recovers the killed
+  // run's WAL; the clean close checkpoints it away).
+  {
+    const db = new Database(sweep.file);
+    db.prepare(`UPDATE artists SET deleted_at = datetime('now', 'localtime', '-60 days') WHERE id = ?`).run(sweep.artistId);
+    db.close();
+  }
+
+  console.log('\n== purge never destroys live children (SDL-01) / reaches a pinned season (PR50-07)');
+  await startServer(); // boot purgeExpired() runs here — default season only
+  {
+    // The server has not touched this file yet (boot opens only the default), so a direct
+    // readonly peek is safe while it runs. Without this check, a boot that swept every
+    // season would also pass the assertion after the pinned request.
+    const db = new Database(sweep.file, { readonly: true });
+    const there = db.prepare('SELECT COUNT(*) c FROM artists WHERE id = ?').get(sweep.artistId).c === 1;
+    db.close();
+    check('the boot sweep leaves a non-default season alone', there);
+  }
+  await ok('GET', '/artists', undefined, { 'x-auftakt-season': String(sweep.seasonId) }); // first pinned open
   await stopServer();
+  {
+    const db = new Database(sweep.file, { readonly: true });
+    const gone = db.prepare('SELECT COUNT(*) c FROM artists WHERE id = ?').get(sweep.artistId).c === 0;
+    db.close();
+    check('one pinned request swept the season on first open (PR50-07)', gone);
+  }
   {
     // Read the file, not the API: `GET /:id` 404s on soft-deleted rows too (crud.ts), so over
     // HTTP a parked row and a purged one look identical. The whole point is telling them apart.
