@@ -14,7 +14,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fileStamp, localStamp } from '../../shared/time';
 import { CHILD_EDGES, DELETE_ORDER } from './lib/cascade';
-import { currentSeasonId } from './seasonContext';
+import { currentSeasonId, currentSeasonRef } from './seasonContext';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -1212,9 +1212,20 @@ function initDb(db: Database.Database, isFresh: boolean): void {
 }
 
 export function getDb(): Database.Database {
-  const season = currentSeason();
+  // Inside a request, the /api middleware already resolved and validated the season —
+  // reading it off the store instead of re-parsing seasons.json restores the fast path the
+  // pool removed (PR50-09). Storeless callers keep re-reading the registry per call; the
+  // check scripts' in-process activate-then-getDb pattern depends on that (DECISIONS.md).
+  const season = currentSeasonRef() ?? currentSeason();
   const cached = pool.get(season.id);
   if (cached?.open) return cached;
+  // Pool miss with a store: the snapshot may predate a concurrent delete, and opening would
+  // resurrect the season's file. Re-check against disk — failing beats silently recreating
+  // it (the same reasoning as currentSeason()'s throw, which the snapshot bypasses). A pool
+  // hit needs no check: deleteSeason evicts synchronously via closeSeason.
+  if (currentSeasonRef() !== null && !readRegistry().seasons.some((s) => s.id === season.id)) {
+    throw new Error(`unknown season ${season.id}`);
+  }
   const path = join(dataDir(), season.file);
   mkdirSync(dirname(path), { recursive: true });
   const isFresh = !existsSync(path);

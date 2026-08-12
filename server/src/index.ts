@@ -149,7 +149,9 @@ app.use('/api', (req: Request, res: Response, next: NextFunction) => {
     }
   }
   res.setHeader('X-Auftakt-Season', String(id));
-  runWithSeason(id, next);
+  // The row is guaranteed present: the header branch just checked membership, and the
+  // default branch derived `id` from this same array.
+  runWithSeason(reg.seasons.find((s) => s.id === id)!, next);
 });
 
 app.use('/api/artists', artistsRouter);
