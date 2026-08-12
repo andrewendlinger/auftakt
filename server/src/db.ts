@@ -256,10 +256,21 @@ export function seasonStats(): Record<number, SeasonStats | null> {
   // getDb() resolves the REQUEST's season, so that — not reg.activeId — decides which row
   // may use it. Comparing against the default here read the pinned season's counts under
   // the default's id and never opened the default's own file at all (#53).
-  const current = currentSeason(reg);
+  //
+  // currentSeason() throws for a context id this registry read no longer carries — possible
+  // when another process rewrites seasons.json between the middleware's read and this one.
+  // A throw here would 500 the whole response and blank every card, the opposite of the
+  // per-season degrade below; with no resolvable current season no row is the pooled one and
+  // every season is simply read raw.
+  let current: Season | null = null;
+  try {
+    current = currentSeason(reg);
+  } catch {
+    /* season vanished mid-request — fall through with none marked current */
+  }
   const out: Record<number, SeasonStats | null> = {};
   for (const s of reg.seasons) {
-    const isCurrent = s.id === current.id;
+    const isCurrent = s.id === current?.id;
     const path = join(dataDir(), s.file);
     // Guard: new Database() would create a stray empty file for a missing season.
     if (!isCurrent && !existsSync(path)) {
