@@ -15,7 +15,7 @@ import type { Node as PMNode } from '@tiptap/pm/model';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { api } from '../api/client';
 import { useErrorToast } from '../hooks';
-import { withSeasonPin } from '../lib/imageRef';
+import { withSeasonPin, type ImageAlign } from '../lib/imageRef';
 import { INDENT_UNIT, outdentWidth } from '../lib/indent';
 import { resizeTextImage } from '../lib/image';
 import { markdownExtensions } from '../lib/richtext';
@@ -777,35 +777,53 @@ const IMAGE_WIDTHS = { klein: 192, mittel: 384, gross: 768 } as const;
  * undoes a re-size, and the width lands in the stored text as `?w=` on serialization.
  */
 function ImageBar({ editor }: { editor: Editor }) {
-  // `undefined` = no image selected (hide the bar); `null` = no width (the „Original" state).
-  const width = useEditorState({
+  // `null` = no image selected (hide the bar); inside, `width`/`align` null = the default state.
+  const img = useEditorState({
     editor,
     selector: ({ editor }) =>
-      editor.isActive('image') ? ((editor.getAttributes('image').width as number | null) ?? null) : undefined,
+      editor.isActive('image')
+        ? {
+            width: (editor.getAttributes('image').width as number | null) ?? null,
+            align: (editor.getAttributes('image').align as ImageAlign | null) ?? null,
+          }
+        : null,
   });
-  if (width === undefined) return null;
+  if (!img) return null;
   // Re-select the node in the same chain: `updateAttributes` replaces it and the NodeSelection
   // does not survive, so without this the bar vanishes on the first click and comparing two
   // sizes means re-selecting the image between every try. Attrs-only, so the position is stable.
-  const setWidth = (w: number | null) => {
+  const set = (attrs: { width?: number | null; align?: ImageAlign | null }) => {
     const pos = editor.state.selection.from;
-    editor.chain().focus().updateAttributes('image', { width: w }).setNodeSelection(pos).run();
+    editor.chain().focus().updateAttributes('image', attrs).setNodeSelection(pos).run();
   };
+  // Alignment toggles like the toolbar's marks: clicking the active one returns to text flow.
+  const toggleAlign = (align: ImageAlign) => set({ align: img.align === align ? null : align });
   return (
     <div className="mt-1 flex flex-wrap items-center gap-0.5">
       <span className="mr-1 text-[11px] text-neutral-400">Bildgröße</span>
-      <Btn title={`Klein (${IMAGE_WIDTHS.klein} px)`} on={width === IMAGE_WIDTHS.klein} onClick={() => setWidth(IMAGE_WIDTHS.klein)}>
+      <Btn title={`Klein (${IMAGE_WIDTHS.klein} px)`} on={img.width === IMAGE_WIDTHS.klein} onClick={() => set({ width: IMAGE_WIDTHS.klein })}>
         <span className="text-[11px] font-semibold">Klein</span>
       </Btn>
-      <Btn title={`Mittel (${IMAGE_WIDTHS.mittel} px)`} on={width === IMAGE_WIDTHS.mittel} onClick={() => setWidth(IMAGE_WIDTHS.mittel)}>
+      <Btn title={`Mittel (${IMAGE_WIDTHS.mittel} px)`} on={img.width === IMAGE_WIDTHS.mittel} onClick={() => set({ width: IMAGE_WIDTHS.mittel })}>
         <span className="text-[11px] font-semibold">Mittel</span>
       </Btn>
-      <Btn title={`Groß (${IMAGE_WIDTHS.gross} px)`} on={width === IMAGE_WIDTHS.gross} onClick={() => setWidth(IMAGE_WIDTHS.gross)}>
+      <Btn title={`Groß (${IMAGE_WIDTHS.gross} px)`} on={img.width === IMAGE_WIDTHS.gross} onClick={() => set({ width: IMAGE_WIDTHS.gross })}>
         <span className="text-[11px] font-semibold">Groß</span>
       </Btn>
       <Sep />
-      <Btn title="Originalgröße (an die Spalte angepasst)" on={width === null} onClick={() => setWidth(null)}>
+      <Btn title="Originalgröße (an die Spalte angepasst)" on={img.width === null} onClick={() => set({ width: null })}>
         <span className="text-[11px] font-semibold">Original</span>
+      </Btn>
+      <Sep />
+      <span className="mx-1 text-[11px] text-neutral-400">Ausrichtung</span>
+      <Btn title="Links, vom Text umflossen (erneut klicken: zurücksetzen)" on={img.align === 'left'} onClick={() => toggleAlign('left')}>
+        <span className="text-[11px] font-semibold">Links</span>
+      </Btn>
+      <Btn title="Zentriert (erneut klicken: zurücksetzen)" on={img.align === 'center'} onClick={() => toggleAlign('center')}>
+        <span className="text-[11px] font-semibold">Mitte</span>
+      </Btn>
+      <Btn title="Rechts, vom Text umflossen (erneut klicken: zurücksetzen)" on={img.align === 'right'} onClick={() => toggleAlign('right')}>
+        <span className="text-[11px] font-semibold">Rechts</span>
       </Btn>
     </div>
   );
