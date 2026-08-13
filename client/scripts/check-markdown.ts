@@ -157,6 +157,11 @@ const corpus: Record<string, string> = {
   // while the editor round-trip puts it in a paragraph.
   imageRawTagInline: `Davor <img src="${IMG}" alt="y"> danach.`,
   imageRawTagBlock: `davor\n\n<img src="${IMG}" alt="y">\n\ndanach`,
+  // …and nested inside another block, which is how such markup actually arrives. The plugin used
+  // to map the root's direct children only, so the reader left this `<img>` outside any paragraph
+  // while the editor read it into one: the note re-spaced itself when you clicked in and again
+  // when you clicked away. A blockquote, not a `<div>`, because ProseMirror has a node for it —
+  // an unknown wrapper is dropped by the editor for reasons that have nothing to do with images.
   // Spelled from the escape, never typed: a literal U+00A0 in a fixture is invisible, and the
   // next editor to touch this file would „fix" it back into a plain space.
   nbspIndent: `${NBSP.repeat(3)}Aufbau ab 14:00\n${NBSP.repeat(6)}Soundcheck`,
@@ -265,6 +270,58 @@ for (const [name, doc] of Object.entries(jsonCorpus)) {
   assertMarkdown(name, editor.getMarkdown(), 'json');
 }
 
+/**
+ * The clipboard gate (WP-37): an `<img>` reaches the document only if it is one of ours.
+ *
+ * ProseMirror parses pasted HTML with the node's own `parseHTML` rules, so an unqualified
+ * `img[src]` quietly turned „paste a picture from a web page" into a supported path — with the
+ * `src` verbatim, past the resize → JPEG → 1.5 MB upload that `DECISIONS.md` says is the only way
+ * an image enters the app. A `data:` one then writes hundreds of kilobytes of base64 into a text
+ * column, and the reader's sanitizer strips it again, so the bloat lands and the picture does not.
+ *
+ * `insertContent` with an HTML string runs the same DOM rules the clipboard does, which is what
+ * makes this reachable headlessly. The Markdown side stays wide open on purpose — `imageHttpsLegacy`
+ * and `imageDataUrlLegacy` above assert that a *stored* foreign source still round-trips.
+ */
+const parseHtml = (html: string) => {
+  editor.commands.setContent('', { contentType: 'markdown' });
+  editor.commands.insertContent(html);
+  return editor.getMarkdown();
+};
+
+const clipboard: Array<[string, string, boolean]> = [
+  ['unsere eigene Referenz', `<p>davor <img src="${IMG}" alt="y"> danach</p>`, true],
+  ['mit Saison-Pin (Kopie im Editor)', `<p><img src="${IMG}?season=3" alt="y"></p>`, true],
+  ['data: aus einer Webseite', '<p><img src="data:image/png;base64,AAAA" alt="y"></p>', false],
+  ['https: aus einer Webseite', '<p><img src="https://example.com/a.jpg" alt="y"></p>', false],
+  ['file:// aus dem Dateisystem', '<p><img src="file:///Users/x/a.jpg" alt="y"></p>', false],
+];
+
+for (const [name, html, admitted] of clipboard) {
+  const out = parseHtml(html);
+  const hasImage = out.includes('![');
+  if (hasImage === admitted) {
+    console.log(`  ok   clipboard: ${name}`);
+  } else {
+    failures++;
+    console.log(
+      `  FAIL clipboard: ${name}  [${admitted ? 'sollte übernommen werden' : 'sollte verworfen werden'}]`,
+    );
+    console.log(`       out md : ${JSON.stringify(out)}`);
+  }
+}
+
+// The pin is stripped on the way in, so a copy inside the editor cannot store one season's URL in
+// another season's note — the reason `canonicalImageSrc` runs before the check above.
+const pinned = parseHtml(`<p><img src="${IMG}?season=3" alt="y"></p>`);
+if (pinned.includes('?season=')) {
+  failures++;
+  console.log(`  FAIL clipboard: der Saison-Pin darf nicht gespeichert werden`);
+  console.log(`       out md : ${JSON.stringify(pinned)}`);
+} else {
+  console.log('  ok   clipboard: der Saison-Pin wird beim Lesen entfernt');
+}
+
 editor.destroy();
 const total = Object.keys(corpus).length + Object.keys(jsonCorpus).length;
 if (failures) {
@@ -272,5 +329,6 @@ if (failures) {
   process.exit(1);
 }
 console.log(
-  `\nmarkdown round-trip: all ${total} cases render-equal, idempotent, control-char free and code free`,
+  `\nmarkdown round-trip: all ${total} cases render-equal, idempotent, control-char free and code free` +
+    `, and all ${clipboard.length + 1} clipboard assertions hold`,
 );

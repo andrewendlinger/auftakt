@@ -8,7 +8,7 @@ import { TableHeader } from '@tiptap/extension-table-header';
 import { Extension, Node, mergeAttributes, type AnyExtension, type JSONContent } from '@tiptap/core';
 import { Marked } from 'marked';
 import { fenceParagraphs } from './legacyCode';
-import { canonicalImageSrc, imageMarkdown } from './imageRef';
+import { canonicalImageSrc, imageMarkdown, isImageRef } from './imageRef';
 
 /**
  * Underline is serialized as raw `<u>…</u>`, not TipTap's default `++…++`.
@@ -161,8 +161,37 @@ const MdImage = Node.create<{ resolveSrc: (src: string) => string }>({
     };
   },
 
+  /**
+   * **This is the paste gate, not only the parser.** ProseMirror runs the same rules over
+   * clipboard HTML, so an unqualified `img[src]` admits any `<img>` the user copied out of a web
+   * page, a Word document or an Outlook mail — with its `src` verbatim, straight past the resize →
+   * JPEG → 1.5 MB upload path that `DECISIONS.md` names as the only way an image enters the app
+   * („Paste and drag-and-drop are deliberately not wired"). A `data:` flavour then writes hundreds
+   * of kilobytes of base64 into a text column that `SELECT *` carries on every list request; an
+   * `https://` one stores a reference that no season copy and no backup can carry; a `file:///` one
+   * shows while the editor is open and is gone the moment it is saved (IMG-01).
+   *
+   * So the rule matches our own stored references and nothing else. `false` rejects it, and with no
+   * other node claiming `img` the tag is dropped exactly as it was before WP-37. Reading the
+   * editor's *own* rendered HTML still works — that is the copy-paste-inside-the-note case, and the
+   * pin is stripped by `canonicalImageSrc` before the check, so a pinned `<img>` matches too.
+   *
+   * The Markdown side (`parseMarkdown`) stays wide open on purpose: a stored `https://` or `data:`
+   * image still round-trips verbatim, because giving back what you were given is the repair this
+   * node exists for. Only the *clipboard* is narrowed.
+   */
   parseHTML() {
-    return [{ tag: 'img[src]' }];
+    return [
+      {
+        tag: 'img[src]',
+        // Structural, not `HTMLElement`: `tsconfig.scripts.json` typechecks this module through
+        // `check-markdown.ts` with `lib: ["ES2023"]` and no DOM, so naming a DOM global here fails
+        // the root typecheck while the client's own passes. Contravariance makes the wider
+        // parameter type assignable to what ProseMirror asks for.
+        getAttrs: (el: { getAttribute(name: string): string | null }) =>
+          isImageRef(canonicalImageSrc(el.getAttribute('src') ?? '')) && null,
+      },
+    ];
   },
 
   renderHTML({ HTMLAttributes }) {

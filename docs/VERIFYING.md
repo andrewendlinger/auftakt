@@ -52,6 +52,18 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   URL returns 304. Pass `'cache-control': ''` explicitly to override undici's default — a browser
   revalidating an `<img>` sends no such header, so that is the faithful simulation, not a
   workaround. Cost one wrong verdict on `/api/images/:token` (WP-37).
+- **Paste is verifiable headlessly — it is a `parseHTML` rule, not an event handler.** ProseMirror
+  parses clipboard HTML with the same rules as any other DOM input, so
+  `editor.commands.insertContent('<p><img src="…"></p>')` in `check-markdown.ts`'s jsdom editor
+  exercises exactly what a paste would, with no browser involved. That is how the clipboard
+  assertions at the foot of that script reach a path that reads like it needs a real Cmd-V. The
+  corollary is the trap: a parse rule *is* a paste rule, so widening one to read stored HTML
+  silently widens what a paste may bring in (WP-37).
+- **A gate that cannot fail is worse than no gate — prove the new one bites.** Revert the fix,
+  watch the new case fail, restore it. Doing that here caught a sabotage that was itself broken: a
+  duplicate `getAttrs:` key added *above* the real one changed nothing, because the later key wins,
+  and the gate went on passing against what looked like unfixed code. Delete the property under
+  test rather than shadowing it.
 - Kill stray servers by port, never with a broad `pkill`:
   `lsof -ti tcp:4317 -ti tcp:5317 | xargs kill`. **The `-i` must be repeated.** macOS ships
   lsof 4.91, which reads the second `tcp:…` as a *filename*, prints its usage block to stderr and

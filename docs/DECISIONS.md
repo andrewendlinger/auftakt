@@ -1323,3 +1323,15 @@ season happened to be pinned and read as broken from every other one. Forgetting
 missing button, which is visible and harmless; defaulting it on would cost that. Paste and
 drag-and-drop are deliberately not wired: the editor has neither handler today, and an accidentally
 pasted screenshot would land in the database.
+
+**…and „not wired" had to be *made* true.** The first cut registered the node with
+`parseHTML: [{ tag: 'img[src]' }]`, and ProseMirror runs those rules over clipboard HTML as well —
+so pasting from a web page, a Word document or an Outlook mail did admit an image, with its `src`
+verbatim and none of the resize → JPEG → 1.5 MB path the paragraph above describes as the only way
+in. Each protocol failed differently: `data:` wrote hundreds of kilobytes of base64 into a text
+column that `SELECT *` carries on every list refresh (and the sanitizer then stripped the src, so
+the bloat landed and the picture did not), `https:` stored a reference no season copy or backup can
+carry, `file:` showed until the note was saved. The rule now matches our own references only — a
+`getAttrs` returning `false` for anything else, which drops the tag exactly as it was dropped before
+the node existed. The Markdown side stays wide open, because a *stored* foreign source must still
+round-trip; only the clipboard is narrowed, and `check-markdown.ts` asserts both halves.
