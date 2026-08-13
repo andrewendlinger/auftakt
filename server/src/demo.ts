@@ -646,7 +646,13 @@ function main(): void {
         name: 'Verträge 2027',
         type: 'links',
         value: null,
-        documents: [{ label: 'Bühnenbau-Angebot', url: 'https://example.org/angebot.pdf' }],
+        // Two rows, not one: a custom Dokumente-Bereich writes its documents through its own
+        // section row rather than through `landing.documents`, and with a single row that second
+        // reorder path cannot be dragged at all (WP-50).
+        documents: [
+          { label: 'Bühnenbau-Angebot', url: 'https://example.org/angebot.pdf' },
+          { label: 'Technik-Angebot', url: 'https://example.org/technik.pdf' },
+        ],
       },
     ],
   });

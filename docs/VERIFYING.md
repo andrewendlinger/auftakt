@@ -367,6 +367,10 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   out its timeout. Open it from `#/einstellungen/aufgaben` („Verwalten").
 - **The Einstellungen tabs are links, not buttons** — `getByRole('button', …)` waits for ever.
   Navigate straight to `#/einstellungen/aufgaben`.
+- **`getByLabel` finds nothing in a `RecordFormModal`.** Its `<label>` (`fields.tsx`) carries no
+  `htmlFor` and does not wrap the input, so the two are not associated and Playwright's
+  accessible-name lookup times out — 30 s per field, reading as „the dialog never opened".
+  Address the field by its placeholder instead (`getByPlaceholder('z. B. Fördervertrag')`).
 - **A drag must start on the ⠿, not on the row.** Every reorderer runs `useDragReorder` in
   `mode: 'armed'`, so the item is not `draggable` until a primary-button `pointerdown` lands on
   its handle — `locator.dragTo()` on the row body is a silent no-op that reads as "reordering is
@@ -378,9 +382,14 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **The handle is `opacity-40` at rest and `opacity-100` on row hover** (WP-35 — it used to be
   invisible until hovered). Both states are hit-testable, so actionability was never the issue;
   what changed is that a screenshot assertion about a "clean" row now has a ⠿ in it.
-- **Reorderable surfaces, as of WP-35:** task rows, links (within one category group), contacts,
+- **Reorderable surfaces, as of WP-50:** task rows, links (within one category group), contacts,
   the project cards on an artist page, the artist cards on the Übersicht, the season cards on the
-  landing page, and sections in „anordnen" mode.
+  landing page, the landing page's document lists (the builtin „Dokumente" card *and* every custom
+  Dokumente-Bereich), and sections in „anordnen" mode.
+- **The landing documents reorder without a `reorder` request.** They are a JSON array in
+  `seasons.json`, so the drag issues `PATCH /api/landing` with the whole `documents` (or
+  `sections`) array — a script waiting for `**/reorder` waits for ever. Assert against
+  `GET /api/landing`, or after a `reload()`.
 - **`keyboard.down` emits one keydown.** A repeat-key defect (TTU-24) needs events dispatched with
   `repeat: true`.
 - **Some repros only fire inside a refetch window.** On a local server the refetch beats a human's
