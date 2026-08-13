@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import type { Season, SeasonCopyOptions } from '../api/types';
-import { Modal, Label, TextInput, Select } from './fields';
+import { Modal, Label, TextInput, Select, onEnterKey } from './fields';
 import { Btn } from './ui';
 import { useSeasonTerm } from '../hooks';
 
@@ -159,7 +159,7 @@ export function NewSeasonModal({
             autoFocus
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && submit()}
+            onKeyDown={onEnterKey(() => void submit())}
             placeholder="z. B. Festival 2027"
           />
         </div>

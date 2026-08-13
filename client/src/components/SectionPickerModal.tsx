@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Btn, PickerRow } from './ui';
-import { Label, Modal, TextInput } from './fields';
+import { Label, Modal, TextInput, onEnterKey } from './fields';
 import { SECTION_TYPES, type SectionGroup, type SectionType } from '../lib/sections';
 import { useErrorToast } from '../hooks';
 
@@ -41,6 +41,9 @@ export function SectionPickerModal({
   const [chosen, setChosen] = useState<SectionType | null>(null);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  // A ref beside the state: Enter reaches `create` directly, and a repeat-key burst inside one
+  // tick reads the same stale `busy` — one section per repeat (TTU-24).
+  const busyRef = useRef(false);
   const report = useErrorToast();
 
   /**
@@ -53,7 +56,8 @@ export function SectionPickerModal({
    * pressing the button again.
    */
   const create = async () => {
-    if (!name.trim() || !chosen || busy) return;
+    if (!name.trim() || !chosen || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       await onCreate(chosen, name.trim());
@@ -61,6 +65,7 @@ export function SectionPickerModal({
     } catch (err) {
       report(err, 'Der Bereich konnte nicht angelegt werden.');
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
@@ -133,9 +138,7 @@ export function SectionPickerModal({
               value={name}
               placeholder={namePlaceholder(chosen)}
               onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void create();
-              }}
+              onKeyDown={onEnterKey(() => void create())}
             />
           </div>
         )}
