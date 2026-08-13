@@ -588,7 +588,8 @@ export function RecordFormModal({
   // The in-flight guard is a *ref*, not the `busy` state below it: „Enter saves" reaches `submit`
   // directly, and a burst of repeat-key events inside one tick all read the same stale `false`.
   // The disabled Speichern button used to be the only way in, which is what made the state
-  // enough — the sibling forms (`useTaskComposer`, `AddColumnForm.add`) all gate this way (TTU-24).
+  // enough; every submit Enter can reach carries the same ref — `useTaskComposer`,
+  // `AddColumnForm.add`, `ColumnEditModal.persist` (TTU-24).
   const inFlight = useRef(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const guard = useGuardedAction();

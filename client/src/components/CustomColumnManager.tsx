@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Modal, Label, TextInput, Select } from './fields';
+import { useMemo, useRef, useState } from 'react';
+import { Modal, Label, TextInput, Select, onEnterKey } from './fields';
 import { Btn, IconButton, ReorderArrows } from './ui';
 import { TrashIcon } from './icons';
 import { api } from '../api/client';
@@ -351,6 +351,10 @@ function ColumnEditModal({
   const [icon, setIcon] = useState(col.icon ?? '');
   const [options, setOptions] = useState<CustomColumnOption[]>(parseColumnOptions(col.options));
   const [busy, setBusy] = useState(false);
+  // A ref, not `busy`: „Enter saves" reaches `save` directly, and a repeat-key burst inside one
+  // tick reads the same stale `false` (TTU-24). Cleared in `finally`, unlike `busy`, which the
+  // removal dialog keeps while it asks.
+  const inFlight = useRef(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [pending, setPending] = useState<OptionRemoval[] | null>(null);
   const { usage, ready } = useOptionUsage();
@@ -374,6 +378,8 @@ function ColumnEditModal({
    * so a category that is only becoming „erledigt" with this very save has to be on disk first.
    */
   const persist = async (mapping: Array<{ from: string; to: string }>) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     try {
       const patch: CustomColumnUpdate = { name: name.trim(), icon: icon.trim() || null };
@@ -385,12 +391,13 @@ function ColumnEditModal({
       await onSaved();
       onClose();
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };
 
   const save = async () => {
-    if (!name.trim() || problem || !ready) return;
+    if (busy || !name.trim() || problem || !ready) return;
     setSaveError(null);
     if (!editableOptions || !store) return persist([]);
     const cleaned = normalizeOptions(options);
@@ -424,11 +431,15 @@ function ColumnEditModal({
       <div className="space-y-4">
         <div>
           <Label>Name</Label>
-          <TextInput value={name} onChange={(e) => setName(e.target.value)} />
+          <TextInput
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={onEnterKey(() => void save())}
+          />
         </div>
         <div>
           <Label>Symbol (optional)</Label>
-          <IconPicker value={icon} onChange={setIcon} />
+          <IconPicker value={icon} onChange={setIcon} onEnter={() => void save()} />
         </div>
         {editableOptions && (
           <div>
@@ -453,7 +464,16 @@ function ColumnEditModal({
 }
 
 /** Emoji/symbol picker: a preset grid plus a free field for any other emoji. */
-function IconPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function IconPicker({
+  value,
+  onChange,
+  onEnter,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  /** „Enter saves" for the free field — same contract as `ColorField`'s `onEnter`. */
+  onEnter?: () => void;
+}) {
   return (
     <div>
       <div className="flex flex-wrap gap-1">
@@ -483,6 +503,7 @@ function IconPicker({ value, onChange }: { value: string; onChange: (v: string) 
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onKeyDown={onEnter && onEnterKey(onEnter)}
         maxLength={8}
         placeholder="oder eigenes Emoji eintippen"
         className="mt-1.5 w-52 rounded-lg border border-neutral-300 px-2.5 py-1.5 text-sm outline-none focus:border-neutral-500"
@@ -507,9 +528,13 @@ function AddColumnForm({
   const [icon, setIcon] = useState('');
   const [options, setOptions] = useState<CustomColumnOption[]>([]);
   const [busy, setBusy] = useState(false);
+  // Same TTU-24 shape as `useTaskComposer`: Enter reaches `add` directly, so a repeat-key burst
+  // needs a ref — the `busy` state only disables the button.
+  const busyRef = useRef(false);
 
   const add = async () => {
-    if (!name.trim()) return;
+    if (!name.trim() || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       await api.customColumns.create({
@@ -527,6 +552,7 @@ function AddColumnForm({
       setIcon('');
       await onAdded();
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
@@ -537,7 +563,12 @@ function AddColumnForm({
       <div className="grid grid-cols-2 gap-3">
         <div>
           <Label>Name</Label>
-          <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="z. B. Verantwortlich" />
+          <TextInput
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={onEnterKey(() => void add())}
+            placeholder="z. B. Verantwortlich"
+          />
         </div>
         <div>
           <Label>Typ</Label>
@@ -562,7 +593,7 @@ function AddColumnForm({
         </div>
         <div className="col-span-2">
           <Label>Symbol (optional)</Label>
-          <IconPicker value={icon} onChange={setIcon} />
+          <IconPicker value={icon} onChange={setIcon} onEnter={() => void add()} />
         </div>
         {type === 'select' && (
           <div className="col-span-2">
