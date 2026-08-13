@@ -158,6 +158,11 @@ export function GlobalSearch() {
    * field is a *filter*, and every keystroke after ↓ would have to be routed back. That is also
    * why the hits are `tabIndex={-1}`: they used to be the only way in, twenty tab stops behind
    * the field, and now they are neither reachable that way nor in anyone's way.
+   *
+   * ↑/↓ wrap, and that is the whole navigation: **Home and End stay the caret's.** The field is
+   * an editable textbox first, so taking them for „first/last hit" would leave no single key to
+   * get back to the start of a typed query — and the panel is open for almost every query that
+   * has one, so it would be taken nearly always.
    */
   const move = (delta: number) => {
     if (!hits.length) return;
@@ -170,9 +175,6 @@ export function GlobalSearch() {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       move(e.key === 'ArrowDown' ? 1 : -1);
-    } else if ((e.key === 'Home' || e.key === 'End') && shown && hits.length) {
-      e.preventDefault();
-      setActive(e.key === 'Home' ? 0 : hits.length - 1);
     } else if (e.key === 'Enter') {
       const hit = shown ? hits[at] : undefined;
       if (!hit) return;
@@ -235,7 +237,12 @@ export function GlobalSearch() {
                         tabIndex={-1}
                         // The mouse moves the same marker the arrows do, so the panel never
                         // shows two highlighted rows and Enter always means what is highlighted.
-                        onMouseEnter={() => setActive(i)}
+                        //
+                        // `mousemove`, not `mouseenter`: holding ↓ scrolls the panel under a
+                        // stationary pointer, and Chromium then dispatches boundary events for
+                        // whatever row slid under it — which would drag the marker back to the
+                        // cursor on every step and open the wrong hit on Enter.
+                        onMouseMove={() => setActive(i)}
                         onClick={() => go(h.to)}
                         className={`flex w-full items-center justify-between gap-3 px-4 py-1.5 text-left text-sm ${
                           i === at ? 'bg-neutral-100' : ''

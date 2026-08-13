@@ -76,14 +76,30 @@ export function ColorSwatchPicker({
    * shape, one component further). Focus lands on the current colour, like `PillSelect`'s does,
    * so the arrows start where the value already is. Tab is left alone here, unlike there: this
    * menu has „eigene" and „Keine" below the grid and Tab is how they are reached.
+   *
+   * Taking focus means owning its return. `pick` and the popover's Escape hand it back
+   * themselves, but the three closes that go through `closePopover` alone — the backdrop click, a
+   * page scroll, a resize — unmount the focused swatch and drop focus to `<body>`, so the next
+   * Tab would restart at the top of the page. The close arm below repairs exactly that case, and
+   * only that one: focus the user has since moved somewhere real is never stolen, the rule
+   * `Modal`'s close-restore follows.
    */
   const roving = useRovingFocus();
   // A colour from „eigene" matches no preset, so the first swatch holds the stop then.
   const stop = shown && PRESETS.includes(shown) ? shown : PRESETS[0];
+  const grabbedFocus = useRef(false);
   useLayoutEffect(() => {
-    if (!open) return;
+    if (!open) {
+      if (!grabbedFocus.current) return;
+      grabbedFocus.current = false;
+      const active = document.activeElement;
+      if (!active || active === document.body) anchorRef.current?.focus();
+      return;
+    }
     const items = Array.from(roving.ref.current?.querySelectorAll<HTMLElement>('[data-roving]') ?? []);
-    (items.find((el) => el.dataset.color === shown) ?? items[0])?.focus();
+    const target = items.find((el) => el.dataset.color === shown) ?? items[0];
+    target?.focus();
+    grabbedFocus.current = !!target;
     // Keyed on `open` alone, deliberately: `shown` changes while the user drags the „eigene"
     // wheel, and re-running this would pull focus off it mid-drag.
   }, [open]);

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TaskSortRule } from '../api/types';
 import { arrayMove } from '../lib/arrays';
 import { SORTABLE_TASK_COLUMNS, describeSortColumn, type SortRuleState } from '../lib/taskSort';
@@ -32,6 +32,8 @@ export function TaskSortEditor({
 }) {
   const [toAdd, setToAdd] = useState('');
   const columns = useGlobalColumns();
+  // Scopes the `[data-rule-row]` lookup `move` uses to put focus back on the row it moved.
+  const listRef = useRef<HTMLOListElement>(null);
   const available = useMemo(
     () =>
       SORTABLE_TASK_COLUMNS.filter((c) => !value.some((r) => r.id === c.id)).map((c) => ({
@@ -41,10 +43,41 @@ export function TaskSortEditor({
     [value, columns],
   );
 
+  /**
+   * Move a rule, and take its focus with it (RTE-14) — the duty every ▲▼ list carries, and the
+   * one this list was missing. Since WP-43 ↑/↓ on a focused arrow *are* the ordinary way to
+   * reorder, and without this the second press undoes the first: focus stays on the row position
+   * the rule left, which now holds the rule it swapped with, and ↑ sends *that* one back.
+   *
+   * The restore runs off `value`, not in a `requestAnimationFrame` after `onChange` the way
+   * `OptionsEditor` can. That one owns its array as local state and React flushes it
+   * synchronously; here the array belongs to the settings cache a level up, so the frame callback
+   * beats the commit and reads the pre-move rows — the same reason `CustomColumnManager` waits
+   * for its refetch, and the same shape of fix.
+   */
+  const restore = useRef<{ id: string; dir: -1 | 1 } | null>(null);
   const move = (i: number, dir: -1 | 1) => {
     const next = arrayMove(value, i, dir);
-    if (next !== value) onChange(next);
+    if (next === value) return;
+    restore.current = { id: value[i]!.id, dir };
+    onChange(next);
   };
+  useEffect(() => {
+    const target = restore.current;
+    if (!target) return;
+    restore.current = null;
+    const i = value.findIndex((r) => r.id === target.id);
+    const list = listRef.current;
+    if (i < 0 || !list) return;
+    // Focus the user moved elsewhere in the meantime is left alone.
+    const active = document.activeElement;
+    if (active && active !== document.body && !list.contains(active)) return;
+    const row = list.querySelectorAll<HTMLElement>('[data-rule-row]')[i];
+    const arrow = (d: -1 | 1) => row?.querySelector<HTMLButtonElement>(`[data-arrow="${d === -1 ? 'up' : 'down'}"]`);
+    // The arrow pointing the way the user was going, unless the move just disabled it at an end.
+    const same = arrow(target.dir);
+    (same && !same.disabled ? same : arrow(target.dir === -1 ? 1 : -1))?.focus();
+  }, [value]);
   const setDir = (i: number, dir: 'asc' | 'desc') =>
     onChange(value.map((r, idx) => (idx === i ? { ...r, dir } : r)));
   const removeAt = (i: number) => onChange(value.filter((_, idx) => idx !== i));
@@ -61,12 +94,13 @@ export function TaskSortEditor({
           Keine Regel – Aufgaben behalten die selbst gezogene Reihenfolge (erledigte immer unten).
         </p>
       )}
-      <ol className="space-y-1">
+      <ol className="space-y-1" ref={listRef}>
         {value.map((rule, i) => {
           const { label, state } = describeSortColumn(rule.id, columns);
           return (
             <li
               key={rule.id}
+              data-rule-row
               className="flex items-center gap-2 rounded-lg bg-neutral-50 px-2 py-1.5 text-sm"
             >
               <ReorderArrows

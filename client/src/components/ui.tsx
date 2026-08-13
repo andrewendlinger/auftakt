@@ -125,9 +125,13 @@ export function IconButton({
  * **One tab stop, not two** (WP-43). The pair is one control — „move this row" — and counting it
  * twice is what made a `TaskSortEditor` rule cost four presses to walk past. The first *enabled*
  * arrow is the tabbable one, so a row at either end still has exactly one, and ↑/↓ perform the
- * move from either button: focus the control, then steer. That also keeps the existing
- * focus-restore honest — after a move it lands on whichever arrow is still enabled (RTE-14), and
- * that is the same one that now holds the stop.
+ * move from either button: focus the control, then steer.
+ *
+ * Steering makes the caller's focus restore load-bearing rather than a nicety, because the press
+ * that lands a row at an end disables the very button it was pressed on and the browser drops
+ * focus to `<body>` — one press before the destination, every time. All three lists carry it now
+ * (`OptionsEditor`, `CustomColumnManager`, `TaskSortEditor`), each ending on the arrow that is
+ * still enabled (RTE-14); a new list that omits it dead-ends at its own edges.
  *
  * Auto-repeat is ignored. „Spalten verwalten"'s move is a server round trip whose result the next
  * press would race, so a held key would compute its move from a list that has already changed —
