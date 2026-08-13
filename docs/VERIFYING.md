@@ -316,6 +316,12 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   broken". No human types and Escapes inside one frame; give the script a ~100 ms beat. Dialogs
   whose dirty is computed beside the `Modal` (Saison, Bereich, Spalte bearbeiten) commit
   synchronously with the input event and have no such window.
+- **Focus after a column reorder only settles once the refetch has committed.** „Spalten
+  verwalten"'s ▲/▼ go through the server, and `move` re-finds the row in a `requestAnimationFrame`
+  *after* `invalidate` — so `document.activeElement` read straight after the click is still the
+  pre-move node, and a walk that reorders a column to an end reads as "focus was dropped". Wait
+  for the row order to change, then read focus. `OptionsEditor`'s ▲/▼ are local state and have no
+  such gap.
 - **Setting `input[type=color].value` directly is deduped by React's value tracker.** Use the
   native setter.
 - **A status change re-sorts the task table**, so `.first()` addresses a different row afterwards.

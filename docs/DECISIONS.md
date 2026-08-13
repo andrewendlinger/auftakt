@@ -960,7 +960,10 @@ out of the way (the event dialog's Titel, the confirm buttons, `SectionPickerMod
 late-mounting Name). An `initialFocus` prop was considered and rejected until a dialog exists
 whose first tabbable is provably wrong — „Spalten verwalten" opening on the first reorder arrow
 was reviewed and accepted (user decision 2026-08-13): reordering is that dialog's headline
-function.
+function, and Enter on the focused ▼ moves the column — visible, and reversed by ▲. What that
+does oblige is `move` putting focus back on the row it moved (the same RTE-14 duty
+`OptionsEditor` carries), because the press that lands a column at an end disables the arrow it
+was pressed on.
 
 „Enter saves" stays per single-line input via `onEnterKey`, never on the dialog or a grid —
 RTE-11 stands, `RichTextEditor` and the pill widgets own their Enter. Every save that Enter can

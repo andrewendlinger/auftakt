@@ -98,6 +98,8 @@ export function CustomColumnManager({
   // Everything else in this dialog persists on click; the only unsaved input that Escape or a
   // backdrop click can throw away is what has been typed into the „Neue Spalte" form below.
   const [formDirty, setFormDirty] = useState(false);
+  // Scopes the `[data-column-row]` lookup `move` uses to put focus back on the row it moved.
+  const listRef = useRef<HTMLUListElement>(null);
 
   // On a project page, global columns are shown read-only; only project columns are managed here.
   const managed = useMemo(
@@ -117,11 +119,27 @@ export function CustomColumnManager({
   // buttons for that column. `managed` is a single scope group, so renumbering it from 0 leaves
   // it sharing ordinals with the other group — every consumer orders through `compareColumns`,
   // which sorts by scope first, so that overlap can't interleave them (TTU-21).
+  //
+  // Focus then follows the row, as in `OptionsEditor.move` (RTE-14). Rows are keyed by `c.id`, so
+  // React moves the DOM node and focus normally travels with it — but the press that lands a
+  // column at an end disables the very arrow it was pressed on, the browser blurs it, and focus
+  // falls to <body>. Keyboard reordering dead-ended one press before it finished, which the
+  // dialog opening on that arrow (WP-42) made the ordinary way to use it. Unlike `OptionsEditor`,
+  // the new order is only in the DOM once the refetch has committed, so the rAF waits for
+  // `invalidate` rather than following the PATCH.
   const move = async (col: CustomColumn, dir: -1 | 1) => {
     const next = arrayMove(managed, managed.findIndex((c) => c.id === col.id), dir);
     if (next === managed) return;
     await api.customColumns.reorder(next.map((c) => c.id));
     await invalidate();
+    requestAnimationFrame(() => {
+      const row = listRef.current?.querySelectorAll<HTMLElement>('[data-column-row]')[
+        next.findIndex((c) => c.id === col.id)
+      ];
+      const same = row?.querySelector<HTMLButtonElement>(`[data-arrow="${dir === -1 ? 'up' : 'down'}"]`);
+      const other = row?.querySelector<HTMLButtonElement>(`[data-arrow="${dir === -1 ? 'down' : 'up'}"]`);
+      (same && !same.disabled ? same : other)?.focus();
+    });
   };
 
   const setEnabled = async (col: CustomColumn, enabled: 0 | 1) => {
@@ -186,7 +204,7 @@ export function CustomColumnManager({
           {managed.length === 0 ? (
             <div className="text-sm text-neutral-400">Noch keine Spalten.</div>
           ) : (
-            <ul className="divide-y divide-neutral-100 overflow-hidden rounded-xl ring-1 ring-neutral-100">
+            <ul ref={listRef} className="divide-y divide-neutral-100 overflow-hidden rounded-xl ring-1 ring-neutral-100">
               {managed.map((c, i) => (
                 <ColumnRow
                   key={c.id}
@@ -291,6 +309,7 @@ function ColumnRow({
   const options = hasOptions(col) ? parseColumnOptions(col.options) : [];
   return (
     <li
+      data-column-row
       className={`flex items-center gap-2 px-2 py-1.5 text-sm transition ${
         isBuiltin ? 'bg-sky-50/70 hover:bg-sky-100/60' : 'hover:bg-neutral-50'
       } ${col.enabled ? '' : 'opacity-50'}`}
