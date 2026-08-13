@@ -60,6 +60,42 @@ const roundtrip = (md: string) => {
 };
 
 /**
+ * …and the document it parsed into has to be **legal**, which round-tripping does not prove.
+ *
+ * `setContent` builds the doc with `Node.fromJSON`, which does not validate, and serializing walks
+ * it without asking either — so a structurally invalid document passes render-equality and
+ * idempotence happily, and only explodes later when something *edits* it. That is exactly what
+ * WP-37 shipped: `@tiptap/extension-paragraph` unwraps a paragraph whose only child is an image,
+ * which is correct for a block image node and wrong for ours, so `![x](…)` on its own line landed
+ * as `doc > image` — inline content where the schema says `block+`. Every image fixture here was
+ * green while clicking into such a note threw „Called contentMatchAt on a node with invalid
+ * content" and the field refused to open.
+ *
+ * `doc.check()` is ProseMirror's own answer to „is this document legal", and the dispatch is the
+ * cheapest way to reach the plugins that touch the end of the document (trailing-node), since that
+ * is what the app does on mount and on every keystroke.
+ */
+const docIsLegal = (md: string): string | null => {
+  // A **fresh editor, content at construction** — `setContent` is not the path the app takes and
+  // not the path that breaks. It dispatches a replace step, and ProseMirror repairs an illegal
+  // slice on the way in by fitting it into the schema; `useEditor({ content })` goes through
+  // `Node.fromJSON`, which validates nothing and hands the editor a document it cannot survive
+  // editing. Asserting through `setContent` would have found nothing at all.
+  const probe = new Editor({ element: el, extensions: markdownExtensions(), content: md, contentType: 'markdown' });
+  try {
+    probe.state.doc.check();
+    // The plugins that touch the end of the document (trailing-node) run on any transaction, so
+    // this is what the placeholder nudge and the first keystroke do in the app.
+    probe.view.dispatch(probe.state.tr);
+    return null;
+  } catch (err) {
+    return `invalid document: ${(err as Error).message}`;
+  } finally {
+    probe.destroy();
+  }
+};
+
+/**
  * C0 controls except tab and newline. Stored Markdown is plain text a human edits and a backup
  * round-trips; a control character in it is corruption, not formatting. WP-30 found one being
  * written for real — the table serializer joined the blocks of a multi-block cell with U+001F.
@@ -252,13 +288,17 @@ const assertMarkdown = (name: string, md: string, source: 'md' | 'json') => {
   const idempotent = out1 === out2;
   const clean = !CONTROL_CHARS.test(md) && !CONTROL_CHARS.test(out1);
   const codeFree = !CODE_TAGS.test(render(md)) && !CODE_TAGS.test(render(out1));
-  if (renderEqual && idempotent && clean && codeFree) {
+  // Both directions: the stored text must parse into a legal document, and so must what the
+  // editor writes back — an invalid doc that serializes cleanly is exactly the failure this
+  // catches, and it is invisible to the three assertions above.
+  const illegal = docIsLegal(md) ?? docIsLegal(out1);
+  if (renderEqual && idempotent && clean && codeFree && !illegal) {
     console.log(`  ok   ${name}`);
     return;
   }
   failures++;
   console.log(
-    `  FAIL ${name}${renderEqual ? '' : '  [render differs]'}${idempotent ? '' : '  [not idempotent]'}${clean ? '' : '  [control chars]'}${codeFree ? '' : '  [renders code]'}`,
+    `  FAIL ${name}${renderEqual ? '' : '  [render differs]'}${idempotent ? '' : '  [not idempotent]'}${clean ? '' : '  [control chars]'}${codeFree ? '' : '  [renders code]'}${illegal ? `  [${illegal}]` : ''}`,
   );
   if (!renderEqual) {
     console.log(`       ${source === 'json' ? 'json md' : 'in  md '}: ${JSON.stringify(md)}`);

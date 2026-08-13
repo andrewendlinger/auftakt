@@ -1,5 +1,6 @@
 import StarterKit from '@tiptap/starter-kit';
 import { Underline } from '@tiptap/extension-underline';
+import { Paragraph } from '@tiptap/extension-paragraph';
 import { Markdown, type MarkdownExtensionOptions } from '@tiptap/markdown';
 import { Table, renderTableToMarkdown } from '@tiptap/extension-table';
 import { TableRow } from '@tiptap/extension-table-row';
@@ -214,6 +215,47 @@ const MdImage = Node.create<{ resolveSrc: (src: string) => string }>({
 });
 
 /**
+ * A paragraph holding nothing but an image stays a paragraph (WP-37).
+ *
+ * `@tiptap/extension-paragraph`'s own `parseMarkdown` carries a special case:
+ *
+ *     // if paragraph contains only a single image token,
+ *     // unwrap it to avoid nesting block elements incorrectly
+ *     if (tokens.length === 1 && tokens[0].type === 'image') return helpers.parseChildren([tokens[0]])
+ *
+ * which is right for TipTap's own image extension — that one is a **block** node. Ours is
+ * deliberately `inline: true`, because the reader puts an image inside its paragraph and the two
+ * halves have to agree. Unwrapped, the image landed as a direct child of `doc`, whose content
+ * expression is `block+`: a document ProseMirror never validates on construction and cannot
+ * survive being touched. The editor mounted, drew the note correctly, and threw
+ * „Called contentMatchAt on a node with invalid content" on the first transaction that reached the
+ * end of the document — the trailing-node plugin appending its paragraph, i.e. the placeholder
+ * nudge or the first keystroke. In the app that reads as: click into a note whose last block is an
+ * image, and the field does not open at all.
+ *
+ * That is why „Bild einfügen" appeared to do nothing. Inserting works — an inline node goes inside
+ * the current paragraph — but the note it wrote could not be opened again afterwards.
+ *
+ * Only the lone-image case is intercepted; `null` sends every other paragraph on to the
+ * extension's own handler, which keeps its `&nbsp;` empty-paragraph rule (`nbspIndent`, WP-49)
+ * exactly as it was.
+ */
+const MdParagraph = Paragraph.extend({
+  parseMarkdown: (token, helpers) => {
+    const tokens = token.tokens ?? [];
+    if (tokens.length === 1 && tokens[0]?.type === 'image') {
+      return helpers.createNode('paragraph', undefined, helpers.parseInline(tokens));
+    }
+    // Everything else stays the extension's own, reached through its config rather than
+    // `this.parent`: the markdown fields are declaration-merged onto the config type, so the
+    // parent chain is not typed for them. The original reads nothing off `this`, and it owns the
+    // `&nbsp;` empty-paragraph rule the legacy fences depend on (WP-49), which is exactly why it
+    // has to keep running.
+    return Paragraph.config.parseMarkdown!(token, helpers);
+  },
+});
+
+/**
  * The read half of „a link around an image survives": `[![Saalplan](/api/images/…)](https://…)`.
  *
  * `applyMarkToContent` in the Markdown manager sets marks on **text** nodes and otherwise recurses
@@ -313,6 +355,7 @@ export function markdownExtensions(
   return [
     StarterKit.configure({
       underline: false, // replaced by MdUnderline so it serializes to <u>
+      paragraph: false, // replaced by MdParagraph so a lone image keeps its paragraph
       code: false, // WP-49 — see markdownParser; the tokenizers go with them
       codeBlock: false,
       link: {
@@ -329,6 +372,7 @@ export function markdownExtensions(
     }),
     MdUnderline,
     LegacyFence,
+    MdParagraph,
     MdLinkedImage,
     MdImage.configure({ resolveSrc: opts.resolveSrc ?? ((src: string) => src) }),
     MdTable.configure({ resizable: false }),
