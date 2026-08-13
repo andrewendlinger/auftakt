@@ -46,9 +46,6 @@ interface ImageRow {
   token: string;
   mime: string;
   bytes: Buffer;
-  byte_size: number;
-  width: number | null;
-  height: number | null;
 }
 
 /**
@@ -73,12 +70,16 @@ imagesRouter.get('/:token', (req, res) => {
   const token = req.params.token;
   if (!TOKEN_RE.test(token)) return res.status(404).json({ error: 'not found' });
 
-  const row = getDb()
-    .prepare('SELECT token, mime, bytes, byte_size, width, height FROM images WHERE token = ?')
-    .get(token) as ImageRow | undefined;
-  if (!row) return res.status(404).json({ error: 'not found' });
+  // Metadata first, blob second. `req.fresh` needs the ETag and the ETag is the token, so a 304 —
+  // the common answer on every window reload, since ⌘R revalidates each `<img>` despite
+  // `immutable` — can be given without touching `bytes` at all. Reading the whole column up front
+  // materialised a Buffer per image and threw it away one line later.
+  const meta = getDb().prepare('SELECT token, mime FROM images WHERE token = ?').get(token) as
+    | Pick<ImageRow, 'token' | 'mime'>
+    | undefined;
+  if (!meta) return res.status(404).json({ error: 'not found' });
 
-  const contentType = SERVEABLE[row.mime];
+  const contentType = SERVEABLE[meta.mime];
   if (!contentType) return res.status(404).json({ error: 'not found' });
 
   res.setHeader('Content-Type', contentType);
@@ -90,9 +91,14 @@ imagesRouter.get('/:token', (req, res) => {
   // mean a different picture, not even after restoring an older backup. Setting ETag ourselves also
   // gets conditional requests — Express computes its own only when none is set, and `req.fresh`
   // reads the one we set.
-  res.setHeader('ETag', `"${row.token}"`);
+  res.setHeader('ETag', `"${meta.token}"`);
   res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
   if (req.fresh) return res.status(304).end();
+
+  const row = getDb().prepare('SELECT bytes FROM images WHERE token = ?').get(token) as
+    | Pick<ImageRow, 'bytes'>
+    | undefined;
+  if (!row) return res.status(404).json({ error: 'not found' });
   return res.send(row.bytes);
 });
 
