@@ -67,9 +67,10 @@ const LIST_SQL: Record<DeletedType, string> = {
   // Only user-added columns. A built-in is not deletable from the UI, and ensureBuiltinColumns()
   // re-inserts one whose row is soft-deleted on the very next getDb() — so offering to restore
   // it would resurrect a shadow row sharing its `key` with the fresh one.
-  column: `SELECT c.id, c.name AS label, COALESCE(p.code, 'Global') AS sublabel, c.deleted_at,
+  column: `SELECT c.id, c.name AS label, COALESCE(a.name, p.code, 'Global') AS sublabel, c.deleted_at,
              datetime(c.deleted_at, '+${PURGE_AFTER_DAYS} days') AS purge_at
            FROM custom_columns c
+           LEFT JOIN artists a ON a.id = c.artist_id
            LEFT JOIN projects p ON p.id = c.project_id
            WHERE c.deleted_at IS NOT NULL AND c.kind = 'custom'`,
 };

@@ -340,7 +340,8 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   title })` resolves to nothing and every follow-up call waits out its timeout while the editor is
   right there on screen. Anchor the row on something that stays rendered (its Bereich pill, its
   comment) and address the cells by `td` index; `td` 0 is the tree gutter, so with the demo's
-  columns Fällig is 3 and Abgabe 8.
+  columns Fällig is 3 and Abgabe 8. `#/artist/1` has one more column („Freigabe") but it sits
+  *after* those, so both indices still hold there.
 - **Typing one segment into a *filled* date cell does not produce a half-typed date** — it replaces
   that segment and the value stays complete, so a check for „Enter must not commit" passes
   vacuously against working code and would pass against the bug too. Reproduce it in an **empty**
@@ -362,9 +363,17 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   scroll outside its menu, and the scroll `click()` performs for itself arrives *after* the
   popover opened — the menu blinks shut and the run reads „`PillSelect` does not open at all",
   with `aria-expanded="false"` to back it up. `await trigger.scrollIntoViewIfNeeded()` first.
-- **„Spalten verwalten" on a *project* page lists only project-scoped columns.** The demo's custom
-  columns are global, so `[data-column-row]` matches nothing there and every row selector waits
-  out its timeout. Open it from `#/einstellungen/aufgaben` („Verwalten").
+- **„Spalten verwalten" lists only the page's *own* scope.** On a project page that is the
+  project-scoped columns, and the demo has none — `[data-column-row]` matches nothing there and
+  every row selector waits out its timeout. Open it from `#/einstellungen/aufgaben` („Verwalten")
+  for the globals, or from `#/artist/1`, the one demo page with a scoped column of its own
+  („Freigabe", WP-51). Every other artist page manages an empty group.
+- **An artist page holds several tables** — every project card is one — so `table thead th` reads
+  the project grid, not the task table. Pick the table whose header row carries „Aufgabe".
+- **Column headers are uppercased in CSS**, so `innerText` says `FREIGABE` where the DOM says
+  `Freigabe`. Worse, `innerText` read straight after a modal's `waitFor()` returned a *partial*
+  view of the still-settling dialog — „Globale Spalten" was missing from it while the same node's
+  `textContent` had it all along. Assert on `textContent` (`locator.evaluate((el) => el.textContent)`).
 - **The Einstellungen tabs are links, not buttons** — `getByRole('button', …)` waits for ever.
   Navigate straight to `#/einstellungen/aufgaben`.
 - **`getByLabel` finds nothing in a `RecordFormModal`.** Its `<label>` (`fields.tsx`) carries no
@@ -454,6 +463,10 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   orders anything. Task 5 („Bühnenplan an Technik schicken") carries a Fällig date, an Abgabe date
   and a comment — the one row that exercises every editable cell — and task 2 has neither date,
   which is the empty cell a half-typed-date repro needs.
+- **Exactly one demo column is scoped to a page: „Freigabe" on artist 1** (Nordlicht Quartett,
+  WP-51), with values on that artist's own tasks 16 and 51. It is the fixture for „a scope's
+  columns stay on its own page" — it must be absent from every project page, from the Übersicht
+  and from every other artist.
 - **A newly created task carries a *negative* `sort_order`** — the transform stamps it one below
   its list's minimum so it lands on top. Assert relative order, never a literal ordinal, and expect
   the newest row first in any list nothing has been dragged in.
@@ -560,11 +573,13 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   then `npm run demo` — and remember any script that edits demo data is not re-runnable against a
   dirty database.
 - **The project-scoped column manager lists nothing on the demo** (there are no project-scoped
-  columns) — drive those cases from Einstellungen instead. That also makes a project-scoped custom
-  column the *only* way to reach „hide the column a header click is sorting by while the table
-  stays mounted": hiding a global one means going to Einstellungen, which unmounts the table and
-  resets the override. Create one with
-  `POST /api/custom-columns {"name":"…","type":"text","scope":"project","project_id":5}`.
+  columns) — drive those cases from `#/artist/1` (which has one) or from Einstellungen. A
+  *scoped* column is also the only way to reach „hide the column a header click is sorting by
+  while the table stays mounted": hiding a global one means going to Einstellungen, which unmounts
+  the table and resets the override. Create one with
+  `POST /api/custom-columns {"name":"…","type":"text","scope":"project","project_id":5}` — and
+  note the scope and its parent id must travel together since WP-51, or the write is a 400.
+  A scoped **list** needs the parent too: `GET /api/custom-columns?scope=project` alone is a 400.
 - **A write straight to `/api/custom-columns` does not refetch the client's column list**, and a
   synthetic `window.focus` event does not either. Toggle through the app's own ⚙ Spalten manager
   when the case depends on the table re-rendering with the new column set.

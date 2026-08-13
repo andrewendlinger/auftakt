@@ -79,6 +79,13 @@ export function MoveTaskDialog({ task, onClose }: { task: Task; onClose: () => v
       : task.artist_id != null
         ? `${task.artist_name ?? artistName.get(task.artist_id) ?? ''} · Allgemein`
         : overviewLabel;
+  /** The parent a move gives up, named for the warning below. Null for a task already parentless. */
+  const currentOwner =
+    task.project_id != null
+      ? `Projekt „${currentLabel}“`
+      : task.artist_id != null
+        ? `Künstler „${task.artist_name ?? artistName.get(task.artist_id) ?? ''}“`
+        : null;
   const targetLabel = (value: string): string => {
     if (value.startsWith('a')) return `${artistName.get(Number(value.slice(1))) ?? ''} · Allgemein`;
     if (value.startsWith('p')) {
@@ -206,11 +213,15 @@ export function MoveTaskDialog({ task, onClose }: { task: Task; onClose: () => v
             Aufgabe.
           </p>
         )}
-        {task.project_id != null && (
+        {/* Both parented scopes warn, because both can own columns since WP-51: a task leaving an
+            artist loses that artist's columns exactly as one leaving a project loses the
+            project's. The values stay on the row — custom_values is keyed by column id and
+            nothing prunes it — they simply have no header to appear under at the new place. */}
+        {currentOwner && (
           <p className="text-sm text-amber-700">
-            Die Zuordnung zum Projekt „{currentLabel}“ geht dabei verloren.{' '}
+            Die Zuordnung zum {currentOwner} geht dabei verloren.{' '}
             <span className="text-neutral-500">
-              Werte projektspezifischer Spalten bleiben gespeichert, sind am neuen Ort aber nicht
+              Werte der Spalten dieses Bereichs bleiben gespeichert, sind am neuen Ort aber nicht
               sichtbar.
             </span>
           </p>

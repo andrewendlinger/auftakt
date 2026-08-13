@@ -419,8 +419,19 @@ const LINKS = [
   { id: 17, label: 'Förderantrag 2026 (bewilligt)', url: 'https://example.org/foerderantrag.pdf', category: 'vertrag' },
 ];
 
-/** Custom task columns — the only way to exercise the data-driven task table. */
-const CUSTOM_COLUMNS = [
+/**
+ * Custom task columns — the only way to exercise the data-driven task table. `scope` defaults to
+ * the season-wide one; a row naming a parent is that page's own column and appears nowhere else
+ * (WP-51), which is the branch the artist entry below is here to show.
+ */
+const CUSTOM_COLUMNS: Array<{
+  name: string;
+  type: string;
+  icon: string;
+  options: string | null;
+  scope?: string;
+  artist_id?: number;
+}> = [
   {
     name: 'Bereich',
     type: 'select',
@@ -436,6 +447,19 @@ const CUSTOM_COLUMNS = [
   // its own keyboard rules (a half-typed date commits nothing, WP-43), so „eyeball it" means
   // typing into it.
   { name: 'Abgabe', type: 'date', icon: '📆', options: null },
+  // Artist-scoped: visible on Nordlicht Quartett's own task list and on no other page. Its two
+  // values sit on tasks 16 and 51, the artist-level tasks of that artist.
+  {
+    name: 'Freigabe',
+    type: 'select',
+    icon: '📝',
+    scope: 'artist',
+    artist_id: 1,
+    options: JSON.stringify([
+      { value: 'ausstehend', label: 'ausstehend', color: '#fef3c7' },
+      { value: 'erteilt', label: 'erteilt', color: '#dcfce7' },
+    ]),
+  },
 ];
 
 /**
@@ -446,7 +470,7 @@ const CUSTOM_COLUMNS = [
  */
 const CUSTOM_VALUES: Record<
   number,
-  Partial<Record<'Bereich' | 'Bestätigt' | 'Abgabe', string | boolean>>
+  Partial<Record<'Bereich' | 'Bestätigt' | 'Abgabe' | 'Freigabe', string | boolean>>
 > = {
   1: { Bereich: 'logistik', Bestätigt: false, Abgabe: days(6) },
   3: { Bereich: 'logistik', Bestätigt: true },
@@ -458,6 +482,9 @@ const CUSTOM_VALUES: Record<
   21: { Bereich: 'kommunikation', Bestätigt: false },
   31: { Bestätigt: true },
   36: { Bereich: 'technik', Bestätigt: false },
+  // Artist 1's own tasks, the only rows where the artist-scoped „Freigabe" column is visible.
+  16: { Freigabe: 'ausstehend' },
+  51: { Bereich: 'kommunikation', Freigabe: 'erteilt' },
 };
 
 /* ---------- insert ---------- */
@@ -499,8 +526,8 @@ function main(): void {
      VALUES (@id, @artist_id, @project_id, @name, @type, @value, @deleted_at, @sort_order)`,
   );
   const insColumn = db.prepare(
-    `INSERT INTO custom_columns (name, type, scope, project_id, options, icon, kind, enabled, deletable, sort_order)
-     VALUES (@name, @type, 'global', NULL, @options, @icon, 'custom', 1, 1, @sort_order)`,
+    `INSERT INTO custom_columns (name, type, scope, artist_id, project_id, options, icon, kind, enabled, deletable, sort_order)
+     VALUES (@name, @type, @scope, @artist_id, NULL, @options, @icon, 'custom', 1, 1, @sort_order)`,
   );
 
   const tx = db.transaction(() => {
@@ -514,7 +541,13 @@ function main(): void {
     // Custom columns first: their generated ids are the keys inside tasks.custom_values.
     const colIds = new Map<string, number>();
     CUSTOM_COLUMNS.forEach((c, i) =>
-      colIds.set(c.name, Number(insColumn.run({ ...c, sort_order: 100 + i }).lastInsertRowid)),
+      colIds.set(
+        c.name,
+        Number(
+          insColumn.run({ scope: 'global', artist_id: null, ...c, sort_order: 100 + i })
+            .lastInsertRowid,
+        ),
+      ),
     );
 
     TASKS.forEach((t, i) => {

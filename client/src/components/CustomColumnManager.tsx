@@ -31,6 +31,7 @@ import {
   useRetention,
   useUndoableDelete,
   resourceUndo,
+  type ColumnOwner,
 } from '../hooks';
 
 /**
@@ -124,13 +125,23 @@ interface ColumnConfirm {
   used: number;
 }
 
+/**
+ * The scope group this dialog manages, and the German word for it. `undefined` is the settings
+ * page, which manages the global set; an artist or project page manages its own and shows the
+ * globals read-only (WP-51).
+ */
+const OWNER_LABEL: Record<ColumnOwner['scope'], string> = {
+  artist: 'Künstler-Spalten',
+  project: 'Projekt-Spalten',
+};
+
 export function CustomColumnManager({
   columns,
-  projectId,
+  owner,
   onClose,
 }: {
   columns: CustomColumn[];
-  projectId?: number;
+  owner?: ColumnOwner;
   onClose: () => void;
 }) {
   const invalidate = useInvalidateAll();
@@ -147,17 +158,17 @@ export function CustomColumnManager({
   const listRef = useRef<HTMLUListElement>(null);
   const restoreFocus = useRef<{ id: ID; dir: -1 | 1 } | null>(null);
 
-  // On a project page, global columns are shown read-only; only project columns are managed here.
+  // On an entity page, global columns are shown read-only; only that page's own are managed here.
   const managed = useMemo(
     () =>
       [...columns]
-        .filter((c) => (projectId ? c.scope === 'project' : c.scope === 'global'))
+        .filter((c) => c.scope === (owner?.scope ?? 'global'))
         .sort((a, b) => a.sort_order - b.sort_order || a.id - b.id),
-    [columns, projectId],
+    [columns, owner],
   );
   const readOnly = useMemo(
-    () => (projectId ? [...columns].filter((c) => c.scope === 'global').sort((a, b) => a.sort_order - b.sort_order) : []),
-    [columns, projectId],
+    () => (owner ? [...columns].filter((c) => c.scope === 'global').sort((a, b) => a.sort_order - b.sort_order) : []),
+    [columns, owner],
   );
 
   // One transactional renumber rather than two sequential swaps: if the second PATCH failed,
@@ -261,7 +272,7 @@ export function CustomColumnManager({
 
         <div>
           <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
-            {projectId ? 'Projekt-Spalten' : 'Spalten'}
+            {owner ? OWNER_LABEL[owner.scope] : 'Spalten'}
           </div>
           <p className="mb-3 text-xs text-neutral-400">
             Reihenfolge mit ↑ ↓ ändern. „Status“ und „Aufgabe“ sind fest; andere Spalten lassen sich
@@ -289,7 +300,7 @@ export function CustomColumnManager({
         </div>
 
         <AddColumnForm
-          projectId={projectId}
+          owner={owner}
           nextSort={Math.max(-1, ...managed.map((c) => c.sort_order)) + 1}
           onAdded={invalidate}
           onDirtyChange={setFormDirty}
@@ -625,12 +636,12 @@ function IconPicker({
 /* ---------- add a new custom column ---------- */
 
 function AddColumnForm({
-  projectId,
+  owner,
   nextSort,
   onAdded,
   onDirtyChange,
 }: {
-  projectId?: number;
+  owner?: ColumnOwner;
   nextSort: number;
   onAdded: () => Promise<void>;
   /**
@@ -671,8 +682,11 @@ function AddColumnForm({
       await api.customColumns.create({
         name: name.trim(),
         type,
-        scope: projectId ? 'project' : 'global',
-        project_id: projectId ?? null,
+        // The scope and its parent id travel together, because the server rejects one without
+        // the other — in the route and again in the schema CHECK (WP-51).
+        scope: owner?.scope ?? 'global',
+        artist_id: owner?.scope === 'artist' ? owner.id : null,
+        project_id: owner?.scope === 'project' ? owner.id : null,
         icon: icon.trim() || null,
         options: type === 'select' ? normalizeOptions(options) : null,
         sort_order: nextSort,

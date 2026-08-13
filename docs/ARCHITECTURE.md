@@ -289,6 +289,22 @@ ones (`kind: 'custom'`) store values in the `tasks.custom_values` JSON blob keye
 `ensureBuiltinColumns()` inserts missing built-ins idempotently, and users can disable, reorder or
 (where `deletable`) remove them.
 
+**Every page is a scope, and a scope's columns stay on its own page** (WP-51, #58). `scope` is
+`global | artist | project`, each paired with exactly one parent — none, `artist_id`, `project_id` —
+and the pairing is a schema CHECK as well as a route guard, because writing one half without the
+other puts a row where no list looks (every list binds the scope and the parent id together). The
+Übersicht is the global scope: the „Festival" todos are the season's own list, so it needs no
+fourth value. Built-ins are all `global`, which is why `useGlobalColumns()` answers anything keyed
+off one. Columns are managed in three places — Einstellungen for the globals, „⚙ Spalten" on an
+artist or project page for that page's own, which shows the globals read-only. Ordering is
+`compareColumns` (`client/src/api/types.ts`): globals first, then the page's own group.
+
+A scope's ripples are wider than the column list suggests, and each one is silent when missed: the
+season copy carries a scoped column only if its parent arrived (`copySeasonData`), the .xlsx export
+assembles its column set per scope (`routes/export.ts`), the cascade and the Papierkorb sublabel
+follow the FK (`lib/cascade.ts`, `routes/deleted.ts`), and a task moved out of a scope keeps its
+values in `custom_values` with no header left to show them under (`MoveTaskDialog`).
+
 Column ids in `client/src/lib/taskSort.ts` are `key` for built-ins and `custom:<id>` for
 customs — one `colId`/`customColId` pair owns both halves. The delimiter is load-bearing: the
 previous `c<id>` form shared a namespace with the built-in `comment` key, which then decoded as
@@ -405,7 +421,8 @@ Which module owns which invariant. Reach for these rather than rebuilding the be
 | module | owns |
 |---|---|
 | `useAllTasks()` (hooks.ts) | the one `['tasks','scope-all']` query — live **and** archived. Anything that must not stop at the archive edge takes this: the subtask tree (a subtree op derived from a `scope:'live'` list strands a child past `ARCHIVE_AFTER_DAYS`) and „Fortschritt" (`done`/`total`/`pct` were wrong on the live list; „offen" was not). A new *editable* table stays on the page's live list. |
-| `useGlobalColumns()` (hooks.ts) | the single `['customColumns','global']` reader. `useDoneValue()` sits on it. |
+| `useGlobalColumns()` (hooks.ts) | the single `['customColumns','global']` reader. `useDoneValue()` sits on it, and so does `TaskSortEditor` — a `task_sort` rule is a season-wide setting, so only global columns can carry one. |
+| `useScopedColumns(owner, enabled)` (hooks.ts) | one entity page's column set: the globals plus that page's own, already merged. Both entity pages take it rather than writing the query out, because three things have to agree at once — the scope sent, the parent id sent with it (a scoped list without one is a 400) and the globals leading the merged list. |
 | `useSettingsArray(key, parse)` (hooks.ts) | immediate-save array settings. Publishes into the `['settings']` cache **before** awaiting, so a second edit inside the round trip composes. `current()` reads the array as it is *now* — use it in any closure that runs later (an undo six seconds on). `parse` must be module-level (it is a memo dep) and must read defensively; a throw there blanks the page. |
 | `useLanding()` (hooks.ts) | the same contract for every `seasons.json` write. Two deliberate differences: it **throws** rather than guarding (callers already own a catch → German toast), and the pre-await publish is skipped when the patch adds an id-less row. |
 | `useRetention()` (hooks.ts) | „wie lange bleibt das". **No German string may state a retention threshold again.** Both constants ride on the settings response. |

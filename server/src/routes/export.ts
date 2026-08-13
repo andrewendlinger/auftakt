@@ -38,25 +38,34 @@ function isoDay(s: string | null): string {
 exportRouter.get('/tasks.xlsx', async (req, res) => {
   const db = getDb();
   const projectId = num(req.query.project_id);
+  const artistId = num(req.query.artist_id);
+  const resolvedArtistId = num(req.query.resolved_artist_id);
   const tasks = listTasks(db, {
     projectId,
-    artistId: num(req.query.artist_id),
-    resolvedArtistId: num(req.query.resolved_artist_id),
+    artistId,
+    resolvedArtistId,
     scope: scopeParam(req.query.scope),
     // The sheet has a Fällig column and spans every list, so it wants deadlines, not the
     // per-list drag order the task table is returned in (WP-32).
     order: 'due',
   }) as TaskRow[];
 
-  const globalCols = db
-    .prepare("SELECT id, name, type, options FROM custom_columns WHERE deleted_at IS NULL AND scope = 'global' AND kind = 'custom' ORDER BY sort_order")
-    .all() as Col[];
-  const projectCols = projectId
-    ? (db
-        .prepare("SELECT id, name, type, options FROM custom_columns WHERE deleted_at IS NULL AND scope = 'project' AND kind = 'custom' AND project_id = ? ORDER BY sort_order")
-        .all(projectId) as Col[])
-    : [];
-  const customCols = [...globalCols, ...projectCols];
+  // One arm per scope, in the order compareColumns puts them in on screen (WP-51). The artist
+  // arm accepts `resolved_artist_id` too, because that is what the artist page's own export
+  // button sends (PGS-31) — a sheet holding that artist's tasks should carry that artist's
+  // columns. Project columns still need an explicit project_id: an artist-wide sheet spans
+  // several projects, and one project's columns are meaningless on another's rows.
+  const scoped = (sql: string, ...params: number[]): Col[] =>
+    db
+      .prepare(`SELECT id, name, type, options FROM custom_columns
+                 WHERE deleted_at IS NULL AND kind = 'custom' AND ${sql} ORDER BY sort_order`)
+      .all(...params) as Col[];
+  const owningArtist = artistId ?? resolvedArtistId;
+  const customCols = [
+    ...scoped("scope = 'global'"),
+    ...(owningArtist ? scoped("scope = 'artist' AND artist_id = ?", owningArtist) : []),
+    ...(projectId ? scoped("scope = 'project' AND project_id = ?", projectId) : []),
+  ];
 
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Auftakt';

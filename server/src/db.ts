@@ -640,7 +640,7 @@ const COPY_COLS: Record<string, string[]> = {
   events: ['id', 'artist_id', 'project_id', 'type', 'title', 'start_at', 'end_at', 'all_day', 'location', 'notes', 'sort_order'],
   tasks: ['id', 'artist_id', 'project_id', 'title', 'status', 'priority', 'due_date', 'comment', 'color', 'custom_values', 'erledigt_am', 'parent_id', 'sort_order'],
   links: ['id', 'artist_id', 'project_id', 'event_id', 'task_id', 'section_id', 'label', 'url', 'color', 'category', 'notes', 'sort_order'],
-  custom_columns: ['id', 'name', 'type', 'scope', 'project_id', 'options', 'icon', 'key', 'kind', 'enabled', 'deletable', 'sort_order'],
+  custom_columns: ['id', 'name', 'type', 'scope', 'artist_id', 'project_id', 'options', 'icon', 'key', 'kind', 'enabled', 'deletable', 'sort_order'],
   custom_sections: ['id', 'artist_id', 'project_id', 'name', 'type', 'value', 'sort_order'],
 };
 
@@ -855,13 +855,6 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
 
     const artists = o.artists ? live('artists') : [];
     copyRows(target, 'artists', artists);
-    // Source seasons are opened raw (migrations only run on the active DB), so an old
-    // file may still carry the dropped projects.notes column — merge, don't discard.
-    const projects = o.projects ? live('projects') : [];
-    for (const p of projects) {
-      if (p.notes) p.description = p.description ? `${p.description}\n\n${p.notes}` : p.notes;
-    }
-    copyRows(target, 'projects', projects);
 
     // Every child row is gated on the parent that *actually arrived*, not on the group flag:
     // live() filters `deleted_at IS NULL` per row, and a soft-deleted parent keeps its
@@ -869,8 +862,32 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
     // whose artist_id/project_id names nothing in the new season. foreign_keys is OFF during
     // the copy and turning it back on never re-validates, so those dangling rows surface only
     // later, in a foreign_key_check or an export (DBW-06).
+    //
+    // Projects are gated too, and were the one row type that was not: `projects.artist_id` is
+    // NOT NULL, so a live project under a trashed artist — the everyday state of a season in
+    // the 30 days after a deletion — came over pointing at an artist that never arrived.
     const artistIds = new Set(artists.map((a) => a.id));
+    // Source seasons are opened raw (migrations only run on the active DB), so an old
+    // file may still carry the dropped projects.notes column — merge, don't discard.
+    const projects = o.projects ? live('projects').filter((p) => artistIds.has(p.artist_id)) : [];
+    for (const p of projects) {
+      if (p.notes) p.description = p.description ? `${p.description}\n\n${p.notes}` : p.notes;
+    }
+    copyRows(target, 'projects', projects);
     const projectIds = new Set(projects.map((p) => p.id));
+    // Scoped columns travel with the parent whose page they appear on (WP-51), gated on the row
+    // that actually arrived like every other child here. A legacy source has no artist_id column
+    // and no 'artist' scope, so this arm simply finds nothing there.
+    if (o.artists) {
+      mergeInto(
+        copyCustomColumns(
+          target,
+          live('custom_columns', " AND kind = 'custom' AND scope = 'artist'").filter(
+            (c) => c.artist_id != null && artistIds.has(c.artist_id),
+          ),
+        ),
+      );
+    }
     if (o.projects) {
       mergeInto(
         copyCustomColumns(
@@ -1061,7 +1078,13 @@ CREATE TABLE IF NOT EXISTS custom_columns (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   name       TEXT NOT NULL,
   type       TEXT NOT NULL,
+  -- Which task table the column appears in (WP-51). Unlike every other table here, the parent
+  -- is *named* rather than merely implied by the FKs: scope is what the list route filters on
+  -- and what the client sends. The CHECK is what keeps the two halves from disagreeing — before
+  -- it, a project-scoped row with a NULL project_id was legal and then invisible everywhere,
+  -- because every list binds the scope and the parent id together.
   scope      TEXT NOT NULL DEFAULT 'global',
+  artist_id  INTEGER REFERENCES artists(id),
   project_id INTEGER REFERENCES projects(id),
   options    TEXT,
   icon       TEXT,
@@ -1072,7 +1095,10 @@ CREATE TABLE IF NOT EXISTS custom_columns (
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-  deleted_at TEXT
+  deleted_at TEXT,
+  CHECK ((scope = 'global'  AND artist_id IS NULL     AND project_id IS NULL)
+      OR (scope = 'artist'  AND artist_id IS NOT NULL AND project_id IS NULL)
+      OR (scope = 'project' AND project_id IS NOT NULL AND artist_id IS NULL))
 );
 
 -- User-added widget sections (WP-S): named, typed page sections that join the
@@ -1289,13 +1315,14 @@ function initDb(db: Database.Database, isFresh: boolean): void {
   // After the rebuild, not before — see migrateLinksNotes.
   migrateLinksNotes(db);
   migrateEntityLayout(db);
-  // The season-scope rebuilds (WP-47) run last on purpose: each copies its table's *current*
-  // full column set, which is only complete once every column-adding migration above has run —
-  // even on a legacy database jumping many versions in one open. Any future ensureColumn on
-  // contacts/events/links must be registered after these three.
+  // The table rebuilds run last on purpose: each copies its table's *current* full column set,
+  // which is only complete once every column-adding migration above has run — even on a legacy
+  // database jumping many versions in one open. Any future ensureColumn on
+  // contacts/events/links/custom_columns must be registered after these four.
   migrateContactsAllowSeason(db);
   migrateEventsAllowSeason(db);
   migrateLinksAllowSeason(db);
+  migrateColumnsArtistScope(db);
 }
 
 export function getDb(): Database.Database {
@@ -2120,6 +2147,70 @@ function migrateLinksAllowSeason(db: Database.Database): void {
       ALTER TABLE links_new RENAME TO links;
       CREATE INDEX IF NOT EXISTS idx_links_parents ON links(artist_id, project_id, event_id, task_id);
       CREATE INDEX IF NOT EXISTS idx_links_section ON links(section_id);
+    `);
+  });
+  rebuild();
+  db.pragma('foreign_keys = ON');
+}
+
+/**
+ * Give custom_columns an `artist_id` parent and the CHECK that ties `scope` to it (WP-51, #58),
+ * so a column can belong to one artist the way it has always been able to belong to one project.
+ *
+ * The CHECK is new ground rather than a relaxation: `scope` never had one, and neither the route
+ * nor the schema paired it with a parent id. A row could therefore say `scope = 'project'` and
+ * carry no project_id — invisible in every list, because each one binds the scope and the parent
+ * together, and so unreachable except through the very PATCH that produced it. Those rows are
+ * normalised *before* the rebuild, by deriving the scope from the FK that is actually set; a
+ * straggler would otherwise fail the CHECK and take the whole open with it.
+ *
+ * Same 12-step shape as the WP-47 rebuilds above, and idempotent the same way — the constraint's
+ * own text is the marker. custom_columns carries no index, so none is recreated.
+ */
+function migrateColumnsArtistScope(db: Database.Database): void {
+  ensureColumn(db, 'custom_columns', 'artist_id', 'artist_id INTEGER REFERENCES artists(id)');
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'custom_columns'")
+    .get() as { sql?: string } | undefined;
+  if (!row?.sql || row.sql.includes("scope = 'artist'")) return; // already migrated (or fresh SCHEMA)
+
+  db.exec(`
+    UPDATE custom_columns
+       SET scope = CASE WHEN project_id IS NOT NULL THEN 'project' ELSE 'global' END
+     WHERE scope <> CASE WHEN project_id IS NOT NULL THEN 'project' ELSE 'global' END
+  `);
+
+  // foreign_keys must be toggled OUTSIDE the transaction to take effect.
+  db.pragma('foreign_keys = OFF');
+  const rebuild = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE custom_columns_new (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT NOT NULL,
+        type       TEXT NOT NULL,
+        scope      TEXT NOT NULL DEFAULT 'global',
+        artist_id  INTEGER REFERENCES artists(id),
+        project_id INTEGER REFERENCES projects(id),
+        options    TEXT,
+        icon       TEXT,
+        key        TEXT,
+        kind       TEXT NOT NULL DEFAULT 'custom',
+        enabled    INTEGER NOT NULL DEFAULT 1,
+        deletable  INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+        deleted_at TEXT,
+        CHECK ((scope = 'global'  AND artist_id IS NULL     AND project_id IS NULL)
+            OR (scope = 'artist'  AND artist_id IS NOT NULL AND project_id IS NULL)
+            OR (scope = 'project' AND project_id IS NOT NULL AND artist_id IS NULL))
+      );
+      INSERT INTO custom_columns_new SELECT
+        id, name, type, scope, artist_id, project_id, options, icon, key, kind, enabled,
+        deletable, sort_order, created_at, updated_at, deleted_at
+      FROM custom_columns;
+      DROP TABLE custom_columns;
+      ALTER TABLE custom_columns_new RENAME TO custom_columns;
     `);
   });
   rebuild();

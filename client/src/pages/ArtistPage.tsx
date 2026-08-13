@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
@@ -9,7 +9,8 @@ import { Markdown } from '../components/Markdown';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { LayoutMenu, SectionArranger, useEntityLayout } from '../components/SectionArranger';
 import { EditableLabel } from '../components/EditableLabel';
-import { Card, DragHandle, SectionTitle, Spinner, EmptyState, ErrorState, LoadError } from '../components/ui';
+import { Btn, Card, DragHandle, SectionTitle, Spinner, EmptyState, ErrorState, LoadError } from '../components/ui';
+import { CustomColumnManager } from '../components/CustomColumnManager';
 import { isValidId } from '../lib/routeParams';
 import { EventList } from '../components/EventList';
 import { ContactList } from '../components/ContactList';
@@ -35,7 +36,7 @@ import { ExcelButton } from '../components/ExcelButton';
 import {
   useAllTasks,
   useEventTypeOptions,
-  useGlobalColumns,
+  useScopedColumns,
   useUndoablePatch,
 } from '../hooks';
 
@@ -46,6 +47,7 @@ export function ArtistPage() {
   const validId = isValidId(artistId);
   const eventTypes = useEventTypeOptions();
   const undoablePatch = useUndoablePatch();
+  const [managingColumns, setManagingColumns] = useState(false);
 
   const { data: artist, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['artist', artistId],
@@ -77,7 +79,7 @@ export function ArtistPage() {
     queryFn: () => api.tasks.list({ resolved_artist_id: artistId }),
     enabled: validId,
   });
-  const customColumns = useGlobalColumns();
+  const { columns } = useScopedColumns({ scope: 'artist', id: artistId }, validId);
   const { data: customSections = [] } = useQuery({
     queryKey: ['customSections', 'artist', artistId],
     queryFn: () => api.customSections.list({ artist_id: artistId }),
@@ -217,10 +219,19 @@ export function ArtistPage() {
           {/* resolved_artist_id, matching the page's own task query above — `artist_id` filters on
               `t.artist_id` alone, so the export silently dropped every task that belongs to this
               artist through its project (PGS-31). */}
-          <SectionTitle right={<ExcelButton params={{ resolved_artist_id: artistId }} />}>
+          <SectionTitle
+            right={
+              <div className="flex items-center gap-2">
+                <ExcelButton params={{ resolved_artist_id: artistId }} />
+                <Btn variant="subtle" onClick={() => setManagingColumns(true)}>
+                  ⚙ Spalten
+                </Btn>
+              </div>
+            }
+          >
             <EditableLabel k="artist.aufgaben" />
           </SectionTitle>
-          <TaskTable tasks={generalTasks} customColumns={customColumns} parent={{ artist_id: artistId }} />
+          <TaskTable tasks={generalTasks} customColumns={columns} parent={{ artist_id: artistId }} />
         </>
       ),
     },
@@ -302,6 +313,14 @@ export function ArtistPage() {
           <LayoutMenu store={layout} full={full} labelKey="artist.kicker" />
         )}
       />
+
+      {managingColumns && (
+        <CustomColumnManager
+          columns={columns}
+          owner={{ scope: 'artist', id: artistId }}
+          onClose={() => setManagingColumns(false)}
+        />
+      )}
     </div>
   );
 }

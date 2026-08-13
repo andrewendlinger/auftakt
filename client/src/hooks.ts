@@ -233,6 +233,39 @@ export function useGlobalColumns(): CustomColumn[] {
   return data;
 }
 
+/** The owner of a scoped column set — an artist page or a project page (WP-51). */
+export type ColumnOwner = { scope: 'artist'; id: ID } | { scope: 'project'; id: ID };
+
+/**
+ * One entity page's task columns: the global set plus that page's own, in `compareColumns` order.
+ *
+ * Both entity pages go through here rather than each writing the query out, because the two
+ * halves have to agree on three things at once — the scope sent, the parent id sent with it (the
+ * server 400s a scoped list without one), and that the globals lead the merged list. A second
+ * copy of that is a second place for the artist page and the project page to drift apart.
+ *
+ * `scoped` is handed back separately for `CustomColumnManager`, which manages the page's own
+ * group and shows the globals read-only.
+ */
+export function useScopedColumns(
+  owner: ColumnOwner,
+  enabled = true,
+): { columns: CustomColumn[]; scoped: CustomColumn[] } {
+  const globals = useGlobalColumns();
+  const { data: scoped = [] } = useQuery({
+    queryKey: ['customColumns', owner.scope, owner.id],
+    queryFn: () =>
+      api.customColumns.list(
+        owner.scope === 'artist'
+          ? { scope: 'artist', artist_id: owner.id }
+          : { scope: 'project', project_id: owner.id },
+      ),
+    enabled,
+  });
+  const columns = useMemo(() => [...globals, ...scoped], [globals, scoped]);
+  return { columns, scoped };
+}
+
 /**
  * The Status column's „done" value — what drives gray-out, sink-to-bottom, the open/done split
  * in the stats and the archive. The single derivation, replacing the copy that sat on five

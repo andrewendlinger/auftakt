@@ -1,4 +1,4 @@
-import type { RequestHandler } from 'express';
+import { Router, type RequestHandler } from 'express';
 import { localStamp } from '../../../shared/time';
 import { doneStatusValue, getDb } from '../db';
 import { collect, dependentCounts } from '../lib/cascade';
@@ -187,11 +187,45 @@ function readOptions(raw: unknown): ColumnOption[] {
   throw new HttpError(400, 'Ungültige Kategorien.');
 }
 
-export const customColumnsRouter = crudRouter({
+/**
+ * The parent FK each scope carries — the route's half of the schema CHECK (WP-51, #58). A column
+ * belongs to the whole season, to one artist or to one project, and „belongs to" is spelled twice:
+ * in `scope`, which every list filters on, and in the FK, which the cascade and the season copy
+ * follow. The two disagreeing is the failure this table prevents — a `scope = 'project'` row with
+ * no project_id used to be accepted and was then invisible in every list, because each one binds
+ * the scope and the parent id together.
+ */
+const SCOPE_PARENT = {
+  global: null,
+  artist: 'artist_id',
+  project: 'project_id',
+} as const;
+type ColumnScope = keyof typeof SCOPE_PARENT;
+
+function isColumnScope(v: unknown): v is ColumnScope {
+  return typeof v === 'string' && Object.hasOwn(SCOPE_PARENT, v);
+}
+
+/**
+ * Reject a scope that names no parent, or names the wrong one. Runs on the merged payload, so a
+ * PATCH that moves only one half of the pair is judged against the half already stored.
+ */
+function checkScopeParent(scope: unknown, artistId: unknown, projectId: unknown): void {
+  if (!isColumnScope(scope)) throw new HttpError(400, 'Unbekannter Spalten-Bereich.');
+  const parents = { artist_id: artistId, project_id: projectId };
+  const owner = SCOPE_PARENT[scope];
+  for (const [fk, value] of Object.entries(parents)) {
+    const set = value !== undefined && value !== null && value !== '';
+    if (fk === owner && !set) throw new HttpError(400, 'Dieser Spalten-Bereich braucht ein Elternteil.');
+    if (fk !== owner && set) throw new HttpError(400, 'Diese Spalte hängt am falschen Elternteil.');
+  }
+}
+
+const columnsCrud = crudRouter({
   table: 'custom_columns',
-  writable: ['name', 'type', 'scope', 'project_id', 'options', 'icon', 'enabled', 'deletable', 'sort_order'],
+  writable: ['name', 'type', 'scope', 'artist_id', 'project_id', 'options', 'icon', 'enabled', 'deletable', 'sort_order'],
   required: ['name', 'type'],
-  filters: ['scope', 'project_id'],
+  filters: ['scope', 'artist_id', 'project_id'],
   jsonColumns: ['options'],
   order: 'sort_order ASC, id ASC',
   /**
@@ -205,6 +239,18 @@ export const customColumnsRouter = crudRouter({
    * produced. Requiring the flag is the editor's job (TTU-01), where the user can supply it.
    */
   transform: (body, { mode, existing }) => {
+    // The scope/parent pair, judged on create and on any PATCH that touches either half. A create
+    // that names no scope takes the column DEFAULT, which is the global one, so it is checked
+    // against that rather than skipped.
+    const touchesScope = 'scope' in body || 'artist_id' in body || 'project_id' in body;
+    if (mode === 'create' || touchesScope) {
+      const at = (key: string): unknown => (key in body ? body[key] : existing?.[key]);
+      checkScopeParent(
+        'scope' in body ? body.scope : (existing?.scope ?? 'global'),
+        at('artist_id'),
+        at('project_id'),
+      );
+    }
     if (!('options' in body) || body.options == null) return body;
     const type = String(body.type ?? existing?.type ?? '');
     if (!OPTION_TYPES.has(type)) return body;
@@ -228,6 +274,25 @@ export const customColumnsRouter = crudRouter({
     return body;
   },
 });
+
+/**
+ * A scoped list has to name its parent. `?scope=project` alone used to return *every* project's
+ * columns — a set that belongs to no one page and that a caller merging it with the globals would
+ * render on the wrong task table (#58). The crud factory's list handler is generic, so the guard
+ * sits in front of it rather than inside it.
+ */
+export const customColumnsRouter = Router();
+customColumnsRouter.get('/', (req, _res, next) => {
+  const scope = req.query.scope;
+  if (scope === undefined || scope === '') return next();
+  if (!isColumnScope(scope)) throw new HttpError(400, 'Unbekannter Spalten-Bereich.');
+  const owner = SCOPE_PARENT[scope];
+  if (owner && !num(req.query[owner])) {
+    throw new HttpError(400, 'Dieser Spalten-Bereich braucht ein Elternteil.');
+  }
+  next();
+});
+customColumnsRouter.use(columnsCrud);
 
 /** A completion date the server itself wrote: `YYYY-MM-DD`, optionally with a time. */
 const ERLEDIGT_AM_SHAPE = /^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}:\d{2})?$/;
