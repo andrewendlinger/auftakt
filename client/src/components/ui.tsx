@@ -264,9 +264,12 @@ export function PickerRow({
  * every change to link-row presentation had to be made twice and the two drifted (SHL-28).
  * `color` is the links half: it tints the row and paints the left border.
  *
- * `handle`, `notes` and the drag styling are the links half too — the landing's `DocList` stores
- * its documents inside a setting rather than as rows, so it has neither a reorder endpoint nor a
- * column to put a note in. Both are omitted there and the row renders exactly as before.
+ * `handle` and the drag styling are used by both: the landing's documents live in a JSON array
+ * rather than in rows, so they have no batch `reorder` endpoint, but reordering that array is a
+ * write like any other and the row cannot tell the difference (WP-50).
+ *
+ * `notes` is the links half — a landing document has no column to put a second line in. It is
+ * omitted there and the row renders exactly as before.
  */
 export function DocumentRow({
   label,

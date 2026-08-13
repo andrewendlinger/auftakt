@@ -6,9 +6,11 @@ import type {
   LandingSection,
   LandingSectionInput,
 } from '../api/types';
-import { Card, SectionTitle, Btn, DocumentRow, EmptyState } from './ui';
+import { Card, SectionTitle, Btn, DocumentRow, DragHandle, EmptyState } from './ui';
 import { SectionPickerModal } from './SectionPickerModal';
 import { normalizeUrl } from '../lib/url';
+import { arrayMoveTo } from '../lib/arrays';
+import { useDragReorder } from '../lib/dragReorder';
 import { RecordFormModal, type FieldDef } from './fields';
 import { EditableLabel } from './EditableLabel';
 import { EditableText } from './EditableText';
@@ -135,6 +137,40 @@ function DocList({
   const del = useUndoableDelete();
   const [editing, setEditing] = useState<LandingDoc | null>(null);
 
+  /**
+   * Drag-to-reorder, the same affordance every other content list has (docs/DECISIONS.md,
+   * „Inhaltslisten bekommen Drag"). Landing documents are a JSON array in the registry, so the
+   * move *is* the write: `patchLanding` stores what it is given and `assignDocIds` keeps both
+   * order and ids.
+   *
+   * `useDragReorder` directly rather than `useListReorder`, which the other flat lists use: that
+   * one persists by sending ids in display order to a batch `reorder` endpoint and computes them
+   * from the array its caller *rendered* with. There is no such endpoint here — and a snapshot is
+   * exactly what this component may not write, since a document added since that render is absent
+   * from it and a PATCH would delete it outright, with no Papierkorb behind seasons.json (SHL-01
+   * again, reached through the drag). So the move is computed over `read()`, like every other
+   * mutation here.
+   *
+   * `mode: 'armed'` because the row is not a card: a permanently `draggable` ancestor swallows
+   * the text selection inside it and misfires the label's click-to-open (CCL-01, CCL-19).
+   */
+  const drag = useDragReorder<number>({
+    mode: 'armed',
+    onReorder: async (fromId, toId) => {
+      const now = await read();
+      const next = arrayMoveTo(
+        now,
+        now.findIndex((d) => d.id === fromId),
+        now.findIndex((d) => d.id === toId),
+      );
+      // `arrayMoveTo` hands back the same array when either `findIndex` came up -1 — a row
+      // dropped from the list between the grab and the release — and the identity check then
+      // skips the request rather than rewriting the list to itself.
+      if (next === now) return;
+      await onPatch(next);
+    },
+  });
+
   const save = async (values: Record<string, string | null>) => {
     const label = values.label ?? '';
     // Same field, same rule as LinkList: store a scheme so the row is openable (CCL-09).
@@ -171,6 +207,11 @@ function DocList({
       key={doc.id}
       label={doc.label}
       url={doc.url}
+      dragging={drag.isDragging(doc.id)}
+      dropTarget={drag.isDropTarget(doc.id)}
+      // The bare „Zum Verschieben ziehen" — the qualifier LinkList adds names its category rule,
+      // and landing documents have no categories and so no `canDrop`.
+      handle={<DragHandle className="mt-0.5 text-base" {...drag.handleProps(doc.id)} />}
       actions={
         <>
           <Btn variant="ghost" title="Bearbeiten" onClick={() => setEditing(doc)}>
@@ -181,6 +222,7 @@ function DocList({
           </Btn>
         </>
       }
+      {...drag.itemProps(doc.id)}
     />
   );
 
