@@ -149,6 +149,12 @@ const corpus: Record<string, string> = {
   imageHttpsLegacy: '![x](https://example.com/a.jpg)',
   imageDataUrlLegacy: '![x](data:image/jpeg;base64,AAAA)',
   imageSpacedUrlLegacy: '![x](<https://e.org/a b.jpg>)',
+  // A link around an image, which no toolbar authors but an import carries. The destination used
+  // to be dropped on save — the mark reached neither the node (the parser cannot mark an atom) nor
+  // the output (the serializer only writes marks around text).
+  imageLinked: `[![Saalplan](${IMG})](https://example.com)`,
+  imageLinkedInline: `Davor [![Saalplan](${IMG})](https://example.com) danach.`,
+  imageLinkedTitle: `[![Saalplan](${IMG})](https://example.com "Zur Seite")`,
   imageInList: `- eins\n- ![Saalplan](${IMG})\n- drei`,
   imageInTable: `| Raum | Plan |\n| --- | --- |\n| Saal | ![Saalplan](${IMG}) |`,
   imageInQuote: `> Achtung ![Saalplan](${IMG})`,

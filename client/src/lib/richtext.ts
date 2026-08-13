@@ -8,7 +8,7 @@ import { TableHeader } from '@tiptap/extension-table-header';
 import { Extension, Node, mergeAttributes, type AnyExtension, type JSONContent } from '@tiptap/core';
 import { Marked } from 'marked';
 import { fenceParagraphs } from './legacyCode';
-import { canonicalImageSrc, imageMarkdown, isImageRef } from './imageRef';
+import { canonicalImageSrc, encodeSrc, escapeTitle, imageMarkdown, isImageRef } from './imageRef';
 
 /**
  * Underline is serialized as raw `<u>…</u>`, not TipTap's default `++…++`.
@@ -207,8 +207,79 @@ const MdImage = Node.create<{ resolveSrc: (src: string) => string }>({
     ),
 
   renderMarkdown: (node) =>
-    imageMarkdown(node.attrs?.src ?? '', node.attrs?.alt ?? '', node.attrs?.title),
+    wrapImageMarks(
+      imageMarkdown(node.attrs?.src ?? '', node.attrs?.alt ?? '', node.attrs?.title),
+      node.marks,
+    ),
 });
+
+/**
+ * The read half of „a link around an image survives": `[![Saalplan](/api/images/…)](https://…)`.
+ *
+ * `applyMarkToContent` in the Markdown manager sets marks on **text** nodes and otherwise recurses
+ * into `content`. An image is an atom with no content, so a link wrapping one had its mark applied
+ * to nothing at all: the node came back unmarked, and the serializer — which can only write what
+ * the node carries — then wrote a bare `![…](…)`. Opening an imported note and saving it dropped
+ * the destination silently (IMG-04, the parser half).
+ *
+ * Standing in for the built-in `link` handler is the only place the two tokens are visible at once.
+ * `priority` puts this ahead of the Link mark (1000): the registry keeps handlers in registration
+ * order and TipTap registers by descending priority, so the first one registered for `link` wins.
+ * Text keeps going through `applyMark` exactly as before — the only addition is marking atoms the
+ * helper cannot reach.
+ */
+const MdLinkedImage = Extension.create({
+  name: 'linkedImage',
+  priority: 1001,
+  markdownTokenName: 'link',
+  parseMarkdown: (token, helpers) => {
+    const attrs = { href: token.href ?? '', title: token.title ?? null };
+    const content = helpers.parseInline(token.tokens ?? []).map((node) =>
+      node.type === 'image'
+        ? { ...node, marks: [...(node.marks ?? []), { type: 'link', attrs }] }
+        : node,
+    );
+    return helpers.applyMark('link', content, attrs);
+  },
+});
+
+/**
+ * Marks around an image, written by hand — the serializer only puts them around *text*.
+ *
+ * `renderNodesWithMarkBoundaries` opens and closes marks while walking text nodes; a non-text node
+ * gets the surrounding marks closed before it and reopened after, and marks that *start* on the
+ * node itself are never opened at all. For an image that is the only child of its paragraph the
+ * active set is empty, so `[![Saalplan](…)](https://example.com)` — from an import, or from pasting
+ * a linked image — serialized to a bare `![Saalplan](…)` and the destination was gone from the
+ * stored text with no warning (IMG-04). Same for `**…**` and `*…*`.
+ *
+ * The link goes outermost, matching the shape both parsers read back. When the image sits *between*
+ * two text nodes carrying the same mark, the serializer's own close/reopen still runs — the result
+ * is then three adjacent links rather than one, which renders identically and stores the
+ * destination the old output simply dropped.
+ *
+ * `underline` is absent deliberately: it serializes as raw `<u>`, and marked does not parse
+ * Markdown inside a raw tag, so the image would come back as literal `![…]` text. Nothing in the
+ * app can author that combination — the toolbar cannot underline an atom — and writing it would be
+ * the loss this function exists to prevent.
+ */
+function wrapImageMarks(md: string, marks: JSONContent['marks']): string {
+  if (!marks?.length) return md;
+  let out = md;
+  for (const name of ['strike', 'italic', 'bold'] as const) {
+    if (marks.some((m) => m.type === name)) {
+      const fence = name === 'strike' ? '~~' : name === 'bold' ? '**' : '*';
+      out = `${fence}${out}${fence}`;
+    }
+  }
+  const link = marks.find((m) => m.type === 'link');
+  if (link) {
+    const href = typeof link.attrs?.href === 'string' ? link.attrs.href : '';
+    const title = typeof link.attrs?.title === 'string' ? link.attrs.title : '';
+    out = `[${out}](${encodeSrc(href)}${title ? ` "${escapeTitle(title)}"` : ''})`;
+  }
+  return out;
+}
 
 /**
  * The extension set that governs Markdown ⇄ editor round-trips.
@@ -258,6 +329,7 @@ export function markdownExtensions(
     }),
     MdUnderline,
     LegacyFence,
+    MdLinkedImage,
     MdImage.configure({ resolveSrc: opts.resolveSrc ?? ((src: string) => src) }),
     MdTable.configure({ resizable: false }),
     TableRow,

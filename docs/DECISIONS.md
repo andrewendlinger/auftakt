@@ -1335,3 +1335,13 @@ carry, `file:` showed until the note was saved. The rule now matches our own ref
 `getAttrs` returning `false` for anything else, which drops the tag exactly as it was dropped before
 the node existed. The Markdown side stays wide open, because a *stored* foreign source must still
 round-trip; only the clipboard is narrowed, and `check-markdown.ts` asserts both halves.
+
+**A link around an image needs both parsers taught, and marks around an atom are hand-written.**
+`[![Saalplan](…)](https://…)` — no toolbar authors it, an import carries it — lost its destination
+on the first save. Two independent causes: the Markdown manager's `applyMarkToContent` sets marks on
+*text* nodes and otherwise recurses into `content`, so an atom with no content received nothing; and
+the serializer opens marks only around text, so even a marked node would have been written bare.
+Hence `MdLinkedImage`, standing in for the built-in `link` handler at a higher priority because that
+is the only place both tokens are visible at once, and `wrapImageMarks` on the write side.
+`**…**`/`*…*` are written but not read back: bold on an image has no rendered effect, so the
+asymmetry costs nothing observable and the read side stays the library's.
