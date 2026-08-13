@@ -30,6 +30,7 @@ export const CHILD_EDGES: Record<string, Array<readonly [table: string, fk: stri
     ['contacts', 'artist_id'],
     ['events', 'artist_id'],
     ['tasks', 'artist_id'],
+    ['custom_columns', 'artist_id'],
     ['links', 'artist_id'],
     ['custom_sections', 'artist_id'],
   ],

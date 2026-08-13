@@ -124,7 +124,12 @@ export type CustomColumnType =
   // Read-only built-ins bound to the task's timestamps.
   | 'created'
   | 'updated';
-export type CustomColumnScope = 'global' | 'project';
+/**
+ * Which task table a column appears in (WP-51). Each value pairs with exactly one parent FK —
+ * `global` with neither, `artist` with `artist_id`, `project` with `project_id` — and the server
+ * enforces the pairing in both the route and a schema CHECK.
+ */
+export type CustomColumnScope = 'global' | 'artist' | 'project';
 export type CustomColumnKind = 'builtin' | 'custom';
 
 export interface CustomColumnOption {
@@ -139,6 +144,7 @@ export interface CustomColumn extends SoftDeletable {
   name: string;
   type: CustomColumnType;
   scope: CustomColumnScope;
+  artist_id: ID | null;
   project_id: ID | null;
   options: string | null; // JSON string of CustomColumnOption[]
   /** Optional emoji/symbol shown in the column header (custom columns). */
@@ -269,7 +275,7 @@ export type CustomSectionCreate = CustomSectionUpdate & Pick<CustomSection, 'nam
 export type CustomColumnUpdate = Partial<
   Pick<
     CustomColumn,
-    'name' | 'type' | 'scope' | 'project_id' | 'icon' | 'enabled' | 'deletable' | 'sort_order'
+    'name' | 'type' | 'scope' | 'artist_id' | 'project_id' | 'icon' | 'enabled' | 'deletable' | 'sort_order'
   >
 > & {
   /**
@@ -743,22 +749,25 @@ export function customValueOf(task: Task, colId: ID): string {
   return v == null ? '' : String(v);
 }
 
+/** Global (built-ins included) first, then the page's own scope. See `compareColumns`. */
+const SCOPE_RANK: Record<CustomColumnScope, number> = { global: 0, artist: 1, project: 2 };
+
 /**
- * The display order of the task columns: global (built-ins included) before project-scoped,
- * then `sort_order`, then id.
+ * The display order of the task columns: global (built-ins included) before scoped ones, then
+ * `sort_order`, then id.
  *
  * `sort_order` alone is not a total order. CustomColumnManager renumbers one scope group from 0
  * — `reorder` sets `sort_order = i` over exactly the ids it is sent, and on a project page that
  * is the project columns only — so a project column and a global column routinely share an
  * ordinal. Every consumer therefore has to apply the same scope-first key, or the live table and
  * the print sheet order the same columns differently (TTU-21).
+ *
+ * Artist and project columns never meet in one list — a scope's columns stay on its own page
+ * (WP-51) — but the rank is a total order anyway, so a caller that merges more than two groups
+ * gets the same answer everywhere.
  */
 export function compareColumns(a: CustomColumn, b: CustomColumn): number {
-  return (
-    (a.scope === 'global' ? 0 : 1) - (b.scope === 'global' ? 0 : 1) ||
-    a.sort_order - b.sort_order ||
-    a.id - b.id
-  );
+  return SCOPE_RANK[a.scope] - SCOPE_RANK[b.scope] || a.sort_order - b.sort_order || a.id - b.id;
 }
 
 /** The Status column's option flagged `done` — drives gray-out, sink-to-bottom, archiving. */

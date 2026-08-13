@@ -1157,3 +1157,57 @@ them was the smaller promise, but nothing writes at that level any more, so prun
 bring the pile below its cap and the untidiness would have been fixed only for fresh installs.
 Flat `auftakt-<stamp>.db` files from before the folders are still left alone: they are real
 backups, the README explains them, and a path a customer may have written down keeps working.
+
+## Spalten je Kontext: jede Seite ist ein Bereich (2026-08-13, WP-51, #58)
+
+The customer asked why columns can only be managed for project tasks — „der kuenstler hat evtl
+andere spalten als ein projekt". WP-47 had deferred exactly this („parity here is about parents,
+not about widening the column system"), so this is that deferral being lifted on request, not a
+decision reversed by accident.
+
+**One scope model, widened once.** `custom_columns.scope` is now `global | artist | project`, with
+an `artist_id` FK parallel to the existing `project_id` — not a generic `parent_type`/`parent_id`,
+which appears nowhere else in this schema: `tasks`, `events`, `contacts`, `links` and
+`custom_sections` all name their parents as nullable FKs with a CHECK. A generic parent would have
+been a second idiom for one table's benefit.
+
+**No inheritance: a scope's columns stay on its own page.** An artist column appears in the artist
+page's own task table and nowhere else; a project page keeps showing global + its own. The
+alternative — artist columns raining down on that artist's projects — was rejected because it
+answers a question nobody asked and creates several: `compareColumns` would order three groups at
+once, the project export would have to join through `projects.artist_id`, and the move dialog would
+need a second „values stay but go invisible" case. The artist page's editable table renders only
+project-less tasks, so the question #58 called hard („what does a task under artist A's project B
+show?") does not arise.
+
+**The Übersicht needs no fourth value.** The „Festival" todos *are* the global scope — the season's
+own list. „Überall individuell veränderbar" is satisfied there by the global set.
+
+**The pairing is enforced twice, and legacy rows are normalised rather than dropped.** `scope` never
+had a CHECK and the route never paired it with a parent, so both halves were separately writable and
+two mismatched shapes are legal in any database this build has not opened yet: a *straggler*
+(`scope = 'project'`, no project_id), invisible in every list because each one binds the scope and
+the parent id together, and a *mirror* row (`scope = 'global'` carrying a project_id), which lists
+as a global column and is on screen. Both are normalised before the rebuild installs the CHECK —
+failing the rebuild would fail the whole database open — under one rule: **the scope is
+authoritative, a parent it does not own is dropped, and only a scope that names a parent it does not
+carry falls back to `global`.** Deriving the scope from the FK instead satisfies the CHECK just as
+well and was the first cut, but it answers the mirror row by moving a column the user can see out of
+the Übersicht and every artist page into one project, silently and with no way back except the API.
+The direction is chosen so that nothing visible moves.
+
+The rule is spelled twice because it has two audiences: the migration, for the active database, and
+`copySeasonData`, which opens source seasons raw and would otherwise insert a mismatched row
+straight into a target that *does* carry the CHECK — aborting the copy between groups, with no outer
+transaction to undo the ones already written and a half-populated season left behind.
+
+**No UI to change a column's scope.** A column created in the wrong place is deleted and created
+again. Its values live in `custom_values` keyed by column id, so nothing is lost that moving it
+would have preserved, and a move needs its own warning (values appear and disappear elsewhere) plus
+a re-stamped `sort_order` in the target group. Named here because #58 lists it as a gap: it is a
+known limit, not an oversight.
+
+**A copy without the parent keeps the values but not the column.** If tasks are copied into a new
+season without the artists or projects they hang off, their scoped values stay in `custom_values`
+with no column to display them — the behaviour project columns have always had. Forcing the parent
+groups along would make „nur Aufgaben kopieren" quietly copy the whole season.

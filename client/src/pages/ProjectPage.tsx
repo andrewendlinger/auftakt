@@ -32,7 +32,7 @@ import {
 import {
   useAllTasks,
   useEventTypeOptions,
-  useGlobalColumns,
+  useScopedColumns,
   useUndoablePatch,
 } from '../hooks';
 
@@ -75,12 +75,7 @@ export function ProjectPage() {
     queryFn: () => api.tasks.list({ project_id: projectId }),
     enabled: validId,
   });
-  const globalCols = useGlobalColumns();
-  const { data: projectCols = [] } = useQuery({
-    queryKey: ['customColumns', 'project', projectId],
-    queryFn: () => api.customColumns.list({ scope: 'project', project_id: projectId }),
-    enabled: validId,
-  });
+  const columns = useScopedColumns({ scope: 'project', id: projectId }, validId);
   const { data: customSections = [] } = useQuery({
     queryKey: ['customSections', 'project', projectId],
     queryFn: () => api.customSections.list({ project_id: projectId }),
@@ -118,7 +113,6 @@ export function ProjectPage() {
   }
   const artistColor = artist?.color ?? '#888888';
   const shade = projectShade(artistColor, project.color, project.id);
-  const columns = [...globalCols, ...projectCols];
 
   // A filled section can't be binned (nonEmptyKeys). The computed Einblicke stay freely removable.
   const nonEmptyKeys = [
@@ -281,7 +275,7 @@ export function ProjectPage() {
       {managingColumns && (
         <CustomColumnManager
           columns={columns}
-          projectId={projectId}
+          owner={{ scope: 'project', id: projectId }}
           onClose={() => setManagingColumns(false)}
         />
       )}

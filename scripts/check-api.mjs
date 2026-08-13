@@ -25,6 +25,9 @@ import { fileURLToPath } from 'node:url';
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(join(REPO, 'server', 'package.json'));
 const Database = require('better-sqlite3');
+// The .xlsx export is asserted by reading the sheet back, so the check needs the same reader
+// the route writes with. Both come from the server's own node_modules.
+const ExcelJS = require('exceljs');
 
 const PORT = 4323; // not 4317/4319/4321: dev server, check:backup and check:dates own those
 const API = `http://localhost:${PORT}/api`;
@@ -765,6 +768,94 @@ try {
     check('an unknown order is a 400, not a silent fallback', bogus.status === 400, String(bogus.status));
   }
 
+  // ------------------------------------------------------ column scopes (WP-51, #58)
+  // A task column belongs to the whole season, to one artist or to one project, and „belongs
+  // to" is spelled twice: in `scope`, which every list filters on, and in the FK, which the
+  // cascade, the trash and the season copy follow. Writing one half without the other put the
+  // row somewhere no list looks — `scope = 'project'` with a NULL project_id was accepted and
+  // then invisible everywhere, because every list binds the pair together.
+  console.log('\n== a column names its scope and its parent together (WP-51, #58)');
+  {
+    const artist = await ok('POST', '/artists', { name: 'Spalten-Künstler' });
+    const other = await ok('POST', '/artists', { name: 'Anderer Künstler' });
+    const project = await ok('POST', '/projects', { artist_id: artist.id, name: 'Spalten-Projekt', code: 'S1' });
+
+    const mine = await ok('POST', '/custom-columns', { name: 'Freigabe', type: 'text', scope: 'artist', artist_id: artist.id });
+    check('an artist column is created with its parent', mine.scope === 'artist' && mine.artist_id === artist.id, JSON.stringify(mine));
+    await ok('POST', '/custom-columns', { name: 'Fremd', type: 'text', scope: 'artist', artist_id: other.id });
+    await ok('POST', '/custom-columns', { name: 'Projektspalte', type: 'text', scope: 'project', project_id: project.id });
+
+    for (const [what, body] of [
+      ['a scope with no parent', { name: 'X', type: 'text', scope: 'artist' }],
+      ['a scope with the wrong parent', { name: 'X', type: 'text', scope: 'artist', project_id: project.id }],
+      ['a parent with no scope', { name: 'X', type: 'text', artist_id: artist.id }],
+      ['a global column carrying a parent', { name: 'X', type: 'text', scope: 'global', project_id: project.id }],
+      ['an unknown scope', { name: 'X', type: 'text', scope: 'saison', artist_id: artist.id }],
+    ]) {
+      const r = await req('POST', '/custom-columns', body);
+      check(`${what} is refused`, r.status === 400, `${r.status} ${JSON.stringify(r.body)}`);
+    }
+
+    // A PATCH moving one half of the pair is judged against the half already stored, or the
+    // guard would only ever hold for creates.
+    const halfMove = await req('PATCH', `/custom-columns/${mine.id}`, { scope: 'project' });
+    check('moving the scope without the parent is refused', halfMove.status === 400, String(halfMove.status));
+    const stillMine = await ok('GET', `/custom-columns/${mine.id}`);
+    check('…and the column is left where it was', stillMine.scope === 'artist' && stillMine.artist_id === artist.id, JSON.stringify(stillMine));
+    const renamed = await ok('PATCH', `/custom-columns/${mine.id}`, { name: 'Freigabe' });
+    check('an edit that touches neither half still goes through', renamed.name === 'Freigabe', JSON.stringify(renamed));
+
+    // The list side of the same rule. `?scope=artist` alone used to hand back every artist's
+    // columns — a set that belongs to no one page, and that a caller merging it with the
+    // globals would render on the wrong task table.
+    const loose = await req('GET', '/custom-columns?scope=artist');
+    check('a scoped list without its parent is refused', loose.status === 400, String(loose.status));
+    const names = (await ok('GET', `/custom-columns?scope=artist&artist_id=${artist.id}`)).map((c) => c.name);
+    check('a scoped list returns only that parent’s columns', JSON.stringify(names) === JSON.stringify(['Freigabe']), names.join(', '));
+    const globals = await ok('GET', '/custom-columns?scope=global');
+    check(
+      'the global list needs no parent and is where the built-ins live',
+      globals.every((c) => c.scope === 'global') && globals.some((c) => c.key === 'status'),
+      `${globals.length} rows`,
+    );
+
+    // The .xlsx is the reader that spans lists, so its column set is assembled per scope too —
+    // and it is the one that fails silently: a missing column is a missing sheet column, not
+    // an error. The artist arm reads `resolved_artist_id`, because that is what the artist
+    // page's own export button sends (PGS-31).
+    const headersOf = async (query) => {
+      const res = await fetch(`${API}/export/tasks.xlsx${query}`);
+      const wb = new ExcelJS.Workbook();
+      // Both casts are the type layer only. ExcelJS's bundled types predate the generic `Buffer`,
+      // so today's `Buffer<ArrayBuffer>` does not match its plain `Buffer`; and it types
+      // `Row.values` as a union with the by-key object form, which the array access below is not.
+      await wb.xlsx.load(/** @type {any} */ (Buffer.from(await res.arrayBuffer())));
+      const header = /** @type {import('exceljs').CellValue[]} */ (
+        wb.getWorksheet('Aufgaben').getRow(1).values
+      );
+      return header.filter(Boolean).map(String);
+    };
+    const artistSheet = await headersOf(`?resolved_artist_id=${artist.id}`);
+    check("the artist sheet carries that artist's columns", artistSheet.includes('Freigabe'), artistSheet.join(', '));
+    check('…and not another artist’s', !artistSheet.includes('Fremd'), artistSheet.join(', '));
+    check('…nor a project’s, which spans several on that page', !artistSheet.includes('Projektspalte'), artistSheet.join(', '));
+    const projectSheet = await headersOf(`?project_id=${project.id}`);
+    check('the project sheet carries the project column', projectSheet.includes('Projektspalte'), projectSheet.join(', '));
+    check('…and not the artist’s', !projectSheet.includes('Freigabe'), projectSheet.join(', '));
+
+    // The cascade hangs off the FK, so an artist's columns are part of what deleting it costs —
+    // its project's columns included, since the walk steps through the project.
+    const deps = await ok('GET', `/artists/${artist.id}/dependents`);
+    check('an artist counts its columns, its project’s included', deps.byType.column === 2, JSON.stringify(deps.byType));
+
+    // The Papierkorb names the owner, so two columns called „Freigabe" on two artists are
+    // told apart there.
+    await ok('DELETE', `/custom-columns/${mine.id}`);
+    const trashed = (await ok('GET', '/deleted')).find((d) => d.type === 'column' && d.id === mine.id);
+    check('a trashed artist column names its artist', trashed?.sublabel === 'Spalten-Künstler', JSON.stringify(trashed));
+    await ok('POST', `/custom-columns/${mine.id}/restore`);
+  }
+
   // ------------------------------------------------------------------ season copy (DBW-06)
   // Every child row is gated on the parent that *actually arrived*, not on the group flag.
   // `includeEvents` forces artists along (db.ts closes that edge) but NOT projects — so an
@@ -782,6 +873,20 @@ try {
     // which is exactly why it is easy to forget there (WP-25).
     await ok('PATCH', `/artists/${artist.id}`, { layout: [{ key: 'kontakte', width: 'half' }] });
     await ok('PATCH', `/projects/${project.id}`, { layout: [{ key: 'termine', width: 'half' }] });
+
+    // A scoped column travels with the parent whose page it appears on (WP-51) — and only if
+    // that parent actually arrived, the DBW-06 rule this whole section is about. The first copy
+    // takes artists (forced by includeEvents) but not projects, so the pair splits.
+    await ok('POST', '/custom-columns', { name: 'Kopie-Künstlerspalte', type: 'text', scope: 'artist', artist_id: artist.id });
+    await ok('POST', '/custom-columns', { name: 'Kopie-Projektspalte', type: 'text', scope: 'project', project_id: project.id });
+
+    // The projects arm of the same rule, and the one row type it was never applied to. A project
+    // whose artist is in the Papierkorb is still live — that is the ordinary state of a season
+    // for the 30 days before the purge — and `projects.artist_id` is NOT NULL, so copying it
+    // without its artist plants a row pointing at nothing.
+    const trashedArtist = await ok('POST', '/artists', { name: 'Kopie-Papierkorb' });
+    await ok('POST', '/projects', { artist_id: trashedArtist.id, name: 'Kopie-Waise', code: 'W1' });
+    await ok('DELETE', `/artists/${trashedArtist.id}`);
 
     const season = await ok('POST', '/seasons', { label: 'Kopie ohne Projekte', copyFrom: 1, includeEvents: true });
     check('the copy reported no error', season.copyError === undefined, String(season.copyError));
@@ -985,6 +1090,17 @@ try {
     check('the project-owned event stayed behind (DBW-06)', !titles.includes('Termin am Projekt'), titles.join(', '));
     const artistLayout = db.prepare("SELECT layout FROM artists WHERE name = 'Kopie'").get()?.layout;
     check('the artist layout travelled with the copy (WP-25)', artistLayout === '[{"key":"kontakte","width":"half"}]', String(artistLayout));
+
+    // The scoped columns split along the same line as their parents (WP-51): artists came,
+    // projects did not.
+    const col = (name) => db.prepare('SELECT * FROM custom_columns WHERE name = ?').get(name);
+    const artistCol = col('Kopie-Künstlerspalte');
+    check(
+      'the artist column came with its artist',
+      artistCol?.scope === 'artist' && artistCol.artist_id === db.prepare("SELECT id FROM artists WHERE name = 'Kopie'").get()?.id,
+      JSON.stringify(artistCol),
+    );
+    check('the project column stayed behind with its project', col('Kopie-Projektspalte') === undefined);
     db.close();
   }
 
@@ -993,6 +1109,18 @@ try {
     const db = new Database(projectCopyTarget, { readonly: true });
     const layout = db.prepare("SELECT layout FROM projects WHERE name = 'Projekt'").get()?.layout;
     check('the project layout travelled with the copy (WP-25)', layout === '[{"key":"termine","width":"half"}]', String(layout));
+    const projectCol = db.prepare("SELECT * FROM custom_columns WHERE name = 'Kopie-Projektspalte'").get();
+    check(
+      'the project column came once its project did (WP-51)',
+      projectCol?.scope === 'project' && projectCol.project_id === db.prepare("SELECT id FROM projects WHERE name = 'Projekt'").get()?.id,
+      JSON.stringify(projectCol),
+    );
+    check(
+      'a live project under a trashed artist stayed behind (DBW-06)',
+      db.prepare("SELECT COUNT(*) c FROM projects WHERE name = 'Kopie-Waise'").get().c === 0,
+    );
+    const dangling = db.prepare('PRAGMA foreign_key_check').all();
+    check('the copy with projects and both column scopes is free of dangling rows', dangling.length === 0, JSON.stringify(dangling.slice(0, 4)));
     db.close();
   }
 
@@ -1270,6 +1398,141 @@ try {
     }
     check('the rebuilds left no dangling rows', db2.prepare('PRAGMA foreign_key_check').all().length === 0);
     db2.close();
+  }
+
+  // The column-scope rebuild (WP-51): a database from before the artist scope has no artist_id
+  // and no CHECK, so it may hold a row whose `scope` names a parent it does not carry. Those
+  // are normalised on the way in — the FK is the half that decides — because the CHECK would
+  // otherwise fail the rebuild and take the whole open with it.
+  console.log('\n== a legacy custom_columns gains the artist scope (WP-51)');
+  {
+    const db = new Database(seasonFile('auftakt.db'));
+    db.pragma('foreign_keys = OFF');
+    db.exec(`
+      DROP TABLE custom_columns;
+      CREATE TABLE custom_columns (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT NOT NULL,
+        type       TEXT NOT NULL,
+        scope      TEXT NOT NULL DEFAULT 'global',
+        project_id INTEGER REFERENCES projects(id),
+        options    TEXT,
+        icon       TEXT,
+        key        TEXT,
+        kind       TEXT NOT NULL DEFAULT 'custom',
+        enabled    INTEGER NOT NULL DEFAULT 1,
+        deletable  INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        deleted_at TEXT
+      );
+      INSERT INTO custom_columns (id, name, type, scope, project_id, icon, sort_order)
+        VALUES (901, 'Altspalte', 'text', 'global', NULL, '📎', 7);
+      INSERT INTO custom_columns (id, name, type, scope, project_id, sort_order)
+        VALUES (902, 'Altprojektspalte', 'text', 'project',
+                (SELECT id FROM projects WHERE deleted_at IS NULL LIMIT 1), 8);
+      -- The straggler: project-scoped, no project. Legal before WP-51, and invisible in every
+      -- list, because each one binds the scope and the parent id together.
+      INSERT INTO custom_columns (id, name, type, scope, project_id, sort_order)
+        VALUES (903, 'Heimatlose Spalte', 'text', 'project', NULL, 9);
+      -- Its mirror: global, but carrying a project. Equally legal before WP-51 and equally
+      -- CHECK-failing now — but this one is *visible*, on the Übersicht and every artist page, so
+      -- the direction of the fix is the assertion below: the stray parent is dropped, rather than
+      -- the scope rewritten to follow it into a single project and out of sight.
+      INSERT INTO custom_columns (id, name, type, scope, project_id, sort_order)
+        VALUES (904, 'Spalte mit Fremdeltern', 'text', 'global',
+                (SELECT id FROM projects WHERE deleted_at IS NULL LIMIT 1), 10);
+    `);
+    db.close();
+
+    await startServer();
+    await stopServer();
+
+    const db2 = new Database(seasonFile('auftakt.db'), { readonly: true });
+    const sql = db2.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'custom_columns'").get().sql;
+    check('the scope/parent CHECK is installed', sql.includes("scope = 'artist'"), sql);
+    check('artist_id is there to hang a column on', sql.includes('artist_id'), sql);
+    const row = (id) => db2.prepare('SELECT * FROM custom_columns WHERE id = ?').get(id);
+    check('the plain global column came through intact', row(901)?.name === 'Altspalte' && row(901)?.icon === '📎' && row(901)?.sort_order === 7, JSON.stringify(row(901)));
+    check('the project column kept its parent', row(902)?.scope === 'project' && row(902)?.project_id != null, JSON.stringify(row(902)));
+    check('the straggler is normalised rather than dropped', row(903)?.name === 'Heimatlose Spalte' && row(903)?.scope === 'global', JSON.stringify(row(903)));
+    check(
+      'the mirror row keeps the scope it is visible under, and loses the stray parent',
+      row(904)?.scope === 'global' && row(904)?.project_id === null,
+      JSON.stringify(row(904)),
+    );
+    const builtins = db2.prepare("SELECT COUNT(*) c FROM custom_columns WHERE kind = 'builtin'").get().c;
+    check('the built-ins are back after the table was replaced', builtins > 0, `${builtins} built-ins`);
+    check('the column rebuild left no dangling rows', db2.prepare('PRAGMA foreign_key_check').all().length === 0);
+    db2.close();
+  }
+
+  // The same legacy rows, reached down the other path (WP-51). copySeasonData opens the *source*
+  // season raw — migrations only ever run on the active database — while the target is built from
+  // SCHEMA and carries the CHECK. A mismatched row copied verbatim therefore aborts the copy
+  // between groups, and there is no outer transaction: the user gets `copyError` and a season with
+  // its artists but no tasks. The mirror row cannot be planted through the API any more (route and
+  // CHECK both refuse it), so it goes into a season file that is never opened as the active one.
+  console.log('\n== a copy from a legacy season normalises instead of aborting (WP-51)');
+  {
+    await startServer();
+    const src = await ok('POST', '/seasons', { label: 'Alt-Quelle' });
+    const pin = { 'x-auftakt-season': String(src.id) };
+    await ok('POST', '/artists', { name: 'Alt-Künstler' }, pin);
+    // Copied *after* the columns, so its arrival is what proves the copy ran past them.
+    await ok('POST', '/tasks', { title: 'Aufgabe nach den Spalten' }, pin);
+    await stopServer();
+
+    // Now roll that season's custom_columns back to the pre-WP-51 shape, holding both mismatched
+    // rows. Boot only sweeps the registry default, so nothing opens this file and re-migrates it.
+    const old = new Database(seasonFile(src.file));
+    old.pragma('foreign_keys = OFF');
+    old.exec(`
+      DROP TABLE custom_columns;
+      CREATE TABLE custom_columns (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT NOT NULL,
+        type       TEXT NOT NULL,
+        scope      TEXT NOT NULL DEFAULT 'global',
+        project_id INTEGER REFERENCES projects(id),
+        options    TEXT,
+        icon       TEXT,
+        key        TEXT,
+        kind       TEXT NOT NULL DEFAULT 'custom',
+        enabled    INTEGER NOT NULL DEFAULT 1,
+        deletable  INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        deleted_at TEXT
+      );
+      INSERT INTO custom_columns (id, name, type, scope, project_id, sort_order)
+        VALUES (911, 'Alt-Spalte mit Fremdeltern', 'text', 'global', 4242, 1);
+      INSERT INTO custom_columns (id, name, type, scope, project_id, sort_order)
+        VALUES (912, 'Alt-Spalte ohne Eltern', 'text', 'project', NULL, 2);
+    `);
+    old.close();
+
+    await startServer();
+    const copy = await ok('POST', '/seasons', {
+      label: 'Kopie der Alt-Quelle',
+      copyFrom: src.id,
+      includeArtists: true,
+      includeTasks: true, // forces the columns group along
+    });
+    check('the copy from a legacy season reported no error', copy.copyError === undefined, String(copy.copyError));
+    await stopServer();
+
+    const db3 = new Database(seasonFile(copy.file), { readonly: true });
+    const col = (name) => db3.prepare('SELECT * FROM custom_columns WHERE name = ?').get(name);
+    const global = (c) => c?.scope === 'global' && c.artist_id === null && c.project_id === null;
+    check('the mirror row came over as the global column it was displayed as', global(col('Alt-Spalte mit Fremdeltern')), JSON.stringify(col('Alt-Spalte mit Fremdeltern')));
+    check('the straggler came over rather than being dropped', global(col('Alt-Spalte ohne Eltern')), JSON.stringify(col('Alt-Spalte ohne Eltern')));
+    const titles = db3.prepare('SELECT title FROM tasks').all().map((t) => t.title);
+    check('the copy ran past the column group', titles.includes('Aufgabe nach den Spalten'), titles.join(', '));
+    check('the copy from a legacy season left no dangling rows', db3.prepare('PRAGMA foreign_key_check').all().length === 0);
+    db3.close();
   }
 } catch (err) {
   check('run completed', false, String(err));
