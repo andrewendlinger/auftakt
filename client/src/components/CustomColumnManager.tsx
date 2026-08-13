@@ -33,8 +33,41 @@ import {
   resourceUndo,
 } from '../hooks';
 
-/** A handful of common symbols; users can also type any emoji into the free field. */
-const ICON_PRESETS = ['👤', '👥', '📞', '📧', '✅', '⭐', '📅', '🎵', '🎸', '🎤', '💶', '📝', '📌', '🏨', '🚗', '✈️'];
+/**
+ * A handful of common symbols; users can also type any emoji into the free field.
+ *
+ * Named, because the buttons carry nothing but the emoji: a grid of bare glyphs reads as nothing
+ * at all to a screen reader, and 🎼 against 🎵 is not self-evident by sight either. The names are
+ * what the symbol is *for* here (💶 Honorar, ✈️ Flug), not what the glyph depicts — this is a
+ * column header, so „Erledigt" helps where „Häkchen" does not.
+ *
+ * The instrument run is WP-38: the customer asked for music symbols and reached the picker in the
+ * note editor instead, which had a real bug. These were fine, just thin.
+ */
+const ICON_PRESETS: ReadonlyArray<{ icon: string; name: string }> = [
+  { icon: '👤', name: 'Person' },
+  { icon: '👥', name: 'Gruppe' },
+  { icon: '📞', name: 'Telefon' },
+  { icon: '📧', name: 'E-Mail' },
+  { icon: '✅', name: 'Erledigt' },
+  { icon: '⭐', name: 'Stern' },
+  { icon: '📅', name: 'Termin' },
+  { icon: '🎵', name: 'Musik' },
+  { icon: '🎸', name: 'Gitarre' },
+  { icon: '🎤', name: 'Mikrofon' },
+  { icon: '🎼', name: 'Noten' },
+  { icon: '🎹', name: 'Klavier' },
+  { icon: '🥁', name: 'Schlagzeug' },
+  { icon: '🎻', name: 'Geige' },
+  { icon: '🎺', name: 'Trompete' },
+  { icon: '🎫', name: 'Ticket' },
+  { icon: '💶', name: 'Honorar' },
+  { icon: '📝', name: 'Notiz' },
+  { icon: '📌', name: 'Pin' },
+  { icon: '🏨', name: 'Hotel' },
+  { icon: '🚗', name: 'Auto' },
+  { icon: '✈️', name: 'Flug' },
+];
 
 /**
  * What picking „Auswahl" puts in the Kategorien editor, so the user has something to rename
@@ -545,7 +578,7 @@ function IconPicker({
   // The grid is one tab stop; a custom emoji from the field below matches no preset, so „kein
   // Symbol" holds it then. The ref goes on the grid and not on the wrapper: inside the free-text
   // field ←/→ belong to the caret.
-  const stop = ICON_PRESETS.includes(value) ? value : '';
+  const stop = ICON_PRESETS.some((p) => p.icon === value) ? value : '';
   return (
     <div>
       <div ref={roving.ref} onKeyDown={roving.onKeyDown} className="flex flex-wrap gap-1">
@@ -560,17 +593,18 @@ function IconPicker({
         >
           –
         </button>
-        {ICON_PRESETS.map((e) => (
+        {ICON_PRESETS.map(({ icon, name }) => (
           <button
-            key={e}
+            key={icon}
             type="button"
-            {...rovingItem(e === stop)}
-            onClick={() => onChange(e)}
+            {...rovingItem(icon === stop)}
+            onClick={() => onChange(icon)}
+            title={name}
             className={`flex h-8 w-8 items-center justify-center rounded-lg text-base ring-1 transition ${
-              value === e ? 'bg-sky-50 ring-sky-400' : 'ring-neutral-200 hover:bg-neutral-100'
+              value === icon ? 'bg-sky-50 ring-sky-400' : 'ring-neutral-200 hover:bg-neutral-100'
             }`}
           >
-            {e}
+            {icon}
           </button>
         ))}
       </div>
