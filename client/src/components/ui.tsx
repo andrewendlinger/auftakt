@@ -1,4 +1,10 @@
-import type { ButtonHTMLAttributes, ComponentPropsWithRef, HTMLAttributes, ReactNode } from 'react';
+import type {
+  ButtonHTMLAttributes,
+  ComponentPropsWithRef,
+  HTMLAttributes,
+  KeyboardEvent,
+  ReactNode,
+} from 'react';
 import { withAlpha } from '../lib/colors';
 import { isNotFound } from '../lib/errors';
 import { openExternal } from '../lib/external';
@@ -113,7 +119,20 @@ export function IconButton({
   );
 }
 
-/** Stacked ▲▼ move-up/down control shared by the column/option/sort reorder lists. */
+/**
+ * Stacked ▲▼ move-up/down control shared by the column/option/sort reorder lists.
+ *
+ * **One tab stop, not two** (WP-43). The pair is one control — „move this row" — and counting it
+ * twice is what made a `TaskSortEditor` rule cost four presses to walk past. The first *enabled*
+ * arrow is the tabbable one, so a row at either end still has exactly one, and ↑/↓ perform the
+ * move from either button: focus the control, then steer. That also keeps the existing
+ * focus-restore honest — after a move it lands on whichever arrow is still enabled (RTE-14), and
+ * that is the same one that now holds the stop.
+ *
+ * Auto-repeat is ignored. „Spalten verwalten"'s move is a server round trip whose result the next
+ * press would race, so a held key would compute its move from a list that has already changed —
+ * the TTU-24 class of defect, one level up from the ref latches.
+ */
 export function ReorderArrows({
   onUp,
   onDown,
@@ -127,13 +146,36 @@ export function ReorderArrows({
 }) {
   const cls =
     'rounded px-1 text-xs leading-none text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-700 disabled:opacity-30 disabled:hover:bg-transparent';
+  const steer = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.repeat) return;
+    const run = e.key === 'ArrowUp' ? (first ? null : onUp) : e.key === 'ArrowDown' ? (last ? null : onDown) : null;
+    if (!run) return;
+    e.preventDefault();
+    run();
+  };
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col" onKeyDown={steer}>
       {/* data-arrow lets a caller move focus onto the row's new position after a reorder. */}
-      <button type="button" data-arrow="up" className={cls} disabled={first} onClick={onUp} title="Nach oben">
+      <button
+        type="button"
+        data-arrow="up"
+        tabIndex={first ? -1 : 0}
+        className={cls}
+        disabled={first}
+        onClick={onUp}
+        title="Nach oben"
+      >
         ▲
       </button>
-      <button type="button" data-arrow="down" className={cls} disabled={last} onClick={onDown} title="Nach unten">
+      <button
+        type="button"
+        data-arrow="down"
+        tabIndex={first ? 0 : -1}
+        className={cls}
+        disabled={last}
+        onClick={onDown}
+        title="Nach unten"
+      >
         ▼
       </button>
     </div>
