@@ -7,6 +7,7 @@ import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
 import { Extension, type AnyExtension, type JSONContent } from '@tiptap/core';
 import { Marked } from 'marked';
+import { fenceParagraphs } from './legacyCode';
 
 /**
  * Underline is serialized as raw `<u>…</u>`, not TipTap's default `++…++`.
@@ -89,21 +90,23 @@ markdownParser.use({
  * the token. Both directions of the round-trip agree with `remarkFenceToParagraph` on the render
  * side; the corpus in `scripts/check-markdown.ts` is what holds them together.
  *
- * The lines are split onto `hardBreak` nodes rather than left as one text node with `\n` in it:
- * a raw newline serializes as a soft break and reads back as a hard one, so the first round-trip
- * would differ from the second and the gate's idempotence assertion would fail.
+ * Lines go onto `hardBreak` nodes rather than into one text node with `\n` in it: a raw newline
+ * serializes as a soft break and reads back as a hard one, so the first round-trip would differ
+ * from the second and the gate's idempotence assertion would fail. `fenceParagraphs` owns the
+ * rest of the shape — blank lines and indentation — because the reader has to reach the same one.
  */
 const LegacyFence = Extension.create({
   name: 'legacyFence',
   markdownTokenName: 'code',
-  parseMarkdown: (token, helpers) => {
-    const content: JSONContent[] = [];
-    (token.text ?? '').replace(/\n+$/, '').split('\n').forEach((line, i) => {
-      if (i) content.push(helpers.createNode('hardBreak', {}, []));
-      if (line) content.push(helpers.createTextNode(line));
-    });
-    return helpers.createNode('paragraph', {}, content);
-  },
+  parseMarkdown: (token, helpers) =>
+    fenceParagraphs(token.text ?? '').map((lines) => {
+      const content: JSONContent[] = [];
+      lines.forEach((line, i) => {
+        if (i) content.push(helpers.createNode('hardBreak', {}, []));
+        if (line) content.push(helpers.createTextNode(line));
+      });
+      return helpers.createNode('paragraph', {}, content);
+    }),
 });
 
 /**

@@ -131,8 +131,13 @@ const RICH_EVENT_NOTES = `Doors 19:00, Beginn **19:30**. Zugabe ist abgesprochen
 const LEGACY_CODE_NOTES = [
   'Ablauf am Abend — die Einrückungen kamen aus der alten Fassung:',
   '',
+  // Blank line and sub-indentation inside the fence, because that is what an indented block
+  // swallowed: as hard breaks the blank line came back as a paragraph break, and the indentation
+  // has to survive as U+00A0 or the reader loses it (`lib/legacyCode.ts`).
   '```',
   'Soundcheck 14:00',
+  '  Bühne frei ab 13:30',
+  '',
   'Einlass 19:00',
   '```',
   '',

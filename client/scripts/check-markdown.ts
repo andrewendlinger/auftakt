@@ -116,6 +116,17 @@ const corpus: Record<string, string> = {
   indentedParagraph: 'Absatz.\n\n    vier Leerzeichen davor',
   legacyFence: '```\nAufbau ab 14:00\nEinlass 19:00\n```',
   legacyFenceWithMarks: '```js\nein *stern* und <u>u</u>\n```',
+  // The two shapes a fence written *by the bug* actually has, both of which the first cut of this
+  // package got wrong. An indented block swallows the blank lines between its lines, so a fence
+  // full of them is the norm, not an edge case — and rendering one as two hard breaks wrote back
+  // a whitespace-only line, which reads as a paragraph break: the note re-shaped itself on save.
+  // And the indentation is the whole reason these notes exist, so it has to reach the reader,
+  // which for a Markdown paragraph means U+00A0 (`lib/legacyCode.ts`).
+  legacyFenceBlankLine: '```\nSoundcheck 14:00\n\nEinlass 19:00\n```',
+  legacyFenceIndented: '```\n  eingerückt in der ersten Zeile\nund bündig in der zweiten\n```',
+  // Only an import or a restored backup can still carry this, and unwrapping it would collapse
+  // its line breaks while the editor keeps them.
+  rawPreTag: 'davor\n\n<pre>Soundcheck\nEinlass</pre>',
   inlineBackticksLegacy: 'ein `code` wort',
   inlineBackticksEscaped: 'ein \\`code\\` wort',
   // Spelled from the escape, never typed: a literal U+00A0 in a fixture is invisible, and the

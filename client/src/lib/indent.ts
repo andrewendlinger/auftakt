@@ -11,7 +11,9 @@
  * Three, to match the list indentation the serializer writes (`richtext.ts`). Written as an
  * escape everywhere it appears: a literal U+00A0 in source is indistinguishable from a space.
  */
-export const INDENT_UNIT = '\u00a0'.repeat(3);
+export const NBSP = '\u00a0';
+
+export const INDENT_UNIT = NBSP.repeat(3);
 
 /** One unit's worth of leading indentation, either character (WP-49). */
 const LEADING_INDENT = /^[\u00a0 ]{1,3}/;

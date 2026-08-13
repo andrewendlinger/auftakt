@@ -3,10 +3,12 @@ import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import type { Root } from 'mdast';
+import type { Root as HastRoot } from 'hast';
 import type { PluggableList, Processor } from 'unified';
 // Type-only, for its side effect: `micromarkExtensions` is remark-parse's addition to unified's
 // `Data`, and without this the processor's data bag does not admit the field this file writes.
 import type {} from 'remark-parse';
+import { fenceParagraphs } from './legacyCode';
 
 /**
  * The reader's half of the Markdown dialect, in one place.
@@ -53,25 +55,26 @@ function remarkNoCodeSyntax(this: Processor) {
 /** Structural view of the mdast nodes this file rewrites — `children` on anything that has it. */
 type MdNode = { type: string; value?: string; children?: MdNode[] };
 
-/** A fence's text as a paragraph: lines interleaved with hard breaks, empty lines dropped. */
-function fenceParagraph(value: string): MdNode {
-  const children: MdNode[] = [];
-  value
-    .replace(/\n+$/, '')
-    .split('\n')
-    .forEach((line, i) => {
+/** A block of code text as prose: `fenceParagraphs`' shape in mdast nodes. */
+function proseNodes(value: string): MdNode[] {
+  return fenceParagraphs(value).map((lines) => {
+    const children: MdNode[] = [];
+    lines.forEach((line, i) => {
       if (i) children.push({ type: 'break' });
       if (line) children.push({ type: 'text', value: line });
     });
-  return { type: 'paragraph', children };
+    return { type: 'paragraph', children };
+  });
 }
 
 function stripFences(node: MdNode) {
   if (!node.children) return;
-  node.children = node.children.map((child) => {
-    if (child.type === 'code') return fenceParagraph(child.value ?? '');
+  // flatMap, not map: a fence holding a blank line becomes two paragraphs, exactly as the
+  // editor reads it — see `fenceParagraphs`.
+  node.children = node.children.flatMap((child) => {
+    if (child.type === 'code') return proseNodes(child.value ?? '');
     stripFences(child);
-    return child;
+    return [child];
   });
 }
 
@@ -98,5 +101,59 @@ export const remarkPlugins: PluggableList = [
   remarkFenceToParagraph,
 ];
 
-/** Order is load-bearing: raw HTML is parsed first, then sanitized. */
-export const rehypePlugins: PluggableList = [rehypeRaw, [rehypeSanitize, sanitizeSchema]];
+/** Structural view of the hast nodes below — enough to find a `<pre>` and replace it. */
+type HastNode = {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+};
+
+const textOf = (node: HastNode): string =>
+  node.type === 'text' ? (node.value ?? '') : (node.children ?? []).map(textOf).join('');
+
+/** The same prose shape `proseNodes` builds, in hast. */
+function proseElements(value: string): HastNode[] {
+  return fenceParagraphs(value).map((lines) => {
+    const children: HastNode[] = [];
+    lines.forEach((line, i) => {
+      if (i) {
+        children.push({ type: 'element', tagName: 'br', properties: {}, children: [] });
+        // `mdast-util-to-hast` puts a newline after every hard break; matching it keeps this
+        // path's HTML identical to the fence path's, which is what the gate compares.
+        children.push({ type: 'text', value: '\n' });
+      }
+      if (line) children.push({ type: 'text', value: line });
+    });
+    return { type: 'element', tagName: 'p', properties: {}, children };
+  });
+}
+
+function unwrapPre(node: HastNode) {
+  if (!node.children) return;
+  node.children = node.children.flatMap((child) => {
+    if (child.type === 'element' && child.tagName === 'pre') return proseElements(textOf(child));
+    unwrapPre(child);
+    return [child];
+  });
+}
+
+/**
+ * A `<pre>` typed as raw HTML reads as prose too (WP-49).
+ *
+ * No Markdown produces one any more, but a CSV import or a restored backup can carry one, and
+ * the sanitizer alone would unwrap it into bare text: its line breaks would collapse and it would
+ * sit outside any paragraph, while the *editor* reads the same note as a paragraph with hard
+ * breaks. Same segmentation as the fence path, so the two halves agree.
+ */
+function rehypePreToProse() {
+  return (tree: HastRoot) => unwrapPre(tree as unknown as HastNode);
+}
+
+/** Order is load-bearing: raw HTML is parsed first, reshaped, and only then sanitized. */
+export const rehypePlugins: PluggableList = [
+  rehypeRaw,
+  rehypePreToProse,
+  [rehypeSanitize, sanitizeSchema],
+];
