@@ -299,8 +299,31 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   inside it forever. `PillSelect`'s option menu is the exception the trap makes: it portals to
   `document.body`, so while it is open `document.activeElement` is *outside* the dialog card and
   moves with ↑/↓, not Tab.
-- **`InlineInput` autofocuses and React sets `value` as a *property***, so `input[value="…"]` never
-  matches. Use `input:focus`.
+- **React sets `value` as a *property***, so `input[value="…"]` never matches; address a focused
+  field as `input:focus`. Since WP-42 *every* dialog autofocuses its first field, so `input:focus`
+  is only unambiguous scoped to the dialog card — or outside any dialog, where an `InlineInput`
+  is the one thing that autofocuses.
+- **Every `Modal` places focus on open and returns it on close** (WP-42): the first body tabbable,
+  which for a confirm dialog is the footer's „Abbrechen" — **Enter cancels those now**, so a
+  script that used Enter as a harmless keystroke on a confirm deletes nothing and closes the
+  dialog. The dialogs that hold typed text pass `dirty`, so Escape on a half-typed Saison,
+  Bereich or Spalte answers with „Änderungen verwerfen?" — answer the question (or clear the
+  fields) instead of expecting the dialog to be gone.
+- **An Escape dispatched in the same frame as a `fill()` can beat a *lifted* `dirty`.** „Spalten
+  verwalten" learns its dirty from `AddColumnForm` through a passive effect plus a second commit,
+  and `Modal`'s Escape listener is a raw window listener that does not wait for React — so
+  fill-then-Escape with no gap closed the dialog without the question and read as "dirty is
+  broken". No human types and Escapes inside one frame; give the script a ~100 ms beat. Dialogs
+  whose dirty is computed beside the `Modal` (Saison, Bereich, Spalte bearbeiten) commit
+  synchronously with the input event and have no such window.
+- **Focus after a column reorder only settles once the refetch has committed.** „Spalten
+  verwalten"'s ▲/▼ go through the server, so `move` hands the restore to an effect keyed on the
+  column list rather than doing it inline — `document.activeElement` read straight after the click
+  is still the pre-move node. Wait for the row order to change, then read focus. `OptionsEditor`'s
+  ▲/▼ are local state and have no such gap. Nor is a `requestAnimationFrame` after `invalidate`
+  enough to close it: that frame beat React's commit, the arrow was not `disabled` yet, and
+  focusing it was undone milliseconds later — the fix looked right and the walk still ended on
+  `<body>`.
 - **Setting `input[type=color].value` directly is deduped by React's value tracker.** Use the
   native setter.
 - **A status change re-sorts the task table**, so `.first()` addresses a different row afterwards.

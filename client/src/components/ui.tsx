@@ -70,7 +70,11 @@ export function Btn({ variant = 'subtle', className = '', ...rest }: BtnProps) {
     danger: 'text-red-600 hover:bg-red-50',
   };
   return (
+    // `type="button"`, because the native default is `submit`. Inert while no <form> exists in
+    // the client — but the first one that appears would otherwise turn every Btn inside it into
+    // a submit button. `{...rest}` spreads after it, so a caller can still override.
     <button
+      type="button"
       className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition disabled:opacity-40 ${styles[variant]} ${className}`}
       {...rest}
     />

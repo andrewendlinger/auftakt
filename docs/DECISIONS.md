@@ -942,3 +942,35 @@ finding one does not read as a discovery.
   server: that same window did not re-fetch before either, so it showed a stale split then too. A
   rollover timer or a focus refetch would close it; both cost more than one stale heading buys on
   a desktop app that is usually reopened, not left running.
+
+## The dialog layer owns the keyboard: Modal places focus, Enter saves per input (2026-08-13, WP-42)
+
+`Modal` focuses the first tabbable of its *body* when it opens, falling back to the footer and
+then the ✕ — never nothing, because focus left behind the backdrop sends the next Enter to the
+button that just opened the dialog. Confirm dialogs have no body tabbables and land on the
+footer's „Abbrechen": the keystroke that reaches the question answers it, and the safe answer is
+the one Enter lands on — which means **Enter cancels a confirm dialog** by design. On close,
+focus returns to the opener, but only when closing would otherwise drop it: focus the user
+parked elsewhere (a `PillSelect` menu portalled to `document.body`, RTE-11) is never stolen, and
+a dead opener is skipped.
+
+The override is the field, not a prop: React commits a child's `autoFocus` before effects run,
+so a dialog that wants a different first stop marks that element `autoFocus` and `Modal` stays
+out of the way (the event dialog's Titel, the confirm buttons, `SectionPickerModal`'s
+late-mounting Name). An `initialFocus` prop was considered and rejected until a dialog exists
+whose first tabbable is provably wrong — „Spalten verwalten" opening on the first reorder arrow
+was reviewed and accepted (user decision 2026-08-13): reordering is that dialog's headline
+function, and Enter on the focused ▼ moves the column — visible, and reversed by ▲. What that
+does oblige is `move` putting focus back on the row it moved (the same RTE-14 duty
+`OptionsEditor` carries), because the press that lands a column at an end disables the arrow it
+was pressed on.
+
+„Enter saves" stays per single-line input via `onEnterKey`, never on the dialog or a grid —
+RTE-11 stands, `RichTextEditor` and the pill widgets own their Enter. Every save that Enter can
+reach directly carries a ref latch, because a repeat-key burst inside one tick reads the same
+stale `busy` (TTU-24, SHL-08); the settings cards go without, their repeated PATCH writes the
+same value again. Enter inside an `OptionsEditor` row is deliberately inert (user decision
+2026-08-13): a blank row blocks the save, so saving or appending from there would manufacture
+the very validation error the user is resolving. And `Btn` defaults to `type="button"` — inert
+while the client has no `<form>`, load-bearing the day one appears; that day is also the day to
+revisit the default.

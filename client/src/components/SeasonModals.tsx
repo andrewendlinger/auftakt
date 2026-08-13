@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import type { Season, SeasonCopyOptions } from '../api/types';
-import { Modal, Label, TextInput, Select } from './fields';
+import { Modal, Label, TextInput, Select, onEnterKey } from './fields';
 import { Btn } from './ui';
 import { useSeasonTerm } from '../hooks';
 
@@ -145,6 +145,8 @@ export function NewSeasonModal({
       title={`${term.singular} anlegen`}
       size="lg"
       onClose={onClose}
+      // The copy checkboxes only render once „Übernehmen aus" is set, so `copyFrom` covers them.
+      dirty={label !== '' || copyFrom !== ''}
       footer={
         <>
           <Btn onClick={onClose}>Abbrechen</Btn>
@@ -159,7 +161,7 @@ export function NewSeasonModal({
             autoFocus
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && submit()}
+            onKeyDown={onEnterKey(() => void submit())}
             placeholder="z. B. Festival 2027"
           />
         </div>

@@ -3,7 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 import { api } from '../api/client';
 import type { CustomColumnOption, ReassignField, Season, WritableSettings } from '../api/types';
 import { Card, SectionTitle, Spinner, Btn, IconButton, ErrorState } from '../components/ui';
-import { Label, TextInput, Modal } from '../components/fields';
+import { Label, TextInput, Modal, onEnterKey } from '../components/fields';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { CustomColumnManager } from '../components/CustomColumnManager';
 import {
@@ -371,11 +371,21 @@ function SeasonTermCard() {
       <div className="flex items-end gap-3">
         <div className="flex-1">
           <Label>Einzahl</Label>
-          <TextInput value={singular} placeholder="Saison" onChange={(e) => setSingular(e.target.value)} />
+          <TextInput
+            value={singular}
+            placeholder="Saison"
+            onChange={(e) => setSingular(e.target.value)}
+            onKeyDown={onEnterKey(() => void save())}
+          />
         </div>
         <div className="flex-1">
           <Label>Mehrzahl</Label>
-          <TextInput value={plural} placeholder="Saisons" onChange={(e) => setPlural(e.target.value)} />
+          <TextInput
+            value={plural}
+            placeholder="Saisons"
+            onChange={(e) => setPlural(e.target.value)}
+            onKeyDown={onEnterKey(() => void save())}
+          />
         </div>
         <Btn variant="primary" onClick={save}>
           Speichern
@@ -684,6 +694,11 @@ function TaskStatsSetting({
           value={windowDraft}
           onChange={(e) => setWindowDraft(e.target.value)}
           onBlur={() => setWindowDraft(String(windowDays ?? cfg.windowDays))}
+          // Mirrors the button's disabled condition. Fires before the blur clamp, which is
+          // fine: `save` parses the live draft, the clamp only rewrites what is displayed.
+          onKeyDown={onEnterKey(() => {
+            if (dirty && !busy) void save();
+          })}
         />
       </div>
       <div className="flex justify-end">
@@ -731,6 +746,9 @@ function EventWindowSetting({ onSave }: { onSave: (windowDays: number) => Promis
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => setDraft(String(windowDays ?? current))}
+          onKeyDown={onEnterKey(() => {
+            if (dirty && !busy) void save();
+          })}
         />
       </div>
       <div className="flex justify-end">

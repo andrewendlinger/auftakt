@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Modal, Label, TextInput, Select } from './fields';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Modal, Label, TextInput, Select, onEnterKey } from './fields';
 import { Btn, IconButton, ReorderArrows } from './ui';
 import { TrashIcon } from './icons';
 import { api } from '../api/client';
@@ -34,6 +34,16 @@ import {
 
 /** A handful of common symbols; users can also type any emoji into the free field. */
 const ICON_PRESETS = ['👤', '👥', '📞', '📧', '✅', '⭐', '📅', '🎵', '🎸', '🎤', '💶', '📝', '📌', '🏨', '🚗', '✈️'];
+
+/**
+ * What picking „Auswahl" puts in the Kategorien editor, so the user has something to rename
+ * rather than an empty list. Doubles as the baseline `AddColumnForm`'s `dirty` compares against:
+ * these two rows appearing is the app's doing, editing them is the user's.
+ */
+const SEED_OPTIONS: CustomColumnOption[] = [
+  { label: 'offen', value: 'offen', color: OPTION_PALETTE[0]! },
+  { label: 'fertig', value: 'fertig', color: OPTION_PALETTE[2]! },
+];
 
 const TYPE_LABEL: Record<string, string> = {
   status: 'Status', title: 'Text', priority: 'Auswahl', due: 'Datum', comment: 'Text',
@@ -95,6 +105,13 @@ export function CustomColumnManager({
   const { purgeAfterDays } = useRetention();
   const [editing, setEditing] = useState<CustomColumn | null>(null);
   const [confirming, setConfirming] = useState<ColumnConfirm | null>(null);
+  // Everything else in this dialog persists on click; the only unsaved input that Escape or a
+  // backdrop click can throw away is what has been typed into the „Neue Spalte" form below.
+  const [formDirty, setFormDirty] = useState(false);
+  // Scopes the `[data-column-row]` lookup the effect below uses to put focus back on a moved row,
+  // and the row it is waiting for.
+  const listRef = useRef<HTMLUListElement>(null);
+  const restoreFocus = useRef<{ id: ID; dir: -1 | 1 } | null>(null);
 
   // On a project page, global columns are shown read-only; only project columns are managed here.
   const managed = useMemo(
@@ -114,12 +131,48 @@ export function CustomColumnManager({
   // buttons for that column. `managed` is a single scope group, so renumbering it from 0 leaves
   // it sharing ordinals with the other group — every consumer orders through `compareColumns`,
   // which sorts by scope first, so that overlap can't interleave them (TTU-21).
+  //
+  // Focus then follows the row, as in `OptionsEditor.move` (RTE-14). Rows are keyed by `c.id`, so
+  // React moves the DOM node and focus normally travels with it — but the press that lands a
+  // column at an end disables the very arrow it was pressed on, the browser blurs it, and focus
+  // falls to <body>. Keyboard reordering dead-ended one press before it finished, which the
+  // dialog opening on that arrow (WP-42) made the ordinary way to use it.
   const move = async (col: CustomColumn, dir: -1 | 1) => {
     const next = arrayMove(managed, managed.findIndex((c) => c.id === col.id), dir);
     if (next === managed) return;
     await api.customColumns.reorder(next.map((c) => c.id));
+    restoreFocus.current = { id: col.id, dir };
     await invalidate();
   };
+
+  /**
+   * Put focus back on the row `move` just moved, once the new order is actually in the DOM.
+   *
+   * `OptionsEditor` can do this in a `requestAnimationFrame` right after its `onChange`, because
+   * that is a discrete event and React flushes it synchronously. Here the order comes back from
+   * the server, so the re-render happens in an async continuation that a frame callback can beat:
+   * the rAF then read the *old* row — arrow not disabled yet — focused it, and the commit that
+   * followed disabled it and dropped focus to <body>, which is the exact failure this repairs.
+   * Running off `managed` instead waits for the commit by construction.
+   *
+   * Focus the user moved elsewhere while the PATCH was in flight is left alone, the same rule
+   * `Modal`'s close-restore follows.
+   */
+  useEffect(() => {
+    const target = restoreFocus.current;
+    if (!target) return;
+    restoreFocus.current = null;
+    const i = managed.findIndex((c) => c.id === target.id);
+    const list = listRef.current;
+    if (i < 0 || !list) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && !list.contains(active)) return;
+    const row = list.querySelectorAll<HTMLElement>('[data-column-row]')[i];
+    const arrow = (d: -1 | 1) => row?.querySelector<HTMLButtonElement>(`[data-arrow="${d === -1 ? 'up' : 'down'}"]`);
+    // The arrow pointing the way the user was going, unless the move just disabled it at an end.
+    const same = arrow(target.dir);
+    (same && !same.disabled ? same : arrow(target.dir === -1 ? 1 : -1))?.focus();
+  }, [managed]);
 
   const setEnabled = async (col: CustomColumn, enabled: 0 | 1) => {
     setConfirming(null);
@@ -152,7 +205,7 @@ export function CustomColumnManager({
   };
 
   return (
-    <Modal title="Spalten verwalten" onClose={onClose} wide>
+    <Modal title="Spalten verwalten" onClose={onClose} wide dirty={formDirty}>
       <div className="space-y-5">
         {readOnly.length > 0 && (
           <div>
@@ -183,7 +236,7 @@ export function CustomColumnManager({
           {managed.length === 0 ? (
             <div className="text-sm text-neutral-400">Noch keine Spalten.</div>
           ) : (
-            <ul className="divide-y divide-neutral-100 overflow-hidden rounded-xl ring-1 ring-neutral-100">
+            <ul ref={listRef} className="divide-y divide-neutral-100 overflow-hidden rounded-xl ring-1 ring-neutral-100">
               {managed.map((c, i) => (
                 <ColumnRow
                   key={c.id}
@@ -201,7 +254,12 @@ export function CustomColumnManager({
           )}
         </div>
 
-        <AddColumnForm projectId={projectId} nextSort={Math.max(-1, ...managed.map((c) => c.sort_order)) + 1} onAdded={invalidate} />
+        <AddColumnForm
+          projectId={projectId}
+          nextSort={Math.max(-1, ...managed.map((c) => c.sort_order)) + 1}
+          onAdded={invalidate}
+          onDirtyChange={setFormDirty}
+        />
       </div>
 
       {editing && <ColumnEditModal col={editing} onClose={() => setEditing(null)} onSaved={invalidate} />}
@@ -283,6 +341,7 @@ function ColumnRow({
   const options = hasOptions(col) ? parseColumnOptions(col.options) : [];
   return (
     <li
+      data-column-row
       className={`flex items-center gap-2 px-2 py-1.5 text-sm transition ${
         isBuiltin ? 'bg-sky-50/70 hover:bg-sky-100/60' : 'hover:bg-neutral-50'
       } ${col.enabled ? '' : 'opacity-50'}`}
@@ -351,6 +410,10 @@ function ColumnEditModal({
   const [icon, setIcon] = useState(col.icon ?? '');
   const [options, setOptions] = useState<CustomColumnOption[]>(parseColumnOptions(col.options));
   const [busy, setBusy] = useState(false);
+  // A ref, not `busy`: „Enter saves" reaches `save` directly, and a repeat-key burst inside one
+  // tick reads the same stale `false` (TTU-24). This is the double-fire guard; `busy` only
+  // disables buttons for the length of the request, and both clear in the same `finally`.
+  const inFlight = useRef(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [pending, setPending] = useState<OptionRemoval[] | null>(null);
   const { usage, ready } = useOptionUsage();
@@ -374,6 +437,8 @@ function ColumnEditModal({
    * so a category that is only becoming „erledigt" with this very save has to be on disk first.
    */
   const persist = async (mapping: Array<{ from: string; to: string }>) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     try {
       const patch: CustomColumnUpdate = { name: name.trim(), icon: icon.trim() || null };
@@ -385,12 +450,13 @@ function ColumnEditModal({
       await onSaved();
       onClose();
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };
 
   const save = async () => {
-    if (!name.trim() || problem || !ready) return;
+    if (busy || !name.trim() || problem || !ready) return;
     setSaveError(null);
     if (!editableOptions || !store) return persist([]);
     const cleaned = normalizeOptions(options);
@@ -409,10 +475,17 @@ function ColumnEditModal({
   };
 
   const message = problem ?? saveError;
+  // Compared against what the dialog opened with (`before` exists for the removal check and is
+  // exactly that snapshot), so reverting an edit by hand also clears the question (TTU-17).
+  const dirty =
+    name !== col.name ||
+    icon !== (col.icon ?? '') ||
+    (editableOptions && JSON.stringify(options) !== JSON.stringify(before));
   return (
     <Modal
       title={`„${col.name}“ bearbeiten`}
       onClose={onClose}
+      dirty={dirty}
       footer={
         <>
           <Btn onClick={onClose}>Abbrechen</Btn>
@@ -424,11 +497,15 @@ function ColumnEditModal({
       <div className="space-y-4">
         <div>
           <Label>Name</Label>
-          <TextInput value={name} onChange={(e) => setName(e.target.value)} />
+          <TextInput
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={onEnterKey(() => void save())}
+          />
         </div>
         <div>
           <Label>Symbol (optional)</Label>
-          <IconPicker value={icon} onChange={setIcon} />
+          <IconPicker value={icon} onChange={setIcon} onEnter={() => void save()} />
         </div>
         {editableOptions && (
           <div>
@@ -453,7 +530,16 @@ function ColumnEditModal({
 }
 
 /** Emoji/symbol picker: a preset grid plus a free field for any other emoji. */
-function IconPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function IconPicker({
+  value,
+  onChange,
+  onEnter,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  /** „Enter saves" for the free field — same contract as `ColorField`'s `onEnter`. */
+  onEnter?: () => void;
+}) {
   return (
     <div>
       <div className="flex flex-wrap gap-1">
@@ -483,6 +569,7 @@ function IconPicker({ value, onChange }: { value: string; onChange: (v: string) 
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onKeyDown={onEnter && onEnterKey(onEnter)}
         maxLength={8}
         placeholder="oder eigenes Emoji eintippen"
         className="mt-1.5 w-52 rounded-lg border border-neutral-300 px-2.5 py-1.5 text-sm outline-none focus:border-neutral-500"
@@ -497,19 +584,44 @@ function AddColumnForm({
   projectId,
   nextSort,
   onAdded,
+  onDirtyChange,
 }: {
   projectId?: number;
   nextSort: number;
   onAdded: () => Promise<void>;
+  /**
+   * Reports whether the form holds the user's own input, so the surrounding Modal can ask before
+   * an accidental exit throws it away (TTU-17). The Kategorien seed rows appear on their own when
+   * „Auswahl" is picked, so their mere *presence* is not the user's work — but renaming, colouring
+   * or adding to them is, and that is a lot of typing to lose to one Escape. Hence the comparison
+   * against `SEED_OPTIONS` rather than a plain `options.length > 0`.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const [name, setName] = useState('');
   const [type, setType] = useState<CustomColumnType>('text');
   const [icon, setIcon] = useState('');
   const [options, setOptions] = useState<CustomColumnOption[]>([]);
   const [busy, setBusy] = useState(false);
+  // Same TTU-24 shape as `useTaskComposer`: Enter reaches `add` directly, so a repeat-key burst
+  // needs a ref — the `busy` state only disables the button.
+  const busyRef = useRef(false);
+
+  // Compared against the seed, not against `[]`: switching the type back to Text leaves `options`
+  // populated (the seeding below only fires into an empty list), and untouched seeds are not the
+  // user's work whichever type is selected. Picking a type is itself left out — it is one click to
+  // redo, and the question is about text that took typing.
+  const dirty =
+    name.trim() !== '' ||
+    icon.trim() !== '' ||
+    (options.length > 0 && JSON.stringify(options) !== JSON.stringify(SEED_OPTIONS));
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   const add = async () => {
-    if (!name.trim()) return;
+    if (!name.trim() || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       await api.customColumns.create({
@@ -527,6 +639,7 @@ function AddColumnForm({
       setIcon('');
       await onAdded();
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
@@ -537,7 +650,12 @@ function AddColumnForm({
       <div className="grid grid-cols-2 gap-3">
         <div>
           <Label>Name</Label>
-          <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="z. B. Verantwortlich" />
+          <TextInput
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={onEnterKey(() => void add())}
+            placeholder="z. B. Verantwortlich"
+          />
         </div>
         <div>
           <Label>Typ</Label>
@@ -546,12 +664,7 @@ function AddColumnForm({
             onChange={(e) => {
               const t = e.target.value as CustomColumnType;
               setType(t);
-              if (t === 'select' && options.length === 0) {
-                setOptions([
-                  { label: 'offen', value: 'offen', color: OPTION_PALETTE[0]! },
-                  { label: 'fertig', value: 'fertig', color: OPTION_PALETTE[2]! },
-                ]);
-              }
+              if (t === 'select' && options.length === 0) setOptions(SEED_OPTIONS);
             }}
           >
             <option value="text">Text</option>
@@ -562,7 +675,7 @@ function AddColumnForm({
         </div>
         <div className="col-span-2">
           <Label>Symbol (optional)</Label>
-          <IconPicker value={icon} onChange={setIcon} />
+          <IconPicker value={icon} onChange={setIcon} onEnter={() => void add()} />
         </div>
         {type === 'select' && (
           <div className="col-span-2">

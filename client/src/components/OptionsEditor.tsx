@@ -48,11 +48,22 @@ export function OptionsEditor({
       (same && !same.disabled ? same : other)?.focus();
     });
   };
-  const addOption = () =>
+  // Focus moves into the appended row's Bezeichnung field — the row exists to be named, and
+  // without this „+ Kategorie" left focus on the button while the empty row sat above it
+  // blocking the save. Same rAF-after-onChange shape as `move` above; the new row is the last
+  // one, at the old list's length.
+  const addOption = () => {
     onChange([
       ...value,
       { label: '', value: '', color: OPTION_PALETTE[value.length % OPTION_PALETTE.length]! },
     ]);
+    requestAnimationFrame(() => {
+      listRef.current
+        ?.querySelectorAll<HTMLElement>('[data-option-row]')
+        [value.length]?.querySelector<HTMLInputElement>('[data-option-label]')
+        ?.focus();
+    });
+  };
 
   return (
     <div className="space-y-2" ref={listRef}>
@@ -72,6 +83,7 @@ export function OptionsEditor({
             title="Farbe"
           />
           <input
+            data-option-label
             value={o.label}
             onChange={(e) => update(i, { label: e.target.value })}
             placeholder="Bezeichnung"
