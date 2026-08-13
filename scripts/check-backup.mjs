@@ -216,8 +216,16 @@ check(
   point,
 );
 
-/** Read a file the app wrote for the customer, asserting the Windows encoding it needs. */
+/**
+ * Read a file the app wrote for the customer, asserting the Windows encoding it needs.
+ * The existence check comes before the read: a missing file must be a red line in this list,
+ * not an ENOENT stack that takes the remaining assertions down with it.
+ */
 function windowsDoc(name, path) {
+  if (!existsSync(path)) {
+    check(`${name} exists`, false, path);
+    return '';
+  }
   const raw = readFileSync(path);
   check(`${name} exists`, raw.length > 0, path);
   check(`  ${name} starts with a UTF-8 BOM`, raw[0] === 0xef && raw[1] === 0xbb && raw[2] === 0xbf);
@@ -233,8 +241,11 @@ check('README does not mention flat backups it has none of', !readme.includes('a
 
 const manifest = windowsDoc('MANIFEST.txt', join(point, 'MANIFEST.txt'));
 // The whole point of the manifest: the season NAME, which the file names cannot carry.
+// Compared as strings, not as a built regex: a label may legally contain ( + [ * , which would
+// either throw and abort the run or silently loosen the assertion.
 for (const s of seasons) {
-  check(`  MANIFEST names ${s.file} → „${s.label}“`, new RegExp(`${s.file}\\s+=\\s+${s.label}`).test(manifest), manifest.split('\r\n').find((l) => l.includes(s.file)));
+  const line = manifest.split('\r\n').find((l) => l.includes(s.file));
+  check(`  MANIFEST names ${s.file} → „${s.label}“`, (line ?? '').includes(`=  ${s.label}`), line);
 }
 check('MANIFEST names the app version', /App-Version: \S+/.test(manifest));
 

@@ -14,8 +14,13 @@ import { BACKUP_KEEP, BACKUP_POINTS_DIR, PRE_IMPORT_DIR } from '../db';
  * carry exactly the `file` values from seasons.json — so the label lives in the manifest.
  */
 
-/** Windows line endings, and a BOM so Notepad reads it as UTF-8. */
-const BOM = '﻿';
+/**
+ * A BOM so Notepad reads the file as UTF-8. Written as an escape, never as the character:
+ * U+FEFF is invisible in every editor and diff, so a formatter or a copy-paste through
+ * anything that strips zero-width characters would drop it without a trace — and turn every
+ * umlaut in these two files into the mojibake they exist to avoid.
+ */
+const BOM = '\uFEFF';
 
 /**
  * The backup folder typically sits on a Windows machine inside Google Drive, and both halves
@@ -133,8 +138,9 @@ export function readmeText(hasLegacyFlatFiles: boolean): string {
       '--------------------------------------------',
       '',
       'Die Dateien auftakt-<Zeitstempel>.db, die direkt hier liegen (nicht in einem',
-      'Unterordner), stammen aus früheren Auftakt-Versionen. Sie sind gültige Sicherungen',
-      'je einer einzelnen Saison und bleiben unangetastet – Auftakt löscht sie nicht.',
+      'Unterordner), stammen aus früheren Auftakt-Versionen oder aus „Datenbank',
+      'exportieren…“. Sie sind gültige Sicherungen je einer einzelnen Saison und bleiben',
+      'unangetastet – Auftakt löscht sie nicht.',
       'Zurückspielen lässt sich eine davon in der App: Einstellungen → „Saison & Daten“ →',
       '„Datenbank importieren…“. Der Import ersetzt die gerade geöffnete Saison und legt',
       `vorher eine Sicherheitskopie in ${PRE_IMPORT_DIR}\\ ab.`,

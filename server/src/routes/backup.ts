@@ -62,15 +62,23 @@ function pruneDatedFolders(dir: string, prefix: string): void {
  * cap — and the untidiness this package is about would be fixed only for fresh installs.
  */
 function migrateDatedFolders(backupDir: string, prefix: string, into: string): void {
-  const stale = datedFolders(backupDir, prefix);
-  if (!stale.length) return;
-  mkdirSync(into, { recursive: true });
-  for (const name of stale) {
-    try {
-      renameSync(join(backupDir, name), join(into, name));
-    } catch {
-      /* locked, or a name already down there — leave it and retry next run */
+  // The whole body, not just the rename: this runs *after* the restore point has been written,
+  // so anything escaping here would report a complete, valid backup as "no backup was written"
+  // (electron/main.ts raises a dialog on a throw). mkdirSync can hit EPERM/EBUSY on a synced
+  // folder, and datedFolders' statSync can lose a race with the sync client removing an entry.
+  try {
+    const stale = datedFolders(backupDir, prefix);
+    if (!stale.length) return;
+    mkdirSync(into, { recursive: true });
+    for (const name of stale) {
+      try {
+        renameSync(join(backupDir, name), join(into, name));
+      } catch {
+        /* locked, or a name already down there — leave it and retry next run */
+      }
     }
+  } catch {
+    /* see above — the next run tries again */
   }
 }
 
@@ -137,10 +145,19 @@ export function runBackup(backupDir: string): { dir: string; files: string[] } {
   return { dir: target, files };
 }
 
-/** Flat `auftakt-<stamp>.db` files from versions before the dated folders — the README explains them. */
+/**
+ * Flat `auftakt-<stamp>.db` files from versions before the dated folders — the README explains
+ * them, so this decides whether that paragraph is written at all.
+ *
+ * Matched on the dated shape rather than on `auftakt-*.db`: „Datenbank exportieren…" proposes
+ * `auftakt-<label>-<stamp>.db` (electron/exportName.ts), and saving an export into the backup
+ * folder is a natural thing to do. A looser pattern would announce those files as leftovers of
+ * an older version. The label-less fallback of that same helper is indistinguishable from a
+ * legacy backup, which is why the paragraph names both origins.
+ */
 function hasLegacyFlatBackups(backupDir: string): boolean {
   try {
-    return readdirSync(backupDir).some((f) => /^auftakt-.+\.db$/.test(f));
+    return readdirSync(backupDir).some((f) => /^auftakt-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}(?:-\d{3})?\.db$/.test(f));
   } catch {
     return false;
   }
