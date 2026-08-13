@@ -35,6 +35,16 @@ import {
 /** A handful of common symbols; users can also type any emoji into the free field. */
 const ICON_PRESETS = ['👤', '👥', '📞', '📧', '✅', '⭐', '📅', '🎵', '🎸', '🎤', '💶', '📝', '📌', '🏨', '🚗', '✈️'];
 
+/**
+ * What picking „Auswahl" puts in the Kategorien editor, so the user has something to rename
+ * rather than an empty list. Doubles as the baseline `AddColumnForm`'s `dirty` compares against:
+ * these two rows appearing is the app's doing, editing them is the user's.
+ */
+const SEED_OPTIONS: CustomColumnOption[] = [
+  { label: 'offen', value: 'offen', color: OPTION_PALETTE[0]! },
+  { label: 'fertig', value: 'fertig', color: OPTION_PALETTE[2]! },
+];
+
 const TYPE_LABEL: Record<string, string> = {
   status: 'Status', title: 'Text', priority: 'Auswahl', due: 'Datum', comment: 'Text',
   text: 'Text', date: 'Datum', checkbox: 'Checkbox', select: 'Auswahl',
@@ -558,9 +568,11 @@ function AddColumnForm({
   nextSort: number;
   onAdded: () => Promise<void>;
   /**
-   * Reports whether the form holds typed input, so the surrounding Modal can ask before an
-   * accidental exit throws it away (TTU-17). Name and Symbol only: the Kategorien seed rows
-   * appear on their own when „Auswahl" is picked, so their mere presence is not the user's work.
+   * Reports whether the form holds the user's own input, so the surrounding Modal can ask before
+   * an accidental exit throws it away (TTU-17). The Kategorien seed rows appear on their own when
+   * „Auswahl" is picked, so their mere *presence* is not the user's work — but renaming, colouring
+   * or adding to them is, and that is a lot of typing to lose to one Escape. Hence the comparison
+   * against `SEED_OPTIONS` rather than a plain `options.length > 0`.
    */
   onDirtyChange?: (dirty: boolean) => void;
 }) {
@@ -573,7 +585,14 @@ function AddColumnForm({
   // needs a ref — the `busy` state only disables the button.
   const busyRef = useRef(false);
 
-  const dirty = name.trim() !== '' || icon.trim() !== '';
+  // Compared against the seed, not against `[]`: switching the type back to Text leaves `options`
+  // populated (the seeding below only fires into an empty list), and untouched seeds are not the
+  // user's work whichever type is selected. Picking a type is itself left out — it is one click to
+  // redo, and the question is about text that took typing.
+  const dirty =
+    name.trim() !== '' ||
+    icon.trim() !== '' ||
+    (options.length > 0 && JSON.stringify(options) !== JSON.stringify(SEED_OPTIONS));
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
@@ -623,12 +642,7 @@ function AddColumnForm({
             onChange={(e) => {
               const t = e.target.value as CustomColumnType;
               setType(t);
-              if (t === 'select' && options.length === 0) {
-                setOptions([
-                  { label: 'offen', value: 'offen', color: OPTION_PALETTE[0]! },
-                  { label: 'fertig', value: 'fertig', color: OPTION_PALETTE[2]! },
-                ]);
-              }
+              if (t === 'select' && options.length === 0) setOptions(SEED_OPTIONS);
             }}
           >
             <option value="text">Text</option>
