@@ -9,7 +9,16 @@ import { TableHeader } from '@tiptap/extension-table-header';
 import { Extension, Node, mergeAttributes, type AnyExtension, type JSONContent } from '@tiptap/core';
 import { Marked } from 'marked';
 import { fenceParagraphs } from './legacyCode';
-import { canonicalImageSrc, encodeSrc, escapeTitle, imageMarkdown, isImageRef } from './imageRef';
+import {
+  canonicalImageSrc,
+  composeImageSrc,
+  encodeSrc,
+  escapeTitle,
+  imageMarkdown,
+  isImageRef,
+  isImageWidth,
+  splitImageSrc,
+} from './imageRef';
 
 /**
  * Underline is serialized as raw `<u>…</u>`, not TipTap's default `++…++`.
@@ -159,6 +168,20 @@ const MdImage = Node.create<{ resolveSrc: (src: string) => string }>({
       },
       alt: { default: '' },
       title: { default: null },
+      width: {
+        default: null,
+        // An explicit `width` attribute first — the editor's own rendered HTML, the reader's DOM
+        // and an imported raw tag all carry one — then a `?w=` a hand-written raw src may hold.
+        // `canonicalImageSrc` above strips that query from `src`, so without this second look the
+        // width would be silently gone. Anything unparseable is null, i.e. natural size.
+        parseHTML: (el: { getAttribute(name: string): string | null }) => {
+          const attr = Number(el.getAttribute('width'));
+          if (isImageWidth(attr)) return attr;
+          return splitImageSrc(el.getAttribute('src') ?? '').width;
+        },
+        renderHTML: (attrs: { width?: number | null }) =>
+          isImageWidth(attrs.width) ? { width: attrs.width } : {},
+      },
     };
   },
 
@@ -200,16 +223,25 @@ const MdImage = Node.create<{ resolveSrc: (src: string) => string }>({
     return ['img', mergeAttributes(HTMLAttributes, { src: this.options.resolveSrc(src) })];
   },
 
-  parseMarkdown: (token, helpers) =>
-    helpers.createNode(
+  // The width leg of the spelling (`?w=384`) is lifted off here and written back below —
+  // `splitImageSrc`/`composeImageSrc` are exact inverses, and the reader's `rehypeImgWidth`
+  // does the identical lift, so both halves draw the same `width` from the same string.
+  parseMarkdown: (token, helpers) => {
+    const { src, width } = splitImageSrc(token.href ?? '');
+    return helpers.createNode(
       'image',
-      { src: token.href ?? '', alt: token.text ?? '', title: token.title ?? null },
+      { src, alt: token.text ?? '', title: token.title ?? null, width },
       [],
-    ),
+    );
+  },
 
   renderMarkdown: (node) =>
     wrapImageMarks(
-      imageMarkdown(node.attrs?.src ?? '', node.attrs?.alt ?? '', node.attrs?.title),
+      imageMarkdown(
+        composeImageSrc(node.attrs?.src ?? '', node.attrs?.width),
+        node.attrs?.alt ?? '',
+        node.attrs?.title,
+      ),
       node.marks,
     ),
 });

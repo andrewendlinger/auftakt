@@ -22,6 +22,13 @@
  * the `?season=` leg for „plain `<a href>` downloads, which cannot carry headers"; an image load is
  * the same class of request.
  *
+ * A display width rides on the same URL in the *other* direction: stored as `?w=384`, split off
+ * into a `width` attribute before anything is drawn (`splitImageSrc`), and written back on
+ * serialization (`composeImageSrc`). The two query legs never meet — **a stored reference carries
+ * only `w`, a rendered `src` carries only `season`** — which is what lets `canonicalImageSrc` keep
+ * truncating at the first `?` unchanged: by the time a URL reaches it, a recognized width has
+ * already been lifted off, and whatever query is left is render-only or noise.
+ *
  * Pure on purpose — no DOM, no `sessionStorage`, no imports. `richtext.ts` is loaded by the
  * headless round-trip gate, which has neither a window nor a season, and `check:unit` reaches this
  * module only because it stays a plain function of its arguments (the callers pass
@@ -78,6 +85,49 @@ export function canonicalImageSrc(src: string): string {
   if (!isImageRef(src)) return src;
   const cut = src.indexOf('?');
   return cut === -1 ? src : src.slice(0, cut);
+}
+
+/** A display width the `?w=` spelling accepts: a positive integer of at most four digits. */
+export function isImageWidth(width: unknown): width is number {
+  return typeof width === 'number' && Number.isInteger(width) && width > 0 && width <= 9999;
+}
+
+/**
+ * Lift a stored display width off a reference: `…?w=384` → `{ src: '…', width: 384 }`.
+ *
+ * The split is deliberately narrow — our own path, and a query that is *exactly* `w=` followed by
+ * a plain positive integer. Anything else (a foreign URL whose `?w=` belongs to somebody else's
+ * server, a hand-typed `?w=abc`, a multi-parameter query) passes through verbatim, because both
+ * parsers must give back what they were given: a string this function does not recognize
+ * round-trips byte-identically, and the round-trip gate's render-equality and idempotence hold by
+ * construction instead of by case analysis.
+ *
+ * `composeImageSrc` is the exact inverse on everything this recognizes — that pair is what keeps
+ * the editor (`MdImage` in richtext.ts) and the reader (`rehypeImgWidth` in markdownPipeline.ts)
+ * spelling the width identically, the same way `withSeasonPin`/`canonicalImageSrc` hold the pin.
+ */
+export function splitImageSrc(src: string): { src: string; width: number | null } {
+  if (isImageRef(src)) {
+    const cut = src.indexOf('?');
+    if (cut !== -1) {
+      const match = /^w=([1-9]\d{0,3})$/.exec(src.slice(cut + 1));
+      if (match) return { src: src.slice(0, cut), width: Number(match[1]) };
+    }
+  }
+  return { src, width: null };
+}
+
+/**
+ * Write a display width back onto a reference — the serializer half of `splitImageSrc`.
+ *
+ * Appends only where the split would lift it back off: our own path, a width the spelling accepts,
+ * and no query already present. A reference that kept an unrecognized query (`?w=abc` and friends
+ * ride along verbatim in the node's `src`) is returned unchanged rather than double-queried — a
+ * width set on such a node is dropped on save instead of corrupting the URL.
+ */
+export function composeImageSrc(src: string, width: number | null | undefined): string {
+  if (!isImageWidth(width) || !isImageRef(src) || src.includes('?')) return src;
+  return `${src}?w=${width}`;
 }
 
 /**

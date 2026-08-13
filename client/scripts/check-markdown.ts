@@ -216,6 +216,26 @@ const corpus: Record<string, string> = {
   // browser draws differently — but string equality cannot say so, and the list spread has nothing
   // to do with images.
   imageRawTagInQuote: `> <img src="${IMG}" alt="y">`,
+  // A display width is spelled `?w=` on our own reference and nowhere else (WP-37 follow-up).
+  // `splitImageSrc` lifts it into a `width` attribute on both sides — the editor in
+  // `parseMarkdown`, the reader in `rehypeImgWidth` — and `composeImageSrc` writes it back, so
+  // the string must round-trip byte-identically wherever an image can sit.
+  imageWidth: `![Saalplan](${IMG}?w=384)`,
+  imageWidthInline: `Davor ![Saalplan](${IMG}?w=192) danach.`,
+  imageWidthTitle: `![Saalplan](${IMG}?w=384 "Großer Saal")`,
+  imageWidthLinked: `[![Saalplan](${IMG}?w=384)](https://example.com)`,
+  imageWidthInTable: `| Raum | Plan |\n| --- | --- |\n| Saal | ![Saalplan](${IMG}?w=192) |`,
+  // …and everything the spelling does *not* recognize passes through verbatim on both sides:
+  // a query that is not exactly `w=<int>`, and a foreign URL whose `?w=` belongs to somebody
+  // else's server. Rewriting either would be the quiet loss the image node exists to prevent.
+  imageWidthGarbage: `![x](${IMG}?w=abc)`,
+  imageWidthTwoParams: `![x](${IMG}?w=384&x=1)`,
+  imageWidthForeignQuery: '![x](https://example.com/a.jpg?w=300)',
+  // A raw tag's `width` attribute survives an edit, re-spelled as `?w=` — before the schema had a
+  // `width` attr, the demo's own `<img … width="120">` fixture silently lost it on the first
+  // keystroke. Attribute order matches `mdast-util-to-hast` (src, alt, then the lifted width), so
+  // the two render paths agree at string level.
+  imageRawTagWidth: `Davor <img src="${IMG}" alt="y" width="120"> danach.`,
   // Spelled from the escape, never typed: a literal U+00A0 in a fixture is invisible, and the
   // next editor to touch this file would „fix" it back into a plain space.
   nbspIndent: `${NBSP.repeat(3)}Aufbau ab 14:00\n${NBSP.repeat(6)}Soundcheck`,
@@ -350,6 +370,8 @@ const parseHtml = (html: string) => {
 const clipboard: Array<[string, string, boolean]> = [
   ['unsere eigene Referenz', `<p>davor <img src="${IMG}" alt="y"> danach</p>`, true],
   ['mit Saison-Pin (Kopie im Editor)', `<p><img src="${IMG}?season=3" alt="y"></p>`, true],
+  ['mit Breite (Kopie im Editor)', `<p><img src="${IMG}?season=3" width="360" alt="y"></p>`, true],
+  ['mit unlesbarer Breite', `<p><img src="${IMG}" width="50%" alt="y"></p>`, true],
   ['data: aus einer Webseite', '<p><img src="data:image/png;base64,AAAA" alt="y"></p>', false],
   ['https: aus einer Webseite', '<p><img src="https://example.com/a.jpg" alt="y"></p>', false],
   ['file:// aus dem Dateisystem', '<p><img src="file:///Users/x/a.jpg" alt="y"></p>', false],
@@ -380,6 +402,54 @@ if (pinned.includes('?season=')) {
   console.log('  ok   clipboard: der Saison-Pin wird beim Lesen entfernt');
 }
 
+// …while a width travels the other way: the DOM attribute a copied `<img>` carries is stored as
+// `?w=`, still without the pin. A width the spelling does not accept is dropped, not stored.
+const sized = parseHtml(`<p><img src="${IMG}?season=3" width="360" alt="y"></p>`);
+if (!sized.includes(`(${IMG}?w=360)`) || sized.includes('?season=')) {
+  failures++;
+  console.log(`  FAIL clipboard: die Breite wird als ?w= gespeichert, der Pin nicht`);
+  console.log(`       out md : ${JSON.stringify(sized)}`);
+} else {
+  console.log('  ok   clipboard: die Breite wird als ?w= gespeichert, der Pin nicht');
+}
+const unsized = parseHtml(`<p><img src="${IMG}" width="50%" alt="y"></p>`);
+if (unsized.includes('?w=')) {
+  failures++;
+  console.log(`  FAIL clipboard: eine unlesbare Breite darf nicht gespeichert werden`);
+  console.log(`       out md : ${JSON.stringify(unsized)}`);
+} else {
+  console.log('  ok   clipboard: eine unlesbare Breite wird verworfen');
+}
+
+/**
+ * The editor must *understand* the width spelling, not merely carry it.
+ *
+ * String equality cannot see the difference: an editor that kept `?w=384` verbatim in the node's
+ * `src` would round-trip every corpus case above byte-identically — and draw the image full-size
+ * while the reader draws it at 384, and silently refuse to re-size it (the size buttons write the
+ * `width` attribute, and `composeImageSrc` refuses a src that already carries a query). So this
+ * asserts the parsed node directly: the query is lifted into `width`, and the editor's own
+ * rendered `<img>` carries it — the WYSIWYG half the size buttons and the paste path read back.
+ */
+editor.commands.setContent(`![x](${IMG}?w=384)`, { contentType: 'markdown' });
+// Structural, like `getAttrs` in richtext.ts: the JSON node union has no `attrs` on text nodes.
+type LooseNode = { type?: string; attrs?: { src?: string; width?: number | null }; content?: LooseNode[] };
+const imageAttrs = ((editor.getJSON() as LooseNode).content ?? [])
+  .flatMap((node) => node.content ?? [])
+  .filter((node) => node.type === 'image')
+  .map((node) => node.attrs);
+if (imageAttrs.length !== 1 || imageAttrs[0]?.src !== IMG || imageAttrs[0]?.width !== 384) {
+  failures++;
+  console.log('  FAIL node: ?w= wird nicht in das width-Attribut gehoben');
+  console.log(`       attrs  : ${JSON.stringify(imageAttrs)}`);
+} else if (!editor.getHTML().includes('width="384"')) {
+  failures++;
+  console.log('  FAIL node: das width-Attribut erreicht das gezeichnete <img> nicht');
+  console.log(`       html   : ${editor.getHTML()}`);
+} else {
+  console.log('  ok   node: ?w= wird zum width-Attribut, im Dokument und im gezeichneten <img>');
+}
+
 editor.destroy();
 const total = Object.keys(corpus).length + Object.keys(jsonCorpus).length;
 if (failures) {
@@ -388,5 +458,5 @@ if (failures) {
 }
 console.log(
   `\nmarkdown round-trip: all ${total} cases render-equal, idempotent, control-char free and code free` +
-    `, and all ${clipboard.length + 1} clipboard assertions hold`,
+    `, and all ${clipboard.length + 4} clipboard and node assertions hold`,
 );
