@@ -64,15 +64,12 @@ export function InlineNotes({
         onChange={setText}
         className="min-h-32 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-800 outline-none transition focus:border-neutral-500 focus:ring-2 focus:ring-neutral-900/5"
         onBlur={commit}
+        // Escape cancels; ⌘↵ saves by blurring, which the editor does for itself (WP-49).
         onKeyDown={(e) => {
           if (e.key === 'Escape') {
             e.preventDefault();
             setText(value ?? '');
             setEditing(false);
-          }
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault();
-            (e.target as HTMLElement).blur();
           }
         }}
       />
