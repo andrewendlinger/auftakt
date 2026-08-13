@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { contrastText } from '../lib/colors';
 import { useAnchoredPopover } from '../lib/popover';
 import type { CustomColumnOption } from '../api/types';
+import { ChevronRightIcon } from './icons';
 
 /**
  * A compact, modern colored-category dropdown used for the Status, Priorität and
@@ -96,7 +97,7 @@ export function PillSelect({
         }
       >
         {current ? current.label : placeholder}
-        {!disabled && <span className="text-[9px] opacity-60">▾</span>}
+        {!disabled && <ChevronRightIcon className="h-3 w-3 rotate-90 opacity-60" />}
       </button>
       {open &&
         !disabled &&

@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom';
-import { HomeIcon } from './icons';
+import { ArrowLeftIcon, ArrowRightIcon, HomeIcon } from './icons';
 
 export interface Crumb {
   label: string;
@@ -19,10 +19,10 @@ export function Breadcrumbs({ trail }: { trail: Crumb[] }) {
     <nav className="flex flex-wrap items-center gap-2 text-sm text-neutral-500">
       <span className="flex items-center gap-0.5">
         <button onClick={() => navigate(-1)} title="Zurück" aria-label="Zurück" className={iconBtn}>
-          ←
+          <ArrowLeftIcon />
         </button>
         <button onClick={() => navigate(1)} title="Vorwärts" aria-label="Vorwärts" className={iconBtn}>
-          →
+          <ArrowRightIcon />
         </button>
       </span>
       <span className="flex flex-wrap items-center gap-1.5">

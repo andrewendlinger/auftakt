@@ -9,6 +9,7 @@ import { withAlpha } from '../lib/colors';
 import { isNotFound } from '../lib/errors';
 import { openExternal } from '../lib/external';
 import { normalizeUrl } from '../lib/url';
+import { ChevronRightIcon, LinkIcon } from './icons';
 
 export function Card({
   children,
@@ -168,8 +169,9 @@ export function ReorderArrows({
         disabled={first}
         onClick={onUp}
         title="Nach oben"
+        aria-label="Nach oben"
       >
-        ▲
+        <ChevronRightIcon className="h-3.5 w-3.5 -rotate-90" />
       </button>
       <button
         type="button"
@@ -179,8 +181,9 @@ export function ReorderArrows({
         disabled={last}
         onClick={onDown}
         title="Nach unten"
+        aria-label="Nach unten"
       >
-        ▼
+        <ChevronRightIcon className="h-3.5 w-3.5 rotate-90" />
       </button>
     </div>
   );
@@ -302,7 +305,9 @@ export function DocumentRow({
       style={color ? { background: withAlpha(color, 0.16), borderLeftColor: color } : undefined}
     >
       {handle}
-      <span className="text-neutral-400">🔗</span>
+      <span className="mt-0.5 text-neutral-400">
+        <LinkIcon />
+      </span>
       <div className="min-w-0 flex-1">
         {url ? (
           <button

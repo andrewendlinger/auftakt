@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { PencilIcon } from './icons';
 import { InlineInput } from './InlineInput';
 
 // Inherits the heading's own size/weight/tracking so the text doesn't jump on click.
@@ -51,7 +52,7 @@ export function EditableText({
           setEditing(true);
         }}
       >
-        ✎
+        <PencilIcon className="h-3 w-3" />
       </button>
     </span>
   );

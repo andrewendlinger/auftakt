@@ -9,7 +9,7 @@ import { useDragReorder } from '../lib/dragReorder';
 import { useAnchoredPopover } from '../lib/popover';
 import { Btn, DragHandle } from './ui';
 import { Modal } from './fields';
-import { TrashIcon } from './icons';
+import { ChevronRightIcon, HomeIcon, TrashIcon } from './icons';
 import { useToast } from './Toast';
 import { useUndo, type UndoEntry } from './UndoProvider';
 import type { LabelKey } from '../lib/labels';
@@ -400,7 +400,7 @@ export function LayoutMenu({
   return (
     <>
       <Btn ref={anchorRef} variant="subtle" aria-haspopup="menu" aria-expanded={open} onClick={toggle}>
-        ⌂ Layout <span className="text-[9px] opacity-70">▾</span>
+        <HomeIcon className="h-3.5 w-3.5" /> Layout <ChevronRightIcon className="h-3 w-3 rotate-90 opacity-70" />
       </Btn>
       {open &&
         pos &&
@@ -864,18 +864,20 @@ function Arranger({
                       // The anchor stays put and nothing may pass it, so the section right
                       // below it cannot go up either.
                       disabled={i === 0 || i === anchorIdx || i === anchorIdx + 1}
-                      aria-label="nach oben"
+                      title="Nach oben"
+                      aria-label="Nach oben"
                       onClick={() => move(key, -1)}
                     >
-                      ▲
+                      <ChevronRightIcon className="h-4 w-4 -rotate-90" />
                     </button>
                     <button
                       className="rounded px-2 py-0.5 text-lg leading-none text-neutral-500 hover:bg-neutral-200 disabled:opacity-30"
                       disabled={i === display.length - 1 || i === anchorIdx}
-                      aria-label="nach unten"
+                      title="Nach unten"
+                      aria-label="Nach unten"
                       onClick={() => move(key, 1)}
                     >
-                      ▼
+                      <ChevronRightIcon className="h-4 w-4 rotate-90" />
                     </button>
                     {!mandatoryKeys.includes(key) && (
                       <button

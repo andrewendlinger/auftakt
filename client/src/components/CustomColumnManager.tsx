@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Label, TextInput, Select, onEnterKey } from './fields';
 import { Btn, IconButton, ReorderArrows } from './ui';
-import { TrashIcon } from './icons';
+import { PencilIcon, TrashIcon } from './icons';
 import { api } from '../api/client';
 import type {
   CustomColumn,
@@ -417,7 +417,9 @@ function ColumnRow({
           {col.enabled ? '👁 sichtbar' : '🚫 aus'}
         </button>
       )}
-      <IconButton size="sm" onClick={onEdit} title="Bearbeiten">✎</IconButton>
+      <IconButton size="sm" onClick={onEdit} title="Bearbeiten">
+        <PencilIcon className="h-3.5 w-3.5" />
+      </IconButton>
       {col.kind === 'custom' ? (
         <IconButton variant="danger" size="sm" onClick={onRemove} title="Löschen">
           <TrashIcon className="h-4 w-4" />

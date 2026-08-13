@@ -1,4 +1,5 @@
 import { useRef } from 'react';
+import { XIcon } from './icons';
 import { IconButton, ReorderArrows } from './ui';
 import type { CustomColumnOption } from '../api/types';
 import { arrayMove } from '../lib/arrays';
@@ -95,7 +96,9 @@ export function OptionsEditor({
               erledigt
             </label>
           )}
-          <IconButton variant="danger" size="sm" onClick={() => removeAt(i)} title="Entfernen">✕</IconButton>
+          <IconButton variant="danger" size="sm" onClick={() => removeAt(i)} title="Entfernen" aria-label="Entfernen">
+            <XIcon className="h-3.5 w-3.5" />
+          </IconButton>
         </div>
       ))}
       <button type="button" className="text-sm text-neutral-500 hover:text-neutral-800" onClick={addOption}>{addLabel}</button>

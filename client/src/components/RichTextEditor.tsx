@@ -17,7 +17,7 @@ import { INDENT_UNIT, outdentWidth } from '../lib/indent';
 import { markdownExtensions } from '../lib/richtext';
 import { isParsableUrl, normalizeUrl } from '../lib/url';
 import { EXTERNAL_LINK_CLASS } from './ui';
-import { LinkIcon, ListIcon, TrashIcon } from './icons';
+import { IndentIcon, LinkIcon, ListIcon, OutdentIcon, QuoteIcon, SmileIcon, TableIcon, TrashIcon } from './icons';
 
 // Loaded on demand so the emoji dataset stays out of the main bundle.
 const EmojiPickerLazy = lazy(() => import('./EmojiPickerLazy'));
@@ -460,10 +460,10 @@ function Toolbar({ editor, compact }: { editor: Editor; compact: boolean }) {
               <span className="text-[11px] font-semibold">1.</span>
             </Btn>
             <Btn title="Einrücken" onClick={() => indent(editor)}>
-              <span className="text-sm">⇥</span>
+              <IndentIcon className="h-4 w-4" />
             </Btn>
             <Btn title="Ausrücken" onClick={() => outdent(editor)}>
-              <span className="text-sm">⇤</span>
+              <OutdentIcon className="h-4 w-4" />
             </Btn>
           </>
         )}
@@ -483,13 +483,13 @@ function Toolbar({ editor, compact }: { editor: Editor; compact: boolean }) {
               <span className="text-[11px] font-semibold">H3</span>
             </Btn>
             <Btn title="Zitat" on={active?.quote} onClick={() => chain().toggleBlockquote().run()}>
-              <span className="text-sm">❝</span>
+              <QuoteIcon className="h-4 w-4" />
             </Btn>
             <Btn
               title="Tabelle einfügen"
               onClick={() => chain().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}
             >
-              <span className="text-sm">▦</span>
+              <TableIcon className="h-4 w-4" />
             </Btn>
           </>
         )}
@@ -503,7 +503,7 @@ function Toolbar({ editor, compact }: { editor: Editor; compact: boolean }) {
             else setEmoji(true);
           }}
         >
-          <span className="text-sm">🙂</span>
+          <SmileIcon className="h-4 w-4" />
         </Btn>
       </div>
 

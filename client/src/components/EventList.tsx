@@ -7,7 +7,7 @@ import type { CustomColumnOption, EventItem } from '../api/types';
 import { contrastText } from '../lib/colors';
 import { formatEventWhen, weekdayShort } from '../lib/dates';
 import { Markdown } from './Markdown';
-import { TrashIcon } from './icons';
+import { CopyIcon, PencilIcon, TrashIcon } from './icons';
 import { EditableLabel } from './EditableLabel';
 import type { LabelKey } from '../lib/labels';
 import { useErrorToast, useInvalidateAll, useUndoableDelete, resourceUndo } from '../hooks';
@@ -90,7 +90,7 @@ export function EventList({
         </div>
         <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
           <Btn variant="ghost" title="Bearbeiten" onClick={() => setEditing(ev)}>
-            ✎
+            <PencilIcon className="h-4 w-4" />
           </Btn>
           <Btn
             variant="ghost"
@@ -124,7 +124,7 @@ export function EventList({
               );
             }}
           >
-            ⧉
+            <CopyIcon className="h-4 w-4" />
           </Btn>
           <Btn
             variant="danger"

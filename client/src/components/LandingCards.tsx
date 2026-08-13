@@ -13,7 +13,7 @@ import { RecordFormModal, type FieldDef } from './fields';
 import { EditableLabel } from './EditableLabel';
 import { EditableText } from './EditableText';
 import { InlineNotes } from './InlineNotes';
-import { TrashIcon } from './icons';
+import { PencilIcon, TrashIcon } from './icons';
 import { useLanding, useUndoableDelete } from '../hooks';
 
 /**
@@ -174,7 +174,7 @@ function DocList({
       actions={
         <>
           <Btn variant="ghost" title="Bearbeiten" onClick={() => setEditing(doc)}>
-            ✎
+            <PencilIcon className="h-4 w-4" />
           </Btn>
           <Btn variant="danger" title="Löschen" onClick={() => void remove(doc)}>
             <TrashIcon className="h-4 w-4" />

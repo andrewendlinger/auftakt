@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { XIcon } from './icons';
 import { Btn, IconButton } from './ui';
 import { RichTextEditor } from './RichTextEditor';
 import { contrastText } from '../lib/colors';
@@ -237,7 +238,7 @@ export function Modal({
           <h3 className="font-semibold text-neutral-800">{title}</h3>
           {/* ✕ and the footer's Abbrechen are deliberate exits and never confirm. */}
           <IconButton onClick={onClose} title="Schließen" aria-label="Schließen" className="-mr-1">
-            ✕
+            <XIcon />
           </IconButton>
         </div>
         {/* Covers the footer too, not just the body. The provider used to wrap `children` alone,
