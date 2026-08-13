@@ -429,8 +429,10 @@ export function SettingsDataTab() {
               </Btn>
             </div>
             <p className="mt-1 text-xs text-neutral-400">
-              Beim App-Start wird eine datierte Kopie <strong>aller {term.plural}</strong> hierhin gesichert (die
-              letzten 30 Stände bleiben erhalten). In einen Cloud-Ordner (z. B. Google Drive) legen.
+              Beim App-Start wird eine datierte Kopie <strong>aller {term.plural}</strong> in den
+              Unterordner „backups“ gesichert (die letzten 30 Stände bleiben erhalten). In einen
+              Cloud-Ordner (z. B. Google Drive) legen. Die Datei „README.txt“ dort erklärt den Aufbau und
+              wie sich eine Sicherung zurückspielen lässt.
             </p>
             {hasElectron && !settings.backup_dir && (
               <p className="mt-1 text-xs text-amber-600">

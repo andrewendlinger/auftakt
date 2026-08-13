@@ -1,8 +1,10 @@
 import { Router } from 'express';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import {
   BACKUP_KEEP,
+  BACKUP_POINTS_DIR,
+  PRE_IMPORT_DIR,
   backupStamp,
   getBackupConfig,
   getDb,
@@ -15,6 +17,7 @@ import {
   snapshotDb,
   validateImportCandidate,
 } from '../db';
+import { appVersion, manifestText, readmeText, writeDoc } from '../lib/backupDocs';
 
 /**
  * Dated folders this app writes into the backup folder, newest first.
@@ -45,39 +48,102 @@ function pruneDatedFolders(dir: string, prefix: string): void {
 }
 
 /**
- * Write one dated restore point holding every season plus the registry:
+ * Move dated folders an older version wrote at the top level down into their sub-folder (WP-41).
  *
- *   <backupDir>/auftakt-<stamp>/{seasons.json, auftakt.db, season-2.db, …}
+ * Self-detecting rather than marker-gated (the house rule in docs/ARCHITECTURE.md): a folder
+ * still sitting at the old level *is* the signal, so there is no state to keep and nothing to
+ * re-run manually. It is a rename inside the backup folder — same filesystem, no copy, no
+ * second set of bytes — and best-effort per folder: a Google Drive or OneDrive client can hold
+ * a handle on a folder it is syncing, and a refused move must neither abort the backup nor lose
+ * the folder. Whatever fails stays where it is and the next launch tries again.
+ *
+ * Without this the up-to-60 folders an existing installation already has would sit at the top
+ * level for good — nothing writes there any more, so pruning could never bring them below its
+ * cap — and the untidiness this package is about would be fixed only for fresh installs.
+ */
+function migrateDatedFolders(backupDir: string, prefix: string, into: string): void {
+  const stale = datedFolders(backupDir, prefix);
+  if (!stale.length) return;
+  mkdirSync(into, { recursive: true });
+  for (const name of stale) {
+    try {
+      renameSync(join(backupDir, name), join(into, name));
+    } catch {
+      /* locked, or a name already down there — leave it and retry next run */
+    }
+  }
+}
+
+/**
+ * Write one dated restore point holding every season plus the registry, and keep the backup
+ * folder explaining itself:
+ *
+ *   <backupDir>/README.txt
+ *   <backupDir>/backups/auftakt-<stamp>/{MANIFEST.txt, seasons.json, auftakt.db, season-2.db, …}
+ *   <backupDir>/pre-import/pre-import-<stamp>/<file>.db   (written by the import, pruned here)
  *
  * All seasons are covered, not just the active one, and each is snapshotted via
  * VACUUM INTO so the copy actually contains the rows sitting in the WAL.
  *
+ * **Inside a restore point everything stays flat and keeps the file names from seasons.json.**
+ * Restoring is a hand copy of that folder's contents over the data directory (README.txt,
+ * docs/BACKUP-TESTING.md case 7), which is exactly why the season label goes into MANIFEST.txt
+ * and not into the file names.
+ *
  * Legacy flat `auftakt-<stamp>.db` files from earlier versions are deliberately
  * left alone: they are real backups, nothing writes that shape any more, so the
- * set is already capped — deleting a user's backups would be the wrong call.
+ * set is already capped — deleting a user's backups would be the wrong call. The README
+ * explains them instead.
  */
 export function runBackup(backupDir: string): { dir: string; files: string[] } {
-  const target = join(backupDir, `auftakt-${backupStamp()}`);
+  const at = new Date();
+  const pointsDir = join(backupDir, BACKUP_POINTS_DIR);
+  const preImportDir = join(backupDir, PRE_IMPORT_DIR);
+  const target = join(pointsDir, `auftakt-${backupStamp(at)}`);
   mkdirSync(target, { recursive: true });
 
   const files: string[] = [];
+  const labels: Array<{ file: string; label: string }> = [];
   for (const season of seasonFiles()) {
     if (!existsSync(season.path)) continue; // registered but never opened
     snapshotDb(season.path, join(target, season.file));
     files.push(season.file);
+    labels.push({ file: season.file, label: season.label });
   }
   const registry = registryPath();
+  let registryFile: string | null = null;
   if (existsSync(registry)) {
-    copyFileSync(registry, join(target, basename(registry)));
-    files.push(basename(registry));
+    registryFile = basename(registry);
+    copyFileSync(registry, join(target, registryFile));
+    files.push(registryFile);
   }
+  // Named from what was actually written, not from what was meant to be: the manifest is read
+  // years later, next to the folder it describes, and a line for a file that is not in there
+  // sends the reader looking for it.
+  writeDoc(join(target, 'MANIFEST.txt'), manifestText(at, appVersion(), labels, registryFile));
 
-  pruneDatedFolders(backupDir, 'auftakt');
-  // Pre-import snapshots live in the same folder but under their own prefix, so nothing
+  // Before pruning, or the migrated folders would not be counted and an installation could
+  // end up holding 30 in each place.
+  migrateDatedFolders(backupDir, 'auftakt', pointsDir);
+  migrateDatedFolders(backupDir, 'pre-import', preImportDir);
+
+  pruneDatedFolders(pointsDir, 'auftakt');
+  // Pre-import snapshots have their own folder and their own prefix, so nothing
   // ever cleaned them up and the backup folder grew with every import (DBW-12). Pruned
   // on their own count, so heavy importing cannot evict the dated restore points.
-  pruneDatedFolders(backupDir, 'pre-import');
+  pruneDatedFolders(preImportDir, 'pre-import');
+
+  writeDoc(join(backupDir, 'README.txt'), readmeText(hasLegacyFlatBackups(backupDir)));
   return { dir: target, files };
+}
+
+/** Flat `auftakt-<stamp>.db` files from versions before the dated folders — the README explains them. */
+function hasLegacyFlatBackups(backupDir: string): boolean {
+  try {
+    return readdirSync(backupDir).some((f) => /^auftakt-.+\.db$/.test(f));
+  } catch {
+    return false;
+  }
 }
 
 /** True once the request's season holds anything worth backing up. */

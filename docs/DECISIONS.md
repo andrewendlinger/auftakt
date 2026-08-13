@@ -1128,3 +1128,32 @@ What this does not settle: whether „✎ Bearbeiten" and the row pencil should 
 pass they do not — one is a glyph beside a word, the other an icon — and that is visible on the
 project page. The beside-a-word rule is what keeps the change bounded; the alternative is a second
 pass that converts them too and leaves the word.
+
+## Der Saisonname steht im Manifest, nicht im Dateinamen (2026-08-13, WP-41)
+
+The customer asked for the season name to be "part of the backup". It is — in `MANIFEST.txt`
+inside each restore point, not in the `.db` file names, and that is deliberate.
+
+Restoring is a **hand copy**: quit Auftakt, copy a restore point's contents over the data
+directory, launch. That works only while the files carry exactly the `file` values from
+`seasons.json` and sit flat in the folder. `Festival 2026.db` would be a file the app never
+looks for — a backup that reads beautifully and cannot be restored. Two more constraints point
+the same way: the prune regex matches `^<prefix>-<stamp>$` and never cleans up what it does not
+match, and the folders sort lexicographically by name, so nothing may precede the stamp either.
+
+The only path that would free the file names is a **restore dialog inside the app**, which could
+map labels back to files itself. Deliberately not in this package — noted here so a later reader
+does not mistake the missing name for an oversight.
+
+Where the labels do land: `MANIFEST.txt` (`auftakt.db = Festival 2026`, plus timestamp and app
+version) and the `README.txt` at the root of the backup folder, which carries the restore steps
+in German. Both are CRLF + UTF-8 BOM because they are read in Notepad, out of Google Drive, on
+Windows — without either, the customer sees one line of mojibake and the files are worse than
+nothing.
+
+Existing installations get their top-level dated folders **moved** into `backups/` and
+`pre-import/` on the next backup run (best-effort, self-detecting, retried each run). Leaving
+them was the smaller promise, but nothing writes at that level any more, so pruning could never
+bring the pile below its cap and the untidiness would have been fixed only for fresh installs.
+Flat `auftakt-<stamp>.db` files from before the folders are still left alone: they are real
+backups, the README explains them, and a path a customer may have written down keeps working.

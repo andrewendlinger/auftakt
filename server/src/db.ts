@@ -1515,11 +1515,23 @@ export function importIntoCurrentSeason(candidatePath: string, backupDir: string
 /** How many dated restore points and pre-import snapshots are kept. */
 export const BACKUP_KEEP = 30;
 
+/**
+ * The two sub-folders the backup folder is divided into (WP-41). Named here rather than at
+ * the two write sites — routes/backup.ts writes the restore points, preImportBackupPath the
+ * pre-import copies — because the backup run also prunes and migrates both, and a second
+ * spelling of either name would leave a pool nothing ever cleans up.
+ *
+ * The *dated folder names inside them* keep their prefixes (`auftakt-`, `pre-import-`): the
+ * prune regex is keyed to them, and a folder that does not match is never cleaned up.
+ */
+export const BACKUP_POINTS_DIR = 'backups';
+export const PRE_IMPORT_DIR = 'pre-import';
+
 /** Pre-import safety copy: into the backup folder when there is one, else next to the DB. */
 function preImportBackupPath(dbPath: string, backupDir: string): string {
   const name = `${basename(dbPath, '.db')}.db`;
   return backupDir
-    ? join(backupDir, `pre-import-${backupStamp()}`, name)
+    ? join(backupDir, PRE_IMPORT_DIR, `pre-import-${backupStamp()}`, name)
     : `${dbPath}.pre-import-${backupStamp()}.bak`;
 }
 
@@ -1549,8 +1561,8 @@ function prunePreImportFiles(dbPath: string): void {
  * `shared/time.ts` helper, by Electron's export/backup default filenames, which used to carry a
  * byte-identical copy of this line (ELP-11).
  */
-export function backupStamp(): string {
-  return fileStamp();
+export function backupStamp(at: Date = new Date()): string {
+  return fileStamp(at);
 }
 
 /**
