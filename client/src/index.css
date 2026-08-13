@@ -134,6 +134,26 @@ body {
   margin: 1em 0;
 }
 
+/* Images in the flowing text (WP-37). Nothing constrained an <img> before, because nothing could
+   author one — a Saalplan at its natural pixel size would simply run off the card.
+
+   `max-height` as well as `max-width`: a portrait plan constrained only by width still turns a
+   note into a poster you have to scroll past to reach the text under it. */
+.prose-md img {
+  max-width: 100%;
+  max-height: 60vh;
+  height: auto;
+  vertical-align: middle;
+  border-radius: 0.5rem;
+}
+/* An image alone in its paragraph is a block, not a word: as an inline it sits on the text
+   baseline and reserves the descender space under it, which reads as a stray gap. The node is
+   inline in the schema (so it can sit mid-sentence) — this is the display half of that choice. */
+.prose-md p > img:only-child {
+  display: block;
+  margin: 0.4em 0;
+}
+
 /* Rich-text editor (RichTextEditor.tsx). The editable area carries `.prose-md` too, so
    what-you-type matches the rendered output; these rules add only the editor chrome. */
 .rte-content {
@@ -145,6 +165,12 @@ body {
 .rte-content:focus,
 .rte-content:focus-visible {
   outline: none;
+}
+/* An image is an atom node: clicking it selects the whole thing and ⌫ deletes it in one go.
+   Without a visible selection that is a surprise rather than an affordance. */
+.rte-content img.ProseMirror-selectednode {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
 }
 /* Placeholder text for the empty editor (mirrors the old textarea placeholder). */
 .rte-content p.is-editor-empty:first-child::before,
@@ -222,5 +248,15 @@ body {
   h3,
   .print-group-head {
     break-after: avoid;
+  }
+  /* Chromium cannot fragment a replaced element, so an image taller than the page is *clipped*,
+     not carried onto the next one. A4 inside the 14 mm @page margins leaves ~269 mm, so 240 mm
+     guarantees the picture and the line above it land on one page. The screen cap is a viewport
+     unit and means nothing on paper. */
+  .prose-md img {
+    break-inside: avoid;
+    max-width: 100%;
+    max-height: 240mm;
+    height: auto;
   }
 }

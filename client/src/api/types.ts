@@ -775,3 +775,23 @@ export function doneValueOf(cols: CustomColumn[]): string {
   const status = cols.find((c) => c.kind === 'builtin' && c.key === 'status');
   return parseColumnOptions(status?.options).find((o) => o.done)?.value ?? 'done';
 }
+
+/** An image being stored for the flowing text (WP-37); `data` is a data URL or bare base64. */
+export interface ImageUpload {
+  data: string;
+  name?: string;
+  width?: number;
+  height?: number;
+}
+
+/**
+ * What the server stored. `url` is the reference to write into the Markdown — root-relative and
+ * season-free, so it survives a season copy untouched; the season is appended only at render.
+ */
+export interface ImageUploaded {
+  token: string;
+  url: string;
+  width: number | null;
+  height: number | null;
+  bytes: number;
+}

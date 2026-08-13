@@ -1,6 +1,8 @@
-import { useMemo, type ComponentPropsWithoutRef } from 'react';
+import { useMemo, useState, type ComponentPropsWithoutRef } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { withSeasonPin } from '../lib/imageRef';
 import { rehypePlugins, remarkPlugins } from '../lib/markdownPipeline';
+import { getWindowSeason } from '../lib/season';
 import { EXTERNAL_LINK_CLASS, ExternalLink } from './ui';
 
 /**
@@ -29,6 +31,41 @@ function MdLinkText({ href, title, children }: ComponentPropsWithoutRef<'a'>) {
     <span title={title ?? href} className={EXTERNAL_LINK_CLASS}>
       {children}
     </span>
+  );
+}
+
+/**
+ * An image in the flowing text (WP-37) — and the window's season is added *here*, not in storage.
+ *
+ * A browser fetching an `<img src>` sends no headers, so `X-Auftakt-Season` cannot reach the
+ * server and the request would resolve the registry default: in a window pinned to another season,
+ * the wrong picture or none, with a DOM that looks perfectly correct either way. `server/index.ts`
+ * already documents the `?season=` leg for „plain `<a href>` downloads, which cannot carry
+ * headers"; this is the same class of request. The stored Markdown stays season-free so it
+ * survives a season copy — see `lib/imageRef.ts`.
+ *
+ * `loading="lazy"` is deliberately **not** set: Chromium does not reliably load lazy images below
+ * the fold when printing, and both print sheets render Markdown.
+ *
+ * The fallback is what a reference whose image did not travel looks like — a note pasted in from
+ * another season — instead of a broken-image glyph with no explanation.
+ */
+function MdImage({ src, alt, title }: ComponentPropsWithoutRef<'img'>) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) {
+    return (
+      <span className="inline-block rounded-lg border border-dashed border-neutral-300 px-2 py-1 text-xs text-neutral-400">
+        {alt ? `Bild nicht gefunden: ${alt}` : 'Bild nicht gefunden'}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={withSeasonPin(src, getWindowSeason())}
+      alt={alt ?? ''}
+      title={title}
+      onError={() => setFailed(true)}
+    />
   );
 }
 
@@ -72,7 +109,7 @@ export function Markdown({
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
           rehypePlugins={rehypePlugins}
-          components={{ a: plainLinks ? MdLinkText : MdLink }}
+          components={{ a: plainLinks ? MdLinkText : MdLink, img: MdImage }}
         >
           {children}
         </ReactMarkdown>

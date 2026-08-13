@@ -270,6 +270,7 @@ export function ArtistPage() {
               {/* The one general free-text field lives inside the header, not as a section. */}
               <div className="mt-1 max-w-2xl text-sm text-neutral-600">
                 <InlineNotes
+                  images
                   value={artist.notes}
                   onSave={async (v) => {
                     await undoablePatch({

@@ -13,11 +13,16 @@ import { Placeholder } from '@tiptap/extensions';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import type { Node as PMNode } from '@tiptap/pm/model';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
+import { api } from '../api/client';
+import { useErrorToast } from '../hooks';
+import { withSeasonPin } from '../lib/imageRef';
 import { INDENT_UNIT, outdentWidth } from '../lib/indent';
+import { resizeTextImage } from '../lib/image';
 import { markdownExtensions } from '../lib/richtext';
+import { getWindowSeason } from '../lib/season';
 import { isParsableUrl, normalizeUrl } from '../lib/url';
 import { EXTERNAL_LINK_CLASS } from './ui';
-import { IndentIcon, LinkIcon, ListIcon, OutdentIcon, QuoteIcon, SmileIcon, TableIcon, TrashIcon } from './icons';
+import { ImageIcon, IndentIcon, LinkIcon, ListIcon, OutdentIcon, QuoteIcon, SmileIcon, TableIcon, TrashIcon } from './icons';
 
 // Loaded on demand so the emoji dataset stays out of the main bundle.
 const EmojiPickerLazy = lazy(() => import('./EmojiPickerLazy'));
@@ -167,6 +172,7 @@ export function RichTextEditor({
   onSubmit,
   placeholder,
   compact = false,
+  images = false,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -193,8 +199,24 @@ export function RichTextEditor({
    * surface has to be given the matching `roomy`, or the text reflows the moment it saves.
    */
   compact?: boolean;
+  /**
+   * Offer „Bild einfügen" (WP-37). **Off by default, and that default is load-bearing.**
+   *
+   * The bytes go into the season database, so the button only belongs on a surface whose text
+   * lives there too. `LandingCards` is the counter-example: its notes are stored in `seasons.json`,
+   * which is shared across seasons, so an image inserted there would be written to whichever
+   * season happened to be pinned and read as broken from every other one. Forgetting this flag
+   * costs a missing button — visible, harmless; defaulting it on would cost that.
+   *
+   * The *dialect* carries images everywhere regardless (`lib/richtext.ts`), so a note that already
+   * holds one still round-trips safely in an editor that offers no button.
+   */
+  images?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const showError = useErrorToast();
   // Keep the latest callbacks reachable from the editor's (stable) event hooks.
   const onChangeRef = useRef(onChange);
   const onBlurRef = useRef(onBlur);
@@ -235,7 +257,13 @@ export function RichTextEditor({
 
   const editor = useEditor({
     extensions: [
-      ...markdownExtensions({ linkClass: EXTERNAL_LINK_CLASS }),
+      // `resolveSrc` is display-only: it pins the window's season onto the app's own image URLs
+      // so the browser's header-less <img> request reaches the right database. The stored Markdown
+      // never sees it — the node's `parseHTML` strips it straight back off.
+      ...markdownExtensions({
+        linkClass: EXTERNAL_LINK_CLASS,
+        resolveSrc: (src) => withSeasonPin(src, getWindowSeason()),
+      }),
       Placeholder.configure({ placeholder: () => placeholderRef.current ?? '' }),
       LinkHoverTitle,
       Indent,
@@ -325,9 +353,67 @@ export function RichTextEditor({
     editor.commands.setContent(value, { contentType: 'markdown', emitUpdate: false });
   }, [value, editor]);
 
+  /**
+   * Resize, store, insert (WP-37).
+   *
+   * The upload resolves a tick after the click, and the caller commits on blur — so if focus
+   * leaves in between, the note is stored without the image while its row exists: a harmless
+   * orphan, but a lost picture. The button disables itself while `uploading` so the ordinary path
+   * cannot race, the way `ImageField` does for the avatar.
+   *
+   * `image/*` matches plenty the browser cannot decode — the iPhone `.heic` of CCL-14 — so both
+   * the decode and the upload report through the error toast rather than failing silently.
+   */
+  const insertImageFile = async (file: File) => {
+    setUploading(true);
+    try {
+      const resized = await resizeTextImage(file);
+      const stored = await api.uploadImage({
+        data: resized.dataUrl,
+        name: file.name,
+        width: resized.width,
+        height: resized.height,
+      });
+      editor
+        ?.chain()
+        .focus()
+        // The server's URL, stored verbatim: season-free, so it survives a season copy.
+        .insertContent({ type: 'image', attrs: { src: stored.url, alt: file.name } })
+        .run();
+    } catch (err) {
+      showError(err, 'Bild konnte nicht gespeichert werden.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <div ref={rootRef} className="rte-root">
-      {editor && <Toolbar editor={editor} compact={compact} />}
+      {editor && (
+        <Toolbar
+          editor={editor}
+          compact={compact}
+          onImage={images ? () => fileRef.current?.click() : undefined}
+          imageBusy={uploading}
+        />
+      )}
+      {/* Inside `rootRef` on purpose. The blur guard below fires `fireBlur()` on any `focusin` or
+          capture-phase `pointerdown` *outside* the root, and opening a file dialog moves focus —
+          mounted anywhere else, picking an image would commit the note mid-insert (RTE-02). */}
+      {images && (
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            // Cleared before the await, so picking the same file twice in a row still fires.
+            e.target.value = '';
+            if (file) void insertImageFile(file);
+          }}
+        />
+      )}
       <EditorContent editor={editor} />
       {/* Below the text, not above it: this strip appears and disappears as the caret enters and
           leaves a table, and above the editor that would shove the paragraph being edited up and
@@ -340,7 +426,18 @@ export function RichTextEditor({
 
 // --- toolbar --------------------------------------------------------------------------------
 
-function Toolbar({ editor, compact }: { editor: Editor; compact: boolean }) {
+function Toolbar({
+  editor,
+  compact,
+  onImage,
+  imageBusy,
+}: {
+  editor: Editor;
+  compact: boolean;
+  /** Present only where images belong — see `RichTextEditor`'s `images` prop. */
+  onImage?: () => void;
+  imageBusy?: boolean;
+}) {
   // `origin` is the text the bar opened with, so `insertLink` can tell "only the address
   // changed" from "the label changed". Note `setLink` here is this state setter, *not* TipTap's
   // command of the same name — the editor commands are reached through `chain()`.
@@ -491,6 +588,17 @@ function Toolbar({ editor, compact }: { editor: Editor; compact: boolean }) {
             >
               <TableIcon className="h-4 w-4" />
             </Btn>
+            {/* Document-sized, so it sits behind the same `compact` gate as tables and headings:
+                a one-line task-comment cell is not where a Saalplan goes. */}
+            {onImage && (
+              <Btn
+                title={imageBusy ? 'Bild wird gespeichert…' : 'Bild einfügen'}
+                onClick={onImage}
+                disabled={imageBusy}
+              >
+                <ImageIcon className="h-4 w-4" />
+              </Btn>
+            )}
           </>
         )}
         <Sep />
@@ -598,11 +706,14 @@ function Btn({
   on,
   onClick,
   children,
+  disabled,
 }: {
   title: string;
   on?: boolean;
   onClick: () => void;
   children: React.ReactNode;
+  /** Only „Bild einfügen" uses this today, while its upload is in flight. */
+  disabled?: boolean;
 }) {
   return (
     <button
@@ -620,9 +731,10 @@ function Btn({
       // Keep focus in the editor so an onBlur-to-save never fires on a toolbar click.
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
+      disabled={disabled}
       // `min-w-7` rather than `w-7`: the single-glyph buttons stay square, the table strip's
       // word labels get to be as wide as they need.
-      className={`flex h-7 min-w-7 items-center justify-center rounded-lg px-1 text-sm transition ${
+      className={`flex h-7 min-w-7 items-center justify-center rounded-lg px-1 text-sm transition disabled:opacity-40 ${
         on ? 'bg-neutral-800 text-white' : 'text-neutral-600 hover:bg-neutral-200'
       }`}
     >

@@ -15,6 +15,7 @@ export function InlineNotes({
   onSave,
   placeholder = '+ hinzufügen',
   compact = false,
+  images = false,
 }: {
   value: string | null;
   onSave: (v: string | null) => void | Promise<void>;
@@ -25,6 +26,12 @@ export function InlineNotes({
    * surface, so the flag goes to the editor and the reader together and they cannot drift.
    */
   compact?: boolean;
+  /**
+   * Offer „Bild einfügen" (WP-37). Threaded rather than defaulted on, because this block is also
+   * the landing page's notes editor, whose text lives in `seasons.json` and not in a season
+   * database — see `RichTextEditor`'s `images` prop.
+   */
+  images?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(value ?? '');
@@ -60,6 +67,7 @@ export function InlineNotes({
       <RichTextEditor
         autoFocus
         compact={compact}
+        images={images}
         value={text}
         onChange={setText}
         className="min-h-32 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-800 outline-none transition focus:border-neutral-500 focus:ring-2 focus:ring-neutral-900/5"
