@@ -246,51 +246,55 @@ export function ArtistPage() {
 
       <Card style={{ background: withAlpha(color, 0.12) }}>
         <div className="h-1.5 rounded-t-2xl" style={{ background: color }} />
-        <div className="flex flex-wrap items-start justify-between gap-4 p-6">
-          <div className="flex items-center gap-4">
-            {artist.image ? (
-              <img
-                src={artist.image}
-                alt=""
-                className="h-12 w-12 shrink-0 rounded-full object-cover shadow-sm ring-2 ring-white"
-              />
-            ) : (
-              <span
-                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-base font-bold shadow-sm"
-                style={{ background: color, color: contrastText(color) }}
-              >
-                {initials(artist.name)}
-              </span>
-            )}
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
-                <EditableLabel k="artist.kicker" />
-              </div>
-              <h1 className="text-2xl font-bold text-neutral-800">{artist.name}</h1>
-              {/* The one general free-text field lives inside the header, not as a section. */}
-              <div className="mt-1 max-w-2xl text-sm text-neutral-600">
-                <InlineNotes
-                  value={artist.notes}
-                  onSave={async (v) => {
-                    await undoablePatch({
-                      res: api.artists,
-                      row: artist,
-                      patch: { notes: v },
-                      label: 'Textänderung',
-                    });
-                  }}
+        <div className="p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex items-center gap-4">
+              {artist.image ? (
+                <img
+                  src={artist.image}
+                  alt=""
+                  className="h-12 w-12 shrink-0 rounded-full object-cover shadow-sm ring-2 ring-white"
                 />
+              ) : (
+                <span
+                  className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-base font-bold shadow-sm"
+                  style={{ background: color, color: contrastText(color) }}
+                >
+                  {initials(artist.name)}
+                </span>
+              )}
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                  <EditableLabel k="artist.kicker" />
+                </div>
+                <h1 className="text-2xl font-bold text-neutral-800">{artist.name}</h1>
               </div>
             </div>
+            <div className="flex items-center gap-2">
+              <a
+                href={`#/print/artist/${artistId}`}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200"
+              >
+                🖨 Ein-Pager (PDF)
+              </a>
+              <EditArtistButton artist={artist} />
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <a
-              href={`#/print/artist/${artistId}`}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200"
-            >
-              🖨 Ein-Pager (PDF)
-            </a>
-            <EditArtistButton artist={artist} />
+          {/* The one general free-text field lives inside the header, not as a section — below
+              the identity row, so it gets the card's full width for tables and images. */}
+          <div className="mt-2 text-sm text-neutral-600">
+            <InlineNotes
+              images
+              value={artist.notes}
+              onSave={async (v) => {
+                await undoablePatch({
+                  res: api.artists,
+                  row: artist,
+                  patch: { notes: v },
+                  label: 'Textänderung',
+                });
+              }}
+            />
           </div>
         </div>
       </Card>

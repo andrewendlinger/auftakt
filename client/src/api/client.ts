@@ -19,6 +19,8 @@ import type {
   EventItem,
   EventUpdate,
   ID,
+  ImageUpload,
+  ImageUploaded,
   LandingContent,
   LandingPatch,
   LinkCreate,
@@ -216,6 +218,12 @@ export const api = {
       http<{ ids: ID[] }>('POST', `/tasks/${id}/tree/restore`, { ids }),
   },
   links: resource<LinkItem, LinkCreate, LinkUpdate>('/links'),
+  /**
+   * Store an image for the flowing text (WP-37) and get back the reference to write into the
+   * Markdown. The **server** composes that URL; nothing here builds one, so the stored form stays
+   * decided in a single place.
+   */
+  uploadImage: (body: ImageUpload) => http<ImageUploaded>('POST', '/images', body),
   customColumns: resource<CustomColumn, CustomColumnCreate, CustomColumnUpdate>('/custom-columns'),
   customSections: resource<CustomSection, CustomSectionCreate, CustomSectionUpdate>('/custom-sections'),
 

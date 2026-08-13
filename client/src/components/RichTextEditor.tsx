@@ -13,11 +13,16 @@ import { Placeholder } from '@tiptap/extensions';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import type { Node as PMNode } from '@tiptap/pm/model';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
+import { api } from '../api/client';
+import { useErrorToast } from '../hooks';
+import { withSeasonPin, type ImageAlign } from '../lib/imageRef';
 import { INDENT_UNIT, outdentWidth } from '../lib/indent';
+import { resizeTextImage } from '../lib/image';
 import { markdownExtensions } from '../lib/richtext';
+import { getWindowSeason } from '../lib/season';
 import { isParsableUrl, normalizeUrl } from '../lib/url';
 import { EXTERNAL_LINK_CLASS } from './ui';
-import { IndentIcon, LinkIcon, ListIcon, OutdentIcon, QuoteIcon, SmileIcon, TableIcon, TrashIcon } from './icons';
+import { ImageIcon, IndentIcon, LinkIcon, ListIcon, OutdentIcon, QuoteIcon, SmileIcon, TableIcon, TrashIcon } from './icons';
 
 // Loaded on demand so the emoji dataset stays out of the main bundle.
 const EmojiPickerLazy = lazy(() => import('./EmojiPickerLazy'));
@@ -167,6 +172,7 @@ export function RichTextEditor({
   onSubmit,
   placeholder,
   compact = false,
+  images = false,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -193,8 +199,24 @@ export function RichTextEditor({
    * surface has to be given the matching `roomy`, or the text reflows the moment it saves.
    */
   compact?: boolean;
+  /**
+   * Offer „Bild einfügen" (WP-37). **Off by default, and that default is load-bearing.**
+   *
+   * The bytes go into the season database, so the button only belongs on a surface whose text
+   * lives there too. `LandingCards` is the counter-example: its notes are stored in `seasons.json`,
+   * which is shared across seasons, so an image inserted there would be written to whichever
+   * season happened to be pinned and read as broken from every other one. Forgetting this flag
+   * costs a missing button — visible, harmless; defaulting it on would cost that.
+   *
+   * The *dialect* carries images everywhere regardless (`lib/richtext.ts`), so a note that already
+   * holds one still round-trips safely in an editor that offers no button.
+   */
+  images?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const showError = useErrorToast();
   // Keep the latest callbacks reachable from the editor's (stable) event hooks.
   const onChangeRef = useRef(onChange);
   const onBlurRef = useRef(onBlur);
@@ -219,8 +241,22 @@ export function RichTextEditor({
   placeholderRef.current = placeholder;
   // One commit per departure, whichever path notices it first (see the effect below).
   const blurFired = useRef(false);
+  /**
+   * „Bild einfügen" opens a **native** file panel, and that is not a departure (WP-37).
+   *
+   * The panel takes focus away from the whole window, so ProseMirror's own `onBlur` fires with
+   * `relatedTarget: null` — nothing to test against `rootRef`, so the guard below read it as „the
+   * user clicked somewhere else", committed, and `InlineNotes` unmounted the editor while the
+   * Finder window was still open. From the user's side: the text field closes behind the dialog,
+   * and the image they then pick has nowhere to go. Mounting the `<input>` inside `rootRef`
+   * (RTE-02) only covers the DOM events; a window losing focus is not one of them.
+   *
+   * The flag is cleared by whichever of `change`, `cancel` or the window regaining focus comes
+   * first, so a panel dismissed by any route re-arms the ordinary commit-on-blur.
+   */
+  const pickingImage = useRef(false);
   const fireBlur = () => {
-    if (blurFired.current || !onBlurRef.current) return;
+    if (pickingImage.current || blurFired.current || !onBlurRef.current) return;
     blurFired.current = true;
     void onBlurRef.current();
   };
@@ -235,7 +271,13 @@ export function RichTextEditor({
 
   const editor = useEditor({
     extensions: [
-      ...markdownExtensions({ linkClass: EXTERNAL_LINK_CLASS }),
+      // `resolveSrc` is display-only: it pins the window's season onto the app's own image URLs
+      // so the browser's header-less <img> request reaches the right database. The stored Markdown
+      // never sees it — the node's `parseHTML` strips it straight back off.
+      ...markdownExtensions({
+        linkClass: EXTERNAL_LINK_CLASS,
+        resolveSrc: (src) => withSeasonPin(src, getWindowSeason()),
+      }),
       Placeholder.configure({ placeholder: () => placeholderRef.current ?? '' }),
       LinkHoverTitle,
       Indent,
@@ -308,6 +350,24 @@ export function RichTextEditor({
     // Reads only refs, so it registers once and never needs to re-bind.
   }, []);
 
+  /**
+   * Re-arm commit-on-blur when the file panel is dismissed without a file.
+   *
+   * `change` covers the pick, this covers the cancel — and it is a native listener rather than a
+   * React prop because `cancel` on `<input type="file">` is not in React's synthetic event set.
+   * Without it the flag above would stay raised for the rest of the editor's life and the note
+   * would stop saving on blur, which is a far worse bug than the one it guards.
+   */
+  useEffect(() => {
+    const input = fileRef.current;
+    if (!input) return;
+    const rearm = () => {
+      pickingImage.current = false;
+    };
+    input.addEventListener('cancel', rearm);
+    return () => input.removeEventListener('cancel', rearm);
+  }, [images]);
+
   // The placeholder decoration is only recomputed when the editor state moves, so nudge it
   // when the prop changes; without this the ref above would be read once and never again.
   useEffect(() => {
@@ -325,22 +385,122 @@ export function RichTextEditor({
     editor.commands.setContent(value, { contentType: 'markdown', emitUpdate: false });
   }, [value, editor]);
 
+  /**
+   * Resize, store, insert (WP-37).
+   *
+   * The upload resolves a tick after the click, and the caller commits on blur — so if focus
+   * leaves in between, the note is stored without the image while its row exists: a harmless
+   * orphan, but a lost picture. The button disables itself while `uploading` so the ordinary path
+   * cannot race, the way `ImageField` does for the avatar.
+   *
+   * `image/*` matches plenty the browser cannot decode — the iPhone `.heic` of CCL-14 — so both
+   * the decode and the upload report through the error toast rather than failing silently.
+   */
+  const insertImageFile = async (file: File) => {
+    setUploading(true);
+    try {
+      const resized = await resizeTextImage(file);
+      const stored = await api.uploadImage({
+        data: resized.dataUrl,
+        name: file.name,
+        width: resized.width,
+        height: resized.height,
+      });
+      // Focus may have left while the upload ran, and `InlineNotes` unmounts the editor on blur —
+      // the optional chain does not catch that, because `editor` is then a live reference to a
+      // torn-down instance and dispatching into it throws. The catch below would report „konnte
+      // nicht gespeichert werden" for bytes the server did store (IMG-03); the row stays as the
+      // harmless orphan the comment above describes, and the picture is simply not inserted,
+      // which is what the user's own blur asked for.
+      if (!editor || editor.isDestroyed) return;
+      editor
+        .chain()
+        .focus()
+        // The server's URL, stored verbatim: season-free, so it survives a season copy. A fresh
+        // insert starts at „Mittel" — a 1200px plan at full column width shoves everything under
+        // it out of view — unless the image is naturally smaller: a width attribute *upscales*,
+        // so a 200px logo keeps its own size (null = natural, the „Original" preset).
+        .insertContent({
+          type: 'image',
+          attrs: {
+            src: stored.url,
+            alt: file.name,
+            width: resized.width > IMAGE_WIDTHS.mittel ? IMAGE_WIDTHS.mittel : null,
+          },
+        })
+        .run();
+    } catch (err) {
+      showError(err, 'Bild konnte nicht gespeichert werden.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <div ref={rootRef} className="rte-root">
-      {editor && <Toolbar editor={editor} compact={compact} />}
+      {editor && (
+        <Toolbar
+          editor={editor}
+          compact={compact}
+          onImage={
+            images
+              ? () => {
+                  // Set *before* the click: the panel opens synchronously and the window's blur
+                  // arrives before any of our handlers do.
+                  pickingImage.current = true;
+                  fileRef.current?.click();
+                }
+              : undefined
+          }
+          imageBusy={uploading}
+        />
+      )}
+      {/* Inside `rootRef` on purpose. The blur guard below fires `fireBlur()` on any `focusin` or
+          capture-phase `pointerdown` *outside* the root, and opening a file dialog moves focus —
+          mounted anywhere else, picking an image would commit the note mid-insert (RTE-02). */}
+      {images && (
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            pickingImage.current = false;
+            const file = e.target.files?.[0];
+            // Cleared before the await, so picking the same file twice in a row still fires.
+            e.target.value = '';
+            if (file) void insertImageFile(file);
+          }}
+        />
+      )}
       <EditorContent editor={editor} />
       {/* Below the text, not above it: this strip appears and disappears as the caret enters and
           leaves a table, and above the editor that would shove the paragraph being edited up and
           down by a row's height every time. Shown even when `compact`, because a table stored in
           a note can be opened in a cell editor and these are the only controls that can fix it. */}
       {editor && <TableBar editor={editor} />}
+      {/* Same reasoning, for a selected image — and not gated on `images`: inserting is limited
+          to the season-safe fields, but an image round-trips through every editor, so wherever
+          one can legitimately sit it can also be re-sized. */}
+      {editor && <ImageBar editor={editor} />}
     </div>
   );
 }
 
 // --- toolbar --------------------------------------------------------------------------------
 
-function Toolbar({ editor, compact }: { editor: Editor; compact: boolean }) {
+function Toolbar({
+  editor,
+  compact,
+  onImage,
+  imageBusy,
+}: {
+  editor: Editor;
+  compact: boolean;
+  /** Present only where images belong — see `RichTextEditor`'s `images` prop. */
+  onImage?: () => void;
+  imageBusy?: boolean;
+}) {
   // `origin` is the text the bar opened with, so `insertLink` can tell "only the address
   // changed" from "the label changed". Note `setLink` here is this state setter, *not* TipTap's
   // command of the same name — the editor commands are reached through `chain()`.
@@ -491,6 +651,17 @@ function Toolbar({ editor, compact }: { editor: Editor; compact: boolean }) {
             >
               <TableIcon className="h-4 w-4" />
             </Btn>
+            {/* Document-sized, so it sits behind the same `compact` gate as tables and headings:
+                a one-line task-comment cell is not where a Saalplan goes. */}
+            {onImage && (
+              <Btn
+                title={imageBusy ? 'Bild wird gespeichert…' : 'Bild einfügen'}
+                onClick={onImage}
+                disabled={imageBusy}
+              >
+                <ImageIcon className="h-4 w-4" />
+              </Btn>
+            )}
           </>
         )}
         <Sep />
@@ -589,6 +760,75 @@ function TableBar({ editor }: { editor: Editor }) {
   );
 }
 
+/**
+ * The three widths the size buttons write, in CSS px — stored as `?w=` (lib/imageRef.ts).
+ *
+ * A doubling scale against the 1200px capture cap (lib/image.ts): „Mittel" is the insert default —
+ * about a third of a header note's column, ~10cm on the print sheet, and with >3× the master's
+ * pixels in reserve, so „Groß" and „Original" stay sharp on a 2× display. „Original" is the
+ * absence of a width: natural size, still bounded by the column and 60vh (`.prose-md img`).
+ */
+const IMAGE_WIDTHS = { klein: 192, mittel: 384, gross: 768 } as const;
+
+/**
+ * Size controls, visible only while an image node is selected — `TableBar`'s pattern exactly,
+ * `Btn` included (it cancels `mousedown`; a plain button here would blur the view and fire the
+ * caller's commit-on-blur mid-edit, RTE-02). `updateAttributes` is one transaction, so one ⌘Z
+ * undoes a re-size, and the width lands in the stored text as `?w=` on serialization.
+ */
+function ImageBar({ editor }: { editor: Editor }) {
+  // `null` = no image selected (hide the bar); inside, `width`/`align` null = the default state.
+  const img = useEditorState({
+    editor,
+    selector: ({ editor }) =>
+      editor.isActive('image')
+        ? {
+            width: (editor.getAttributes('image').width as number | null) ?? null,
+            align: (editor.getAttributes('image').align as ImageAlign | null) ?? null,
+          }
+        : null,
+  });
+  if (!img) return null;
+  // Re-select the node in the same chain: `updateAttributes` replaces it and the NodeSelection
+  // does not survive, so without this the bar vanishes on the first click and comparing two
+  // sizes means re-selecting the image between every try. Attrs-only, so the position is stable.
+  const set = (attrs: { width?: number | null; align?: ImageAlign | null }) => {
+    const pos = editor.state.selection.from;
+    editor.chain().focus().updateAttributes('image', attrs).setNodeSelection(pos).run();
+  };
+  // Alignment toggles like the toolbar's marks: clicking the active one returns to text flow.
+  const toggleAlign = (align: ImageAlign) => set({ align: img.align === align ? null : align });
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-0.5">
+      <span className="mr-1 text-[11px] text-neutral-400">Bildgröße</span>
+      <Btn title={`Klein (${IMAGE_WIDTHS.klein} px)`} on={img.width === IMAGE_WIDTHS.klein} onClick={() => set({ width: IMAGE_WIDTHS.klein })}>
+        <span className="text-[11px] font-semibold">Klein</span>
+      </Btn>
+      <Btn title={`Mittel (${IMAGE_WIDTHS.mittel} px)`} on={img.width === IMAGE_WIDTHS.mittel} onClick={() => set({ width: IMAGE_WIDTHS.mittel })}>
+        <span className="text-[11px] font-semibold">Mittel</span>
+      </Btn>
+      <Btn title={`Groß (${IMAGE_WIDTHS.gross} px)`} on={img.width === IMAGE_WIDTHS.gross} onClick={() => set({ width: IMAGE_WIDTHS.gross })}>
+        <span className="text-[11px] font-semibold">Groß</span>
+      </Btn>
+      <Sep />
+      <Btn title="Originalgröße (an die Spalte angepasst)" on={img.width === null} onClick={() => set({ width: null })}>
+        <span className="text-[11px] font-semibold">Original</span>
+      </Btn>
+      <Sep />
+      <span className="mx-1 text-[11px] text-neutral-400">Ausrichtung</span>
+      <Btn title="Links, vom Text umflossen (erneut klicken: zurücksetzen)" on={img.align === 'left'} onClick={() => toggleAlign('left')}>
+        <span className="text-[11px] font-semibold">Links</span>
+      </Btn>
+      <Btn title="Zentriert (erneut klicken: zurücksetzen)" on={img.align === 'center'} onClick={() => toggleAlign('center')}>
+        <span className="text-[11px] font-semibold">Mitte</span>
+      </Btn>
+      <Btn title="Rechts, vom Text umflossen (erneut klicken: zurücksetzen)" on={img.align === 'right'} onClick={() => toggleAlign('right')}>
+        <span className="text-[11px] font-semibold">Rechts</span>
+      </Btn>
+    </div>
+  );
+}
+
 function Sep() {
   return <span className="mx-0.5 h-4 w-px bg-neutral-200" aria-hidden />;
 }
@@ -598,11 +838,14 @@ function Btn({
   on,
   onClick,
   children,
+  disabled,
 }: {
   title: string;
   on?: boolean;
   onClick: () => void;
   children: React.ReactNode;
+  /** Only „Bild einfügen" uses this today, while its upload is in flight. */
+  disabled?: boolean;
 }) {
   return (
     <button
@@ -620,9 +863,10 @@ function Btn({
       // Keep focus in the editor so an onBlur-to-save never fires on a toolbar click.
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
+      disabled={disabled}
       // `min-w-7` rather than `w-7`: the single-glyph buttons stay square, the table strip's
       // word labels get to be as wide as they need.
-      className={`flex h-7 min-w-7 items-center justify-center rounded-lg px-1 text-sm transition ${
+      className={`flex h-7 min-w-7 items-center justify-center rounded-lg px-1 text-sm transition disabled:opacity-40 ${
         on ? 'bg-neutral-800 text-white' : 'text-neutral-600 hover:bg-neutral-200'
       }`}
     >

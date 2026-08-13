@@ -2,7 +2,7 @@
   "name": "auftakt-client",
   "private": true,
   "version": "0.5.0",
-  "description": "Auftakt frontend — React + Vite, talks to auftakt-server over REST",
+  "description": "Auftakt frontend \u2014 React + Vite, talks to auftakt-server over REST",
   "author": "Andre Wendlinger",
   "license": "SEE LICENSE IN LICENSE.md",
   "repository": {
@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",
+    "@tiptap/extension-paragraph": "^3.29.2",
     "@tiptap/extension-table": "^3.29.2",
     "@tiptap/extension-table-cell": "^3.29.2",
     "@tiptap/extension-table-header": "^3.29.2",

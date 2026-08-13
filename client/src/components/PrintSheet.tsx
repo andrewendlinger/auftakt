@@ -65,7 +65,11 @@ export function PrintHeader({
   return (
     <header className="mb-6 flex items-start gap-4 border-b-4 pb-3" style={{ borderColor: accent }}>
       {image && <img src={image} alt="" className="h-16 w-16 shrink-0 rounded-full object-cover" />}
-      <div>
+      {/* `min-w-0` because a flex item's `min-width` is `auto`, i.e. it refuses to shrink below its
+          min-content width. The subtitle is Markdown, and since WP-37 that can hold an image — a
+          wide one would push this column past the sheet and off the paper, with `max-width: 100%`
+          resolving against a box that had already grown. */}
+      <div className="min-w-0">
         <div className="text-xs uppercase tracking-widest text-neutral-400">{kicker}</div>
         {badges && <div className="mt-1 flex items-center gap-2">{badges}</div>}
         <h1 className="text-3xl font-bold text-neutral-900">{title}</h1>

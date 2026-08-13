@@ -210,47 +210,51 @@ export function ProjectPage() {
 
       <Card style={{ background: withAlpha(shade, 0.16) }}>
         <div className="h-1.5 rounded-t-2xl" style={{ background: shade }} />
-        <div className="flex flex-wrap items-start justify-between gap-4 p-6">
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
-              <EditableLabel k="project.kicker" />
-              {artist ? ` · ${artist.name}` : ''}
+        <div className="p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                <EditableLabel k="project.kicker" />
+                {artist ? ` · ${artist.name}` : ''}
+              </div>
+              <div className="mt-1 flex items-center gap-2">
+                {project.code && (
+                  <span
+                    className="rounded-md px-2 py-0.5 text-sm font-bold"
+                    style={{ background: shade, color: contrastText(shade) }}
+                  >
+                    {project.code}
+                  </span>
+                )}
+                {project.status && <ProjectStatusPill status={project.status} />}
+              </div>
+              <h1 className="mt-2 text-2xl font-bold text-neutral-800">{project.name}</h1>
             </div>
-            <div className="mt-1 flex items-center gap-2">
-              {project.code && (
-                <span
-                  className="rounded-md px-2 py-0.5 text-sm font-bold"
-                  style={{ background: shade, color: contrastText(shade) }}
-                >
-                  {project.code}
-                </span>
-              )}
-              {project.status && <ProjectStatusPill status={project.status} />}
-            </div>
-            <h1 className="mt-2 text-2xl font-bold text-neutral-800">{project.name}</h1>
-            {/* The one general free-text field lives inside the header, not as a section. */}
-            <div className="mt-1 max-w-2xl text-sm text-neutral-600">
-              <InlineNotes
-                value={project.description}
-                onSave={async (v) => {
-                  await undoablePatch({
-                    res: api.projects,
-                    row: project,
-                    patch: { description: v },
-                    label: 'Textänderung',
-                  });
-                }}
-              />
+            <div className="flex items-center gap-2">
+              <a
+                href={`#/print/project/${projectId}`}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200"
+              >
+                🖨 Ein-Pager (PDF)
+              </a>
+              <EditProjectButton project={project} artistColor={artistColor} />
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <a
-              href={`#/print/project/${projectId}`}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200"
-            >
-              🖨 Ein-Pager (PDF)
-            </a>
-            <EditProjectButton project={project} artistColor={artistColor} />
+          {/* The one general free-text field lives inside the header, not as a section — below
+              the identity row, so it gets the card's full width for tables and images. */}
+          <div className="mt-2 text-sm text-neutral-600">
+            <InlineNotes
+              images
+              value={project.description}
+              onSave={async (v) => {
+                await undoablePatch({
+                  res: api.projects,
+                  row: project,
+                  patch: { description: v },
+                  label: 'Textänderung',
+                });
+              }}
+            />
           </div>
         </div>
       </Card>

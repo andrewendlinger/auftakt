@@ -44,6 +44,41 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   confirming the target pass in this state. What catches it: `ps -o lstart= -p $(lsof -ti tcp:4317)`
   against the seed time — a server older than the reseed is answering from a deleted inode — or
   comparing one API response against the file directly. Kill both ports, then `npm run demo`.
+- **Node's `fetch` cannot observe an HTTP cache hit.** undici adds `cache-control: no-cache` and
+  `pragma: no-cache` to *every* request it sends, and Express's `fresh` honours that — correctly,
+  since the client asked not to be given a cached answer. So a conditional request written the
+  obvious way (`fetch(url, { headers: { 'if-none-match': etag } })`) reads **200**, and the server
+  looks like it is ignoring its own ETag when it is not. `curl -H 'If-None-Match: …'` on the same
+  URL returns 304. Pass `'cache-control': ''` explicitly to override undici's default — a browser
+  revalidating an `<img>` sends no such header, so that is the faithful simulation, not a
+  workaround. Cost one wrong verdict on `/api/images/:token` (WP-37).
+- **Paste is verifiable headlessly — it is a `parseHTML` rule, not an event handler.** ProseMirror
+  parses clipboard HTML with the same rules as any other DOM input, so
+  `editor.commands.insertContent('<p><img src="…"></p>')` in `check-markdown.ts`'s jsdom editor
+  exercises exactly what a paste would, with no browser involved. That is how the clipboard
+  assertions at the foot of that script reach a path that reads like it needs a real Cmd-V. The
+  corollary is the trap: a parse rule *is* a paste rule, so widening one to read stored HTML
+  silently widens what a paste may bring in (WP-37).
+- **`setContent` repairs an illegal document; `useEditor({ content })` does not.** The app hands
+  stored Markdown to the editor at *construction*, which goes through `Node.fromJSON` and validates
+  nothing. `setContent` dispatches a replace step, and ProseMirror fits an illegal slice into the
+  schema on the way in — so a document that crashes the real editor loads perfectly in a check
+  script written the obvious way. Build a fresh `new Editor({ content })` per case and call
+  `doc.check()`, then dispatch an empty transaction to reach the plugins that touch the end of the
+  document. The WP-37 image bug was invisible to the round-trip gate for exactly this reason.
+- **`.rte-content img` counts ProseMirror's own elements.** ProseMirror puts an
+  `<img class="ProseMirror-separator">` after an inline atom at the end of a text block, so
+  „the image was inserted once" reads as two or three. Select
+  `img:not(.ProseMirror-separator)`. Cost one wrong „the insert is duplicating images" verdict.
+- **The server rejects a dev client on any port but 5317 with a bare 403.** `ALLOWED_ORIGINS` in
+  `server/src/index.ts` is built from `CLIENT_DEV_PORT = 5317`, so running Vite on another port to
+  dodge a busy 4317 makes every write fail as „Forbidden" and reads exactly like a broken feature.
+  Move the *server* (`AUFTAKT_PORT=4319`) and keep the client on 5317.
+- **A gate that cannot fail is worse than no gate — prove the new one bites.** Revert the fix,
+  watch the new case fail, restore it. Doing that here caught a sabotage that was itself broken: a
+  duplicate `getAttrs:` key added *above* the real one changed nothing, because the later key wins,
+  and the gate went on passing against what looked like unfixed code. Delete the property under
+  test rather than shadowing it.
 - Kill stray servers by port, never with a broad `pkill`:
   `lsof -ti tcp:4317 -ti tcp:5317 | xargs kill`. **The `-i` must be repeated.** macOS ships
   lsof 4.91, which reads the second `tcp:…` as a *filename*, prints its usage block to stderr and
@@ -414,6 +449,22 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   needs a real `reload()` or the page persists the stale array over it.
 - **Clean up fixtures between runs.** A script that throws mid-way leaves its rows behind, and the
   next run then matches two elements with the same name and picks the wrong one.
+- **Open an `InlineNotes` editor by clicking a text run, never the prose box.** A `.click()` on
+  `.prose-md` lands at the element's center, and the demo notes put links and a linked image
+  there — the click then navigates (or selects the image) and `.rte-content` never mounts, which
+  reads as „the editor is broken". `getByText('Streichquartett')` opens the artist note reliably.
+- **`h1` is not a safe blur target, because a note can contain one.** The demo project description
+  begins with `# Eröffnungskonzert`, which renders an `<h1>` inside `.prose-md` — the same text as
+  the page heading, so `locator('h1')` is a strict-mode violation that looks like a duplicated
+  page title. Use `.first()`, or click something a note cannot contain.
+- **Commit-on-blur is asynchronous.** After clicking outside the editor, the PATCH is still in
+  flight; a `GET` issued immediately reads the pre-edit row and the save looks lost. Wait for the
+  re-rendered reader to show the change (e.g. `.prose-md img[width="768"]`), then read the API.
+- **Two `locator.boundingBox()` calls straddle the post-save re-render.** The query invalidation
+  after a commit re-renders between them, so a parent measured before and a child measured after
+  compare boxes from *different layouts* — a float read as escaping its container by 400px when
+  the steady state was fine, twice. Snapshot all geometry in one `evaluate`, or better, phrase the
+  assertion as an eventually-true `waitForFunction` so a transition can never be the sample.
 
 ## Print and PDF
 

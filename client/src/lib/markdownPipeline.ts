@@ -9,6 +9,7 @@ import type { PluggableList, Processor } from 'unified';
 // `Data`, and without this the processor's data bag does not admit the field this file writes.
 import type {} from 'remark-parse';
 import { fenceParagraphs } from './legacyCode';
+import { splitImageSrc } from './imageRef';
 
 /**
  * The reader's half of the Markdown dialect, in one place.
@@ -151,9 +152,108 @@ function rehypePreToProse() {
   return (tree: HastRoot) => unwrapPre(tree as unknown as HastNode);
 }
 
+/**
+ * Tags that already hold inline content, so an `<img>` inside one needs no paragraph of its own.
+ * Anything else — the root, a `<div>`, a `<blockquote>`, a list item — is a block container, and
+ * the editor can only put an inline node inside a paragraph there.
+ */
+const INLINE_HOSTS = new Set([
+  'p',
+  'a',
+  'em',
+  'strong',
+  'u',
+  'del',
+  's',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'td',
+  'th',
+  'figcaption',
+]);
+
+/**
+ * A raw `<img>` that is not already inside a text container is read as a paragraph (WP-37).
+ *
+ * Markdown's own `![…](…)` always lands inside a paragraph, so the editor's image node is inline
+ * and everything agrees. Raw HTML does not: `rehypeRaw` leaves the `<img>` exactly where it stood,
+ * outside any paragraph, while the editor — which has nowhere else to put an inline node — reads it
+ * into one. The two halves then render different HTML for the same note, which is the one thing the
+ * round-trip gate exists to catch.
+ *
+ * It **recurses**, like `unwrapPre` above and unlike the first cut of this plugin, which mapped the
+ * root's direct children only. Raw HTML from an import or a restored backup is exactly the source
+ * this exists for, and such markup routinely nests: `<div><img …></div>` and `<blockquote><img
+ * …></blockquote>` both left the reader and the editor disagreeing, so a note visibly re-spaced
+ * itself when you clicked into it and again when you clicked away (IMG-07).
+ *
+ * Only an import or a restored backup can carry such a tag; nothing in the app authors one. Same
+ * situation and same remedy as `rehypePreToProse` above, which is why it sits here rather than in
+ * the sanitize schema: this is about *shape*, not about safety.
+ */
+function wrapLooseImages(node: HastNode) {
+  if (!node.children) return;
+  const host = node.type === 'element' ? (node.tagName ?? '') : '';
+  const insideText = INLINE_HOSTS.has(host);
+  node.children = node.children.map((child) => {
+    if (!insideText && child.type === 'element' && child.tagName === 'img') {
+      return { type: 'element', tagName: 'p', properties: {}, children: [child] };
+    }
+    wrapLooseImages(child);
+    return child;
+  });
+}
+
+function rehypeImgToParagraph() {
+  return (tree: HastRoot) => wrapLooseImages(tree as unknown as HastNode);
+}
+
+/**
+ * The stored `?w=384&a=right` on our own references becomes the `width`/`align` the browser
+ * honours (WP-37).
+ *
+ * This is the reader's half of the presentation spelling; the editor's is the `width`/`align`
+ * attribute pair on `MdImage` in richtext.ts, and `splitImageSrc` is the one definition both
+ * call, so the two halves cannot drift. It sits *here* rather than in the React component so the
+ * round-trip gate — which renders through these plugins and ends in `rehype-stringify`, never in
+ * React — asserts the semantics at string level: a raw `<img … width="120" align="right">` and
+ * its round-trip as `![…](…?w=120&a=right)` must produce the same HTML, and they only can if the
+ * lift happens inside the shared pipeline. (`width` is set before `align` for the same reason:
+ * property insertion order is attribute order in the stringified HTML.)
+ *
+ * An explicit attribute on a raw tag wins over the query in its src, matching the order the
+ * editor's attribute parser reads them in. Unrecognized queries stay on the src verbatim — the
+ * server ignores them, and the editor round-trips them untouched.
+ */
+function liftImageQueries(node: HastNode) {
+  if (!node.children) return;
+  for (const child of node.children) {
+    if (child.type === 'element' && child.tagName === 'img') {
+      const props = (child.properties ??= {});
+      const { src, width, align } = splitImageSrc(String(props.src ?? ''));
+      if (width !== null || align !== null) {
+        props.src = src;
+        if (width !== null && (props.width === undefined || props.width === null)) props.width = width;
+        if (align !== null && (props.align === undefined || props.align === null)) props.align = align;
+      }
+    }
+    liftImageQueries(child);
+  }
+}
+
+function rehypeImgQuery() {
+  return (tree: HastRoot) => liftImageQueries(tree as unknown as HastNode);
+}
+
 /** Order is load-bearing: raw HTML is parsed first, reshaped, and only then sanitized. */
 export const rehypePlugins: PluggableList = [
   rehypeRaw,
   rehypePreToProse,
+  rehypeImgToParagraph,
+  rehypeImgQuery,
   [rehypeSanitize, sanitizeSchema],
 ];

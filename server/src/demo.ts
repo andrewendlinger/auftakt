@@ -9,6 +9,7 @@
  * Dates are relative to today, so due dates stay meaningful and the archive cutoff keeps
  * working however long from now this runs.
  */
+import { createHash } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -112,14 +113,131 @@ Die Bühne braucht <u>zwingend</u> zwei Monitore. Kontakt über [die Technik-Sei
 
 > Aufbau nur mit Helm 🎧`;
 
-// Appended to RICH_DESCRIPTION below — the shape migrateProjectsMergeNotes() leaves behind
-// when a pre-merge project had both text fields filled.
-const RICH_PROJECT_NOTES = `**Bestätigt:** Termin, Saal und Honorar stehen. Rider liegt vor — Details im [Ordner](https://example.com/rider).`;
+/**
+ * A tiny hall plan (WP-37), so the „Bild im Text" branch has something to look at without anyone
+ * having to insert one by hand. 260×173 JPEG, ~6 KB — the CSV importer cannot express an image any
+ * more than it can express `parent_id`, which is why the demo fixtures are code.
+ *
+ * The reference stored in the prose is the *content* token, so it is computed here rather than
+ * written out: change a byte of the image and the row and the Markdown move together.
+ */
+const SAALPLAN_JPEG_B64 =
+  '/9j/4AAQSkZJRgABAQAASABIAAD/4QBMRXhpZgAATU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQA' +
+  'AAABAAABBKADAAQAAAABAAAArQAAAAD/7QA4UGhvdG9zaG9wIDMuMAA4QklNBAQAAAAAAAA4QklNBCUAAAAAABDUHYzZjwCyBOmA' +
+  'CZjs+EJ+/8AAEQgArQEEAwEiAAIRAQMRAf/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQE' +
+  'AAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldY' +
+  'WVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk' +
+  '5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAAIBAgQEAwQHBQQEAAECdwABAgMR' +
+  'BAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdo' +
+  'aWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+jp6vLz' +
+  '9PX29/j5+v/bAEMADw8PDw8PGg8PGiQaGhokMSQkJCQxPjExMTExPks+Pj4+Pj5LS0tLS0tLS1paWlpaWmlpaWlpdnZ2dnZ2dnZ2' +
+  'dv/bAEMBEhMTHhweNBwcNHtURVR7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e3t7e//dAAQA' +
+  'Ef/aAAwDAQACEQMRAD8A76o3lSPG7PPTAJ/lUlQv/r4/o39KAE+0R+jf98n/AAo+0R+jf98n/Cp6KAIPtEfo3/fJ/wAKPtEfo3/f' +
+  'J/wqeigCD7RH6N/3yf8ACj7RH6N/3yf8KnooAg+0R+jf98n/AAo+0R+jf98n/Cp6KAIPtEfo3/fJ/wAKPtEfo3/fJ/wouZxbW8lw' +
+  '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';
+const SAALPLAN_BYTES = Buffer.from(SAALPLAN_JPEG_B64, 'base64');
+const SAALPLAN_TOKEN = createHash('sha256').update(SAALPLAN_BYTES).digest('hex').slice(0, 32);
+const SAALPLAN_REF = `/api/images/${SAALPLAN_TOKEN}`;
 
+// Appended to RICH_DESCRIPTION below — the shape migrateProjectsMergeNotes() leaves behind
+// when a pre-merge project had both text fields filled. `?w=384` is what „Bild einfügen" writes
+// today (the „Mittel" default), so this is the sized branch to eyeball; `?a=center` is the
+// centered one. The float branch is the imported raw `align="right"` in the artist note below,
+// and the linked image there stays unsized, i.e. „Original".
+const RICH_PROJECT_NOTES = `**Bestätigt:** Termin, Saal und Honorar stehen. Rider liegt vor — Details im [Ordner](https://example.com/rider).
+
+![Saalplan großer Saal](${SAALPLAN_REF}?w=384)
+
+Fürs Programmheft, klein und zentriert:
+
+![Saalplan zentriert](${SAALPLAN_REF}?w=192&a=center)`;
+
+// The two image shapes only an *import* produces, side by side with the one the button writes —
+// so the branches that used to disagree between reader and editor have something to look at.
+// A raw `<img>` nested inside a block (here a quote) rendered outside any paragraph in the reader
+// while the editor read it into one, and `width`/`align` used to be dropped on the way to the DOM,
+// so the thumbnail jumped to full column width. Click into the note and out of it: nothing may
+// move.
 const RICH_ARTIST_NOTES = `Streichquartett, <u>Residenz</u> über das ganze Festival. Reisen gemeinsam an 🚐.
 
 - Bevorzugt vegetarisches Catering
-- Braucht Stimmzimmer ab Mittag`;
+- Braucht Stimmzimmer ab Mittag
+
+> Aus dem alten Notion-Export übernommen:
+> <img src="${SAALPLAN_REF}" alt="Saalplan aus dem Export" width="120" align="right">
+
+Und der Plan mit Link auf die Saalseite: [![Saalplan](${SAALPLAN_REF})](https://example.com/saal)`;
 
 const RICH_EVENT_NOTES = `Doors 19:00, Beginn **19:30**. Zugabe ist abgesprochen 🎻.`;
 
@@ -499,6 +617,14 @@ function main(): void {
     `INSERT INTO artists (id, name, color, notes, layout, sort_order)
      VALUES (@id, @name, @color, @notes, @layout, @sort_order)`,
   );
+  // The demo hall plan. `ON CONFLICT DO NOTHING` mirrors the real upload path, so re-seeding is
+  // idempotent for the same reason a second paste of the same picture is.
+  db.prepare(
+    `INSERT INTO images (token, mime, bytes, byte_size, width, height, name)
+     VALUES (?, 'image/jpeg', ?, ?, 260, 173, 'saalplan.jpg')
+     ON CONFLICT(token) DO NOTHING`,
+  ).run(SAALPLAN_TOKEN, SAALPLAN_BYTES, SAALPLAN_BYTES.length);
+
   const insProject = db.prepare(
     `INSERT INTO projects (id, artist_id, code, name, status, description, color, layout, deleted_at, sort_order)
      VALUES (@id, @artist_id, @code, @name, @status, @description, @color, @layout, @deleted_at, @sort_order)`,

@@ -92,6 +92,18 @@ export function LinkIcon({ className = 'h-4 w-4' }: IconProps) {
   );
 }
 
+/** „Bild einfügen" — a framed picture: the mountain-and-sun every photo app draws (WP-37). */
+export function ImageIcon({ className = 'h-4 w-4' }: IconProps) {
+  return (
+    <svg className={className} {...common}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <circle cx="8.5" cy="9.5" r="1.5" />
+      <path d="M21 16l-5-5-5.5 5.5" />
+      <path d="M3 18l4-4 3 3" />
+    </svg>
+  );
+}
+
 /** „Bearbeiten" / „Umbenennen" — the pencil that used to be `✎`. */
 export function PencilIcon({ className = 'h-4 w-4' }: IconProps) {
   return (

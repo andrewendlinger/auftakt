@@ -102,6 +102,21 @@ by key; **settings** are upserted minus `SETTINGS_NOT_COPIED` (`saison`, `backup
 `first_run_done`). That exclusion list is an allowlist of what stays *behind*, so a new setting is
 carried over by default — nothing to add there when you add one.
 
+**Images in flowing text** (`images`, WP-37) are a third exception: they travel **unconditionally**,
+whatever groups were ticked. A reference lives inside a Markdown string — `/api/images/<token>`,
+where the token is `sha256(bytes)` — and the set of strings that can hold one is not closable
+(eight text columns, every text-typed custom column inside the `tasks.custom_values` JSON, and the
+landing notes in `seasons.json`, which is not even in the file being copied). Gating them would
+surface as a broken picture at the customer. They go through the same `copyRows` as every other
+table, with `ON CONFLICT(token) DO NOTHING` passed in: dedupe on the content token rather than kept
+ids, so the copy is also correct into a *non-empty* target, and no stored prose ever has to be
+rewritten. Only the *read* of the source table is wrapped in a `try` — a season file written before
+WP-37 has none — because a failure **writing** to the new season has to surface rather than be
+reported as a successful copy. The stored URL carries **no season**: an `<img>` request sends no headers, so the
+window's pin is appended at render time (`Markdown.tsx`, and the editor's `resolveSrc`) and stripped
+again on the way back in — see `client/src/lib/imageRef.ts`. The table is deliberately absent from
+`lib/cascade.ts`, so nothing purges it; `docs/DECISIONS.md` has the reasoning.
+
 ### Migrations
 
 `initDb(db, isFresh)` is **the single initialisation path** — `getDb()` and `createSeason()` both
@@ -430,6 +445,7 @@ Which module owns which invariant. Reach for these rather than rebuilding the be
 | `pushWithToast(entry, message)` (UndoProvider) | pairing a stack entry with its toast. Never call `push` *and* wire a toast `onAction` — doing both is TTU-13, where the toast ran `revert` behind the stack's back. `DERIVED_INVERSE_KEYS` (hooks.ts) maps a resource to the columns the server derives. |
 | `useUndoableDelete()` (hooks.ts) | soft-delete + undo stack + toast, returning whether the row is actually gone. A delete endpoint that does not answer `{deleted:false}` on a no-op silently opts out of the „war bereits gelöscht" check — teach it in `nothingDeleted()`. **Deleting a row that has a page of its own passes `gone: [kind, id]`** — its keys go stale but are never refetched. Without it the blanket invalidate asks for the deleted row while its page is still mounted (the redirect is a router transition and does not commit first), the server answers 404, and the user gets an error toast next to the „gelöscht" one. |
 | `lib/season.ts` | the window's season boundary: the sessionStorage pin, the response-echo adoption, the 410 recovery (`seasonGone()` → landing + relayed toast) and `switchSeason()` — **the only legal way to change seasons from the client.** Calling `api.activateSeason` directly moves the default without switching anything. `switchSeason()` yields when its own activate comes back 410: the recovery has already navigated, and a second navigation over it left the relay flag latched and the window unable to recover from any later 410 (PR50-01). `sessionStorage['auftakt-season']` has exactly one other reader, and it is in another process: `windowSeason()` in `electron/main.ts` peeks it via `executeJavaScript` to route the Datei menu's export/import. `electron/tsconfig.json` includes only `electron/*.ts`, so no typecheck spans the two spellings — **grep is the whole coupling**, and renaming the key means renaming both (PR50-10). |
+| `lib/imageRef.ts` | how an image in flowing text is spelled (WP-37). The stored form is root-relative and **season-free** (`/api/images/<sha256-token>`), which is why the untouched `defaultSchema` already renders it and why a season copy rewrites nothing. `withSeasonPin`/`canonicalImageSrc` are exact inverses and the reason that holds: an `<img>` request carries no header, so the window's pin is appended when the tag is drawn and stripped when one is read back — leak it into storage and the note is wrong in every *other* season. Pure (no DOM, no `sessionStorage`, no imports) so `lib/richtext.ts` stays loadable by the headless gate and `check:unit` reaches the escaping rules. |
 | `lib/broadcast.ts` | cross-window signalling. **One channel object per window, for posting AND listening — the singleton IS the self-suppression**: BroadcastChannel skips delivery only to the posting object, so a second `new BroadcastChannel('auftakt')` makes a window hear its own writes and loop every invalidate. Messages are versioned pure signals, never data. `useInvalidateAll` posts; the sole listener lives in `main.tsx`, where it shares one coalesced blanket invalidate with the `backup-config-changed` bridge event (see „Windows (plural)"). |
 | `lib/sectionSpecs.ts` (via `SectionCatalog.tsx`) | the section catalog: `SectionSpec[]` → `arrangerConfig` derives the arranger props, `pickerBuiltins` the „+ Bereich" rows. Spec order **is** the fresh-layout default order; a removable spec must carry its picker group (type-enforced). The derivation is pure and lives in `lib/` so `check:unit` reaches it without React; `SectionCatalog.tsx` re-exports it and holds the shared section bodies (`StatsSection`, `AttentionSection` — both computed sections say so in a hint line under the renameable heading). |
 | `SectionPickerModal` | the one „Bereich hinzufügen" presentation (type rows, restore rows, name field, Enter-to-create). Persistence stays with the wrappers — `AddSectionModal` creates `custom_sections` rows, `AddLandingSectionButton` registry sections (SHL-29's split). |

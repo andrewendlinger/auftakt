@@ -60,6 +60,42 @@ const roundtrip = (md: string) => {
 };
 
 /**
+ * …and the document it parsed into has to be **legal**, which round-tripping does not prove.
+ *
+ * `setContent` builds the doc with `Node.fromJSON`, which does not validate, and serializing walks
+ * it without asking either — so a structurally invalid document passes render-equality and
+ * idempotence happily, and only explodes later when something *edits* it. That is exactly what
+ * WP-37 shipped: `@tiptap/extension-paragraph` unwraps a paragraph whose only child is an image,
+ * which is correct for a block image node and wrong for ours, so `![x](…)` on its own line landed
+ * as `doc > image` — inline content where the schema says `block+`. Every image fixture here was
+ * green while clicking into such a note threw „Called contentMatchAt on a node with invalid
+ * content" and the field refused to open.
+ *
+ * `doc.check()` is ProseMirror's own answer to „is this document legal", and the dispatch is the
+ * cheapest way to reach the plugins that touch the end of the document (trailing-node), since that
+ * is what the app does on mount and on every keystroke.
+ */
+const docIsLegal = (md: string): string | null => {
+  // A **fresh editor, content at construction** — `setContent` is not the path the app takes and
+  // not the path that breaks. It dispatches a replace step, and ProseMirror repairs an illegal
+  // slice on the way in by fitting it into the schema; `useEditor({ content })` goes through
+  // `Node.fromJSON`, which validates nothing and hands the editor a document it cannot survive
+  // editing. Asserting through `setContent` would have found nothing at all.
+  const probe = new Editor({ element: el, extensions: markdownExtensions(), content: md, contentType: 'markdown' });
+  try {
+    probe.state.doc.check();
+    // The plugins that touch the end of the document (trailing-node) run on any transaction, so
+    // this is what the placeholder nudge and the first keystroke do in the app.
+    probe.view.dispatch(probe.state.tr);
+    return null;
+  } catch (err) {
+    return `invalid document: ${(err as Error).message}`;
+  } finally {
+    probe.destroy();
+  }
+};
+
+/**
  * C0 controls except tab and newline. Stored Markdown is plain text a human edits and a backup
  * round-trips; a control character in it is corruption, not formatting. WP-30 found one being
  * written for real — the table serializer joined the blocks of a multi-block cell with U+001F.
@@ -71,6 +107,9 @@ const CODE_TAGS = /<(pre|code)[\s>]/;
 
 /** The indent unit Tab writes (RichTextEditor). Plain spaces cannot survive a paragraph. */
 const NBSP = '\u00a0';
+
+/** A stored image reference (WP-37): root-relative, season-free, 32 hex chars of content hash. */
+const IMG = '/api/images/9f2a41c7b8e05d3a6c1f4b90e7d28a35';
 
 // --- corpus: every authored construct + realistic prose, incl. legacy <u> ------------
 const corpus: Record<string, string> = {
@@ -129,6 +168,86 @@ const corpus: Record<string, string> = {
   rawPreTag: 'davor\n\n<pre>Soundcheck\nEinlass</pre>',
   inlineBackticksLegacy: 'ein `code` wort',
   inlineBackticksEscaped: 'ein \\`code\\` wort',
+  // WP-37. Before the image node existed, every one of these came back out of the editor as its
+  // alt text with the URL dropped — a picture silently becoming a word, which is why the plain
+  // `image` case alone fails the gate on the unfixed code. `imageInline` is the one that pins
+  // `inline: true`: the renderer puts an image inside its paragraph, so a block node would split
+  // this sentence in two and disagree with the reader.
+  image: `![Saalplan](${IMG})`,
+  imageInline: `Davor ![Saalplan](${IMG}) danach.`,
+  imageTitle: `![Saalplan](${IMG} "Großer Saal")`,
+  imageNoAlt: `![](${IMG})`,
+  imageBracketAlt: `![Plan \\[Entwurf\\]](${IMG})`,
+  // Destinations the app never authors but a note can hold: an imported `https://` image (which
+  // the reader does draw) and a `data:` URL (which the sanitizer strips the src from, so it draws
+  // broken). Both must still survive the editor verbatim — giving back what you were given is the
+  // whole repair, and re-writing either one would be a second, quieter loss.
+  imageHttpsLegacy: '![x](https://example.com/a.jpg)',
+  imageDataUrlLegacy: '![x](data:image/jpeg;base64,AAAA)',
+  imageSpacedUrlLegacy: '![x](<https://e.org/a b.jpg>)',
+  // A backslash in the alt — a file name really can carry one, and the alt fallback *is* the file
+  // name. It used to gain one on every save (`a\b` → `a\\b` → `a\\\\b`) because the reader
+  // unescapes `\\` and marked does not: the first pass still rendered equal, so only the
+  // idempotence assertion catches it. That is why this entry exists rather than a bracket variant.
+  imageBackslashAlt: `![a\\b](${IMG})`,
+  imageBackslashBeforeBracket: `![a\\\\[b](${IMG})`,
+  // A link around an image, which no toolbar authors but an import carries. The destination used
+  // to be dropped on save — the mark reached neither the node (the parser cannot mark an atom) nor
+  // the output (the serializer only writes marks around text).
+  imageLinked: `[![Saalplan](${IMG})](https://example.com)`,
+  imageLinkedInline: `Davor [![Saalplan](${IMG})](https://example.com) danach.`,
+  imageLinkedTitle: `[![Saalplan](${IMG})](https://example.com "Zur Seite")`,
+  imageInList: `- eins\n- ![Saalplan](${IMG})\n- drei`,
+  imageInTable: `| Raum | Plan |\n| --- | --- |\n| Saal | ![Saalplan](${IMG}) |`,
+  imageInQuote: `> Achtung ![Saalplan](${IMG})`,
+  // Only an import or a restored backup can carry raw `<img>`, and it used to be deleted outright.
+  // The block case needs `rehypeImgToParagraph` — at the root the reader leaves the tag unwrapped
+  // while the editor round-trip puts it in a paragraph.
+  imageRawTagInline: `Davor <img src="${IMG}" alt="y"> danach.`,
+  imageRawTagBlock: `davor\n\n<img src="${IMG}" alt="y">\n\ndanach`,
+  // …and nested inside another block, which is how such markup actually arrives. The plugin used
+  // to map the root's direct children only, so the reader left this `<img>` outside any paragraph
+  // while the editor read it into one: the note re-spaced itself when you clicked in and again
+  // when you clicked away. A blockquote, not a `<div>`, because ProseMirror has a node for it —
+  // an unknown wrapper is dropped by the editor for reasons that have nothing to do with images.
+  // The same tag in a list item is deliberately *not* a case here: the round-trip writes a loose
+  // item (`- …\n\n`), and remark then renders `<li>\n<p>…</p>\n</li>` against the tight
+  // `<li><p>…</p></li>`. The two differ only in whitespace between block elements — nothing a
+  // browser draws differently — but string equality cannot say so, and the list spread has nothing
+  // to do with images.
+  imageRawTagInQuote: `> <img src="${IMG}" alt="y">`,
+  // A display width is spelled `?w=` on our own reference and nowhere else (WP-37 follow-up).
+  // `splitImageSrc` lifts it into a `width` attribute on both sides — the editor in
+  // `parseMarkdown`, the reader in `rehypeImgWidth` — and `composeImageSrc` writes it back, so
+  // the string must round-trip byte-identically wherever an image can sit.
+  imageWidth: `![Saalplan](${IMG}?w=384)`,
+  imageWidthInline: `Davor ![Saalplan](${IMG}?w=192) danach.`,
+  imageWidthTitle: `![Saalplan](${IMG}?w=384 "Großer Saal")`,
+  imageWidthLinked: `[![Saalplan](${IMG}?w=384)](https://example.com)`,
+  imageWidthInTable: `| Raum | Plan |\n| --- | --- |\n| Saal | ![Saalplan](${IMG}?w=192) |`,
+  // …and everything the spelling does *not* recognize passes through verbatim on both sides:
+  // a query that is not exactly `w=<int>`, and a foreign URL whose `?w=` belongs to somebody
+  // else's server. Rewriting either would be the quiet loss the image node exists to prevent.
+  imageWidthGarbage: `![x](${IMG}?w=abc)`,
+  imageWidthTwoParams: `![x](${IMG}?w=384&x=1)`,
+  imageWidthForeignQuery: '![x](https://example.com/a.jpg?w=300)',
+  // A raw tag's `width` attribute survives an edit, re-spelled as `?w=` — before the schema had a
+  // `width` attr, the demo's own `<img … width="120">` fixture silently lost it on the first
+  // keystroke. Attribute order matches `mdast-util-to-hast` (src, alt, then the lifted width), so
+  // the two render paths agree at string level.
+  imageRawTagWidth: `Davor <img src="${IMG}" alt="y" width="120"> danach.`,
+  // The alignment leg (`?a=`), alone, combined with the width in canonical order, and everything
+  // the grammar refuses: the wrong order and a value that is not left/right/center (imports carry
+  // `top`/`middle`, which meant vertical alignment) pass through verbatim on both sides.
+  imageAlignRight: `![Saalplan](${IMG}?a=right)`,
+  imageAlignCenter: `![Saalplan](${IMG}?a=center)`,
+  imageWidthAlign: `![Saalplan](${IMG}?w=384&a=right)`,
+  imageAlignWrongOrder: `![x](${IMG}?a=right&w=384)`,
+  imageAlignGarbage: `![x](${IMG}?a=middle)`,
+  // …and the imported raw shape the demo seeds (`width` + `align`), which used to lose both on
+  // the first keystroke. Attribute order src/alt/width/align matches the lift order in
+  // `rehypeImgQuery`, which is what keeps the two render paths string-equal.
+  imageRawTagAligned: `Davor <img src="${IMG}" alt="y" width="120" align="right"> danach.`,
   // Spelled from the escape, never typed: a literal U+00A0 in a fixture is invisible, and the
   // next editor to touch this file would „fix" it back into a plain space.
   nbspIndent: `${NBSP.repeat(3)}Aufbau ab 14:00\n${NBSP.repeat(6)}Soundcheck`,
@@ -201,13 +320,17 @@ const assertMarkdown = (name: string, md: string, source: 'md' | 'json') => {
   const idempotent = out1 === out2;
   const clean = !CONTROL_CHARS.test(md) && !CONTROL_CHARS.test(out1);
   const codeFree = !CODE_TAGS.test(render(md)) && !CODE_TAGS.test(render(out1));
-  if (renderEqual && idempotent && clean && codeFree) {
+  // Both directions: the stored text must parse into a legal document, and so must what the
+  // editor writes back — an invalid doc that serializes cleanly is exactly the failure this
+  // catches, and it is invisible to the three assertions above.
+  const illegal = docIsLegal(md) ?? docIsLegal(out1);
+  if (renderEqual && idempotent && clean && codeFree && !illegal) {
     console.log(`  ok   ${name}`);
     return;
   }
   failures++;
   console.log(
-    `  FAIL ${name}${renderEqual ? '' : '  [render differs]'}${idempotent ? '' : '  [not idempotent]'}${clean ? '' : '  [control chars]'}${codeFree ? '' : '  [renders code]'}`,
+    `  FAIL ${name}${renderEqual ? '' : '  [render differs]'}${idempotent ? '' : '  [not idempotent]'}${clean ? '' : '  [control chars]'}${codeFree ? '' : '  [renders code]'}${illegal ? `  [${illegal}]` : ''}`,
   );
   if (!renderEqual) {
     console.log(`       ${source === 'json' ? 'json md' : 'in  md '}: ${JSON.stringify(md)}`);
@@ -237,6 +360,135 @@ for (const [name, doc] of Object.entries(jsonCorpus)) {
   assertMarkdown(name, editor.getMarkdown(), 'json');
 }
 
+/**
+ * The clipboard gate (WP-37): an `<img>` reaches the document only if it is one of ours.
+ *
+ * ProseMirror parses pasted HTML with the node's own `parseHTML` rules, so an unqualified
+ * `img[src]` quietly turned „paste a picture from a web page" into a supported path — with the
+ * `src` verbatim, past the resize → JPEG → 1.5 MB upload that `DECISIONS.md` says is the only way
+ * an image enters the app. A `data:` one then writes hundreds of kilobytes of base64 into a text
+ * column, and the reader's sanitizer strips it again, so the bloat lands and the picture does not.
+ *
+ * `insertContent` with an HTML string runs the same DOM rules the clipboard does, which is what
+ * makes this reachable headlessly. The Markdown side stays wide open on purpose — `imageHttpsLegacy`
+ * and `imageDataUrlLegacy` above assert that a *stored* foreign source still round-trips.
+ */
+const parseHtml = (html: string) => {
+  editor.commands.setContent('', { contentType: 'markdown' });
+  editor.commands.insertContent(html);
+  return editor.getMarkdown();
+};
+
+const clipboard: Array<[string, string, boolean]> = [
+  ['unsere eigene Referenz', `<p>davor <img src="${IMG}" alt="y"> danach</p>`, true],
+  ['mit Saison-Pin (Kopie im Editor)', `<p><img src="${IMG}?season=3" alt="y"></p>`, true],
+  ['mit Breite (Kopie im Editor)', `<p><img src="${IMG}?season=3" width="360" alt="y"></p>`, true],
+  ['mit unlesbarer Breite', `<p><img src="${IMG}" width="50%" alt="y"></p>`, true],
+  ['mit Breite und Ausrichtung', `<p><img src="${IMG}?season=3" width="360" align="right" alt="y"></p>`, true],
+  ['mit unlesbarer Ausrichtung', `<p><img src="${IMG}" align="top" alt="y"></p>`, true],
+  ['data: aus einer Webseite', '<p><img src="data:image/png;base64,AAAA" alt="y"></p>', false],
+  ['https: aus einer Webseite', '<p><img src="https://example.com/a.jpg" alt="y"></p>', false],
+  ['file:// aus dem Dateisystem', '<p><img src="file:///Users/x/a.jpg" alt="y"></p>', false],
+];
+
+for (const [name, html, admitted] of clipboard) {
+  const out = parseHtml(html);
+  const hasImage = out.includes('![');
+  if (hasImage === admitted) {
+    console.log(`  ok   clipboard: ${name}`);
+  } else {
+    failures++;
+    console.log(
+      `  FAIL clipboard: ${name}  [${admitted ? 'sollte übernommen werden' : 'sollte verworfen werden'}]`,
+    );
+    console.log(`       out md : ${JSON.stringify(out)}`);
+  }
+}
+
+// The pin is stripped on the way in, so a copy inside the editor cannot store one season's URL in
+// another season's note — the reason `canonicalImageSrc` runs before the check above.
+const pinned = parseHtml(`<p><img src="${IMG}?season=3" alt="y"></p>`);
+if (pinned.includes('?season=')) {
+  failures++;
+  console.log(`  FAIL clipboard: der Saison-Pin darf nicht gespeichert werden`);
+  console.log(`       out md : ${JSON.stringify(pinned)}`);
+} else {
+  console.log('  ok   clipboard: der Saison-Pin wird beim Lesen entfernt');
+}
+
+// …while a width travels the other way: the DOM attribute a copied `<img>` carries is stored as
+// `?w=`, still without the pin. A width the spelling does not accept is dropped, not stored.
+const sized = parseHtml(`<p><img src="${IMG}?season=3" width="360" alt="y"></p>`);
+if (!sized.includes(`(${IMG}?w=360)`) || sized.includes('?season=')) {
+  failures++;
+  console.log(`  FAIL clipboard: die Breite wird als ?w= gespeichert, der Pin nicht`);
+  console.log(`       out md : ${JSON.stringify(sized)}`);
+} else {
+  console.log('  ok   clipboard: die Breite wird als ?w= gespeichert, der Pin nicht');
+}
+const unsized = parseHtml(`<p><img src="${IMG}" width="50%" alt="y"></p>`);
+if (unsized.includes('?w=')) {
+  failures++;
+  console.log(`  FAIL clipboard: eine unlesbare Breite darf nicht gespeichert werden`);
+  console.log(`       out md : ${JSON.stringify(unsized)}`);
+} else {
+  console.log('  ok   clipboard: eine unlesbare Breite wird verworfen');
+}
+const aligned = parseHtml(`<p><img src="${IMG}?season=3" width="360" align="right" alt="y"></p>`);
+if (!aligned.includes(`(${IMG}?w=360&a=right)`) || aligned.includes('?season=')) {
+  failures++;
+  console.log(`  FAIL clipboard: Breite und Ausrichtung werden kanonisch gespeichert, der Pin nicht`);
+  console.log(`       out md : ${JSON.stringify(aligned)}`);
+} else {
+  console.log('  ok   clipboard: Breite und Ausrichtung werden kanonisch gespeichert, der Pin nicht');
+}
+const misaligned = parseHtml(`<p><img src="${IMG}" align="top" alt="y"></p>`);
+if (misaligned.includes('?a=')) {
+  failures++;
+  console.log(`  FAIL clipboard: eine unlesbare Ausrichtung darf nicht gespeichert werden`);
+  console.log(`       out md : ${JSON.stringify(misaligned)}`);
+} else {
+  console.log('  ok   clipboard: eine unlesbare Ausrichtung wird verworfen');
+}
+
+/**
+ * The editor must *understand* the width spelling, not merely carry it.
+ *
+ * String equality cannot see the difference: an editor that kept `?w=384` verbatim in the node's
+ * `src` would round-trip every corpus case above byte-identically — and draw the image full-size
+ * while the reader draws it at 384, and silently refuse to re-size it (the size buttons write the
+ * `width` attribute, and `composeImageSrc` refuses a src that already carries a query). So this
+ * asserts the parsed node directly: the query is lifted into `width`, and the editor's own
+ * rendered `<img>` carries it — the WYSIWYG half the size buttons and the paste path read back.
+ */
+editor.commands.setContent(`![x](${IMG}?w=384&a=right)`, { contentType: 'markdown' });
+// Structural, like `getAttrs` in richtext.ts: the JSON node union has no `attrs` on text nodes.
+type LooseNode = {
+  type?: string;
+  attrs?: { src?: string; width?: number | null; align?: string | null };
+  content?: LooseNode[];
+};
+const imageAttrs = ((editor.getJSON() as LooseNode).content ?? [])
+  .flatMap((node) => node.content ?? [])
+  .filter((node) => node.type === 'image')
+  .map((node) => node.attrs);
+if (
+  imageAttrs.length !== 1 ||
+  imageAttrs[0]?.src !== IMG ||
+  imageAttrs[0]?.width !== 384 ||
+  imageAttrs[0]?.align !== 'right'
+) {
+  failures++;
+  console.log('  FAIL node: ?w=/?a= werden nicht in die width/align-Attribute gehoben');
+  console.log(`       attrs  : ${JSON.stringify(imageAttrs)}`);
+} else if (!editor.getHTML().includes('width="384"') || !editor.getHTML().includes('align="right"')) {
+  failures++;
+  console.log('  FAIL node: width/align erreichen das gezeichnete <img> nicht');
+  console.log(`       html   : ${editor.getHTML()}`);
+} else {
+  console.log('  ok   node: ?w=/?a= werden zu width/align, im Dokument und im gezeichneten <img>');
+}
+
 editor.destroy();
 const total = Object.keys(corpus).length + Object.keys(jsonCorpus).length;
 if (failures) {
@@ -244,5 +496,6 @@ if (failures) {
   process.exit(1);
 }
 console.log(
-  `\nmarkdown round-trip: all ${total} cases render-equal, idempotent, control-char free and code free`,
+  `\nmarkdown round-trip: all ${total} cases render-equal, idempotent, control-char free and code free` +
+    `, and all ${clipboard.length + 6} clipboard and node assertions hold`,
 );
