@@ -33,6 +33,18 @@ reproduced without it.
 
 Security problems go through [SECURITY.md](SECURITY.md) instead, privately.
 
+## Stack
+
+- **Frontend:** React + TypeScript + Vite + Tailwind CSS + TanStack Query
+- **Backend:** Express + better-sqlite3 (one SQLite file = one season's whole database)
+- **Shell/packaging:** Electron + electron-builder
+
+Day-to-day work happens in the browser (`npm run dev`); Electron is only the window, the
+packaging and the native pieces (file dialogs, backups, external links). The REST boundary is
+hard — **no Electron APIs in React**, only the narrow `window.auftakt` preload bridge for
+external links and DB export/import. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) is the
+reference for everything that crosses it.
+
 ## Running it locally
 
 ```bash
@@ -73,6 +85,31 @@ Bump `engines.npm` alongside it.
 — `demo.ts` pins its own data directory before the first connection is opened. Prefer
 it over `npm run seed`, which is unconditionally destructive.
 
+For real data instead:
+
+```bash
+npm run seed      # fills ./.data/ — deletes what is there first
+npm run dev       # server (4317) + client (5317) → http://localhost:5317
+```
+
+`npm run seed` imports `{artists,contacts,projects,events,tasks,links}.csv` from
+`AUFTAKT_IMPORT_DIR` (UTF-8, comma-separated, ISO dates, empty cell = unknown) and falls back
+to a five-row sample dataset when that folder is absent. In dev the live database is
+`./.data/auftakt.db` — one file per season, alongside the `seasons.json` registry. The packaged
+app uses Electron's `userData` directory instead. Never put either in a cloud-sync folder.
+
+## Repository layout
+
+```
+server/   Express + better-sqlite3: db.ts (schema), seed.ts, demo.ts, routes/, lib/
+client/   React app: pages/, components/, api/, lib/ (linkify, dates, colors)
+electron/ main.ts, preload.ts, menu.ts, backup.ts
+shared/   time.ts — the timestamp convention, shared by server and Electron
+scripts/  build.mjs (esbuild bundles), icons.mjs (npm run icons) + the check-*.mjs gates
+build/    app icons for electron-builder (icon.icns, icon.ico, icon.png)
+docs/     architecture, decisions, verification and test checklists
+```
+
 ## Gates
 
 There is no linter. That is a decision, not an oversight — see
@@ -82,20 +119,69 @@ does not change.
 
 ```bash
 npm run typecheck   # server + client + electron
-npm run check       # backup/import, timezones, API invariants, Markdown round-trip
+npm run check       # unit, backup/import, timezones, API invariants, Markdown round-trip
 ```
 
-Both run in CI on every push and pull request. The four `check:*` scripts are plain
-`.mjs` files that boot the real server and assert against it. They are the load-bearing
-gate and nothing replaces them — what is being added alongside covers the client, which
-they never reached.
+Both run in CI on every push and pull request. `npm run check` runs five gates, in this order:
+
+| script | guards |
+| --- | --- |
+| `check:unit` | client Vitest over `client/src/**/*.test.ts` — the pure logic the boot-the-server scripts cannot reach. Four of them reach *up* into `electron/`, the only automated coverage the main process has |
+| `check:backup` | the backup/import path — boots the server against a temp dir and drives `/api/backup` |
+| `check:dates` | the naive-local-time convention — re-runs the API under two timezones 25 h apart |
+| `check:api` | server data invariants — purge vs live children, the `writable` allowlist, `parent_id` rules, restore semantics, season copies |
+| `check:markdown` | the rich-text editor's Markdown round-trip, under jsdom |
+
+Four of the five are plain `.mjs` files that boot the real server and assert against it. They
+are the load-bearing gate and nothing replaces them.
+
+`npm run check:package` is a sixth gate, deliberately **not** part of `check`: it inspects what
+electron-builder actually packed, so it needs a build. CI runs it in the `build` job instead.
 
 [docs/VERIFYING.md](docs/VERIFYING.md) lists the traps that have produced a wrong result
 at least once. It is worth reading before writing any check that drives a browser: every
 entry is an assertion that would otherwise have been wrong.
 
-Start with [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before changing anything that
-crosses the REST boundary.
+### CI
+
+`.github/workflows/build.yml` has three jobs:
+
+- **`checks`** — on every push, pull request and tag: `npm run typecheck`, `npm run check` and
+  `npm audit` on `ubuntu-latest`.
+- **`build`** — only for a `v*` tag or a manual run (`workflow_dispatch`): the `.dmg` on
+  `macos-latest` and the NSIS installer on `windows-latest`, plus `check:package`, a build
+  provenance attestation and an SBOM per platform.
+- **`release`** — only for a `v*` tag: uploads both installers and `latest.yml` to the
+  [Releases page](https://github.com/andrewendlinger/auftakt/releases) **as a draft**, which is
+  then smoke-tested and published by hand.
+
+## Building installers
+
+```bash
+# development: run `npm run dev` first, then in a second terminal
+npm run electron:dev
+
+# installers — output in ./release
+npm run dist         # current platform
+npm run dist:mac     # macOS .dmg
+npm run dist:win     # Windows NSIS
+```
+
+`npm run build` builds the client (`client/dist`) and bundles server and Electron
+(`server/dist`, `electron/dist`) with esbuild; electron-builder packs the result according to
+`electron-builder.yml`, whose comments explain the parts that are load-bearing rather than
+cosmetic. Neither installer is signed — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+("Packaging") and [SECURITY.md](SECURITY.md).
+
+## Documentation
+
+| File | Contents |
+| --- | --- |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | the three tiers, timestamp convention, seasons, backups, CRUD factory, soft delete, the data-driven task columns, client contracts |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | what was deliberately *not* done, and why |
+| [`docs/VERIFYING.md`](docs/VERIFYING.md) | traps when verifying by hand in the browser |
+| [`docs/BACKUP-TESTING.md`](docs/BACKUP-TESTING.md) | the manual backup/import checklist, run on both OSes before each release |
+| [`SECURITY.md`](SECURITY.md) | reporting route, signing, verifying a download |
 
 ## Reading the commit log
 
