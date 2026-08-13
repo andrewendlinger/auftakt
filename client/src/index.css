@@ -148,10 +148,38 @@ body {
 }
 /* An image alone in its paragraph is a block, not a word: as an inline it sits on the text
    baseline and reserves the descender space under it, which reads as a stray gap. The node is
-   inline in the schema (so it can sit mid-sentence) — this is the display half of that choice. */
-.prose-md p > img:only-child {
+   inline in the schema (so it can sit mid-sentence) — this is the display half of that choice.
+   Aligned images opt out: the rules below own their display and margins, and this selector's
+   higher specificity would silently win the margin fight otherwise. */
+.prose-md p > img:only-child:not([align='left']):not([align='right']):not([align='center']) {
   display: block;
   margin: 0.4em 0;
+}
+/* The three alignments `?a=` can spell (WP-37, lib/imageRef.ts). left/right are what the legacy
+   attribute has always meant on an <img> — a float the text wraps around, the shape imported
+   notes already carry — pinned here with margins so screen, editor and paper agree instead of
+   leaning on browser defaults. center has no legacy meaning on an <img>; it is a block centered
+   in the column. */
+.prose-md img[align='left'] {
+  float: left;
+  margin: 0.4em 1em 0.4em 0;
+}
+.prose-md img[align='right'] {
+  float: right;
+  margin: 0.4em 0 0.4em 1em;
+}
+.prose-md img[align='center'] {
+  display: block;
+  float: none;
+  margin: 0.4em auto;
+}
+/* A float escapes its container: a right-floated plan at the end of a note would hang out of the
+   card on screen and off the sheet in print. Clearfix rather than `display: flow-root`, which
+   would also stop margins collapsing and shift every note's spacing. */
+.prose-md::after {
+  content: '';
+  display: block;
+  clear: both;
 }
 
 /* Rich-text editor (RichTextEditor.tsx). The editable area carries `.prose-md` too, so

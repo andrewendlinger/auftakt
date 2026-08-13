@@ -213,36 +213,40 @@ function rehypeImgToParagraph() {
 }
 
 /**
- * The stored `?w=384` on our own references becomes the `width` the browser honours (WP-37).
+ * The stored `?w=384&a=right` on our own references becomes the `width`/`align` the browser
+ * honours (WP-37).
  *
- * This is the reader's half of the width spelling; the editor's is the `width` attribute on
- * `MdImage` in richtext.ts, and `splitImageSrc` is the one definition both call, so the two
- * halves cannot drift. It sits *here* rather than in the React component so the round-trip gate —
- * which renders through these plugins and ends in `rehype-stringify`, never in React — asserts
- * the semantics at string level: a raw `<img … width="120">` and its round-trip as `![…](…?w=120)`
- * must produce the same HTML, and they only can if the lift happens inside the shared pipeline.
+ * This is the reader's half of the presentation spelling; the editor's is the `width`/`align`
+ * attribute pair on `MdImage` in richtext.ts, and `splitImageSrc` is the one definition both
+ * call, so the two halves cannot drift. It sits *here* rather than in the React component so the
+ * round-trip gate — which renders through these plugins and ends in `rehype-stringify`, never in
+ * React — asserts the semantics at string level: a raw `<img … width="120" align="right">` and
+ * its round-trip as `![…](…?w=120&a=right)` must produce the same HTML, and they only can if the
+ * lift happens inside the shared pipeline. (`width` is set before `align` for the same reason:
+ * property insertion order is attribute order in the stringified HTML.)
  *
- * An explicit `width` attribute on a raw tag wins over a `?w=` in its src, matching the order the
+ * An explicit attribute on a raw tag wins over the query in its src, matching the order the
  * editor's attribute parser reads them in. Unrecognized queries stay on the src verbatim — the
  * server ignores them, and the editor round-trips them untouched.
  */
-function liftImageWidths(node: HastNode) {
+function liftImageQueries(node: HastNode) {
   if (!node.children) return;
   for (const child of node.children) {
     if (child.type === 'element' && child.tagName === 'img') {
       const props = (child.properties ??= {});
-      const { src, width } = splitImageSrc(String(props.src ?? ''));
-      if (width !== null) {
+      const { src, width, align } = splitImageSrc(String(props.src ?? ''));
+      if (width !== null || align !== null) {
         props.src = src;
-        if (props.width === undefined || props.width === null) props.width = width;
+        if (width !== null && (props.width === undefined || props.width === null)) props.width = width;
+        if (align !== null && (props.align === undefined || props.align === null)) props.align = align;
       }
     }
-    liftImageWidths(child);
+    liftImageQueries(child);
   }
 }
 
-function rehypeImgWidth() {
-  return (tree: HastRoot) => liftImageWidths(tree as unknown as HastNode);
+function rehypeImgQuery() {
+  return (tree: HastRoot) => liftImageQueries(tree as unknown as HastNode);
 }
 
 /** Order is load-bearing: raw HTML is parsed first, reshaped, and only then sanitized. */
@@ -250,6 +254,6 @@ export const rehypePlugins: PluggableList = [
   rehypeRaw,
   rehypePreToProse,
   rehypeImgToParagraph,
-  rehypeImgWidth,
+  rehypeImgQuery,
   [rehypeSanitize, sanitizeSchema],
 ];

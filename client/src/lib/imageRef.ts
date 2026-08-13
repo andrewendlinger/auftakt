@@ -22,12 +22,13 @@
  * the `?season=` leg for „plain `<a href>` downloads, which cannot carry headers"; an image load is
  * the same class of request.
  *
- * A display width rides on the same URL in the *other* direction: stored as `?w=384`, split off
- * into a `width` attribute before anything is drawn (`splitImageSrc`), and written back on
- * serialization (`composeImageSrc`). The two query legs never meet — **a stored reference carries
- * only `w`, a rendered `src` carries only `season`** — which is what lets `canonicalImageSrc` keep
- * truncating at the first `?` unchanged: by the time a URL reaches it, a recognized width has
- * already been lifted off, and whatever query is left is render-only or noise.
+ * Display presentation rides on the same URL in the *other* direction: stored as `?w=384`,
+ * `?a=right` or `?w=384&a=right` (canonical order, `w` first), split off into `width`/`align`
+ * attributes before anything is drawn (`splitImageSrc`), and written back on serialization
+ * (`composeImageSrc`). The two query legs never meet — **a stored reference carries only `w` and
+ * `a`, a rendered `src` carries only `season`** — which is what lets `canonicalImageSrc` keep
+ * truncating at the first `?` unchanged: by the time a URL reaches it, a recognized query has
+ * already been lifted off, and whatever is left is render-only or noise.
  *
  * Pure on purpose — no DOM, no `sessionStorage`, no imports. `richtext.ts` is loaded by the
  * headless round-trip gate, which has neither a window nor a season, and `check:unit` reaches this
@@ -93,41 +94,74 @@ export function isImageWidth(width: unknown): width is number {
 }
 
 /**
- * Lift a stored display width off a reference: `…?w=384` → `{ src: '…', width: 384 }`.
- *
- * The split is deliberately narrow — our own path, and a query that is *exactly* `w=` followed by
- * a plain positive integer. Anything else (a foreign URL whose `?w=` belongs to somebody else's
- * server, a hand-typed `?w=abc`, a multi-parameter query) passes through verbatim, because both
- * parsers must give back what they were given: a string this function does not recognize
- * round-trips byte-identically, and the round-trip gate's render-equality and idempotence hold by
- * construction instead of by case analysis.
- *
- * `composeImageSrc` is the exact inverse on everything this recognizes — that pair is what keeps
- * the editor (`MdImage` in richtext.ts) and the reader (`rehypeImgWidth` in markdownPipeline.ts)
- * spelling the width identically, the same way `withSeasonPin`/`canonicalImageSrc` hold the pin.
+ * An alignment the `?a=` spelling accepts. `left`/`right` mean what the legacy `align` attribute
+ * has always meant on an `<img>` — a float the text wraps around, the shape Notion-imported notes
+ * already carry — and `center` is a block centered in the column (a float-center does not exist).
+ * The CSS half lives in index.css under `.prose-md img[align=…]`.
  */
-export function splitImageSrc(src: string): { src: string; width: number | null } {
-  if (isImageRef(src)) {
-    const cut = src.indexOf('?');
-    if (cut !== -1) {
-      const match = /^w=([1-9]\d{0,3})$/.exec(src.slice(cut + 1));
-      if (match) return { src: src.slice(0, cut), width: Number(match[1]) };
-    }
-  }
-  return { src, width: null };
+export type ImageAlign = 'left' | 'right' | 'center';
+
+export function isImageAlign(align: unknown): align is ImageAlign {
+  return align === 'left' || align === 'right' || align === 'center';
 }
 
 /**
- * Write a display width back onto a reference — the serializer half of `splitImageSrc`.
+ * Lift stored display presentation off a reference:
+ * `…?w=384&a=right` → `{ src: '…', width: 384, align: 'right' }`.
  *
- * Appends only where the split would lift it back off: our own path, a width the spelling accepts,
- * and no query already present. A reference that kept an unrecognized query (`?w=abc` and friends
- * ride along verbatim in the node's `src`) is returned unchanged rather than double-queried — a
- * width set on such a node is dropped on save instead of corrupting the URL.
+ * The split is deliberately all-or-nothing — our own path, and a query that is *exactly* one of
+ * `w=<int>`, `a=<left|right|center>` or `w=<int>&a=<…>` in that order. Anything else (a foreign
+ * URL whose `?w=` belongs to somebody else's server, a hand-typed `?w=abc` or `?a=middle`, the
+ * parameters in the wrong order) passes through verbatim, because both parsers must give back
+ * what they were given: a string this function does not recognize round-trips byte-identically,
+ * and the round-trip gate's render-equality and idempotence hold by construction instead of by
+ * case analysis.
+ *
+ * `composeImageSrc` is the exact inverse on everything this recognizes — that pair is what keeps
+ * the editor (`MdImage` in richtext.ts) and the reader (`rehypeImgQuery` in markdownPipeline.ts)
+ * spelling the query identically, the same way `withSeasonPin`/`canonicalImageSrc` hold the pin.
  */
-export function composeImageSrc(src: string, width: number | null | undefined): string {
-  if (!isImageWidth(width) || !isImageRef(src) || src.includes('?')) return src;
-  return `${src}?w=${width}`;
+export function splitImageSrc(src: string): {
+  src: string;
+  width: number | null;
+  align: ImageAlign | null;
+} {
+  if (isImageRef(src)) {
+    const cut = src.indexOf('?');
+    if (cut !== -1) {
+      const match = /^(?:w=([1-9]\d{0,3})(?:&a=(left|right|center))?|a=(left|right|center))$/.exec(
+        src.slice(cut + 1),
+      );
+      if (match) {
+        return {
+          src: src.slice(0, cut),
+          width: match[1] ? Number(match[1]) : null,
+          align: (match[2] ?? match[3] ?? null) as ImageAlign | null,
+        };
+      }
+    }
+  }
+  return { src, width: null, align: null };
+}
+
+/**
+ * Write display presentation back onto a reference — the serializer half of `splitImageSrc`.
+ *
+ * Appends only where the split would lift it back off: our own path, values the spelling accepts,
+ * canonical order, and no query already present. A reference that kept an unrecognized query
+ * (`?w=abc` and friends ride along verbatim in the node's `src`) is returned unchanged rather
+ * than double-queried — a width or alignment set on such a node is dropped on save instead of
+ * corrupting the URL.
+ */
+export function composeImageSrc(
+  src: string,
+  width: number | null | undefined,
+  align?: ImageAlign | null,
+): string {
+  const w = isImageWidth(width) ? `w=${width}` : '';
+  const a = isImageAlign(align) ? `a=${align}` : '';
+  if ((!w && !a) || !isImageRef(src) || src.includes('?')) return src;
+  return `${src}?${w && a ? `${w}&${a}` : w || a}`;
 }
 
 /**

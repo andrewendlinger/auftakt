@@ -8,6 +8,7 @@ import {
   imageMarkdown,
   imageRefToken,
   imageRefUrl,
+  isImageAlign,
   isImageRef,
   isImageWidth,
   splitImageSrc,
@@ -93,12 +94,14 @@ describe('withSeasonPin / canonicalImageSrc', () => {
 });
 
 describe('splitImageSrc / composeImageSrc', () => {
-  it('lifts a stored width off our own reference', () => {
-    expect(splitImageSrc(`${REF}?w=384`)).toEqual({ src: REF, width: 384 });
-    expect(splitImageSrc(REF)).toEqual({ src: REF, width: null });
+  it('lifts stored presentation off our own reference', () => {
+    expect(splitImageSrc(`${REF}?w=384`)).toEqual({ src: REF, width: 384, align: null });
+    expect(splitImageSrc(`${REF}?a=right`)).toEqual({ src: REF, width: null, align: 'right' });
+    expect(splitImageSrc(`${REF}?w=384&a=center`)).toEqual({ src: REF, width: 384, align: 'center' });
+    expect(splitImageSrc(REF)).toEqual({ src: REF, width: null, align: null });
   });
 
-  it('recognizes exactly `w=<int>` and passes everything else through verbatim', () => {
+  it('recognizes exactly the canonical grammar and passes everything else through verbatim', () => {
     // Both parsers must give back what they were given; a rewritten URL is the quiet loss the
     // image node exists to prevent. So the split is all-or-nothing: no partial extraction.
     for (const src of [
@@ -107,30 +110,44 @@ describe('splitImageSrc / composeImageSrc', () => {
       `${REF}?w=0`,
       `${REF}?w=0384`, // a leading zero would not reconstruct byte-identically
       `${REF}?w=12345`, // five digits is no display width
+      `${REF}?a=middle`, // vertical alignment from an import, not ours
+      `${REF}?a=right&w=384`, // wrong order — compose writes `w` first, so this is not ours
+      `${REF}?w=384&a=right&x=1`,
       `${REF}?season=3`, // the render-only leg, never a stored one
       'https://example.com/a.jpg?w=300', // somebody else's `w`
     ]) {
-      expect(splitImageSrc(src)).toEqual({ src, width: null });
+      expect(splitImageSrc(src)).toEqual({ src, width: null, align: null });
     }
   });
 
   it('is an exact inverse pair, which is what keeps both halves spelling one string', () => {
     for (const width of [1, 192, 384, 768, 9999]) {
-      const stored = composeImageSrc(REF, width);
-      expect(stored).toBe(`${REF}?w=${width}`);
-      expect(splitImageSrc(stored)).toEqual({ src: REF, width });
+      for (const align of [null, 'left', 'right', 'center'] as const) {
+        const stored = composeImageSrc(REF, width, align);
+        expect(stored).toBe(`${REF}?w=${width}${align ? `&a=${align}` : ''}`);
+        expect(splitImageSrc(stored)).toEqual({ src: REF, width, align });
+      }
     }
+    expect(composeImageSrc(REF, null, 'right')).toBe(`${REF}?a=right`);
+    expect(splitImageSrc(composeImageSrc(REF, null, 'right'))).toEqual({
+      src: REF,
+      width: null,
+      align: 'right',
+    });
   });
 
-  it('refuses to write a width where the split would not lift it back off', () => {
+  it('refuses to write what the split would not lift back off', () => {
     expect(composeImageSrc(REF, null)).toBe(REF);
     expect(composeImageSrc(REF, 0)).toBe(REF);
     expect(composeImageSrc(REF, 12.5)).toBe(REF);
     expect(composeImageSrc(REF, 10000)).toBe(REF);
     expect(composeImageSrc('https://example.com/a.jpg', 384)).toBe('https://example.com/a.jpg');
+    expect(composeImageSrc('https://example.com/a.jpg', null, 'right')).toBe(
+      'https://example.com/a.jpg',
+    );
     // A reference that kept an unrecognized query rides verbatim in the node's src; appending
-    // a second `?` would corrupt it, so a width set on such a node is dropped instead.
-    expect(composeImageSrc(`${REF}?w=abc`, 384)).toBe(`${REF}?w=abc`);
+    // a second `?` would corrupt it, so presentation set on such a node is dropped instead.
+    expect(composeImageSrc(`${REF}?w=abc`, 384, 'right')).toBe(`${REF}?w=abc`);
   });
 
   it('accepts the widths the spelling can store', () => {
@@ -141,6 +158,17 @@ describe('splitImageSrc / composeImageSrc', () => {
     expect(isImageWidth(10000)).toBe(false);
     expect(isImageWidth(Number('50%'))).toBe(false); // NaN, the DOM-attribute garbage case
     expect(isImageWidth(null)).toBe(false);
+  });
+
+  it('accepts the alignments the spelling can store', () => {
+    expect(isImageAlign('left')).toBe(true);
+    expect(isImageAlign('right')).toBe(true);
+    expect(isImageAlign('center')).toBe(true);
+    // The legacy attribute's other values meant vertical alignment; they stay untouched imports.
+    expect(isImageAlign('top')).toBe(false);
+    expect(isImageAlign('middle')).toBe(false);
+    expect(isImageAlign('')).toBe(false);
+    expect(isImageAlign(null)).toBe(false);
   });
 });
 

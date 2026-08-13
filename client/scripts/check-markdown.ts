@@ -236,6 +236,18 @@ const corpus: Record<string, string> = {
   // keystroke. Attribute order matches `mdast-util-to-hast` (src, alt, then the lifted width), so
   // the two render paths agree at string level.
   imageRawTagWidth: `Davor <img src="${IMG}" alt="y" width="120"> danach.`,
+  // The alignment leg (`?a=`), alone, combined with the width in canonical order, and everything
+  // the grammar refuses: the wrong order and a value that is not left/right/center (imports carry
+  // `top`/`middle`, which meant vertical alignment) pass through verbatim on both sides.
+  imageAlignRight: `![Saalplan](${IMG}?a=right)`,
+  imageAlignCenter: `![Saalplan](${IMG}?a=center)`,
+  imageWidthAlign: `![Saalplan](${IMG}?w=384&a=right)`,
+  imageAlignWrongOrder: `![x](${IMG}?a=right&w=384)`,
+  imageAlignGarbage: `![x](${IMG}?a=middle)`,
+  // …and the imported raw shape the demo seeds (`width` + `align`), which used to lose both on
+  // the first keystroke. Attribute order src/alt/width/align matches the lift order in
+  // `rehypeImgQuery`, which is what keeps the two render paths string-equal.
+  imageRawTagAligned: `Davor <img src="${IMG}" alt="y" width="120" align="right"> danach.`,
   // Spelled from the escape, never typed: a literal U+00A0 in a fixture is invisible, and the
   // next editor to touch this file would „fix" it back into a plain space.
   nbspIndent: `${NBSP.repeat(3)}Aufbau ab 14:00\n${NBSP.repeat(6)}Soundcheck`,
@@ -372,6 +384,8 @@ const clipboard: Array<[string, string, boolean]> = [
   ['mit Saison-Pin (Kopie im Editor)', `<p><img src="${IMG}?season=3" alt="y"></p>`, true],
   ['mit Breite (Kopie im Editor)', `<p><img src="${IMG}?season=3" width="360" alt="y"></p>`, true],
   ['mit unlesbarer Breite', `<p><img src="${IMG}" width="50%" alt="y"></p>`, true],
+  ['mit Breite und Ausrichtung', `<p><img src="${IMG}?season=3" width="360" align="right" alt="y"></p>`, true],
+  ['mit unlesbarer Ausrichtung', `<p><img src="${IMG}" align="top" alt="y"></p>`, true],
   ['data: aus einer Webseite', '<p><img src="data:image/png;base64,AAAA" alt="y"></p>', false],
   ['https: aus einer Webseite', '<p><img src="https://example.com/a.jpg" alt="y"></p>', false],
   ['file:// aus dem Dateisystem', '<p><img src="file:///Users/x/a.jpg" alt="y"></p>', false],
@@ -420,6 +434,22 @@ if (unsized.includes('?w=')) {
 } else {
   console.log('  ok   clipboard: eine unlesbare Breite wird verworfen');
 }
+const aligned = parseHtml(`<p><img src="${IMG}?season=3" width="360" align="right" alt="y"></p>`);
+if (!aligned.includes(`(${IMG}?w=360&a=right)`) || aligned.includes('?season=')) {
+  failures++;
+  console.log(`  FAIL clipboard: Breite und Ausrichtung werden kanonisch gespeichert, der Pin nicht`);
+  console.log(`       out md : ${JSON.stringify(aligned)}`);
+} else {
+  console.log('  ok   clipboard: Breite und Ausrichtung werden kanonisch gespeichert, der Pin nicht');
+}
+const misaligned = parseHtml(`<p><img src="${IMG}" align="top" alt="y"></p>`);
+if (misaligned.includes('?a=')) {
+  failures++;
+  console.log(`  FAIL clipboard: eine unlesbare Ausrichtung darf nicht gespeichert werden`);
+  console.log(`       out md : ${JSON.stringify(misaligned)}`);
+} else {
+  console.log('  ok   clipboard: eine unlesbare Ausrichtung wird verworfen');
+}
 
 /**
  * The editor must *understand* the width spelling, not merely carry it.
@@ -431,23 +461,32 @@ if (unsized.includes('?w=')) {
  * asserts the parsed node directly: the query is lifted into `width`, and the editor's own
  * rendered `<img>` carries it — the WYSIWYG half the size buttons and the paste path read back.
  */
-editor.commands.setContent(`![x](${IMG}?w=384)`, { contentType: 'markdown' });
+editor.commands.setContent(`![x](${IMG}?w=384&a=right)`, { contentType: 'markdown' });
 // Structural, like `getAttrs` in richtext.ts: the JSON node union has no `attrs` on text nodes.
-type LooseNode = { type?: string; attrs?: { src?: string; width?: number | null }; content?: LooseNode[] };
+type LooseNode = {
+  type?: string;
+  attrs?: { src?: string; width?: number | null; align?: string | null };
+  content?: LooseNode[];
+};
 const imageAttrs = ((editor.getJSON() as LooseNode).content ?? [])
   .flatMap((node) => node.content ?? [])
   .filter((node) => node.type === 'image')
   .map((node) => node.attrs);
-if (imageAttrs.length !== 1 || imageAttrs[0]?.src !== IMG || imageAttrs[0]?.width !== 384) {
+if (
+  imageAttrs.length !== 1 ||
+  imageAttrs[0]?.src !== IMG ||
+  imageAttrs[0]?.width !== 384 ||
+  imageAttrs[0]?.align !== 'right'
+) {
   failures++;
-  console.log('  FAIL node: ?w= wird nicht in das width-Attribut gehoben');
+  console.log('  FAIL node: ?w=/?a= werden nicht in die width/align-Attribute gehoben');
   console.log(`       attrs  : ${JSON.stringify(imageAttrs)}`);
-} else if (!editor.getHTML().includes('width="384"')) {
+} else if (!editor.getHTML().includes('width="384"') || !editor.getHTML().includes('align="right"')) {
   failures++;
-  console.log('  FAIL node: das width-Attribut erreicht das gezeichnete <img> nicht');
+  console.log('  FAIL node: width/align erreichen das gezeichnete <img> nicht');
   console.log(`       html   : ${editor.getHTML()}`);
 } else {
-  console.log('  ok   node: ?w= wird zum width-Attribut, im Dokument und im gezeichneten <img>');
+  console.log('  ok   node: ?w=/?a= werden zu width/align, im Dokument und im gezeichneten <img>');
 }
 
 editor.destroy();
@@ -458,5 +497,5 @@ if (failures) {
 }
 console.log(
   `\nmarkdown round-trip: all ${total} cases render-equal, idempotent, control-char free and code free` +
-    `, and all ${clipboard.length + 4} clipboard and node assertions hold`,
+    `, and all ${clipboard.length + 6} clipboard and node assertions hold`,
 );

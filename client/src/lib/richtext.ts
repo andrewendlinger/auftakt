@@ -15,9 +15,11 @@ import {
   encodeSrc,
   escapeTitle,
   imageMarkdown,
+  isImageAlign,
   isImageRef,
   isImageWidth,
   splitImageSrc,
+  type ImageAlign,
 } from './imageRef';
 
 /**
@@ -182,6 +184,20 @@ const MdImage = Node.create<{ resolveSrc: (src: string) => string }>({
         renderHTML: (attrs: { width?: number | null }) =>
           isImageWidth(attrs.width) ? { width: attrs.width } : {},
       },
+      align: {
+        default: null,
+        // Same two-step read as `width`: the explicit legacy attribute (an imported raw tag, the
+        // editor's own rendered HTML) wins, then a `?a=` in a hand-written raw src. Anything but
+        // left/right/center — imports also carry `top`/`middle`, which meant vertical alignment —
+        // is null, i.e. ordinary text flow.
+        parseHTML: (el: { getAttribute(name: string): string | null }) => {
+          const attr = el.getAttribute('align');
+          if (isImageAlign(attr)) return attr;
+          return splitImageSrc(el.getAttribute('src') ?? '').align;
+        },
+        renderHTML: (attrs: { align?: string | null }) =>
+          isImageAlign(attrs.align) ? { align: attrs.align } : {},
+      },
     };
   },
 
@@ -223,14 +239,15 @@ const MdImage = Node.create<{ resolveSrc: (src: string) => string }>({
     return ['img', mergeAttributes(HTMLAttributes, { src: this.options.resolveSrc(src) })];
   },
 
-  // The width leg of the spelling (`?w=384`) is lifted off here and written back below —
-  // `splitImageSrc`/`composeImageSrc` are exact inverses, and the reader's `rehypeImgWidth`
-  // does the identical lift, so both halves draw the same `width` from the same string.
+  // The presentation legs of the spelling (`?w=384&a=right`) are lifted off here and written
+  // back below — `splitImageSrc`/`composeImageSrc` are exact inverses, and the reader's
+  // `rehypeImgQuery` does the identical lift, so both halves draw the same attributes from the
+  // same string.
   parseMarkdown: (token, helpers) => {
-    const { src, width } = splitImageSrc(token.href ?? '');
+    const { src, width, align } = splitImageSrc(token.href ?? '');
     return helpers.createNode(
       'image',
-      { src, alt: token.text ?? '', title: token.title ?? null, width },
+      { src, alt: token.text ?? '', title: token.title ?? null, width, align },
       [],
     );
   },
@@ -238,7 +255,11 @@ const MdImage = Node.create<{ resolveSrc: (src: string) => string }>({
   renderMarkdown: (node) =>
     wrapImageMarks(
       imageMarkdown(
-        composeImageSrc(node.attrs?.src ?? '', node.attrs?.width),
+        composeImageSrc(
+          node.attrs?.src ?? '',
+          node.attrs?.width,
+          node.attrs?.align as ImageAlign | null,
+        ),
         node.attrs?.alt ?? '',
         node.attrs?.title,
       ),
