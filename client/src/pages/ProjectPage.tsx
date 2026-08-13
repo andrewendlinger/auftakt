@@ -75,7 +75,7 @@ export function ProjectPage() {
     queryFn: () => api.tasks.list({ project_id: projectId }),
     enabled: validId,
   });
-  const { columns } = useScopedColumns({ scope: 'project', id: projectId }, validId);
+  const columns = useScopedColumns({ scope: 'project', id: projectId }, validId);
   const { data: customSections = [] } = useQuery({
     queryKey: ['customSections', 'project', projectId],
     queryFn: () => api.customSections.list({ project_id: projectId }),

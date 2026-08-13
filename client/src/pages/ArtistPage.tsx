@@ -79,7 +79,7 @@ export function ArtistPage() {
     queryFn: () => api.tasks.list({ resolved_artist_id: artistId }),
     enabled: validId,
   });
-  const { columns } = useScopedColumns({ scope: 'artist', id: artistId }, validId);
+  const columns = useScopedColumns({ scope: 'artist', id: artistId }, validId);
   const { data: customSections = [] } = useQuery({
     queryKey: ['customSections', 'artist', artistId],
     queryFn: () => api.customSections.list({ artist_id: artistId }),

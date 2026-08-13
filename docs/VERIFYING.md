@@ -335,6 +335,12 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   `input[placeholder^="Neue Aufgabe"]`, or `^="Neue allgemeine Aufgabe"` on the Übersicht.
 - **The task title cell also carries the subtask counter** („Requisiten sichten\n0/3"), so an
   `innerText` comparison needs the first line only.
+- **A column header's `innerText` is neither the column's name nor only its name.** The header is
+  CSS-uppercased and prefixed with the column's icon, so „Abgabe" reads back as „📆 ABGABE" — an
+  equality test against the name fails on a table that is rendering it correctly. Case-fold and test
+  for containment. `table thead th` also spans *every* table on the page, and on an artist or
+  project page the Besetzung table („Position", „Person") comes first, so a positional read of that
+  list is not the task table's.
 - **A row located by its title stops matching the moment that title is being edited.** React sets
   `value` as a property, so an open `InlineInput` has no text — `locator('tr').filter({ hasText:
   title })` resolves to nothing and every follow-up call waits out its timeout while the editor is
