@@ -15,6 +15,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
   statSync,
@@ -23,7 +24,7 @@ import {
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -204,6 +205,50 @@ for (const s of seasons) {
   check(`  ${s.file} contains rows (WAL captured)`, n > 0, `${n} artists`);
 }
 
+// --- [1c] the folder explains itself: sub-folders, README, MANIFEST (WP-41) ---
+// The customer's complaint was that the backup folder is unreadable, so these two files and
+// the sub-folder split are the deliverable, not decoration. The CRLF/BOM assertions are the
+// load-bearing part: the folder sits on a Windows machine in Google Drive, and without them
+// Notepad shows one endless line of mojibake — which is the state this package fixes.
+check(
+  'restore points live under backups/',
+  (point ?? '').startsWith(join(backupDir, 'backups') + sep),
+  point,
+);
+
+/**
+ * Read a file the app wrote for the customer, asserting the Windows encoding it needs.
+ * The existence check comes before the read: a missing file must be a red line in this list,
+ * not an ENOENT stack that takes the remaining assertions down with it.
+ */
+function windowsDoc(name, path) {
+  if (!existsSync(path)) {
+    check(`${name} exists`, false, path);
+    return '';
+  }
+  const raw = readFileSync(path);
+  check(`${name} exists`, raw.length > 0, path);
+  check(`  ${name} starts with a UTF-8 BOM`, raw[0] === 0xef && raw[1] === 0xbb && raw[2] === 0xbf);
+  const text = raw.toString('utf8');
+  check(`  ${name} uses CRLF line endings`, text.includes('\r\n') && !/[^\r]\n/.test(text));
+  check(`  ${name} survived the umlauts`, text.includes('ä') || text.includes('ö') || text.includes('ü'));
+  return text;
+}
+
+const readme = windowsDoc('README.txt', join(backupDir, 'README.txt'));
+check('README explains the restore (data dir + the -wal trap)', /%APPDATA%/.test(readme) && /-wal/.test(readme));
+check('README does not mention flat backups it has none of', !readme.includes('auftakt-<Zeitstempel>.db'));
+
+const manifest = windowsDoc('MANIFEST.txt', join(point, 'MANIFEST.txt'));
+// The whole point of the manifest: the season NAME, which the file names cannot carry.
+// Compared as strings, not as a built regex: a label may legally contain ( + [ * , which would
+// either throw and abort the run or silently loosen the assertion.
+for (const s of seasons) {
+  const line = manifest.split('\r\n').find((l) => l.includes(s.file));
+  check(`  MANIFEST names ${s.file} → „${s.label}“`, (line ?? '').includes(`=  ${s.label}`), line);
+}
+check('MANIFEST names the app version', /App-Version: \S+/.test(manifest));
+
 // --- [1b] the backup folder is season-independent (WP-39) ---
 // It used to live in the active season's settings table, so switching season left an empty
 // backup_dir behind: no backup, and — where an older build had already marked first_run_done
@@ -297,8 +342,8 @@ try {
 }
 
 check(
-  'pre-import backup lands in the backup folder',
-  (imported.body.backup ?? '').startsWith(backupDir),
+  'pre-import backup lands under pre-import/ in the backup folder',
+  (imported.body.backup ?? '').startsWith(join(backupDir, 'pre-import') + sep),
   imported.body.backup,
 );
 
@@ -352,20 +397,27 @@ if (process.platform === 'win32' || process.getuid?.() === 0) {
   }
 }
 
-// --- pruning keeps the newest KEEP restore points and drops the oldest ---
-const folders = (prefix) =>
-  readdirSync(backupDir).filter(
-    (f) => f.startsWith(`${prefix}-`) && statSync(join(backupDir, f)).isDirectory(),
-  );
-const points = () => folders('auftakt');
+// --- pruning keeps the newest KEEP restore points and drops the oldest, and the old flat
+//     layout is migrated into the sub-folders on the way (WP-41) ---
+// The fixtures are written at the TOP level on purpose: that is the shape every installation
+// from before WP-41 has, so this doubles as the migration test. What must come out is one pool
+// of 30 per kind, in the sub-folder — not 30 in each of two places, and not an untouched pile
+// at the old level that nothing writes to and pruning can therefore never shrink.
+const folders = (prefix, dir = backupDir) =>
+  existsSync(dir)
+    ? readdirSync(dir).filter((f) => f.startsWith(`${prefix}-`) && statSync(join(dir, f)).isDirectory())
+    : [];
+const points = () => folders('auftakt', join(backupDir, 'backups'));
 for (let d = 1; d <= 33; d++) mkdirSync(join(backupDir, `auftakt-2020-01-${String(d).padStart(2, '0')}-00-00-00`));
 // Pre-import snapshots were never pruned at all, so the folder grew with every import (DBW-12).
 for (let d = 1; d <= 33; d++) mkdirSync(join(backupDir, `pre-import-2020-01-${String(d).padStart(2, '0')}-00-00-00`));
+// The newest fixture survives the 30-cap, so it is the one whose contents must come along.
+writeFileSync(join(backupDir, 'auftakt-2020-01-33-00-00-00', 'seasons.json'), '{"seasons":[]}');
 const legacy = join(backupDir, 'auftakt-2019-01-01-00-00-00.db');
 await import('node:fs').then((fs) => fs.writeFileSync(legacy, 'legacy flat backup'));
 
 await post('backup', { dir: backupDir });
-const preImport = folders('pre-import');
+const preImport = folders('pre-import', join(backupDir, 'pre-import'));
 check('pruning caps pre-import snapshots at 30', preImport.length === 30, `${preImport.length} übrig`);
 check('pruning drops the oldest pre-import snapshot first', !preImport.includes('pre-import-2020-01-01-00-00-00'));
 const kept = points();
@@ -373,6 +425,20 @@ check('pruning caps restore points at 30', kept.length === 30, `${kept.length} �
 check('pruning drops the oldest first', !kept.includes('auftakt-2020-01-01-00-00-00'));
 check('pruning keeps the newest', kept.includes(kept.slice().sort().reverse()[0]));
 check('legacy flat backups are left alone', existsSync(legacy));
+check(
+  'the old top level keeps no dated folders',
+  folders('auftakt').length === 0 && folders('pre-import').length === 0,
+  readdirSync(backupDir).join(', '),
+);
+check(
+  'a migrated restore point arrives with its contents',
+  existsSync(join(backupDir, 'backups', 'auftakt-2020-01-33-00-00-00', 'seasons.json')),
+);
+// The README is regenerated on every run, and now there IS a flat backup to explain.
+check(
+  'the README explains the flat backups once they exist',
+  readFileSync(join(backupDir, 'README.txt'), 'utf8').includes('auftakt-<Zeitstempel>.db'),
+);
 
 /* ---------- the WP-39 adoption migration, without a server ---------- */
 

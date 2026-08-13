@@ -60,12 +60,31 @@ npm run dist:mac    # or dist:win
 ### 3 · Startup backup covers every season
 
 - [ ] With a folder set and **two seasons** both holding data, relaunch.
-- [ ] Backup folder gains `auftakt-<stamp>/` containing `seasons.json` **and one `.db` per season**.
+- [ ] Backup folder gains `backups/auftakt-<stamp>/` containing `seasons.json`, `MANIFEST.txt`
+      **and one `.db` per season**.
 - [ ] Open each `.db` (DB Browser for SQLite) → rows are present. **An empty file is the old bug.**
 - [ ] Relaunch a few times → one folder per launch, oldest pruned past 30.
 - [ ] Any pre-existing flat `auftakt-<stamp>.db` files from older versions are still there.
 - [ ] Delete the configured backup folder (or make it read-only) and relaunch → an error dialog
       says no backup was written and points at Settings. **A console-only message is the old bug.**
+
+### 3c · The folder explains itself (WP-41)
+
+The customer's complaint was that the backup folder is unreadable, so these two files *are* the
+deliverable. `npm run check:backup` asserts they exist, carry a BOM and use CRLF; what it cannot
+check is whether they are understandable, which is the whole point.
+
+- [ ] Root holds `README.txt`; the dated folders live under `backups/`, the import safety copies
+      under `pre-import/`.
+- [ ] **Windows: open `README.txt` in real Notepad.** Line breaks and umlauts are the two things
+      that break. Then read it **without prior knowledge**: is it clear what the folder holds and
+      how to restore?
+- [ ] `MANIFEST.txt` in a restore point names the timestamp, the app version and **each season by
+      its label** (`auftakt.db = Festival 2026`) — the file names cannot carry it.
+- [ ] Upgrading an installation that already has dated folders at the *top* level: after the first
+      launch on the new version they have moved into `backups/` and `pre-import/`, contents intact,
+      and the flat `.db` files are still at the root. **Two piles at two levels means the move did
+      not run.**
 
 ### 3b · The backup folder survives a season switch (WP-39)
 
@@ -74,7 +93,8 @@ empty one behind, so the startup backup returned immediately — and where an ol
 already marked `first_run_done` on that season, there was no prompt and no error either. A real
 installation ran that way for two days before anyone noticed. It is now in `seasons.json`.
 
-- [ ] With a folder set, switch to another season, quit, relaunch → a dated folder **is** written.
+- [ ] With a folder set, switch to another season, quit, relaunch → a dated folder **is** written
+      under `backups/`.
 - [ ] Settings → the folder is named on **every** season, not just the one it was chosen on.
 - [ ] Create a brand-new season, switch to it, relaunch → still backed up.
 - [ ] Upgrading an installation that had the folder set on a non-active season: after the first
@@ -114,12 +134,15 @@ that season's settings.
 
 ### 7 · Restore
 
-- [ ] **Quit first, then delete any `*.db-wal` / `*.db-shm` left in the data dir.** A backup folder
-      holds only `.db` files and `seasons.json`, so a sidecar from the *previous* database survives
-      the copy and is replayed into the restored file on the next launch — the same
-      `database disk image is malformed` crash the import path unlinks them to avoid. Restoring
-      under a *running* app is worse still: the open handle never re-reads the file.
-- [ ] Copy a `auftakt-<stamp>/` folder's contents over the data dir (`.db` files + `seasons.json`).
+- [ ] **Quit first, then delete any `*.db-wal` / `*.db-shm` left in the data dir.** A restore point
+      holds only `.db` files, `seasons.json` and `MANIFEST.txt`, so a sidecar from the *previous*
+      database survives the copy and is replayed into the restored file on the next launch — the
+      same `database disk image is malformed` crash the import path unlinks them to avoid.
+      Restoring under a *running* app is worse still: the open handle never re-reads the file.
+- [ ] Copy a `backups/auftakt-<stamp>/` folder's contents over the data dir (`.db` files +
+      `seasons.json`; `MANIFEST.txt` is not needed there). **Follow `README.txt` in the backup
+      folder rather than this list** — those are the steps the customer gets, so a mistake in them
+      shows up here or nowhere.
 - [ ] Launch → all seasons are present, the season switcher lists them, data matches that timestamp.
 - [ ] Settings still names the backup folder — it rides along in `seasons.json` (WP-39).
 - [ ] A season restored from before the local-time conversion carries UTC stamps until it is

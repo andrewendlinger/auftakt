@@ -144,7 +144,18 @@ menu path resolves the focused window's pin, the Einstellungen buttons pass thei
 open file cannot be unlinked on Windows.
 
 Backups cover **every season plus `seasons.json`**, written as one dated restore-point folder per
-run and pruned to 30. Guarded by `npm run check:backup`; the Electron half has a manual checklist
+run and pruned to 30. The backup folder is split into `backups/` and `pre-import/` (WP-41), each
+its own pool of 30; folders an older version left at the top level are moved down on the next run,
+best-effort and self-detecting, while flat `auftakt-<stamp>.db` files from before the folders are
+left alone. A German `README.txt` at the root and a `MANIFEST.txt` per restore point explain the
+folder — CRLF and a UTF-8 BOM, because it is read in Notepad out of Google Drive.
+
+**Inside** a restore point everything stays flat and keeps the `file` names from `seasons.json`:
+restoring is a hand copy over the data directory, so the season *label* goes into the manifest and
+never into a file name. Two things are therefore fixed: the dated folder names must keep matching
+`^<prefix>-<stamp>$` (an unmatched folder is never pruned) and nothing may precede the stamp.
+
+Guarded by `npm run check:backup`; the Electron half has a manual checklist
 in [BACKUP-TESTING.md](BACKUP-TESTING.md) to run on macOS **and** Windows before a release.
 
 ## CRUD factory
