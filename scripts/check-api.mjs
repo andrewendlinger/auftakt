@@ -826,8 +826,14 @@ try {
     const headersOf = async (query) => {
       const res = await fetch(`${API}/export/tasks.xlsx${query}`);
       const wb = new ExcelJS.Workbook();
-      await wb.xlsx.load(Buffer.from(await res.arrayBuffer()));
-      return wb.getWorksheet('Aufgaben').getRow(1).values.filter(Boolean).map(String);
+      // Both casts are the type layer only. ExcelJS's bundled types predate the generic `Buffer`,
+      // so today's `Buffer<ArrayBuffer>` does not match its plain `Buffer`; and it types
+      // `Row.values` as a union with the by-key object form, which the array access below is not.
+      await wb.xlsx.load(/** @type {any} */ (Buffer.from(await res.arrayBuffer())));
+      const header = /** @type {import('exceljs').CellValue[]} */ (
+        wb.getWorksheet('Aufgaben').getRow(1).values
+      );
+      return header.filter(Boolean).map(String);
     };
     const artistSheet = await headersOf(`?resolved_artist_id=${artist.id}`);
     check("the artist sheet carries that artist's columns", artistSheet.includes('Freigabe'), artistSheet.join(', '));

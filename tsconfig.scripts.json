@@ -19,11 +19,22 @@
   // number of arguments, falling through a switch, forgetting a return on one branch.
   //
   // If these files are ever converted to TypeScript, turn `strict` on with them.
+  // `paths` because the gate scripts `createRequire` their heavy dependencies out of
+  // `server/node_modules` rather than carrying a second copy at the root — check-api reads its
+  // .xlsx back with the same ExcelJS the export route writes it with. tsc resolves those
+  // `require()` calls statically and looks only where *it* would look, so without this the root
+  // typecheck fails on a module that resolves perfectly at runtime. better-sqlite3 needs no entry:
+  // the root depends on it directly, for the Electron main process.
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2023"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    // Relative, and with no `baseUrl`: TypeScript 7 removed that option outright, and resolves
+    // these against the tsconfig's own directory instead.
+    "paths": {
+      "exceljs": ["./server/node_modules/exceljs"]
+    },
     "strict": false,
     "noImplicitAny": false,
     "noImplicitReturns": true,
