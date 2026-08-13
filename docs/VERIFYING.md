@@ -59,6 +59,21 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   assertions at the foot of that script reach a path that reads like it needs a real Cmd-V. The
   corollary is the trap: a parse rule *is* a paste rule, so widening one to read stored HTML
   silently widens what a paste may bring in (WP-37).
+- **`setContent` repairs an illegal document; `useEditor({ content })` does not.** The app hands
+  stored Markdown to the editor at *construction*, which goes through `Node.fromJSON` and validates
+  nothing. `setContent` dispatches a replace step, and ProseMirror fits an illegal slice into the
+  schema on the way in — so a document that crashes the real editor loads perfectly in a check
+  script written the obvious way. Build a fresh `new Editor({ content })` per case and call
+  `doc.check()`, then dispatch an empty transaction to reach the plugins that touch the end of the
+  document. The WP-37 image bug was invisible to the round-trip gate for exactly this reason.
+- **`.rte-content img` counts ProseMirror's own elements.** ProseMirror puts an
+  `<img class="ProseMirror-separator">` after an inline atom at the end of a text block, so
+  „the image was inserted once" reads as two or three. Select
+  `img:not(.ProseMirror-separator)`. Cost one wrong „the insert is duplicating images" verdict.
+- **The server rejects a dev client on any port but 5317 with a bare 403.** `ALLOWED_ORIGINS` in
+  `server/src/index.ts` is built from `CLIENT_DEV_PORT = 5317`, so running Vite on another port to
+  dodge a busy 4317 makes every write fail as „Forbidden" and reads exactly like a broken feature.
+  Move the *server* (`AUFTAKT_PORT=4319`) and keep the client on 5317.
 - **A gate that cannot fail is worse than no gate — prove the new one bites.** Revert the fix,
   watch the new case fail, restore it. Doing that here caught a sabotage that was itself broken: a
   duplicate `getAttrs:` key added *above* the real one changed nothing, because the later key wins,

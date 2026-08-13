@@ -241,8 +241,22 @@ export function RichTextEditor({
   placeholderRef.current = placeholder;
   // One commit per departure, whichever path notices it first (see the effect below).
   const blurFired = useRef(false);
+  /**
+   * „Bild einfügen" opens a **native** file panel, and that is not a departure (WP-37).
+   *
+   * The panel takes focus away from the whole window, so ProseMirror's own `onBlur` fires with
+   * `relatedTarget: null` — nothing to test against `rootRef`, so the guard below read it as „the
+   * user clicked somewhere else", committed, and `InlineNotes` unmounted the editor while the
+   * Finder window was still open. From the user's side: the text field closes behind the dialog,
+   * and the image they then pick has nowhere to go. Mounting the `<input>` inside `rootRef`
+   * (RTE-02) only covers the DOM events; a window losing focus is not one of them.
+   *
+   * The flag is cleared by whichever of `change`, `cancel` or the window regaining focus comes
+   * first, so a panel dismissed by any route re-arms the ordinary commit-on-blur.
+   */
+  const pickingImage = useRef(false);
   const fireBlur = () => {
-    if (blurFired.current || !onBlurRef.current) return;
+    if (pickingImage.current || blurFired.current || !onBlurRef.current) return;
     blurFired.current = true;
     void onBlurRef.current();
   };
@@ -336,6 +350,24 @@ export function RichTextEditor({
     // Reads only refs, so it registers once and never needs to re-bind.
   }, []);
 
+  /**
+   * Re-arm commit-on-blur when the file panel is dismissed without a file.
+   *
+   * `change` covers the pick, this covers the cancel — and it is a native listener rather than a
+   * React prop because `cancel` on `<input type="file">` is not in React's synthetic event set.
+   * Without it the flag above would stay raised for the rest of the editor's life and the note
+   * would stop saving on blur, which is a far worse bug than the one it guards.
+   */
+  useEffect(() => {
+    const input = fileRef.current;
+    if (!input) return;
+    const rearm = () => {
+      pickingImage.current = false;
+    };
+    input.addEventListener('cancel', rearm);
+    return () => input.removeEventListener('cancel', rearm);
+  }, [images]);
+
   // The placeholder decoration is only recomputed when the editor state moves, so nudge it
   // when the prop changes; without this the ref above would be read once and never again.
   useEffect(() => {
@@ -400,7 +432,16 @@ export function RichTextEditor({
         <Toolbar
           editor={editor}
           compact={compact}
-          onImage={images ? () => fileRef.current?.click() : undefined}
+          onImage={
+            images
+              ? () => {
+                  // Set *before* the click: the panel opens synchronously and the window's blur
+                  // arrives before any of our handlers do.
+                  pickingImage.current = true;
+                  fileRef.current?.click();
+                }
+              : undefined
+          }
           imageBusy={uploading}
         />
       )}
@@ -414,6 +455,7 @@ export function RichTextEditor({
           accept="image/*"
           className="hidden"
           onChange={(e) => {
+            pickingImage.current = false;
             const file = e.target.files?.[0];
             // Cleared before the await, so picking the same file twice in a row still fires.
             e.target.value = '';
