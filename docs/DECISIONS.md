@@ -1020,3 +1020,58 @@ what a user in the middle of typing means by it — and unlike ⌘Z it stops at 
 backdrop would strand it there. Search hits are `tabIndex={-1}`: with ↑/↓ and Enter on the field
 they no longer need to be a wall of tab stops, and `aria-activedescendant` is what announces the
 marked row while focus stays where the typing goes.
+
+## Auftakt-Text kennt keinen Code: the dialect drops it on all three surfaces (2026-08-13, WP-49)
+
+Users asked why their text sometimes turned grey and started showing HTML tags. One cause: the
+editable area is `white-space: pre-wrap`, so leading spaces are typeable, and nothing escapes them
+on the way out — four of them at the start of a paragraph mean „indented code block" to both
+parsers. What came back was a grey box with the app's own `<u>` printed literally, because code
+does not parse HTML. Nothing in the app authors code; the toolbar has no button for it. So code is
+gone from the dialect entirely rather than fenced off: `code`/`codeBlock` off in the editor,
+`codeIndented`/`codeText` disabled in micromark, `code`/`pre` out of the sanitize schema, and the
+`.prose-md code`/`pre` rules deleted. This reverses the comment `richtext.ts` used to carry — that
+`codeBlock` stays enabled „so any such content in existing notes round-trips".
+
+Switching the extensions off is the version of this fix that **eats text**: a `code` or `codespan`
+token with no handler returns `null` from `parseFallbackToken`, and the paragraph is gone the next
+time the note is opened. The tokenizer has to stop producing those tokens, which is why the module
+owns a `Marked` instance — `markedOptions` configures the global singleton and has no disable
+switch. Returning `undefined` from a tokenizer means „no match"; returning `false` hands back to
+marked's own implementation, which is the trap.
+
+**A stored fence degrades to prose, and its markers go with it.** The bug did not only render
+wrong, it wrote: an indented paragraph came back out of the editor as a ``` fence, so real
+databases hold fences the app manufactured from ordinary prose. Turning three backticks into
+visible characters would be the honest-but-ugly reading; instead the one code tokenizer left alive
+is the fence, and both sides map its output to a paragraph (`LegacyFence`, `remarkFenceToParagraph`
+— the two must change together). The text inside is *not* re-parsed: it was code, so a `*` in it
+stays a `*`. Round-trip fidelity is what makes this safe to assert rather than hope for, and the
+corpus in `check-markdown.ts` gained a fourth assertion for it — no case may render a `<pre>` or a
+`<code>`. Render-equality alone cannot see that: it compares two runs of the same renderer, so a
+construct both sides agree to draw as code passes it happily.
+
+**Tab indents with U+00A0, because a Markdown paragraph cannot carry leading spaces** (user
+decision 2026-08-13). The other half of the report was that Tab jumped focus out of the note.
+Making it insert spaces instead would have re-created the bug in a quieter form — the editor would
+show an indent that the reading view strips, since both parsers drop leading whitespace from a
+paragraph. Non-breaking spaces are not whitespace to either, so they survive the round-trip and
+both surfaces show the same thing. Lists and tables keep the Tab they already have (`sinkListItem`,
+`goToNextCell`); the `Indent` extension sits below them at `priority: 50` and takes what they left.
+It consumes the key either way — „nothing to indent here" must not fall through to the browser, or
+the reported bug is back in one branch. „Einrücken"/„Ausrücken" call the same pair, which is what
+makes WP-43's reading of the toolbar's blanket `tabIndex={-1}` true: those buttons now really do
+have another keyboard route.
+
+**⌘↵ saves from inside the editor.** Tab was the only keyboard way from a notes field to
+„Speichern", and it no longer leaves. ⌘F/⌘K are inert while a dialog is open (WP-43), so without
+this a dialog's notes field would have no keyboard exit at all. The editor owns the key rather than
+each caller: it blurs first — which is what the commit-on-blur callers already listen for, so
+`InlineNotes` and `CommentCell` handed their hand-rolled copies back — and then calls `onSubmit`,
+which only the two dialogs pass. Both `submit` functions guard themselves, so ⌘↵ marks the missing
+fields exactly like Enter from a single-line input rather than saving past them.
+
+The cost is accepted: a note that deliberately held code loses its formatting. Backticks read as
+the characters they are, fences read as the prose they contain. Nothing is deleted, and the
+customer reports never having used fences — „(i dont think users encountered code fences) its
+exclusively indentation". Revisit only if someone stores code in a festival note on purpose.

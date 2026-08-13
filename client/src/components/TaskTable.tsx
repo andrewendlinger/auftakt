@@ -1018,19 +1018,16 @@ function CommentCell({ task, onCommit }: { task: Task; onCommit: (v: string | nu
           setEditing(false);
           if (next() !== (task.comment ?? null)) onCommit(next());
         }}
-        // Enter is a paragraph here, so saving takes ⌘↵ and cancelling takes Escape — the same
-        // two keys `InlineNotes` binds, and the reason `RichTextEditor` runs a caller's handler
-        // ahead of its own keymap. Escape resets the draft first, which also disarms the
-        // unmount commit above (it reads the current render's `value`).
+        // Enter is a paragraph here, so cancelling takes Escape and saving takes ⌘↵ — the editor
+        // owns that one itself since WP-49 and blurs on it, which lands on the commit above.
+        // Escape resets the draft first, which also disarms the unmount commit (it reads the
+        // current render's `value`), and `RichTextEditor` runs a caller's handler ahead of its
+        // own keymap so this gets the key first.
         onKeyDown={(e) => {
           if (e.key === 'Escape') {
             e.preventDefault();
             setValue(task.comment ?? '');
             setEditing(false);
-          }
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault();
-            (e.target as HTMLElement).blur();
           }
         }}
       />

@@ -285,7 +285,9 @@ export function EventEditor({
         </div>
         <div className="col-span-2">
           <Label>Notizen</Label>
-          <RichTextEditor value={notes} onChange={setNotes} />
+          {/* ⌘↵ saves from in here: Enter is a paragraph and Tab indents (WP-49), so it is the
+              only keyboard route to „Speichern" once the caret is in the notes. */}
+          <RichTextEditor value={notes} onChange={setNotes} onSubmit={submit} />
         </div>
       </div>
     </Modal>

@@ -687,6 +687,10 @@ export function RecordFormModal({
                 onChange={(v) => set(f.name, v)}
                 placeholder={f.placeholder}
                 className={`${inputCls} min-h-40`}
+                // Enter is a paragraph in here and Tab indents since WP-49, so ⌘↵ is the only
+                // keyboard route to „Speichern" from a notes field. `submit` guards itself, so
+                // this marks the missing fields exactly like Enter from a single-line input.
+                onSubmit={submit}
               />
             ) : f.type === 'select' ? (
               <Select

@@ -13,6 +13,7 @@ import { Placeholder } from '@tiptap/extensions';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import type { Node as PMNode } from '@tiptap/pm/model';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
+import { INDENT_UNIT, outdentWidth } from '../lib/indent';
 import { markdownExtensions } from '../lib/richtext';
 import { isParsableUrl, normalizeUrl } from '../lib/url';
 import { EXTERNAL_LINK_CLASS } from './ui';
@@ -29,7 +30,11 @@ const EmojiPickerLazy = lazy(() => import('./EmojiPickerLazy'));
  *
  * Drop-in for the four call sites: same `value`/`onChange` (Markdown), an `onBlur` that fires
  * once when focus truly leaves (toolbar / link bar / emoji picker don't count), and an
- * `onKeyDown` that runs *before* the editor's own keymap so callers keep Esc-cancel / ⌘↵-save.
+ * `onKeyDown` that runs *before* the editor's own keymap so callers keep Esc-cancel.
+ *
+ * The editor owns two keys itself (WP-49): Tab/Shift-Tab indent rather than move focus, and ⌘↵
+ * blurs and then calls `onSubmit` — with Tab no longer leaving the field, that is how „Speichern"
+ * is reached from a notes field without the mouse.
  */
 const DEFAULT_CONTENT =
   'w-full min-h-20 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-800 outline-none transition focus:border-neutral-500 focus:ring-2 focus:ring-neutral-900/5';
@@ -75,6 +80,83 @@ const LinkHoverTitle = Extension.create({
   },
 });
 
+/**
+ * Indent the text blocks the selection touches, or give one unit back.
+ *
+ * Blocks a container already indents are left alone: a list item nests through `sinkListItem` and
+ * a table cell has its own Tab, and adding characters *inside* those would fight the container's
+ * own indentation rather than add to it.
+ */
+function shiftBlocks(editor: Editor, dir: 1 | -1): boolean {
+  return editor.commands.command(({ state, tr, dispatch }) => {
+    const { from, to } = state.selection;
+    const targets: { pos: number; text: string }[] = [];
+    state.doc.nodesBetween(from, to, (node, pos, parent) => {
+      if (!node.isTextblock) return true;
+      const container = parent?.type.name;
+      if (container !== 'listItem' && container !== 'tableCell' && container !== 'tableHeader') {
+        targets.push({ pos, text: node.textBetween(0, Math.min(node.content.size, INDENT_UNIT.length)) });
+      }
+      return false; // a textblock's children are text — nothing below it to visit
+    });
+    const edits = targets
+      .map(({ pos, text }) => ({ pos, width: dir === 1 ? 0 : outdentWidth(text) }))
+      .filter(({ width }) => dir === 1 || width > 0);
+    if (!edits.length) return false;
+    if (dispatch) {
+      // Back to front: an edit at the top of the document would move every position below it.
+      for (const { pos, width } of edits.reverse()) {
+        if (dir === 1) tr.insert(pos + 1, state.schema.text(INDENT_UNIT));
+        else tr.delete(pos + 1, pos + 1 + width);
+      }
+    }
+    return true;
+  });
+}
+
+/**
+ * Tab: nest a list item where that applies, indent the block where it doesn't (WP-49).
+ *
+ * The list branch is what `ListItem`'s own keymap does at a higher priority, so the keyboard
+ * never reaches this for it — the toolbar does, and „Einrücken" has to mean the same thing as the
+ * key it names.
+ */
+function indent(editor: Editor): boolean {
+  return editor.chain().focus().sinkListItem('listItem').run() || shiftBlocks(editor, 1);
+}
+
+function outdent(editor: Editor): boolean {
+  return editor.chain().focus().liftListItem('listItem').run() || shiftBlocks(editor, -1);
+}
+
+/**
+ * Tab indents, Shift-Tab outdents, and neither moves focus (WP-49).
+ *
+ * `priority: 50` — below the default — so `ListItem`'s Tab (nest the item) and `Table`'s Tab (next
+ * cell) are tried first and this sees only the keys they left alone. Both handlers return `true`
+ * whatever they did: the reported bug is that Tab handed itself to the browser and focus left the
+ * note, so „nothing to indent here" has to consume the key too. ⌘↵ is the keyboard way out.
+ *
+ * Lives here rather than in `lib/richtext.ts` for the same reason `LinkHoverTitle` does: that
+ * module is the Markdown dialect, and a keymap is not part of it.
+ */
+const Indent = Extension.create({
+  name: 'rteIndent',
+  priority: 50,
+  addKeyboardShortcuts() {
+    return {
+      Tab: () => {
+        indent(this.editor);
+        return true;
+      },
+      'Shift-Tab': () => {
+        outdent(this.editor);
+        return true;
+      },
+    };
+  },
+});
+
 export function RichTextEditor({
   value,
   onChange,
@@ -82,6 +164,7 @@ export function RichTextEditor({
   autoFocus,
   onBlur,
   onKeyDown,
+  onSubmit,
   placeholder,
   compact = false,
 }: {
@@ -93,6 +176,15 @@ export function RichTextEditor({
    *  the callee has to catch its own failure (see `InlineNotes.commit`). */
   onBlur?: () => void | Promise<void>;
   onKeyDown?: (e: KeyboardEvent) => void;
+  /**
+   * „Ich bin hier fertig" — ⌘/Strg+↵, after the editor has blurred (WP-49).
+   *
+   * Enter is a paragraph in here, so a form around the editor cannot save on it, and since Tab
+   * now indents instead of moving focus this is the only way to „Speichern" without the mouse.
+   * The blur happens either way, so a caller that commits on blur — `InlineNotes`, `CommentCell`
+   * — needs nothing else; only the dialogs pass this, to submit as well.
+   */
+  onSubmit?: () => void;
   placeholder?: string;
   /**
    * Small surface — a table cell, a one-line note in a row. Trims the toolbar to what fits and
@@ -107,9 +199,11 @@ export function RichTextEditor({
   const onChangeRef = useRef(onChange);
   const onBlurRef = useRef(onBlur);
   const onKeyDownRef = useRef(onKeyDown);
+  const onSubmitRef = useRef(onSubmit);
   onChangeRef.current = onChange;
   onBlurRef.current = onBlur;
   onKeyDownRef.current = onKeyDown;
+  onSubmitRef.current = onSubmit;
   // The last Markdown we emitted, so an echoed `value` prop doesn't reset the doc mid-typing.
   const lastEmitted = useRef(value);
   // Suppress the blur that TipTap fires while destroying the view on unmount. A plain textarea
@@ -144,17 +238,28 @@ export function RichTextEditor({
       ...markdownExtensions({ linkClass: EXTERNAL_LINK_CLASS }),
       Placeholder.configure({ placeholder: () => placeholderRef.current ?? '' }),
       LinkHoverTitle,
+      Indent,
     ],
     content: value,
     contentType: 'markdown',
     autofocus: autoFocus ? 'end' : false,
     editorProps: {
       attributes: { class: `prose-md ${compact ? '' : 'prose-md--roomy '}rte-content ${className}` },
-      // ProseMirror-level: the caller peeks first; if it preventDefaults (Esc, ⌘↵) we tell
+      // ProseMirror-level: the caller peeks first; if it preventDefaults (Esc) we tell
       // ProseMirror we handled the key so its keymap doesn't also act.
-      handleKeyDown: (_view, event) => {
+      handleKeyDown: (view, event) => {
         onKeyDownRef.current?.(event);
-        return event.defaultPrevented;
+        if (event.defaultPrevented) return true;
+        // ⌘↵ leaves the field: blur first, so a caller that commits on blur has already stored
+        // the draft by the time `onSubmit` closes the dialog around it. While an input method is
+        // composing, Enter confirms the candidate and means nothing to the form (`onEnterKey`).
+        if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.isComposing) {
+          event.preventDefault();
+          view.dom.blur();
+          onSubmitRef.current?.();
+          return true;
+        }
+        return false;
       },
     },
     onUpdate: ({ editor }) => {
@@ -354,10 +459,10 @@ function Toolbar({ editor, compact }: { editor: Editor; compact: boolean }) {
             <Btn title="Nummerierte Liste" on={active?.ordered} onClick={() => chain().toggleOrderedList().run()}>
               <span className="text-[11px] font-semibold">1.</span>
             </Btn>
-            <Btn title="Einrücken" onClick={() => chain().sinkListItem('listItem').run()}>
+            <Btn title="Einrücken" onClick={() => indent(editor)}>
               <span className="text-sm">⇥</span>
             </Btn>
-            <Btn title="Ausrücken" onClick={() => chain().liftListItem('listItem').run()}>
+            <Btn title="Ausrücken" onClick={() => outdent(editor)}>
               <span className="text-sm">⇤</span>
             </Btn>
           </>

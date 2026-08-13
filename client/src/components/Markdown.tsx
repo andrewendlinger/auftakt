@@ -1,17 +1,7 @@
 import { useMemo, type ComponentPropsWithoutRef } from 'react';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import remarkBreaks from 'remark-breaks';
-import rehypeRaw from 'rehype-raw';
-import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
+import { rehypePlugins, remarkPlugins } from '../lib/markdownPipeline';
 import { EXTERNAL_LINK_CLASS, ExternalLink } from './ui';
-
-// Allow the toolbar's <u> (underline has no Markdown syntax); everything else keeps
-// the safe GitHub sanitize defaults, so raw HTML in notes can't inject anything.
-const sanitizeSchema = {
-  ...defaultSchema,
-  tagNames: [...(defaultSchema.tagNames ?? []), 'u'],
-};
 
 /**
  * Links open externally (OS browser / mail client), never inside the app window.
@@ -52,6 +42,10 @@ function MdLinkText({ href, title, children }: ComponentPropsWithoutRef<'a'>) {
  * that keeps notes safe, so the order in `rehypePlugins` is load-bearing: drop or reorder it
  * and an `<img src=x onerror=…>` typed into a note, imported from a CSV or restored from a
  * backup executes in the renderer.
+ *
+ * There is no code in the dialect (WP-49): no grey box, no `<code>`, and a fence left in an old
+ * note reads as the prose it was. The plugin list lives in `lib/markdownPipeline.ts` so the
+ * round-trip gate measures this pipeline rather than a copy of it.
  */
 export function Markdown({
   children,
@@ -76,8 +70,8 @@ export function Markdown({
     () =>
       children ? (
         <ReactMarkdown
-          remarkPlugins={[remarkGfm, remarkBreaks]}
-          rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
+          remarkPlugins={remarkPlugins}
+          rehypePlugins={rehypePlugins}
           components={{ a: plainLinks ? MdLinkText : MdLink }}
         >
           {children}
