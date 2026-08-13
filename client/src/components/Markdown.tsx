@@ -1,5 +1,5 @@
 import { useMemo, useState, type ComponentPropsWithoutRef } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type ExtraProps } from 'react-markdown';
 import { withSeasonPin } from '../lib/imageRef';
 import { rehypePlugins, remarkPlugins } from '../lib/markdownPipeline';
 import { getWindowSeason } from '../lib/season';
@@ -50,9 +50,15 @@ function MdLinkText({ href, title, children }: ComponentPropsWithoutRef<'a'>) {
  * The fallback is what a reference whose image did not travel looks like — a note pasted in from
  * another season — instead of a broken-image glyph with no explanation.
  */
-function MdImage({ src, alt, title }: ComponentPropsWithoutRef<'img'>) {
-  const [failed, setFailed] = useState(false);
-  if (!src || failed) {
+type MdImageProps = ComponentPropsWithoutRef<'img'> & ExtraProps;
+
+function MdImage({ src, alt, node: _node, ...rest }: MdImageProps) {
+  // Which src failed, not *that* one did: React reuses this instance across notes (same route,
+  // same position in the tree — the useMemo below rebuilds the elements but does not remount), so
+  // a boolean latched on the first 404 and drew „Bild nicht gefunden" over the next note's
+  // perfectly good picture until the window was reloaded (IMG-05).
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  if (!src || failedSrc === src) {
     return (
       <span className="inline-block rounded-lg border border-dashed border-neutral-300 px-2 py-1 text-xs text-neutral-400">
         {alt ? `Bild nicht gefunden: ${alt}` : 'Bild nicht gefunden'}
@@ -60,11 +66,15 @@ function MdImage({ src, alt, title }: ComponentPropsWithoutRef<'img'>) {
     );
   }
   return (
+    // `rest` carries what the sanitizer let through — `width`, `height`, `align`, `id` are all in
+    // its default allowlist and used to reach the DOM through react-markdown's own `img`. An
+    // imported note with `<img … width="240" align="right">` renders as the small floated
+    // thumbnail it was written as, instead of jumping to the full column width (IMG-08).
     <img
+      {...rest}
       src={withSeasonPin(src, getWindowSeason())}
       alt={alt ?? ''}
-      title={title}
-      onError={() => setFailed(true)}
+      onError={() => setFailedSrc(src)}
     />
   );
 }
