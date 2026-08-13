@@ -515,6 +515,21 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **The table controls („Zeile +", „Spalte +", „Tabelle löschen") render *below* the editor** and
   only while the caret is inside a table. A script that clicks the table button and then looks
   for them above the text finds nothing.
+- **A key pressed right after a click acts on the *previous* caret.** ProseMirror syncs the DOM
+  selection into its own state through `DOMObserver`, which flushes on a ~20 ms timer, so
+  `click(); press('Tab')` runs the keymap against the selection the editor had *before* the
+  click. `InlineNotes` and `CommentCell` autofocus to the **end**, so that stale selection is the
+  last block of the note: driving WP-49, Tab indented the closing line while the assertion read
+  the first paragraph, and it looked exactly like a broken indent command. Click, then
+  `waitForTimeout(120)` — and wait for `.rte-content.ProseMirror-focused` before clicking at all,
+  since the autofocus itself lands a frame late. Two clicks at the same coordinates also count as
+  a double-click and select the whole paragraph, so place the caret with
+  `mouse.click(box.x + 12, …)` rather than clicking the same element twice.
+- **`npm run demo:seed` while the dev server is running changes nothing it can see.** The rebuild
+  replaces the file; the server keeps its handle on the deleted inode and answers from it, so a
+  „fresh" fixture check reads the previous run's edits. Stop the server first (sweep by process),
+  then `npm run demo` — and remember any script that edits demo data is not re-runnable against a
+  dirty database.
 - **The project-scoped column manager lists nothing on the demo** (there are no project-scoped
   columns) — drive those cases from Einstellungen instead. That also makes a project-scoped custom
   column the *only* way to reach „hide the column a header click is sorting by while the table

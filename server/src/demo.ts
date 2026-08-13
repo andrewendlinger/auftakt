@@ -123,6 +123,26 @@ const RICH_ARTIST_NOTES = `Streichquartett, <u>Residenz</u> über das ganze Fest
 
 const RICH_EVENT_NOTES = `Doors 19:00, Beginn **19:30**. Zugabe ist abgesprochen 🎻.`;
 
+// What WP-49 has to make readable again, in one note. The fence and the four-space paragraph are
+// what the app itself used to store when a user indented a line — both rendered as a grey code
+// box with the `<u>` printed literally. The backticks are the other half of the grey, and the
+// last block is the indentation Tab writes now (U+00A0, spelled out so it stays visible in a
+// diff). Nothing here may render as code, and nothing may go missing.
+const LEGACY_CODE_NOTES = [
+  'Ablauf am Abend — die Einrückungen kamen aus der alten Fassung:',
+  '',
+  '```',
+  'Soundcheck 14:00',
+  'Einlass 19:00',
+  '```',
+  '',
+  '    Bühne dann <u>komplett</u> geräumt',
+  '',
+  'Dateiname war `set-final-v3`, bitte so übernehmen.',
+  '',
+  `${'\u00a0'.repeat(3)}Nachbereitung ab 23:00`,
+].join('\n');
+
 /**
  * A per-entity section arrangement (WP-25). Only artist 2 and project 3 carry one; everyone else
  * stays `NULL` and follows the `artist_layout`/`project_layout` template, so the two states — and
@@ -161,7 +181,7 @@ const PROJECTS = [
   { id: 3, artist_id: 2, code: 'AB1', name: 'Hauptkonzert', status: 'In Progress', description: null, layout: PROJECT_3_LAYOUT },
   { id: 4, artist_id: 2, code: 'AB2', name: 'Radio-Session', status: 'In Progress', description: 'Mitschnitt für den Kultursender.' },
   { id: 5, artist_id: 3, code: 'KH1', name: 'Klanginstallation', status: 'In Progress', description: 'Läuft durchgehend im Foyer.' },
-  { id: 6, artist_id: 3, code: 'KH2', name: 'Late-Night-Set', status: 'Not Started', description: null },
+  { id: 6, artist_id: 3, code: 'KH2', name: 'Late-Night-Set', status: 'Not Started', description: LEGACY_CODE_NOTES },
   { id: 7, artist_id: 4, code: 'JW1', name: 'Solo-Rezital', status: 'Done', description: 'Programm steht, Werbung läuft.' },
   { id: 8, artist_id: 4, code: 'JW2', name: 'Meisterkurs', status: 'In Progress', description: 'Drei Tage, zwölf Teilnehmende.' },
   // Soft-deleted (in the trash) — its live child task 52 makes the cascade count demonstrable.
@@ -260,7 +280,9 @@ const TASKS: DemoTask[] = [
   { id: 12, project_id: 5, parent_id: 11, title: 'Verwaiste Unteraufgabe', status: 'active' },
 
   { id: 13, project_id: 5, title: 'Sensorik im Foyer testen', status: 'active', priority: 'hoch', due_date: days(3) },
-  { id: 14, project_id: 6, title: 'Lichtkonzept abstimmen', status: 'new', priority: 'niedrig' },
+  // The comment cell's share of the WP-49 fixture: an old note whose indentation the app stored
+  // as a fence, in the one place a note is rendered inside a table cell.
+  { id: 14, project_id: 6, title: 'Lichtkonzept abstimmen', status: 'new', priority: 'niedrig', comment: 'Alte Notiz:\n\n```\nGobos prüfen\n```' },
   { id: 15, project_id: 6, title: 'Übergabe an DJ-Set klären', status: 'active' },
 
   // Artist-level todos (no project) — these render the "Allgemein" chip.
