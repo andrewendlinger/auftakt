@@ -211,10 +211,12 @@ const SAALPLAN_TOKEN = createHash('sha256').update(SAALPLAN_BYTES).digest('hex')
 const SAALPLAN_REF = `/api/images/${SAALPLAN_TOKEN}`;
 
 // Appended to RICH_DESCRIPTION below — the shape migrateProjectsMergeNotes() leaves behind
-// when a pre-merge project had both text fields filled.
+// when a pre-merge project had both text fields filled. `?w=384` is what „Bild einfügen" writes
+// today (the „Mittel" default), so this is the sized branch to eyeball; the linked image in the
+// artist note below stays unsized, i.e. „Original".
 const RICH_PROJECT_NOTES = `**Bestätigt:** Termin, Saal und Honorar stehen. Rider liegt vor — Details im [Ordner](https://example.com/rider).
 
-![Saalplan großer Saal](${SAALPLAN_REF})`;
+![Saalplan großer Saal](${SAALPLAN_REF}?w=384)`;
 
 // The two image shapes only an *import* produces, side by side with the one the button writes —
 // so the branches that used to disagree between reader and editor have something to look at.

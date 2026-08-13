@@ -416,8 +416,18 @@ export function RichTextEditor({
       editor
         .chain()
         .focus()
-        // The server's URL, stored verbatim: season-free, so it survives a season copy.
-        .insertContent({ type: 'image', attrs: { src: stored.url, alt: file.name } })
+        // The server's URL, stored verbatim: season-free, so it survives a season copy. A fresh
+        // insert starts at „Mittel" — a 1200px plan at full column width shoves everything under
+        // it out of view — unless the image is naturally smaller: a width attribute *upscales*,
+        // so a 200px logo keeps its own size (null = natural, the „Original" preset).
+        .insertContent({
+          type: 'image',
+          attrs: {
+            src: stored.url,
+            alt: file.name,
+            width: resized.width > IMAGE_WIDTHS.mittel ? IMAGE_WIDTHS.mittel : null,
+          },
+        })
         .run();
     } catch (err) {
       showError(err, 'Bild konnte nicht gespeichert werden.');
@@ -469,6 +479,10 @@ export function RichTextEditor({
           down by a row's height every time. Shown even when `compact`, because a table stored in
           a note can be opened in a cell editor and these are the only controls that can fix it. */}
       {editor && <TableBar editor={editor} />}
+      {/* Same reasoning, for a selected image — and not gated on `images`: inserting is limited
+          to the season-safe fields, but an image round-trips through every editor, so wherever
+          one can legitimately sit it can also be re-sized. */}
+      {editor && <ImageBar editor={editor} />}
     </div>
   );
 }
@@ -741,6 +755,57 @@ function TableBar({ editor }: { editor: Editor }) {
       <Sep />
       <Btn title="Tabelle löschen" onClick={() => chain().deleteTable().run()}>
         <TrashIcon className="h-4 w-4" />
+      </Btn>
+    </div>
+  );
+}
+
+/**
+ * The three widths the size buttons write, in CSS px — stored as `?w=` (lib/imageRef.ts).
+ *
+ * A doubling scale against the 1200px capture cap (lib/image.ts): „Mittel" is the insert default —
+ * about a third of a header note's column, ~10cm on the print sheet, and with >3× the master's
+ * pixels in reserve, so „Groß" and „Original" stay sharp on a 2× display. „Original" is the
+ * absence of a width: natural size, still bounded by the column and 60vh (`.prose-md img`).
+ */
+const IMAGE_WIDTHS = { klein: 192, mittel: 384, gross: 768 } as const;
+
+/**
+ * Size controls, visible only while an image node is selected — `TableBar`'s pattern exactly,
+ * `Btn` included (it cancels `mousedown`; a plain button here would blur the view and fire the
+ * caller's commit-on-blur mid-edit, RTE-02). `updateAttributes` is one transaction, so one ⌘Z
+ * undoes a re-size, and the width lands in the stored text as `?w=` on serialization.
+ */
+function ImageBar({ editor }: { editor: Editor }) {
+  // `undefined` = no image selected (hide the bar); `null` = no width (the „Original" state).
+  const width = useEditorState({
+    editor,
+    selector: ({ editor }) =>
+      editor.isActive('image') ? ((editor.getAttributes('image').width as number | null) ?? null) : undefined,
+  });
+  if (width === undefined) return null;
+  // Re-select the node in the same chain: `updateAttributes` replaces it and the NodeSelection
+  // does not survive, so without this the bar vanishes on the first click and comparing two
+  // sizes means re-selecting the image between every try. Attrs-only, so the position is stable.
+  const setWidth = (w: number | null) => {
+    const pos = editor.state.selection.from;
+    editor.chain().focus().updateAttributes('image', { width: w }).setNodeSelection(pos).run();
+  };
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-0.5">
+      <span className="mr-1 text-[11px] text-neutral-400">Bildgröße</span>
+      <Btn title={`Klein (${IMAGE_WIDTHS.klein} px)`} on={width === IMAGE_WIDTHS.klein} onClick={() => setWidth(IMAGE_WIDTHS.klein)}>
+        <span className="text-[11px] font-semibold">Klein</span>
+      </Btn>
+      <Btn title={`Mittel (${IMAGE_WIDTHS.mittel} px)`} on={width === IMAGE_WIDTHS.mittel} onClick={() => setWidth(IMAGE_WIDTHS.mittel)}>
+        <span className="text-[11px] font-semibold">Mittel</span>
+      </Btn>
+      <Btn title={`Groß (${IMAGE_WIDTHS.gross} px)`} on={width === IMAGE_WIDTHS.gross} onClick={() => setWidth(IMAGE_WIDTHS.gross)}>
+        <span className="text-[11px] font-semibold">Groß</span>
+      </Btn>
+      <Sep />
+      <Btn title="Originalgröße (an die Spalte angepasst)" on={width === null} onClick={() => setWidth(null)}>
+        <span className="text-[11px] font-semibold">Original</span>
       </Btn>
     </div>
   );
