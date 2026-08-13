@@ -28,6 +28,18 @@ const ModalDepthCtx = createContext(0);
 /** Depth of every mounted Modal, keyed by instance token. Read at keydown time, not render. */
 const openModals = new Map<object, number>();
 
+/**
+ * Is any dialog up? For app-global shortcuts, which must not reach past a backdrop.
+ *
+ * A window listener that moves focus — ⌘F/⌘K into the search field — would otherwise tear a
+ * dialog's focus trap open from the outside and leave the caret behind the backdrop, the exact
+ * state `Modal`'s focus effect exists to prevent. Read at keydown time from the same map the
+ * Escape and Tab handlers use, so „a dialog is open" has one definition.
+ */
+export function anyModalOpen(): boolean {
+  return openModals.size > 0;
+}
+
 const FOCUSABLE = 'a[href], button, input, select, textarea, [contenteditable="true"], [tabindex]';
 
 /**
