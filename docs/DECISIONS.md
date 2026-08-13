@@ -974,3 +974,49 @@ same value again. Enter inside an `OptionsEditor` row is deliberately inert (use
 the very validation error the user is resolving. And `Btn` defaults to `type="button"` — inert
 while the client has no `<form>`, load-bearing the day one appears; that day is also the day to
 revisit the default.
+
+## Outside the dialogs the cell owns the keyboard, and a group of buttons is one stop (2026-08-13, WP-43)
+
+Every inline editor in the task table goes through `InlineInput`, so Enter and Escape mean the
+same thing in all of them; the display shells stay separate, as they always were. That is what
+makes the picker rule expressible in one place: **a half-typed date commits nothing.** An
+incomplete `type="date"` reports `value === ''`, and Enter or blur on that state would write „kein
+Datum" over a stored one — the WP-40 hazard. `onEnterKey` answers it by refusing Enter for every
+picker type (`NO_ENTER_TYPES`) and that stays: a dialog-wide Enter cannot know which of five
+fields is mid-thought. A single-field editor can ask, so `InlineInput` reads
+`validity.badInput` — Enter stays in the cell, blur cancels rather than clears, and the last
+reading is kept in a ref for the unmount arm, which has no element left to ask.
+
+**`AddTaskRow` does not autofocus** (user decision 2026-08-13). It is permanently visible, so
+focusing it on mount would take the caret on every artist and project page opened to read, scroll
+it into view and swallow the next ⌘Z. Escape therefore *clears the draft* rather than closing
+anything — there is nothing to close. `SubtaskAddRow` is the opposite case and keeps its
+autofocus: it is opened on purpose and Escape closes it.
+
+**A group of equivalent buttons is one tab stop** (`lib/rovingFocus.ts`): the link category pills,
+`IconPicker`'s presets, the „Bereich hinzufügen" rows and the colour swatches. The tabbable item
+is the *selected* one, not the last focused — no state to keep, and Tab back into the group lands
+on the current value. Arrows move focus only; picking stays with the button's own activation, so
+an arrow can never write a value in passing. The rich-text toolbar's blanket `tabIndex={-1}`
+remains the right answer for *it* — its buttons have another keyboard route — and both drop out of
+`Modal`'s Tab cycle by the same `tabbables()` filter. The ▲▼ pair takes the same „one control, one
+stop" reading with ↑/↓ *performing* the move, and ignores auto-repeat: „Spalten verwalten" moves
+through the server, so a held key would compute its next move from a list that has already
+changed.
+
+**`PillSelect` still closes on Tab without picking** (RTE-11, re-examined here). A native
+`<select>` commits the highlighted option on Tab; this one must not, because the menu portals to
+`document.body` and Tab is the ordinary way out of a field — committing there would write a value
+the user only arrowed past. `ColorSwatchPicker` is the deliberate exception to the *other* half of
+RTE-11: it now places focus in its menu on open, like `PillSelect`, but leaves Tab alone, because
+its menu has „eigene" and „Keine" below the grid and Tab is how they are reached.
+
+**⌘F and ⌘K both focus the global search** (user decision 2026-08-13). ⌘F is the mnemonic and is
+free in the packaged app — Electron has no find-in-page and `electron/menu.ts` declares no
+accelerator besides ⌘N; ⌘K is the convention. On the dev server ⌘F takes Chromium's find bar with
+it, which is the price. Unlike ⌘Z the shortcut fires *inside* text fields — moving to search is
+what a user in the middle of typing means by it — and unlike ⌘Z it stops at an open dialog:
+`anyModalOpen()` reads `Modal`'s own depth map, because a shortcut that moved focus through a
+backdrop would strand it there. Search hits are `tabIndex={-1}`: with ↑/↓ and Enter on the field
+they no longer need to be a wall of tab stops, and `aria-activedescendant` is what announces the
+marked row while focus stays where the typing goes.

@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useGuardedAction } from '../hooks';
 import { useAnchoredPopover } from '../lib/popover';
+import { rovingItem, useRovingFocus } from '../lib/rovingFocus';
 import { DropletIcon } from './icons';
 
 /** A spectrum of vivid colors; items render them as a soft tint + accent so any pick stays readable. */
@@ -65,6 +66,44 @@ export function ColorSwatchPicker({
     write(c);
   };
   const shown = draft ?? value;
+
+  /**
+   * The swatch grid is one tab stop, and the popover puts focus on it when it opens.
+   *
+   * Both halves are needed to make this reachable at all. The menu is portalled to
+   * `document.body`, so before this the sixteen swatches sat at the very end of the tab order —
+   * behind the whole page — and the only way in was to Tab past everything else (the RTE-11
+   * shape, one component further). Focus lands on the current colour, like `PillSelect`'s does,
+   * so the arrows start where the value already is. Tab is left alone here, unlike there: this
+   * menu has „eigene" and „Keine" below the grid and Tab is how they are reached.
+   *
+   * Taking focus means owning its return. `pick` and the popover's Escape hand it back
+   * themselves, but the three closes that go through `closePopover` alone — the backdrop click, a
+   * page scroll, a resize — unmount the focused swatch and drop focus to `<body>`, so the next
+   * Tab would restart at the top of the page. The close arm below repairs exactly that case, and
+   * only that one: focus the user has since moved somewhere real is never stolen, the rule
+   * `Modal`'s close-restore follows.
+   */
+  const roving = useRovingFocus();
+  // A colour from „eigene" matches no preset, so the first swatch holds the stop then.
+  const stop = shown && PRESETS.includes(shown) ? shown : PRESETS[0];
+  const grabbedFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (!open) {
+      if (!grabbedFocus.current) return;
+      grabbedFocus.current = false;
+      const active = document.activeElement;
+      if (!active || active === document.body) anchorRef.current?.focus();
+      return;
+    }
+    const items = Array.from(roving.ref.current?.querySelectorAll<HTMLElement>('[data-roving]') ?? []);
+    const target = items.find((el) => el.dataset.color === shown) ?? items[0];
+    target?.focus();
+    grabbedFocus.current = !!target;
+    // Keyed on `open` alone, deliberately: `shown` changes while the user drags the „eigene"
+    // wheel, and re-running this would pull focus off it mid-drag.
+  }, [open]);
+
   return (
     <div className="relative inline-flex">
       <button
@@ -93,13 +132,15 @@ export function ColorSwatchPicker({
               className="fixed z-40 overflow-y-auto rounded-xl bg-white p-2 text-neutral-600 shadow-lg ring-1 ring-black/10"
               style={{ left: pos.left, top: pos.top, maxHeight: pos.maxHeight }}
             >
-              <div className="grid grid-cols-8 gap-1">
+              <div ref={roving.ref} onKeyDown={roving.onKeyDown} className="grid grid-cols-8 gap-1">
                 {PRESETS.map((c) => (
                   <button
                     key={c}
                     type="button"
                     title={c}
                     aria-label={c}
+                    data-color={c}
+                    {...rovingItem(c === stop)}
                     onClick={() => pick(c)}
                     className="h-5 w-5 rounded-full ring-1 ring-black/10 transition hover:scale-110"
                     style={{ background: c }}

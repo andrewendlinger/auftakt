@@ -405,6 +405,10 @@ const CUSTOM_COLUMNS = [
     ]),
   },
   { name: 'Bestätigt', type: 'checkbox', icon: '✓', options: null },
+  // The `date` branch of `CustomCell`, which had no fixture at all — and it is the branch with
+  // its own keyboard rules (a half-typed date commits nothing, WP-43), so „eyeball it" means
+  // typing into it.
+  { name: 'Abgabe', type: 'date', icon: '📆', options: null },
 ];
 
 /**
@@ -413,10 +417,13 @@ const CUSTOM_COLUMNS = [
  * positional because a fixed [Bereich, Bestätigt] tuple silently wrote the select value into
  * the checkbox column and vice versa as soon as CUSTOM_COLUMNS was reordered (SDB-12).
  */
-const CUSTOM_VALUES: Record<number, Partial<Record<'Bereich' | 'Bestätigt', string | boolean>>> = {
-  1: { Bereich: 'logistik', Bestätigt: false },
+const CUSTOM_VALUES: Record<
+  number,
+  Partial<Record<'Bereich' | 'Bestätigt' | 'Abgabe', string | boolean>>
+> = {
+  1: { Bereich: 'logistik', Bestätigt: false, Abgabe: days(6) },
   3: { Bereich: 'logistik', Bestätigt: true },
-  5: { Bereich: 'technik', Bestätigt: true },
+  5: { Bereich: 'technik', Bestätigt: true, Abgabe: days(2) },
   7: { Bereich: 'logistik', Bestätigt: false },
   10: { Bereich: 'kommunikation' },
   13: { Bereich: 'technik', Bestätigt: false },
@@ -506,6 +513,11 @@ function main(): void {
         sort_order: i,
       });
     });
+
+    // Fällig ships hidden (WP-32), which left the built-in date cell invisible in the demo and
+    // therefore unverifiable. Showing it here is a fixture choice, not a changed default: the
+    // stored `task_sort` is `[status]`, so waking the column up orders nothing differently.
+    db.prepare(`UPDATE custom_columns SET enabled = 1 WHERE kind = 'builtin' AND key = 'due'`).run();
 
     CUSTOM_SECTIONS.forEach((s, i) => insSection.run({ deleted_at: null, ...s, sort_order: i }));
     // Sections first: widget links reference custom_sections(id).

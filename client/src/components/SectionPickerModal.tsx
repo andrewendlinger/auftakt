@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Btn, PickerRow } from './ui';
 import { Label, Modal, TextInput, onEnterKey } from './fields';
 import { SECTION_TYPES, type SectionGroup, type SectionType } from '../lib/sections';
+import { rovingItem, useRovingFocus } from '../lib/rovingFocus';
 import { useErrorToast } from '../hooks';
 
 /** One hidden built-in on offer, its display name already resolved by the caller. */
@@ -70,8 +71,20 @@ export function SectionPickerModal({
     }
   };
 
+  // The rows are one tab stop, walked with the arrow keys: a page with several removed sections
+  // put a dozen of them between the dialog's first field and its name box. The chosen type row
+  // carries the stop, the first row while nothing is chosen — a restore row is never „chosen",
+  // it acts and closes.
+  const roving = useRovingFocus();
+  const stop = chosen ?? SECTION_TYPES[0]?.type;
+
   const typeRows = SECTION_TYPES.map((t) => (
-    <PickerRow key={t.type} selected={chosen === t.type} onClick={() => setChosen(t.type)}>
+    <PickerRow
+      key={t.type}
+      {...rovingItem(t.type === stop)}
+      selected={chosen === t.type}
+      onClick={() => setChosen(t.type)}
+    >
       {t.label}
       <span className="ml-2 text-xs text-neutral-400">neu, mit eigenem Namen</span>
     </PickerRow>
@@ -80,6 +93,7 @@ export function SectionPickerModal({
   const restoreRow = (b: PickerBuiltinRow) => (
     <PickerRow
       key={b.key}
+      {...rovingItem(false)}
       onClick={() => {
         onRestore(b.key);
         onClose();
@@ -110,28 +124,32 @@ export function SectionPickerModal({
       }
     >
       <div className="space-y-4">
-        {grouped ? (
-          <>
-            <div>
-              <div className={groupHeading}>Eingabe</div>
-              <div className="space-y-1.5">
-                {typeRows}
-                {builtins.filter((b) => b.group === 'eingabe').map(restoreRow)}
-              </div>
-            </div>
-            {einblicke.length > 0 && (
+        {/* The group wrapper holds the rows and nothing else — the name field's ←/→ are its
+            caret's. Both headings sit inside it, so ↓ crosses from Eingabe into Einblicke. */}
+        <div ref={roving.ref} onKeyDown={roving.onKeyDown} className="space-y-4">
+          {grouped ? (
+            <>
               <div>
-                <div className={groupHeading}>Einblicke</div>
-                <div className="space-y-1.5">{einblicke.map(restoreRow)}</div>
+                <div className={groupHeading}>Eingabe</div>
+                <div className="space-y-1.5">
+                  {typeRows}
+                  {builtins.filter((b) => b.group === 'eingabe').map(restoreRow)}
+                </div>
               </div>
-            )}
-          </>
-        ) : (
-          <div className="space-y-1.5">
-            {typeRows}
-            {builtins.map(restoreRow)}
-          </div>
-        )}
+              {einblicke.length > 0 && (
+                <div>
+                  <div className={groupHeading}>Einblicke</div>
+                  <div className="space-y-1.5">{einblicke.map(restoreRow)}</div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="space-y-1.5">
+              {typeRows}
+              {builtins.map(restoreRow)}
+            </div>
+          )}
+        </div>
         {chosen && (
           <div>
             <Label>Name</Label>

@@ -33,7 +33,7 @@ import { MoveTaskDialog } from './MoveTaskDialog';
 import { PillSelect } from './PillSelect';
 import { InlineInput } from './InlineInput';
 import { EmptyState, Btn, DragHandle, IconButton } from './ui';
-import { Modal } from './fields';
+import { Modal, onEnterKey } from './fields';
 import {
   useAllTasks,
   useCommitOnUnmount,
@@ -101,8 +101,9 @@ interface TaskTableApi {
   statusOptions: CustomColumnOption[];
   priorityOptions: CustomColumnOption[];
   childrenByParent: Map<number, Task[]>;
-  commit: (task: Task, patch: Partial<Task>, label: string) => void;
-  commitCustom: (task: Task, colId: number, value: unknown) => void;
+  /** Returns its promise so an `InlineInput` cell can report a rejected write (RTE-01). */
+  commit: (task: Task, patch: Partial<Task>, label: string) => Promise<void>;
+  commitCustom: (task: Task, colId: number, value: unknown) => Promise<void>;
   requestDelete: (task: Task) => void;
   toggleExpand: (id: number) => void;
   /** Expand the row and open its inline subtask composer. */
@@ -875,8 +876,8 @@ function ColumnCell({
   doneValue: string;
   statusOptions: CustomColumnOption[];
   priorityOptions: CustomColumnOption[];
-  commit: (task: Task, patch: Partial<Task>, label: string) => void;
-  commitCustom: (task: Task, colId: number, value: unknown) => void;
+  commit: (task: Task, patch: Partial<Task>, label: string) => Promise<void>;
+  commitCustom: (task: Task, colId: number, value: unknown) => Promise<void>;
 }) {
   if (col.kind === 'builtin') {
     switch (col.key) {
@@ -930,33 +931,20 @@ function TitleCell({
   task: Task;
   isChild: boolean;
   doneValue: string;
-  onCommit: (v: string) => void;
+  onCommit: (v: string) => void | Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(task.title);
-  const dirty = () => value.trim() !== '' && value !== task.title;
-  useCommitOnUnmount(editing, () => {
-    if (dirty()) onCommit(value.trim());
-  });
   if (editing) {
+    // `empty: 'ignore'` — a task may not lose its title, which is what this cell hand-rolled
+    // before it shared the input (WP-43): same trim-and-commit-if-changed, plus the Escape
+    // `stopPropagation`, the rejected-write toast and the unmount commit it did not have.
     return (
-      <input
-        autoFocus
+      <InlineInput
+        value={task.title}
+        onCommit={onCommit}
+        onDone={() => setEditing(false)}
+        errorMessage="Der Titel konnte nicht gespeichert werden."
         className={`w-full min-w-48 ${INLINE_INPUT}`}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={() => {
-          setEditing(false);
-          if (dirty()) onCommit(value.trim());
-          else setValue(task.title);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-          if (e.key === 'Escape') {
-            setValue(task.title);
-            setEditing(false);
-          }
-        }}
       />
     );
   }
@@ -985,40 +973,25 @@ function TimestampCell({ value }: { value: string | null }) {
   );
 }
 
-function DueCell({ task, onCommit }: { task: Task; onCommit: (v: string | null) => void }) {
+function DueCell({ task, onCommit }: { task: Task; onCommit: (v: string | null) => void | Promise<void> }) {
   const [editing, setEditing] = useState(false);
-  // The input is uncontrolled, so the picked-but-not-yet-blurred date lives only in the DOM —
-  // mirror it here so the unmount path has something to commit.
-  const picked = useRef<string | null>(task.due_date);
-  useCommitOnUnmount(editing, () => {
-    if (picked.current !== task.due_date) onCommit(picked.current);
-  });
   if (editing) {
+    // `empty: 'clear'` — an emptied Fällig field is „kein Datum", not a no-op. Enter and Escape
+    // come with the shared input; a half-typed date commits nothing (see `InlineInput`).
     return (
-      <input
+      <InlineInput
         type="date"
-        autoFocus
-        defaultValue={task.due_date ?? ''}
+        empty="clear"
+        value={task.due_date ?? ''}
+        onCommit={onCommit}
+        onDone={() => setEditing(false)}
+        errorMessage="Das Datum konnte nicht gespeichert werden."
         className={INLINE_INPUT}
-        onChange={(e) => {
-          picked.current = e.target.value || null;
-        }}
-        onBlur={(e) => {
-          setEditing(false);
-          const v = e.target.value || null;
-          if (v !== task.due_date) onCommit(v);
-        }}
       />
     );
   }
   return (
-    <button
-      className="whitespace-nowrap text-sm"
-      onClick={() => {
-        picked.current = task.due_date;
-        setEditing(true);
-      }}
-    >
+    <button className="whitespace-nowrap text-sm" onClick={() => setEditing(true)}>
       {task.due_date ? formatDate(task.due_date) : <span className="text-neutral-300">—</span>}
     </button>
   );
@@ -1044,6 +1017,21 @@ function CommentCell({ task, onCommit }: { task: Task; onCommit: (v: string | nu
         onBlur={() => {
           setEditing(false);
           if (next() !== (task.comment ?? null)) onCommit(next());
+        }}
+        // Enter is a paragraph here, so saving takes ⌘↵ and cancelling takes Escape — the same
+        // two keys `InlineNotes` binds, and the reason `RichTextEditor` runs a caller's handler
+        // ahead of its own keymap. Escape resets the draft first, which also disarms the
+        // unmount commit above (it reads the current render's `value`).
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            setValue(task.comment ?? '');
+            setEditing(false);
+          }
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            (e.target as HTMLElement).blur();
+          }
         }}
       />
     );
@@ -1146,38 +1134,31 @@ function EditableTextCell({
   );
 }
 
-function EditableDateCell({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
+function EditableDateCell({
+  value,
+  onCommit,
+}: {
+  value: string;
+  onCommit: (v: string) => void | Promise<void>;
+}) {
   const [editing, setEditing] = useState(false);
-  // Uncontrolled like DueCell, and mirrored for the same reason.
-  const picked = useRef(value);
-  useCommitOnUnmount(editing, () => {
-    if (picked.current !== value) onCommit(picked.current);
-  });
   if (editing) {
+    // `empty: 'raw'` — like the text cell beside it, a cleared custom column stores the empty
+    // value rather than `null`; the blob keeps the key.
     return (
-      <input
+      <InlineInput
         type="date"
-        autoFocus
-        defaultValue={value}
+        empty="raw"
+        value={value}
+        onCommit={onCommit}
+        onDone={() => setEditing(false)}
+        errorMessage="Das Datum konnte nicht gespeichert werden."
         className={INLINE_INPUT}
-        onChange={(e) => {
-          picked.current = e.target.value;
-        }}
-        onBlur={(e) => {
-          setEditing(false);
-          if (e.target.value !== value) onCommit(e.target.value);
-        }}
       />
     );
   }
   return (
-    <button
-      className="whitespace-nowrap text-sm"
-      onClick={() => {
-        picked.current = value;
-        setEditing(true);
-      }}
-    >
+    <button className="whitespace-nowrap text-sm" onClick={() => setEditing(true)}>
       {value ? formatDate(value) : <span className="text-neutral-300">—</span>}
     </button>
   );
@@ -1206,9 +1187,14 @@ function AddTaskRow({
       }),
     onAdded,
   );
+  const onEnter = onEnterKey(() => void submit());
   return (
     <div className="flex items-center gap-2 border-b border-neutral-100 px-3 py-2">
       <span className="text-neutral-300">＋</span>
+      {/* No `autoFocus`, deliberately (WP-43): this row is permanently visible, so focusing it on
+          mount would take the caret on every artist and project page the user opened to read —
+          and scroll it into view besides. Escape therefore clears the draft rather than closing
+          anything; there is nothing here to close. */}
       <input
         className="flex-1 bg-transparent px-1 py-1 text-sm outline-none placeholder:text-neutral-300"
         placeholder={
@@ -1218,7 +1204,10 @@ function AddTaskRow({
         }
         value={title}
         onChange={(e) => setTitle(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && void submit()}
+        onKeyDown={(e) => {
+          onEnter(e);
+          if (e.key === 'Escape') setTitle('');
+        }}
       />
     </div>
   );
@@ -1292,6 +1281,7 @@ function SubtaskAddRow({
       }),
     onAdded,
   );
+  const onEnter = onEnterKey(() => void submit());
   return (
     <tr className="border-b border-neutral-200/60" style={{ backgroundImage: CHILD_BAND }}>
       <TreeGutterCell kind="composer" spineColor={spineColor} />
@@ -1305,7 +1295,7 @@ function SubtaskAddRow({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') void submit();
+              onEnter(e);
               if (e.key === 'Escape') onClose();
             }}
             onBlur={() => {
