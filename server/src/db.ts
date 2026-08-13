@@ -642,6 +642,9 @@ const COPY_COLS: Record<string, string[]> = {
   links: ['id', 'artist_id', 'project_id', 'event_id', 'task_id', 'section_id', 'label', 'url', 'color', 'category', 'notes', 'sort_order'],
   custom_columns: ['id', 'name', 'type', 'scope', 'artist_id', 'project_id', 'options', 'icon', 'key', 'kind', 'enabled', 'deletable', 'sort_order'],
   custom_sections: ['id', 'artist_id', 'project_id', 'name', 'type', 'value', 'sort_order'],
+  // No `id`: nothing references an image by row id — the Markdown names its content token — so
+  // the target is free to assign its own and `copyImages` can dedupe on the token instead.
+  images: ['token', 'mime', 'bytes', 'byte_size', 'width', 'height', 'name'],
 };
 
 function copyRows(target: Database.Database, table: string, rows: unknown[]): void {
@@ -652,6 +655,37 @@ function copyRows(target: Database.Database, table: string, rows: unknown[]): vo
   );
   const tx = target.transaction(() => {
     for (const r of rows as Array<Record<string, unknown>>) {
+      const o: Record<string, unknown> = {};
+      for (const c of cols) o[c] = r[c] === undefined ? null : r[c];
+      stmt.run(o);
+    }
+  });
+  tx();
+}
+
+/**
+ * Copy the season's images (WP-37), deduping on the content token.
+ *
+ * **Unconditional — no copy group gates this.** A reference to an image lives inside a Markdown
+ * string, and the set of strings that can hold one is not closable: eight text columns, plus every
+ * text-typed custom column inside the `tasks.custom_values` JSON blob, plus the landing notes in
+ * `seasons.json`, which is not even in the file being copied. Gating images on the group that
+ * carried the text means any miss shows up as a broken picture in the new season, and no gate here
+ * can see it. Copying a few unreferenced megabytes is the cheaper mistake, and the visible one.
+ *
+ * `ON CONFLICT DO NOTHING` makes this correct on a *non-empty* target too — the property an
+ * autoincrement id could never have, and the reason a future „copy into an existing season" needs
+ * no rewriting of stored prose.
+ */
+function copyImages(target: Database.Database, rows: Array<Record<string, unknown>>): void {
+  if (rows.length === 0) return;
+  const cols = COPY_COLS.images!;
+  const stmt = target.prepare(
+    `INSERT INTO images (${cols.join(', ')}) VALUES (${cols.map((c) => '@' + c).join(', ')})
+     ON CONFLICT(token) DO NOTHING`,
+  );
+  const tx = target.transaction(() => {
+    for (const r of rows) {
       const o: Record<string, unknown> = {};
       for (const c of cols) o[c] = r[c] === undefined ? null : r[c];
       stmt.run(o);
@@ -989,6 +1023,15 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
     );
     copyRows(target, 'links', links);
 
+    // Images travel whatever was selected — see copyImages. Source seasons are opened raw, so a
+    // file written before WP-37 has no `images` table at all; that is the ordinary case for every
+    // existing installation, not an error.
+    try {
+      copyImages(target, live('images'));
+    } catch {
+      /* pre-WP-37 source: no images to carry */
+    }
+
     if (o.settings) copySettings(target, q('SELECT key, value FROM settings'));
 
     target.pragma('foreign_keys = ON');
@@ -1139,6 +1182,36 @@ CREATE TABLE IF NOT EXISTS custom_sections (
   deleted_at TEXT,
   -- 0 parents = a dashboard (Übersicht) widget, 1 = artist- or project-page widget.
   CHECK ((artist_id IS NOT NULL) + (project_id IS NOT NULL) <= 1)
+);
+
+-- Images pasted into flowing text (WP-37). The bytes live here rather than in the text column
+-- so a list query — crud.ts selects *, and every write blanket-invalidates — does not drag them
+-- along, which is the defect WP-33 already fixed once for long notes.
+--
+-- token is sha256(bytes) truncated to 32 hex chars, and it, not id, is what the Markdown
+-- references (/api/images/<token>). Content addressing buys three things an autoincrement id
+-- cannot: identical bytes collapse to one row, Cache-Control: immutable on the serving route is
+-- honest, and prose copied by hand into another season names either the same picture or nothing —
+-- never, as an id would, a different one.
+--
+-- Deliberately absent from CHILD_EDGES, DELETE_ORDER and TABLE_TYPE in lib/cascade.ts, and from
+-- the type map in routes/deleted.ts. Those tables are generated from the foreign-key graph, and an
+-- image reference lives inside a TEXT column no foreign key describes — so purgeExpired, which
+-- walks DELETE_ORDER, can never reach a row here. Adding this table to that list would read as a
+-- tidy-up and behave as data loss. deleted_at exists for schema uniformity and a possible future
+-- manager; nothing sets it today.
+CREATE TABLE IF NOT EXISTS images (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  token      TEXT NOT NULL UNIQUE,
+  mime       TEXT NOT NULL,
+  bytes      BLOB NOT NULL,
+  byte_size  INTEGER NOT NULL,
+  width      INTEGER,
+  height     INTEGER,
+  name       TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  deleted_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS links (

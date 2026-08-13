@@ -44,6 +44,14 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   confirming the target pass in this state. What catches it: `ps -o lstart= -p $(lsof -ti tcp:4317)`
   against the seed time — a server older than the reseed is answering from a deleted inode — or
   comparing one API response against the file directly. Kill both ports, then `npm run demo`.
+- **Node's `fetch` cannot observe an HTTP cache hit.** undici adds `cache-control: no-cache` and
+  `pragma: no-cache` to *every* request it sends, and Express's `fresh` honours that — correctly,
+  since the client asked not to be given a cached answer. So a conditional request written the
+  obvious way (`fetch(url, { headers: { 'if-none-match': etag } })`) reads **200**, and the server
+  looks like it is ignoring its own ETag when it is not. `curl -H 'If-None-Match: …'` on the same
+  URL returns 304. Pass `'cache-control': ''` explicitly to override undici's default — a browser
+  revalidating an `<img>` sends no such header, so that is the faithful simulation, not a
+  workaround. Cost one wrong verdict on `/api/images/:token` (WP-37).
 - Kill stray servers by port, never with a broad `pkill`:
   `lsof -ti tcp:4317 -ti tcp:5317 | xargs kill`. **The `-i` must be repeated.** macOS ships
   lsof 4.91, which reads the second `tcp:…` as a *filename*, prints its usage block to stderr and

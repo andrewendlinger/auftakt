@@ -1534,6 +1534,88 @@ try {
     check('the copy from a legacy season left no dangling rows', db3.prepare('PRAGMA foreign_key_check').all().length === 0);
     db3.close();
   }
+
+  // Images in flowing text (WP-37). The reference stored in the Markdown is season-free by
+  // design, so the two things worth pinning here are that the *serving* side is season-scoped
+  // anyway — an <img> carries no header, and resolving one season's token against another's
+  // database would hand back the wrong picture — and that a copied season carries its bytes.
+  console.log('\n== Bilder im Text: speichern, ausliefern, mitkopieren (WP-37)');
+  {
+    await startServer();
+    // 1×1 white JPEG. Spelled as base64 because a fixture that is binary on disk is a fixture
+    // nobody can read in a diff.
+    const JPEG =
+      '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==';
+    const raw = Buffer.from(JPEG, 'base64');
+
+    const up = await ok('POST', '/images', { data: JPEG, width: 1, height: 1, name: 'saalplan.jpg' });
+    check('der Upload liefert ein Inhalts-Token', /^[0-9a-f]{32}$/.test(up.token), up.token);
+    check('der Server nennt die zu speichernde URL', up.url === `/api/images/${up.token}`, up.url);
+
+    // The property the content token exists for: the same picture pasted twice is one row, so a
+    // hall plan in five projects costs its bytes once — and once in each restore point, not five.
+    const again = await ok('POST', '/images', { data: `data:image/jpeg;base64,${JPEG}` });
+    check('gleiche Bytes ergeben dasselbe Token', again.token === up.token, `${up.token} / ${again.token}`);
+
+    const imgPath = `/images/${up.token}`; // API already ends in /api — up.url is the *stored* form
+    const served = await fetch(API + imgPath);
+    const servedBytes = Buffer.from(await served.arrayBuffer());
+    check('GET liefert das Bild', served.status === 200, String(served.status));
+    check('die Bytes kommen unverändert zurück', servedBytes.equals(raw));
+    // From the allowlist, never the stored string — the header must not become user-controlled
+    // the day an importer writes rows this route did not create.
+    check('Content-Type ist die feste Kennung', served.headers.get('content-type') === 'image/jpeg', String(served.headers.get('content-type')));
+    check('nosniff ist gesetzt', served.headers.get('x-content-type-options') === 'nosniff');
+    check('das ETag ist das Token', served.headers.get('etag') === `"${up.token}"`, String(served.headers.get('etag')));
+    check('immutable ist gesetzt', /immutable/.test(served.headers.get('cache-control') ?? ''), String(served.headers.get('cache-control')));
+
+    // Reasoned from Express's documented behaviour when we set the ETag ourselves; asserted
+    // because „reasoned" is how a caching bug gets shipped.
+    //
+    // `cache-control: ''` is not decoration. Node's fetch (undici) adds `cache-control: no-cache`
+    // and `pragma: no-cache` to every request it sends, and Express's `fresh` honours that — as it
+    // must, since the client explicitly asked not to be given a cached answer. Without the
+    // override this reads 200 and looks like a broken ETag when the server is correct; a browser
+    // revalidating an <img> sends no such header. Verified against curl, which gets the 304.
+    const revalidated = await fetch(API + imgPath, {
+      headers: { 'if-none-match': `"${up.token}"`, 'cache-control': '' },
+    });
+    check('If-None-Match wird mit 304 beantwortet', revalidated.status === 304, String(revalidated.status));
+
+    const malformed = await fetch(`${API}/images/nicht-hex`);
+    check('ein Token der falschen Form ist 404', malformed.status === 404, String(malformed.status));
+    const unknown = await fetch(`${API}/images/${'a'.repeat(32)}`);
+    check('ein unbekanntes Token ist 404', unknown.status === 404, String(unknown.status));
+
+    const notJpeg = await req('POST', '/images', { data: Buffer.from('kein Bild').toString('base64') });
+    check('Nicht-JPEG wird abgelehnt', notJpeg.status === 400, `${notJpeg.status} ${JSON.stringify(notJpeg.body)}`);
+    const oversize = await req('POST', '/images', { data: Buffer.concat([raw, Buffer.alloc(1_600_000)]).toString('base64') });
+    check('ein zu großes Bild wird abgelehnt', oversize.status === 400, String(oversize.status));
+
+    // The F1 case. An <img> sends no X-Auftakt-Season, so the *route* has to be season-scoped or
+    // a window pinned to season 2 would be served season 1's picture — silently, because the DOM
+    // looks perfect either way and only the pixels are wrong.
+    const other = await ok('POST', '/seasons', { label: 'Saison ohne Bilder' });
+    const crossSeason = await fetch(`${API}${imgPath}?season=${other.id}`);
+    check('ein Bild der einen Saison ist in der anderen 404', crossSeason.status === 404, String(crossSeason.status));
+
+    // …and a copy carries the bytes, whatever groups were ticked: the reference lives inside a
+    // Markdown string, so gating images on a group would show up as a broken picture and nothing
+    // here could see it.
+    const copied = await ok('POST', '/seasons', { label: 'Kopie mit Bildern', copyFrom: 1, includeArtists: true });
+    const inCopy = await fetch(`${API}${imgPath}?season=${copied.id}`);
+    check('eine kopierte Saison bringt ihre Bilder mit', inCopy.status === 200, String(inCopy.status));
+
+    await stopServer();
+
+    const db4 = new Database(seasonFile('auftakt.db'), { readonly: true });
+    check('die doppelt hochgeladene Datei liegt einmal auf der Platte', db4.prepare('SELECT COUNT(*) c FROM images').get().c === 1, JSON.stringify(db4.prepare('SELECT COUNT(*) c FROM images').get()));
+    db4.close();
+    const db5 = new Database(seasonFile(copied.file), { readonly: true });
+    const copiedRow = db5.prepare('SELECT token, byte_size FROM images').get();
+    check('das Token überlebt die Kopie unverändert', copiedRow?.token === up.token, JSON.stringify(copiedRow));
+    db5.close();
+  }
 } catch (err) {
   check('run completed', false, String(err));
   if (serverLog) console.log(serverLog.slice(-900));
