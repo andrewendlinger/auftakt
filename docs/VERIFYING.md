@@ -460,6 +460,11 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **Commit-on-blur is asynchronous.** After clicking outside the editor, the PATCH is still in
   flight; a `GET` issued immediately reads the pre-edit row and the save looks lost. Wait for the
   re-rendered reader to show the change (e.g. `.prose-md img[width="768"]`), then read the API.
+- **Two `locator.boundingBox()` calls straddle the post-save re-render.** The query invalidation
+  after a commit re-renders between them, so a parent measured before and a child measured after
+  compare boxes from *different layouts* — a float read as escaping its container by 400px when
+  the steady state was fine, twice. Snapshot all geometry in one `evaluate`, or better, phrase the
+  assertion as an eventually-true `waitForFunction` so a transition can never be the sample.
 
 ## Print and PDF
 

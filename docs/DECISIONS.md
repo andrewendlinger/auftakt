@@ -1372,7 +1372,7 @@ never meet — **a stored reference carries only `w`, a rendered `src` carries o
 which is what lets `canonicalImageSrc` keep truncating at the first `?`.
 
 **The reader's half of the lift lives in the pipeline, not the React component.** The gate renders
-through `markdownPipeline.ts` and ends in `rehype-stringify`, never in React — so `rehypeImgWidth`
+through `markdownPipeline.ts` and ends in `rehype-stringify`, never in React — so `rehypeImgQuery`
 sitting in the shared plugin list is what lets the corpus assert the width semantics at string
 level (a raw `<img … width="120">` and its round-trip as `![…](…?w=120)` must emit the same HTML).
 Done in `MdImage` instead, the gate could never hold such a case. The corpus alone still cannot
@@ -1390,4 +1390,27 @@ in reserve for a 2× display — unless the image is naturally smaller, because 
 inserting stays limited to the season-safe fields, but an image round-trips through every editor,
 so wherever one can legitimately sit it can also be re-sized. A side effect worth naming: a raw
 `<img … width="120">` from an import now *survives* an edit, re-spelled as `?w=120` — before the
-schema had a `width` attribute, the first keystroke silently dropped it (`align` still drops).
+schema had a `width` attribute, the first keystroke silently dropped it.
+
+**Alignment rides the same rails as the width, and `left`/`right` mean float on purpose.** The
+grammar grows to `?w=384&a=right` (canonical order, still all-or-nothing — `?a=right&w=384` and
+`?a=middle` pass verbatim), the carrier is the legacy `align` attribute (in the untouched
+sanitizer's `'*'` allowlist, like `width`), and `rehypeImgQuery` lifts both legs. For `left` and
+`right` the attribute already *means* the right thing in every browser — a float the text wraps
+around, which is exactly how the Notion-imported `<img align="right">` notes have rendered since
+IMG-08 — so committing to float semantics makes our spelling and imported raw tags render
+identically under one set of CSS rules, and never re-means a stored string later. `center` has no
+legacy meaning on an `<img>` and is a block on auto margins. All three are pinned in `index.css`
+(`.prose-md img[align=…]`), a clearfix on `.prose-md` keeps a trailing float inside the note card
+and on the print sheet, and the lone-image paragraph rule excludes aligned images so its higher
+specificity cannot silently win the margin fight. In the bar, alignment *toggles* like the
+toolbar's marks — clicking the active one returns to text flow — because unlike the width there
+is no fourth value worth a button.
+
+**Floats broke click-to-select, and the fix is `posAtDOM`, not coordinates.** ProseMirror maps a
+click through the browser's caret-from-point, and next to a float Chromium resolves a point that
+is visibly *on* one image to the start of the line beside it — the old NodeSelection stood, and
+the size bar edited the wrong picture. The image node now handles its own `mousedown`: an event
+whose target is an `<img>` that maps to an image node becomes a NodeSelection via `posAtDOM`,
+which asks the DOM tree instead of the layout. This was the predicted cost of float semantics
+(the editor-UX tail), found by the headless verification run on the first try.
