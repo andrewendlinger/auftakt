@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Label, TextInput, Select, onEnterKey } from './fields';
 import { Btn, IconButton, ReorderArrows } from './ui';
 import { TrashIcon } from './icons';
@@ -95,6 +95,9 @@ export function CustomColumnManager({
   const { purgeAfterDays } = useRetention();
   const [editing, setEditing] = useState<CustomColumn | null>(null);
   const [confirming, setConfirming] = useState<ColumnConfirm | null>(null);
+  // Everything else in this dialog persists on click; the only unsaved input that Escape or a
+  // backdrop click can throw away is what has been typed into the „Neue Spalte" form below.
+  const [formDirty, setFormDirty] = useState(false);
 
   // On a project page, global columns are shown read-only; only project columns are managed here.
   const managed = useMemo(
@@ -152,7 +155,7 @@ export function CustomColumnManager({
   };
 
   return (
-    <Modal title="Spalten verwalten" onClose={onClose} wide>
+    <Modal title="Spalten verwalten" onClose={onClose} wide dirty={formDirty}>
       <div className="space-y-5">
         {readOnly.length > 0 && (
           <div>
@@ -201,7 +204,12 @@ export function CustomColumnManager({
           )}
         </div>
 
-        <AddColumnForm projectId={projectId} nextSort={Math.max(-1, ...managed.map((c) => c.sort_order)) + 1} onAdded={invalidate} />
+        <AddColumnForm
+          projectId={projectId}
+          nextSort={Math.max(-1, ...managed.map((c) => c.sort_order)) + 1}
+          onAdded={invalidate}
+          onDirtyChange={setFormDirty}
+        />
       </div>
 
       {editing && <ColumnEditModal col={editing} onClose={() => setEditing(null)} onSaved={invalidate} />}
@@ -416,10 +424,17 @@ function ColumnEditModal({
   };
 
   const message = problem ?? saveError;
+  // Compared against what the dialog opened with (`before` exists for the removal check and is
+  // exactly that snapshot), so reverting an edit by hand also clears the question (TTU-17).
+  const dirty =
+    name !== col.name ||
+    icon !== (col.icon ?? '') ||
+    (editableOptions && JSON.stringify(options) !== JSON.stringify(before));
   return (
     <Modal
       title={`„${col.name}“ bearbeiten`}
       onClose={onClose}
+      dirty={dirty}
       footer={
         <>
           <Btn onClick={onClose}>Abbrechen</Btn>
@@ -518,10 +533,17 @@ function AddColumnForm({
   projectId,
   nextSort,
   onAdded,
+  onDirtyChange,
 }: {
   projectId?: number;
   nextSort: number;
   onAdded: () => Promise<void>;
+  /**
+   * Reports whether the form holds typed input, so the surrounding Modal can ask before an
+   * accidental exit throws it away (TTU-17). Name and Symbol only: the Kategorien seed rows
+   * appear on their own when „Auswahl" is picked, so their mere presence is not the user's work.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const [name, setName] = useState('');
   const [type, setType] = useState<CustomColumnType>('text');
@@ -531,6 +553,11 @@ function AddColumnForm({
   // Same TTU-24 shape as `useTaskComposer`: Enter reaches `add` directly, so a repeat-key burst
   // needs a ref — the `busy` state only disables the button.
   const busyRef = useRef(false);
+
+  const dirty = name.trim() !== '' || icon.trim() !== '';
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   const add = async () => {
     if (!name.trim() || busyRef.current) return;

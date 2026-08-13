@@ -145,6 +145,8 @@ export function NewSeasonModal({
       title={`${term.singular} anlegen`}
       size="lg"
       onClose={onClose}
+      // The copy checkboxes only render once „Übernehmen aus" is set, so `copyFrom` covers them.
+      dirty={label !== '' || copyFrom !== ''}
       footer={
         <>
           <Btn onClick={onClose}>Abbrechen</Btn>

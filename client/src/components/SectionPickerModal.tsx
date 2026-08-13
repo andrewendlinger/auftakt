@@ -96,6 +96,8 @@ export function SectionPickerModal({
     <Modal
       title="Bereich hinzufügen"
       onClose={onClose}
+      // Only the typed name is worth a question — a picked type is one click to redo.
+      dirty={name !== ''}
       footer={
         chosen && (
           <>
