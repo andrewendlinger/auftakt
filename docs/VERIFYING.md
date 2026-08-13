@@ -334,6 +334,36 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   `input[placeholder^="Neue Aufgabe"]`, or `^="Neue allgemeine Aufgabe"` on the Übersicht.
 - **The task title cell also carries the subtask counter** („Requisiten sichten\n0/3"), so an
   `innerText` comparison needs the first line only.
+- **A row located by its title stops matching the moment that title is being edited.** React sets
+  `value` as a property, so an open `InlineInput` has no text — `locator('tr').filter({ hasText:
+  title })` resolves to nothing and every follow-up call waits out its timeout while the editor is
+  right there on screen. Anchor the row on something that stays rendered (its Bereich pill, its
+  comment) and address the cells by `td` index; `td` 0 is the tree gutter, so with the demo's
+  columns Fällig is 3 and Abgabe 8.
+- **Typing one segment into a *filled* date cell does not produce a half-typed date** — it replaces
+  that segment and the value stays complete, so a check for „Enter must not commit" passes
+  vacuously against working code and would pass against the bug too. Reproduce it in an **empty**
+  date cell (demo task 2, „Anmietung Schlagzeug klären", has no Fällig), or press Backspace on a
+  filled one to clear the focused segment. `input.validity.badInput` is the state under test;
+  Enter then leaves the editor open and writes nothing (WP-43).
+- **Search hits are not tab stops.** ↑/↓ move a marker while focus stays in the field, so read
+  `aria-activedescendant` against the `[role="option"]` ids rather than `document.activeElement`,
+  and press Enter on the *field*. Tab from the field lands on the panel's scroll container —
+  Chromium makes an `overflow-y-auto` region focusable — which is one stop, not a hit.
+- **⌘F/⌘K focus the search field, and are inert while any dialog is open.** A script that expects
+  the shortcut to work over a modal is asserting the opposite of the rule (WP-43).
+- **An option group is one tab stop, so a tab walk that counted pills now ends somewhere else.**
+  The items carry `data-roving`, and exactly one of them has `tabindex="0"` — assert that pair
+  (`[data-roving][tabindex="0"]`) rather than walking, and use the arrows to move inside the
+  group. The same holds for a ▲▼ pair, where ↑/↓ *perform* the move; auto-repeat is ignored, so a
+  held key moves a row once.
+- **Scroll a popover trigger into view before clicking it.** `useAnchoredPopover` closes on any
+  scroll outside its menu, and the scroll `click()` performs for itself arrives *after* the
+  popover opened — the menu blinks shut and the run reads „`PillSelect` does not open at all",
+  with `aria-expanded="false"` to back it up. `await trigger.scrollIntoViewIfNeeded()` first.
+- **„Spalten verwalten" on a *project* page lists only project-scoped columns.** The demo's custom
+  columns are global, so `[data-column-row]` matches nothing there and every row selector waits
+  out its timeout. Open it from `#/einstellungen/aufgaben` („Verwalten").
 - **The Einstellungen tabs are links, not buttons** — `getByRole('button', …)` waits for ever.
   Navigate straight to `#/einstellungen/aufgaben`.
 - **A drag must start on the ⠿, not on the row.** Every reorderer runs `useDragReorder` in
@@ -404,11 +434,16 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   proves the count walks *through* projects rather than stopping at them.
 
 - **The default `task_sort` is `[status]`, and a rule for a hidden column is inert.** A season
-  created before WP-32 still *stores* `[status, priority, due]` and behaves identically — Priorität
-  and Fällig are `enabled: 0`, so `activeSortRules` drops them; there is no migration. A repro that
-  needs a priority or due rule must **show the column first**
+  created before WP-32 still *stores* `[status, priority, due]` and behaves identically — the
+  columns ship `enabled: 0`, so `activeSortRules` drops those rules; there is no migration. A repro
+  that needs a priority rule must **show the column first**
   (`PATCH /api/custom-columns/<id> {"enabled":1}`), or the rule does nothing and the check passes
   against a defect. A „keine Regel" repro still needs `PATCH /api/settings {"task_sort": []}`.
+- **The demo *shows* Fällig, and has a custom date column „Abgabe" (WP-43).** Both exist so the
+  two date cells can be typed into at all; the demo's stored `task_sort` is `[status]`, so neither
+  orders anything. Task 5 („Bühnenplan an Technik schicken") carries a Fällig date, an Abgabe date
+  and a comment — the one row that exercises every editable cell — and task 2 has neither date,
+  which is the empty cell a half-typed-date repro needs.
 - **A newly created task carries a *negative* `sort_order`** — the transform stamps it one below
   its list's minimum so it lands on top. Assert relative order, never a literal ordinal, and expect
   the newest row first in any list nothing has been dragged in.
