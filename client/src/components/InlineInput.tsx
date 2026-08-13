@@ -18,6 +18,8 @@ interface Base {
   value: string;
   /** Leave edit mode. Called when the write lands, on Escape, and on an unchanged commit. */
   onDone: () => void;
+  /** `date` renders a native picker and turns on the half-typed guard below. */
+  type?: 'text' | 'date';
   className?: string;
   title?: string;
   placeholder?: string;
@@ -46,13 +48,28 @@ type Props =
  * (TTU-38), which only the task table's copy did.
  */
 export function InlineInput(props: Props) {
-  const { value, onDone, className = '', title, placeholder, errorMessage, stopClicks } = props;
+  const { value, onDone, type, className = '', title, placeholder, errorMessage, stopClicks } = props;
   const empty: EmptyPolicy = props.empty ?? 'ignore';
   const [text, setText] = useState(value);
   const guard = useGuardedAction();
   // Blur → commit → the shell unmounts us, and the unmount path must not write a second time.
   // Reset on failure so a retry (or the unmount) can still get the text out.
   const settled = useRef(false);
+  /**
+   * „The picker holds digits it does not consider a date yet."
+   *
+   * A half-typed `type="date"` reports `value === ''`, so every write path here would read a
+   * cleared field and store one: in the event dialog that wrote „Datum offen" over a real date
+   * (WP-40), and in a task cell it would do the same on the way past. `onEnterKey` answers this
+   * by refusing Enter for the picker types outright (`NO_ENTER_TYPES`, fields.tsx), because a
+   * dialog-wide Enter cannot know which field is mid-thought. A single-field editor can: this
+   * asks the input itself, so Enter and Escape work on a date cell like they do on a text one and
+   * only the incomplete draft is held back.
+   *
+   * Enter and blur read `validity.badInput` off the event's own element; the ref carries the last
+   * such reading to the unmount arm, which no longer has one (React nulls refs before cleanup).
+   */
+  const incomplete = useRef(false);
 
   /** The value to write, or `undefined` when there is nothing to commit. */
   const pending = (): string | null | undefined => {
@@ -72,8 +89,20 @@ export function InlineInput(props: Props) {
     );
   };
 
-  const commit = async () => {
+  const cancel = () => {
+    settled.current = true;
+    setText(value);
+    onDone();
+  };
+
+  const commit = async (halfTyped = false) => {
     if (settled.current) return;
+    // Leaving a picker mid-date is a cancel, not a clear: the digits on screen were never a value
+    // this component could write, and the stored date is the only thing it could write instead.
+    if (halfTyped) {
+      cancel();
+      return;
+    }
     settled.current = true;
     const next = pending();
     if (next === undefined) {
@@ -82,12 +111,6 @@ export function InlineInput(props: Props) {
     }
     if (await write(next)) onDone();
     else settled.current = false;
-  };
-
-  const cancel = () => {
-    settled.current = true;
-    setText(value);
-    onDone();
   };
 
   /**
@@ -100,7 +123,7 @@ export function InlineInput(props: Props) {
    * there is nothing to save, which is exactly the state a spurious cleanup finds.
    */
   useCommitOnUnmount(true, () => {
-    if (settled.current) return;
+    if (settled.current || incomplete.current) return;
     const next = pending();
     if (next === undefined) return;
     settled.current = true;
@@ -110,16 +133,24 @@ export function InlineInput(props: Props) {
   return (
     <input
       autoFocus
+      type={type}
       className={className}
       value={text}
       title={title}
       placeholder={placeholder}
-      onChange={(e) => setText(e.target.value)}
+      onChange={(e) => {
+        incomplete.current = e.currentTarget.validity.badInput;
+        setText(e.target.value);
+      }}
       onClick={stopClicks ? (e) => e.stopPropagation() : undefined}
-      onBlur={() => void commit()}
+      onBlur={(e) => void commit(e.currentTarget.validity.badInput)}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           e.preventDefault();
+          // Nothing to save yet, and the digits on screen are worth more than a closed editor:
+          // stay open so the date can be finished.
+          incomplete.current = e.currentTarget.validity.badInput;
+          if (incomplete.current) return;
           (e.target as HTMLInputElement).blur();
         }
         if (e.key === 'Escape') {
