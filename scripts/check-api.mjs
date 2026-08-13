@@ -1436,6 +1436,13 @@ try {
       -- list, because each one binds the scope and the parent id together.
       INSERT INTO custom_columns (id, name, type, scope, project_id, sort_order)
         VALUES (903, 'Heimatlose Spalte', 'text', 'project', NULL, 9);
+      -- Its mirror: global, but carrying a project. Equally legal before WP-51 and equally
+      -- CHECK-failing now — but this one is *visible*, on the Übersicht and every artist page, so
+      -- the direction of the fix is the assertion below: the stray parent is dropped, rather than
+      -- the scope rewritten to follow it into a single project and out of sight.
+      INSERT INTO custom_columns (id, name, type, scope, project_id, sort_order)
+        VALUES (904, 'Spalte mit Fremdeltern', 'text', 'global',
+                (SELECT id FROM projects WHERE deleted_at IS NULL LIMIT 1), 10);
     `);
     db.close();
 
@@ -1450,10 +1457,82 @@ try {
     check('the plain global column came through intact', row(901)?.name === 'Altspalte' && row(901)?.icon === '📎' && row(901)?.sort_order === 7, JSON.stringify(row(901)));
     check('the project column kept its parent', row(902)?.scope === 'project' && row(902)?.project_id != null, JSON.stringify(row(902)));
     check('the straggler is normalised rather than dropped', row(903)?.name === 'Heimatlose Spalte' && row(903)?.scope === 'global', JSON.stringify(row(903)));
+    check(
+      'the mirror row keeps the scope it is visible under, and loses the stray parent',
+      row(904)?.scope === 'global' && row(904)?.project_id === null,
+      JSON.stringify(row(904)),
+    );
     const builtins = db2.prepare("SELECT COUNT(*) c FROM custom_columns WHERE kind = 'builtin'").get().c;
     check('the built-ins are back after the table was replaced', builtins > 0, `${builtins} built-ins`);
     check('the column rebuild left no dangling rows', db2.prepare('PRAGMA foreign_key_check').all().length === 0);
     db2.close();
+  }
+
+  // The same legacy rows, reached down the other path (WP-51). copySeasonData opens the *source*
+  // season raw — migrations only ever run on the active database — while the target is built from
+  // SCHEMA and carries the CHECK. A mismatched row copied verbatim therefore aborts the copy
+  // between groups, and there is no outer transaction: the user gets `copyError` and a season with
+  // its artists but no tasks. The mirror row cannot be planted through the API any more (route and
+  // CHECK both refuse it), so it goes into a season file that is never opened as the active one.
+  console.log('\n== a copy from a legacy season normalises instead of aborting (WP-51)');
+  {
+    await startServer();
+    const src = await ok('POST', '/seasons', { label: 'Alt-Quelle' });
+    const pin = { 'x-auftakt-season': String(src.id) };
+    await ok('POST', '/artists', { name: 'Alt-Künstler' }, pin);
+    // Copied *after* the columns, so its arrival is what proves the copy ran past them.
+    await ok('POST', '/tasks', { title: 'Aufgabe nach den Spalten' }, pin);
+    await stopServer();
+
+    // Now roll that season's custom_columns back to the pre-WP-51 shape, holding both mismatched
+    // rows. Boot only sweeps the registry default, so nothing opens this file and re-migrates it.
+    const old = new Database(seasonFile(src.file));
+    old.pragma('foreign_keys = OFF');
+    old.exec(`
+      DROP TABLE custom_columns;
+      CREATE TABLE custom_columns (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT NOT NULL,
+        type       TEXT NOT NULL,
+        scope      TEXT NOT NULL DEFAULT 'global',
+        project_id INTEGER REFERENCES projects(id),
+        options    TEXT,
+        icon       TEXT,
+        key        TEXT,
+        kind       TEXT NOT NULL DEFAULT 'custom',
+        enabled    INTEGER NOT NULL DEFAULT 1,
+        deletable  INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        deleted_at TEXT
+      );
+      INSERT INTO custom_columns (id, name, type, scope, project_id, sort_order)
+        VALUES (911, 'Alt-Spalte mit Fremdeltern', 'text', 'global', 4242, 1);
+      INSERT INTO custom_columns (id, name, type, scope, project_id, sort_order)
+        VALUES (912, 'Alt-Spalte ohne Eltern', 'text', 'project', NULL, 2);
+    `);
+    old.close();
+
+    await startServer();
+    const copy = await ok('POST', '/seasons', {
+      label: 'Kopie der Alt-Quelle',
+      copyFrom: src.id,
+      includeArtists: true,
+      includeTasks: true, // forces the columns group along
+    });
+    check('the copy from a legacy season reported no error', copy.copyError === undefined, String(copy.copyError));
+    await stopServer();
+
+    const db3 = new Database(seasonFile(copy.file), { readonly: true });
+    const col = (name) => db3.prepare('SELECT * FROM custom_columns WHERE name = ?').get(name);
+    const global = (c) => c?.scope === 'global' && c.artist_id === null && c.project_id === null;
+    check('the mirror row came over as the global column it was displayed as', global(col('Alt-Spalte mit Fremdeltern')), JSON.stringify(col('Alt-Spalte mit Fremdeltern')));
+    check('the straggler came over rather than being dropped', global(col('Alt-Spalte ohne Eltern')), JSON.stringify(col('Alt-Spalte ohne Eltern')));
+    const titles = db3.prepare('SELECT title FROM tasks').all().map((t) => t.title);
+    check('the copy ran past the column group', titles.includes('Aufgabe nach den Spalten'), titles.join(', '));
+    check('the copy from a legacy season left no dangling rows', db3.prepare('PRAGMA foreign_key_check').all().length === 0);
+    db3.close();
   }
 } catch (err) {
   check('run completed', false, String(err));

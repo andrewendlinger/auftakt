@@ -876,15 +876,32 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
     copyRows(target, 'projects', projects);
     const projectIds = new Set(projects.map((p) => p.id));
     // Scoped columns travel with the parent whose page they appear on (WP-51), gated on the row
-    // that actually arrived like every other child here. A legacy source has no artist_id column
-    // and no 'artist' scope, so this arm simply finds nothing there.
+    // that actually arrived like every other child here.
+    //
+    // Which page that is has to be worked out rather than read straight off `scope`, because the
+    // source is opened raw: migrateColumnsArtistScope has never run on it, so a row may still name
+    // a scope it carries no parent for, or carry a parent its scope does not own. The target *is*
+    // built from SCHEMA and has the CHECK, and the groups below share no outer transaction — so
+    // one such row inserted verbatim throws SQLITE_CONSTRAINT_CHECK after artists, projects,
+    // contacts and events are already written, and the caller hands the user `copyError` plus half
+    // a season (seasons.ts). Same rule as the migration — the scope is authoritative, a parent it
+    // does not own is dropped, a scope without its parent falls back to global — so opening a
+    // database and copying it give one answer. It is spelled in JS rather than in the WHERE clause
+    // because a legacy source has no artist_id column for SQL to name.
+    const customCols = live('custom_columns', " AND kind = 'custom'");
+    const ownerOf = (c: Record<string, unknown>): 'artist' | 'project' | 'global' =>
+      c.scope === 'artist' && c.artist_id != null
+        ? 'artist'
+        : c.scope === 'project' && c.project_id != null
+          ? 'project'
+          : 'global';
+
+    // A legacy source has no 'artist' scope at all, so this arm simply finds nothing there.
     if (o.artists) {
       mergeInto(
         copyCustomColumns(
           target,
-          live('custom_columns', " AND kind = 'custom' AND scope = 'artist'").filter(
-            (c) => c.artist_id != null && artistIds.has(c.artist_id),
-          ),
+          customCols.filter((c) => ownerOf(c) === 'artist' && artistIds.has(c.artist_id)),
         ),
       );
     }
@@ -892,9 +909,7 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
       mergeInto(
         copyCustomColumns(
           target,
-          live('custom_columns', " AND kind = 'custom' AND scope = 'project'").filter(
-            (c) => c.project_id != null && projectIds.has(c.project_id),
-          ),
+          customCols.filter((c) => ownerOf(c) === 'project' && projectIds.has(c.project_id)),
         ),
       );
     }
@@ -917,7 +932,14 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
         copyColumnConfig(
           target,
           live('custom_columns', " AND kind = 'builtin'"),
-          live('custom_columns', " AND kind = 'custom' AND scope = 'global'"),
+          // Normalised on the way in, per the rule above: a mirror row's stray FK is dropped rather
+          // than obeyed, so a column the user can see stays where they can see it, and a straggler
+          // — invisible in the source, since every list binds scope and parent together — arrives
+          // as the global column the migration would have made of it. Built-ins need no such care:
+          // copyColumnConfig only ever UPDATEs them, matched by `key`.
+          customCols
+            .filter((c) => ownerOf(c) === 'global')
+            .map((c) => ({ ...c, scope: 'global', artist_id: null, project_id: null })),
         ),
       );
     }
@@ -2158,11 +2180,20 @@ function migrateLinksAllowSeason(db: Database.Database): void {
  * so a column can belong to one artist the way it has always been able to belong to one project.
  *
  * The CHECK is new ground rather than a relaxation: `scope` never had one, and neither the route
- * nor the schema paired it with a parent id. A row could therefore say `scope = 'project'` and
- * carry no project_id — invisible in every list, because each one binds the scope and the parent
- * together, and so unreachable except through the very PATCH that produced it. Those rows are
- * normalised *before* the rebuild, by deriving the scope from the FK that is actually set; a
- * straggler would otherwise fail the CHECK and take the whole open with it.
+ * nor the schema paired it with a parent id. Both halves of the pair were separately writable, so
+ * two mismatched shapes are legal in any database this build has not opened yet, and they are not
+ * equally bad: a *straggler* (`scope = 'project'`, no project_id) is invisible in every list,
+ * because each one binds the scope and the parent together, while a *mirror* row (`scope =
+ * 'global'` carrying a project_id) lists as a global column and is on screen right now.
+ *
+ * They are normalised *before* the rebuild — a straggler would otherwise fail the CHECK and take
+ * the whole open with it — under one rule: **the scope is authoritative, a parent it does not own
+ * is dropped, and only a scope that names a parent it does not carry falls back to `global`.**
+ * Deriving the scope from the FK instead would satisfy the CHECK just as well, but it answers the
+ * mirror row by moving a column the user can see out of the Übersicht and every artist page into
+ * one project, silently and with no way back except the API. Nothing visible moves under this rule;
+ * the straggler, invisible either way, surfaces as a global column. copySeasonData applies the same
+ * rule to raw source seasons, where migrations have never run.
  *
  * Same 12-step shape as the WP-47 rebuilds above, and idempotent the same way — the constraint's
  * own text is the marker. custom_columns carries no index, so none is recreated.
@@ -2174,10 +2205,16 @@ function migrateColumnsArtistScope(db: Database.Database): void {
     .get() as { sql?: string } | undefined;
   if (!row?.sql || row.sql.includes("scope = 'artist'")) return; // already migrated (or fresh SCHEMA)
 
+  // Order matters: the two FK clears read `scope`, the fallback below reads the FKs. The
+  // unknown-scope arm is not hypothetical tidiness — `scope` is free text with no CHECK behind it
+  // here, and a value the new one does not list would fail the rebuild exactly like a straggler.
   db.exec(`
-    UPDATE custom_columns
-       SET scope = CASE WHEN project_id IS NOT NULL THEN 'project' ELSE 'global' END
-     WHERE scope <> CASE WHEN project_id IS NOT NULL THEN 'project' ELSE 'global' END
+    UPDATE custom_columns SET project_id = NULL WHERE scope <> 'project' AND project_id IS NOT NULL;
+    UPDATE custom_columns SET artist_id  = NULL WHERE scope <> 'artist'  AND artist_id  IS NOT NULL;
+    UPDATE custom_columns SET scope = 'global'
+     WHERE scope NOT IN ('global', 'artist', 'project')
+        OR (scope = 'project' AND project_id IS NULL)
+        OR (scope = 'artist'  AND artist_id  IS NULL)
   `);
 
   // foreign_keys must be toggled OUTSIDE the transaction to take effect.

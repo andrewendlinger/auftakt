@@ -1184,10 +1184,22 @@ show?") does not arise.
 own list. „Überall individuell veränderbar" is satisfied there by the global set.
 
 **The pairing is enforced twice, and legacy rows are normalised rather than dropped.** `scope` never
-had a CHECK and the route never paired it with a parent, so `scope = 'project'` with a NULL
-project_id was legal — and invisible in every list, because each one binds the scope and the parent
-id together. The migration derives the scope from the FK for any such row before the rebuild
-installs the CHECK; failing the rebuild would fail the whole database open.
+had a CHECK and the route never paired it with a parent, so both halves were separately writable and
+two mismatched shapes are legal in any database this build has not opened yet: a *straggler*
+(`scope = 'project'`, no project_id), invisible in every list because each one binds the scope and
+the parent id together, and a *mirror* row (`scope = 'global'` carrying a project_id), which lists
+as a global column and is on screen. Both are normalised before the rebuild installs the CHECK —
+failing the rebuild would fail the whole database open — under one rule: **the scope is
+authoritative, a parent it does not own is dropped, and only a scope that names a parent it does not
+carry falls back to `global`.** Deriving the scope from the FK instead satisfies the CHECK just as
+well and was the first cut, but it answers the mirror row by moving a column the user can see out of
+the Übersicht and every artist page into one project, silently and with no way back except the API.
+The direction is chosen so that nothing visible moves.
+
+The rule is spelled twice because it has two audiences: the migration, for the active database, and
+`copySeasonData`, which opens source seasons raw and would otherwise insert a mismatched row
+straight into a target that *does* carry the CHECK — aborting the copy between groups, with no outer
+transaction to undo the ones already written and a half-populated season left behind.
 
 **No UI to change a column's scope.** A column created in the wrong place is deleted and created
 again. Its values live in `custom_values` keyed by column id, so nothing is lost that moving it
