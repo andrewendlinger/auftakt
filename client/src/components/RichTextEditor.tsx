@@ -374,8 +374,15 @@ export function RichTextEditor({
         width: resized.width,
         height: resized.height,
       });
+      // Focus may have left while the upload ran, and `InlineNotes` unmounts the editor on blur —
+      // the optional chain does not catch that, because `editor` is then a live reference to a
+      // torn-down instance and dispatching into it throws. The catch below would report „konnte
+      // nicht gespeichert werden" for bytes the server did store (IMG-03); the row stays as the
+      // harmless orphan the comment above describes, and the picture is simply not inserted,
+      // which is what the user's own blur asked for.
+      if (!editor || editor.isDestroyed) return;
       editor
-        ?.chain()
+        .chain()
         .focus()
         // The server's URL, stored verbatim: season-free, so it survives a season copy.
         .insertContent({ type: 'image', attrs: { src: stored.url, alt: file.name } })
