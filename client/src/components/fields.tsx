@@ -75,6 +75,7 @@ export function Modal({
   const [confirming, setConfirming] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const footerRef = useRef<HTMLDivElement>(null);
   // mousedown and mouseup must *both* land on the backdrop. A drag that starts on the dialog's
   // own text and ends outside it is a text selection, not a dismissal (TTU-17).
   const downOnBackdrop = useRef(false);
@@ -153,6 +154,26 @@ export function Modal({
     return () => window.removeEventListener('keydown', h);
   }, [depth]);
 
+  /**
+   * The dialog places focus itself when it opens: the first tabbable of the *body* — the first
+   * field, the thing the user came to type into — then of the footer, then the ✕. Never nothing:
+   * focus left behind the backdrop means the next Enter presses whatever button just opened the
+   * dialog and opens it a second time.
+   *
+   * A dialog that wants a different first stop marks that element `autoFocus`. React commits
+   * child `autoFocus` during the mutation phase, before any effect runs, so the `contains` check
+   * below sees it and stays out of the way — the field is the override, deliberately not a prop
+   * on `Modal`. Confirm dialogs have no body tabbables at all and land on the footer's
+   * „Abbrechen": the keystroke that reaches the question answers it, and the safe answer is the
+   * one Enter lands on — the same rule the „Änderungen verwerfen?" overlay below applies.
+   */
+  useEffect(() => {
+    const card = cardRef.current;
+    if (card && !card.contains(document.activeElement)) {
+      (tabbables(bodyRef.current)[0] ?? tabbables(footerRef.current)[0] ?? tabbables(card)[0])?.focus();
+    }
+  }, []);
+
   const requestClose = () => {
     if (dirty) setConfirming(true);
     else onClose();
@@ -201,6 +222,7 @@ export function Modal({
           </div>
           {footer && (
             <div
+              ref={footerRef}
               inert={confirming}
               className="flex shrink-0 justify-end gap-2 border-t border-neutral-100 px-5 py-3"
             >
