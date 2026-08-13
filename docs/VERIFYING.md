@@ -449,6 +449,17 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   needs a real `reload()` or the page persists the stale array over it.
 - **Clean up fixtures between runs.** A script that throws mid-way leaves its rows behind, and the
   next run then matches two elements with the same name and picks the wrong one.
+- **Open an `InlineNotes` editor by clicking a text run, never the prose box.** A `.click()` on
+  `.prose-md` lands at the element's center, and the demo notes put links and a linked image
+  there — the click then navigates (or selects the image) and `.rte-content` never mounts, which
+  reads as „the editor is broken". `getByText('Streichquartett')` opens the artist note reliably.
+- **`h1` is not a safe blur target, because a note can contain one.** The demo project description
+  begins with `# Eröffnungskonzert`, which renders an `<h1>` inside `.prose-md` — the same text as
+  the page heading, so `locator('h1')` is a strict-mode violation that looks like a duplicated
+  page title. Use `.first()`, or click something a note cannot contain.
+- **Commit-on-blur is asynchronous.** After clicking outside the editor, the PATCH is still in
+  flight; a `GET` issued immediately reads the pre-edit row and the save looks lost. Wait for the
+  re-rendered reader to show the change (e.g. `.prose-md img[width="768"]`), then read the API.
 
 ## Print and PDF
 

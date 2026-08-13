@@ -1354,3 +1354,40 @@ the round-trip gate's *idempotence* assertion can catch, since the first pass st
 Bare is a fixed point on both sides. The mechanism still survives a backslash before a bracket
 (`a\[b` → `a\\[b`, which the two parse differently and agree on the result); a doubled backslash is
 where they part, and no file name from the picker has one.
+
+**A display width is spelled `?w=384` on the reference, and it is pixels via the `width`
+attribute on purpose.** Both parsers treat a URL as an opaque string, so the spelling rides through
+marked, micromark and the linked-image machinery untouched, keeps the alt's escaping story closed,
+and keeps one stored dialect — the raw-HTML alternative (`<img src width>`, which the reader
+already honoured, IMG-08) would have serialized sized images as HTML and plain ones as Markdown,
+handing the alt a second escaping regime: the IMG-06 bug class, reopened. Pandoc's `{width=…}` is
+parsed by neither half and renders as literal braces. Pixels because the `width` DOM attribute
+takes nothing else and `style` is not in the sanitizer's allowlist — the width *attribute* is, on
+`'*'`, in the unmodified GitHub schema — so px-via-attribute is the only size the untouched
+sanitizer admits, the same argument that decided the storage above. `splitImageSrc` /
+`composeImageSrc` (`lib/imageRef.ts`) are the one definition of the spelling, exact inverses, and
+deliberately all-or-nothing: anything but exactly `w=<int>` on our own path passes through
+verbatim, so unrecognized input round-trips byte-identically by construction. The two query legs
+never meet — **a stored reference carries only `w`, a rendered `src` carries only `season`** —
+which is what lets `canonicalImageSrc` keep truncating at the first `?`.
+
+**The reader's half of the lift lives in the pipeline, not the React component.** The gate renders
+through `markdownPipeline.ts` and ends in `rehype-stringify`, never in React — so `rehypeImgWidth`
+sitting in the shared plugin list is what lets the corpus assert the width semantics at string
+level (a raw `<img … width="120">` and its round-trip as `![…](…?w=120)` must emit the same HTML).
+Done in `MdImage` instead, the gate could never hold such a case. The corpus alone still cannot
+see an editor that merely *carries* the query — verbatim pass-through round-trips every string
+perfectly while drawing the wrong size — hence the gate's node-level assertion that `?w=384`
+actually lands in the parsed node's `width` attribute and the editor's own rendered `<img>`.
+
+**Sizing is four presets, not drag handles.** Klein 192 / Mittel 384 / Groß 768 / Original (width
+removed), on a selection-driven bar in `TableBar`'s pattern. Drag needs a NodeView with pointer
+machinery the jsdom gate cannot exercise and produces arbitrary values; presets are enumerable
+corpus cases, one ⌘Z each, and the toolbar idiom the app already has. A fresh insert lands at
+Mittel — a third of a header note's column, ~10 cm on the print sheet, >3× the 1200 px capture cap
+in reserve for a 2× display — unless the image is naturally smaller, because a `width` attribute
+*upscales* and a 200 px logo should keep its own size. The bar is not gated on the `images` prop:
+inserting stays limited to the season-safe fields, but an image round-trips through every editor,
+so wherever one can legitimately sit it can also be re-sized. A side effect worth naming: a raw
+`<img … width="120">` from an import now *survives* an edit, re-spelled as `?w=120` — before the
+schema had a `width` attribute, the first keystroke silently dropped it (`align` still drops).
