@@ -389,8 +389,8 @@ function ColumnEditModal({
   const [options, setOptions] = useState<CustomColumnOption[]>(parseColumnOptions(col.options));
   const [busy, setBusy] = useState(false);
   // A ref, not `busy`: „Enter saves" reaches `save` directly, and a repeat-key burst inside one
-  // tick reads the same stale `false` (TTU-24). Cleared in `finally`, unlike `busy`, which the
-  // removal dialog keeps while it asks.
+  // tick reads the same stale `false` (TTU-24). This is the double-fire guard; `busy` only
+  // disables buttons for the length of the request, and both clear in the same `finally`.
   const inFlight = useRef(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [pending, setPending] = useState<OptionRemoval[] | null>(null);
