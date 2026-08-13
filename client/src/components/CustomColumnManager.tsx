@@ -108,8 +108,10 @@ export function CustomColumnManager({
   // Everything else in this dialog persists on click; the only unsaved input that Escape or a
   // backdrop click can throw away is what has been typed into the „Neue Spalte" form below.
   const [formDirty, setFormDirty] = useState(false);
-  // Scopes the `[data-column-row]` lookup `move` uses to put focus back on the row it moved.
+  // Scopes the `[data-column-row]` lookup the effect below uses to put focus back on a moved row,
+  // and the row it is waiting for.
   const listRef = useRef<HTMLUListElement>(null);
+  const restoreFocus = useRef<{ id: ID; dir: -1 | 1 } | null>(null);
 
   // On a project page, global columns are shown read-only; only project columns are managed here.
   const managed = useMemo(
@@ -134,23 +136,43 @@ export function CustomColumnManager({
   // React moves the DOM node and focus normally travels with it — but the press that lands a
   // column at an end disables the very arrow it was pressed on, the browser blurs it, and focus
   // falls to <body>. Keyboard reordering dead-ended one press before it finished, which the
-  // dialog opening on that arrow (WP-42) made the ordinary way to use it. Unlike `OptionsEditor`,
-  // the new order is only in the DOM once the refetch has committed, so the rAF waits for
-  // `invalidate` rather than following the PATCH.
+  // dialog opening on that arrow (WP-42) made the ordinary way to use it.
   const move = async (col: CustomColumn, dir: -1 | 1) => {
     const next = arrayMove(managed, managed.findIndex((c) => c.id === col.id), dir);
     if (next === managed) return;
     await api.customColumns.reorder(next.map((c) => c.id));
+    restoreFocus.current = { id: col.id, dir };
     await invalidate();
-    requestAnimationFrame(() => {
-      const row = listRef.current?.querySelectorAll<HTMLElement>('[data-column-row]')[
-        next.findIndex((c) => c.id === col.id)
-      ];
-      const same = row?.querySelector<HTMLButtonElement>(`[data-arrow="${dir === -1 ? 'up' : 'down'}"]`);
-      const other = row?.querySelector<HTMLButtonElement>(`[data-arrow="${dir === -1 ? 'down' : 'up'}"]`);
-      (same && !same.disabled ? same : other)?.focus();
-    });
   };
+
+  /**
+   * Put focus back on the row `move` just moved, once the new order is actually in the DOM.
+   *
+   * `OptionsEditor` can do this in a `requestAnimationFrame` right after its `onChange`, because
+   * that is a discrete event and React flushes it synchronously. Here the order comes back from
+   * the server, so the re-render happens in an async continuation that a frame callback can beat:
+   * the rAF then read the *old* row — arrow not disabled yet — focused it, and the commit that
+   * followed disabled it and dropped focus to <body>, which is the exact failure this repairs.
+   * Running off `managed` instead waits for the commit by construction.
+   *
+   * Focus the user moved elsewhere while the PATCH was in flight is left alone, the same rule
+   * `Modal`'s close-restore follows.
+   */
+  useEffect(() => {
+    const target = restoreFocus.current;
+    if (!target) return;
+    restoreFocus.current = null;
+    const i = managed.findIndex((c) => c.id === target.id);
+    const list = listRef.current;
+    if (i < 0 || !list) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && !list.contains(active)) return;
+    const row = list.querySelectorAll<HTMLElement>('[data-column-row]')[i];
+    const arrow = (d: -1 | 1) => row?.querySelector<HTMLButtonElement>(`[data-arrow="${d === -1 ? 'up' : 'down'}"]`);
+    // The arrow pointing the way the user was going, unless the move just disabled it at an end.
+    const same = arrow(target.dir);
+    (same && !same.disabled ? same : arrow(target.dir === -1 ? 1 : -1))?.focus();
+  }, [managed]);
 
   const setEnabled = async (col: CustomColumn, enabled: 0 | 1) => {
     setConfirming(null);

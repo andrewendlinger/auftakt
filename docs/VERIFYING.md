@@ -317,11 +317,13 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   whose dirty is computed beside the `Modal` (Saison, Bereich, Spalte bearbeiten) commit
   synchronously with the input event and have no such window.
 - **Focus after a column reorder only settles once the refetch has committed.** „Spalten
-  verwalten"'s ▲/▼ go through the server, and `move` re-finds the row in a `requestAnimationFrame`
-  *after* `invalidate` — so `document.activeElement` read straight after the click is still the
-  pre-move node, and a walk that reorders a column to an end reads as "focus was dropped". Wait
-  for the row order to change, then read focus. `OptionsEditor`'s ▲/▼ are local state and have no
-  such gap.
+  verwalten"'s ▲/▼ go through the server, so `move` hands the restore to an effect keyed on the
+  column list rather than doing it inline — `document.activeElement` read straight after the click
+  is still the pre-move node. Wait for the row order to change, then read focus. `OptionsEditor`'s
+  ▲/▼ are local state and have no such gap. Nor is a `requestAnimationFrame` after `invalidate`
+  enough to close it: that frame beat React's commit, the arrow was not `disabled` yet, and
+  focusing it was undone milliseconds later — the fix looked right and the walk still ended on
+  `<body>`.
 - **Setting `input[type=color].value` directly is deduped by React's value tracker.** Use the
   native setter.
 - **A status change re-sorts the task table**, so `.first()` addresses a different row afterwards.
