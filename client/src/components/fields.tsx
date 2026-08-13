@@ -76,6 +76,12 @@ export function Modal({
   const cardRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const footerRef = useRef<HTMLDivElement>(null);
+  // Whatever had focus as the dialog rendered — the button that opened it. Captured in a lazy
+  // initializer, not an effect: by the time effects run, a child `autoFocus` (or the focus
+  // effect below) has already moved focus into the card and the opener is unrecoverable.
+  const [opener] = useState(() =>
+    document.activeElement instanceof HTMLElement ? document.activeElement : null,
+  );
   // mousedown and mouseup must *both* land on the backdrop. A drag that starts on the dialog's
   // own text and ends outside it is a text selection, not a dismissal (TTU-17).
   const downOnBackdrop = useRef(false);
@@ -172,7 +178,18 @@ export function Modal({
     if (card && !card.contains(document.activeElement)) {
       (tabbables(bodyRef.current)[0] ?? tabbables(footerRef.current)[0] ?? tabbables(card)[0])?.focus();
     }
-  }, []);
+    return () => {
+      // Hand focus back to the opener — but only when closing would otherwise drop it. At
+      // passive-cleanup time the card is already detached and focus has fallen to <body>, which
+      // is the arm that fires on a real close; the contains-arm keeps this correct if the effect
+      // ever becomes a layout effect. Focus the user moved elsewhere — a `PillSelect` menu
+      // portalled to document.body (RTE-11), another window's field — is never stolen, and an
+      // opener that died with its popover or season is skipped by `isConnected`.
+      const active = document.activeElement;
+      const inCard = cardRef.current !== null && cardRef.current.contains(active);
+      if (opener?.isConnected && (inCard || !active || active === document.body)) opener.focus();
+    };
+  }, [opener]);
 
   const requestClose = () => {
     if (dirty) setConfirming(true);
