@@ -3,6 +3,7 @@ import { Btn, IconButton } from './ui';
 import { RichTextEditor } from './RichTextEditor';
 import { contrastText } from '../lib/colors';
 import { resizeToDataUrl } from '../lib/image';
+import { rovingItem, useRovingFocus } from '../lib/rovingFocus';
 import { useErrorToast, useGuardedAction } from '../hooks';
 
 // Viewport-relative, not a fixed rem cap: on a large window the old max-w-2xl left every
@@ -400,14 +401,18 @@ function PillsField({
   options: NonNullable<FieldDef['options']>;
   onChange: (v: string) => void;
 }) {
+  const roving = useRovingFocus();
+  // One tab stop: the chosen pill carries it, the first one while nothing is chosen.
+  const stop = options.some((o) => o.value === value) ? value : options[0]?.value;
   return (
-    <div className="flex flex-wrap gap-1.5 pt-0.5">
+    <div ref={roving.ref} onKeyDown={roving.onKeyDown} className="flex flex-wrap gap-1.5 pt-0.5">
       {options.map((o) => {
         const on = o.value === value;
         return (
           <button
             key={o.value}
             type="button"
+            {...rovingItem(o.value === stop)}
             aria-pressed={on}
             title={on ? `„${o.label}" entfernen` : `„${o.label}" wählen`}
             onClick={() => onChange(on ? '' : o.value)}

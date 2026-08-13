@@ -16,6 +16,7 @@ import { parseColumnOptions } from '../api/types';
 import { arrayMove } from '../lib/arrays';
 import { dayCount } from '../lib/dates';
 import { OPTION_PALETTE } from '../lib/selectOptions';
+import { rovingItem, useRovingFocus } from '../lib/rovingFocus';
 import {
   OptionsEditor,
   countWithNoun,
@@ -540,11 +541,17 @@ function IconPicker({
   /** „Enter saves" for the free field — same contract as `ColorField`'s `onEnter`. */
   onEnter?: () => void;
 }) {
+  const roving = useRovingFocus();
+  // The grid is one tab stop; a custom emoji from the field below matches no preset, so „kein
+  // Symbol" holds it then. The ref goes on the grid and not on the wrapper: inside the free-text
+  // field ←/→ belong to the caret.
+  const stop = ICON_PRESETS.includes(value) ? value : '';
   return (
     <div>
-      <div className="flex flex-wrap gap-1">
+      <div ref={roving.ref} onKeyDown={roving.onKeyDown} className="flex flex-wrap gap-1">
         <button
           type="button"
+          {...rovingItem(stop === '')}
           onClick={() => onChange('')}
           className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs ring-1 transition ${
             value === '' ? 'bg-sky-50 ring-sky-400' : 'text-neutral-400 ring-neutral-200 hover:bg-neutral-100'
@@ -557,6 +564,7 @@ function IconPicker({
           <button
             key={e}
             type="button"
+            {...rovingItem(e === stop)}
             onClick={() => onChange(e)}
             className={`flex h-8 w-8 items-center justify-center rounded-lg text-base ring-1 transition ${
               value === e ? 'bg-sky-50 ring-sky-400' : 'ring-neutral-200 hover:bg-neutral-100'
