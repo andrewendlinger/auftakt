@@ -1211,3 +1211,115 @@ known limit, not an oversight.
 season without the artists or projects they hang off, their scoped values stay in `custom_values`
 with no column to display them — the behaviour project columns have always had. Forcing the parent
 groups along would make „nur Aufgaben kopieren" quietly copy the whole season.
+
+## Bilder liegen in der Datenbank, referenziert über ein Inhalts-Token (2026-08-13, WP-37)
+
+The customer asked for images in flowing text — a hall plan pinned into the project description
+that discusses it — and explicitly invited a counter-proposal. Three shapes were on the table: a
+`data:` URL inline in the text column, a sidecar folder next to the `.db`, and no inline images at
+all (link to the plan from „Dokumente & Links"). None of them won; the bytes go into an `images`
+table **inside the season `.db`**, and the Markdown references them by content token:
+
+```
+![Saalplan](/api/images/9f2a41c7b8e05d3a6c1f4b90e7d28a35)
+```
+
+**The sanitizer needed no change, and that is what decided it.** `hast-util-sanitize`'s
+`safeProtocol` returns true for a value with no colon before the first `/`, `?` or `#`, and `img` is
+already in the GitHub default `tagNames` — so a root-relative reference renders through the
+*unmodified* schema. `protocols.src` stays `http`/`https`, and the `rehypeRaw → rehypeSanitize`
+order WP-49 documented as load-bearing is untouched. The `data:` option is the only one that would
+have required widening that schema, i.e. taking a security decision for convenience.
+
+The second reason is one this codebase already paid once. `crud.ts`'s `defaultList` is `SELECT *`
+and `useInvalidateAll` blanket-invalidates after every write, so bytes in `projects.description`
+would be refetched on every list refresh whether or not anything drew them — the defect WP-33 fixed
+by dropping `notes` from `upcomingEvents`. `RichTextEditor.onUpdate` also calls `getMarkdown()` on
+every keystroke, which with the bytes in the string means serializing a megabyte-scale document per
+character.
+
+**The sidecar folder was rejected on a printed contract.** `README.txt` in every restore point
+already tells the user, in German, in Notepad, to copy „alle .db-Dateien und seasons.json". Those
+files are sitting in the customer's Google Drive now. A sidecar folder would make that instruction
+incomplete, and it would only be discovered during a restore — the one moment nothing else is left.
+It also breaks the single-file export/import contract, and `VACUUM INTO` gives an atomic image of
+the database that a folder copied beside it is not atomic with.
+
+**The reference is `sha256(bytes)`, not the row id.** Ids do not actually collide today —
+`copySeasonData` only ever writes into a season `createSeason()` just made — but resting on that
+invariant has no gate, and the alternative is unpleasant: a remap would have to rewrite every
+stored string that can hold a reference, and that set is not closable (eight text columns, every
+text-typed custom column inside the `tasks.custom_values` JSON, and the landing notes in
+`seasons.json`, which is not even in the file being copied). Content addressing removes the class
+instead of handling it, and buys three things an autoincrement id cannot:
+
+- **Hand-copied prose stays honest.** Paste a paragraph from one season into another and the URL
+  goes with it. An integer would name a *different picture* in the target; a content token names
+  either the same picture or nothing. Showing the wrong picture is strictly worse than showing none.
+- **`Cache-Control: immutable` is truthful** — the same URL can never mean different bytes, not even
+  after restoring an older backup — and identical bytes collapse to one row.
+- **Nothing is left to enumerate.** A hostile page in the user's browser can point an `<img>` at the
+  route, because `<img>` carries no `Origin` and therefore lands in the same trusted-local arm every
+  same-origin GET uses. It cannot read the pixels (canvas taint); with a sequential id it would have
+  had a working existence-and-dimensions oracle via `naturalWidth`.
+
+**The season pin is added when the image is drawn, never stored.** A browser fetching an `<img src>`
+sends no headers, so `X-Auftakt-Season` cannot reach the server and the request would resolve the
+registry default — in a window pinned to another season, the wrong picture or none, with a DOM that
+looks perfectly correct either way. `server/src/index.ts` already documents the `?season=` leg for
+„plain `<a href>` downloads, which cannot carry headers"; this is the same class of request. So
+`Markdown.tsx` and the editor's `resolveSrc` append it and the node's `parseHTML` strips it back
+off, which is what keeps it out of storage — the `LinkHoverTitle` lesson (a rendered attribute read
+back into the document) applied to a URL that outlives the window.
+
+**Images travel on a season copy whatever groups were ticked.** Gating them on the group that
+carried the text would surface as a broken picture at the customer, and no gate here could see it,
+because the reference is a substring of a string. Copying a few unreferenced megabytes is the
+cheaper and the visible mistake.
+
+**Nothing is garbage-collected, and the table is deliberately outside the cascade.** `CHILD_EDGES`,
+`DELETE_ORDER` and `TABLE_TYPE` are generated from the foreign-key graph; an image reference lives
+in a TEXT column no foreign key describes, so `purgeExpired` — which walks `DELETE_ORDER` — can
+never reach a row. Adding `images` there would read as a tidy-up and behave as data loss. Removing
+an image from a note therefore leaves the row, for four reasons in order of force: the reference
+inventory above is unclosable, so a sweep that misses one column deletes a live hall plan
+undetectably; `useUndoablePatch` restores the pre-edit Markdown, so a hard delete would make
+„Rückgängig" restore text pointing at nothing (same for a trashed task, whose comment lives 30
+days); content addressing makes „orphan" ambiguous, since one row can back N references; and the
+cost is bounded and visible. The honest counterweight is **visibility, not collection** — a future
+Einstellungen card, and behind it a counted „Ungenutzte Bilder entfernen" that reports before it
+deletes. That is a shape the user can refuse; a background sweep is not.
+
+**Sizes, measured rather than estimated.** The client resizes to 1200 px longest side at JPEG q0.82
+(~254 dpi across a 120 mm print column, and a 2× display at ~600 CSS px). A line-art hall plan at
+that cap is **107 KB**; the server ceiling is 1.5 MB decoded, which leaves `express.json`'s 4 MB
+limit biting at roughly 2× the intended maximum rather than becoming a working limit. Ten plans in
+one season make a `VACUUM INTO` restore point **1.20 MB** — only 1.8 % over the raw bytes, so the
+BLOB column costs essentially nothing beyond the pictures themselves. The number the customer feels
+is the retention: with `BACKUP_KEEP = 30`, three seasons holding ten plans each take the backup
+folder — which sits in their Google Drive — from **~10 MB to ~106 MB**. That is the argument for the
+1200 px cap, and the reason a photographic image (roughly 3× a line-art plan) would be worth
+watching.
+
+**The editor bug was older than the feature.** With no `image` node registered, marked's token fell
+through `MarkdownManager`'s `default:` branch, which returns `parseTokens(token.tokens)` when the
+token has children — and an Image token's children are its alt text. So `![Saalplan](…)` in a stored
+note came back out of the editor as the bare word „Saalplan", URL gone, no warning, while the
+renderer displayed the same note's image perfectly. Same shape as the `code` loss WP-49 fixed, one
+degradation quieter: there text turned grey, here a picture became a word. The node closes it for
+every destination, including `https://` images from imported notes and `data:` URLs the sanitizer
+still declines to draw — round-tripping a source the reader will not render is deliberate, because
+the editor's job is to give back what it was given. `inline: true` is load-bearing:
+`mdast-util-to-hast` puts an image inside its paragraph, so a block node would split
+`Davor ![x](u) danach.` and disagree with the reader on every case at once. Raw `<img>` needed the
+other half — `rehypeRaw` leaves a root-level tag outside any paragraph while the editor reads it
+into one, hence `rehypeImgToParagraph`, next to the `<pre>` sibling WP-49 added for the same reason.
+
+**The button is narrower than the dialect, on purpose.** Images round-trip in *every* editor, so a
+note that already holds one is safe anywhere; „Bild einfügen" appears only on project descriptions
+and artist notes. It defaults to off because `LandingCards` is the counter-example — its text lives
+in `seasons.json`, shared across seasons, so an image inserted there would be written to whichever
+season happened to be pinned and read as broken from every other one. Forgetting the flag costs a
+missing button, which is visible and harmless; defaulting it on would cost that. Paste and
+drag-and-drop are deliberately not wired: the editor has neither handler today, and an accidentally
+pasted screenshot would land in the database.
