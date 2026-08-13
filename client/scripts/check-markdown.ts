@@ -72,6 +72,9 @@ const CODE_TAGS = /<(pre|code)[\s>]/;
 /** The indent unit Tab writes (RichTextEditor). Plain spaces cannot survive a paragraph. */
 const NBSP = '\u00a0';
 
+/** A stored image reference (WP-37): root-relative, season-free, 32 hex chars of content hash. */
+const IMG = '/api/images/9f2a41c7b8e05d3a6c1f4b90e7d28a35';
+
 // --- corpus: every authored construct + realistic prose, incl. legacy <u> ------------
 const corpus: Record<string, string> = {
   bold: 'A **bold** word.',
@@ -129,6 +132,31 @@ const corpus: Record<string, string> = {
   rawPreTag: 'davor\n\n<pre>Soundcheck\nEinlass</pre>',
   inlineBackticksLegacy: 'ein `code` wort',
   inlineBackticksEscaped: 'ein \\`code\\` wort',
+  // WP-37. Before the image node existed, every one of these came back out of the editor as its
+  // alt text with the URL dropped — a picture silently becoming a word, which is why the plain
+  // `image` case alone fails the gate on the unfixed code. `imageInline` is the one that pins
+  // `inline: true`: the renderer puts an image inside its paragraph, so a block node would split
+  // this sentence in two and disagree with the reader.
+  image: `![Saalplan](${IMG})`,
+  imageInline: `Davor ![Saalplan](${IMG}) danach.`,
+  imageTitle: `![Saalplan](${IMG} "Großer Saal")`,
+  imageNoAlt: `![](${IMG})`,
+  imageBracketAlt: `![Plan \\[Entwurf\\]](${IMG})`,
+  // Destinations the app never authors but a note can hold: an imported `https://` image (which
+  // the reader does draw) and a `data:` URL (which the sanitizer strips the src from, so it draws
+  // broken). Both must still survive the editor verbatim — giving back what you were given is the
+  // whole repair, and re-writing either one would be a second, quieter loss.
+  imageHttpsLegacy: '![x](https://example.com/a.jpg)',
+  imageDataUrlLegacy: '![x](data:image/jpeg;base64,AAAA)',
+  imageSpacedUrlLegacy: '![x](<https://e.org/a b.jpg>)',
+  imageInList: `- eins\n- ![Saalplan](${IMG})\n- drei`,
+  imageInTable: `| Raum | Plan |\n| --- | --- |\n| Saal | ![Saalplan](${IMG}) |`,
+  imageInQuote: `> Achtung ![Saalplan](${IMG})`,
+  // Only an import or a restored backup can carry raw `<img>`, and it used to be deleted outright.
+  // The block case needs `rehypeImgToParagraph` — at the root the reader leaves the tag unwrapped
+  // while the editor round-trip puts it in a paragraph.
+  imageRawTagInline: `Davor <img src="${IMG}" alt="y"> danach.`,
+  imageRawTagBlock: `davor\n\n<img src="${IMG}" alt="y">\n\ndanach`,
   // Spelled from the escape, never typed: a literal U+00A0 in a fixture is invisible, and the
   // next editor to touch this file would „fix" it back into a plain space.
   nbspIndent: `${NBSP.repeat(3)}Aufbau ab 14:00\n${NBSP.repeat(6)}Soundcheck`,

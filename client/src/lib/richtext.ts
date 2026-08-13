@@ -5,9 +5,10 @@ import { Table, renderTableToMarkdown } from '@tiptap/extension-table';
 import { TableRow } from '@tiptap/extension-table-row';
 import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
-import { Extension, type AnyExtension, type JSONContent } from '@tiptap/core';
+import { Extension, Node, mergeAttributes, type AnyExtension, type JSONContent } from '@tiptap/core';
 import { Marked } from 'marked';
 import { fenceParagraphs } from './legacyCode';
+import { canonicalImageSrc, imageMarkdown } from './imageRef';
 
 /**
  * Underline is serialized as raw `<u>…</u>`, not TipTap's default `++…++`.
@@ -110,6 +111,77 @@ const LegacyFence = Extension.create({
 });
 
 /**
+ * Bilder im Text (WP-37) — and, before it is a feature, a repair.
+ *
+ * Without an `image` node the token has no handler, so it falls through `MarkdownManager`'s
+ * `default:` branch — which returns `parseTokens(token.tokens)` when the token has children. A
+ * marked `Image` token *does* carry children: the alt text. So `![Saalplan](/api/images/…)` came
+ * back out of the editor as the bare word „Saalplan", URL gone, no warning, while the renderer
+ * displayed the same note's image perfectly. Same shape as the `code` loss WP-49 fixed, one
+ * degradation quieter: there, text turned grey; here, a picture became a word.
+ *
+ * Registering the node is what closes that, and it closes it for *every* destination — our own
+ * `/api/images/…`, an `https://` image from an imported note, even a `data:` URL the sanitizer
+ * still declines to render. Round-tripping a source the reader will not draw is deliberate: the
+ * editor's job is to give back what it was given.
+ *
+ * **`inline: true` is load-bearing.** `mdast-util-to-hast` puts an image inside the paragraph
+ * (`<p><img></p>`), so an inline node is what makes render-equality hold for both a lone image and
+ * `Davor ![x](u) danach.` — a block node splits the paragraph and the round-trip gate fails on
+ * every case at once.
+ *
+ * `resolveSrc` is how the season pin reaches the `<img>` without entering the dialect: this module
+ * is loaded by the headless gate, which has no window and no season, so it defaults to identity and
+ * `RichTextEditor.tsx` passes the real one — the same arrangement, and the same reason, as
+ * `linkClass`. The matching `parseHTML` strips the pin again, so a pin can never be read back into
+ * the document and stored.
+ */
+const MdImage = Node.create<{ resolveSrc: (src: string) => string }>({
+  name: 'image',
+  inline: true,
+  group: 'inline',
+  atom: true,
+  draggable: true,
+  markdownTokenName: 'image',
+
+  addOptions() {
+    return { resolveSrc: (src: string) => src };
+  },
+
+  addAttributes() {
+    return {
+      src: {
+        default: '',
+        // The read side of the pin. A paste of editor-rendered HTML carries `?season=3`; storing
+        // that would make the note wrong in every other season.
+        parseHTML: (el) => canonicalImageSrc(el.getAttribute('src') ?? ''),
+      },
+      alt: { default: '' },
+      title: { default: null },
+    };
+  },
+
+  parseHTML() {
+    return [{ tag: 'img[src]' }];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    const src = typeof HTMLAttributes.src === 'string' ? HTMLAttributes.src : '';
+    return ['img', mergeAttributes(HTMLAttributes, { src: this.options.resolveSrc(src) })];
+  },
+
+  parseMarkdown: (token, helpers) =>
+    helpers.createNode(
+      'image',
+      { src: token.href ?? '', alt: token.text ?? '', title: token.title ?? null },
+      [],
+    ),
+
+  renderMarkdown: (node) =>
+    imageMarkdown(node.attrs?.src ?? '', node.attrs?.alt ?? '', node.attrs?.title),
+});
+
+/**
  * The extension set that governs Markdown ⇄ editor round-trips.
  *
  * Shared by the editor component (`RichTextEditor.tsx`) and the round-trip check
@@ -135,7 +207,9 @@ const LegacyFence = Extension.create({
  * added here must be provably absent from the mark's `renderMarkdown` — the link mark serializes
  * `href` and `title` only, which is why a class cannot reach the stored Markdown.
  */
-export function markdownExtensions(opts: { linkClass?: string } = {}): AnyExtension[] {
+export function markdownExtensions(
+  opts: { linkClass?: string; resolveSrc?: (src: string) => string } = {},
+): AnyExtension[] {
   return [
     StarterKit.configure({
       underline: false, // replaced by MdUnderline so it serializes to <u>
@@ -155,6 +229,7 @@ export function markdownExtensions(opts: { linkClass?: string } = {}): AnyExtens
     }),
     MdUnderline,
     LegacyFence,
+    MdImage.configure({ resolveSrc: opts.resolveSrc ?? ((src: string) => src) }),
     MdTable.configure({ resizable: false }),
     TableRow,
     TableCell,

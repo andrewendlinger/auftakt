@@ -151,9 +151,36 @@ function rehypePreToProse() {
   return (tree: HastRoot) => unwrapPre(tree as unknown as HastNode);
 }
 
+/**
+ * A raw `<img>` standing on its own line is read as a paragraph (WP-37).
+ *
+ * Markdown's own `![…](…)` always lands inside a paragraph, so the editor's image node is inline
+ * and everything agrees. Raw HTML does not: `rehypeRaw` leaves a root-level `<img>` exactly where
+ * it stood, outside any paragraph, while the editor — which has nowhere else to put an inline node
+ * — reads it into one. The two halves then rendered different HTML for the same note, which is the
+ * one thing the round-trip gate exists to catch.
+ *
+ * Only an import or a restored backup can carry such a tag; nothing in the app authors one. Same
+ * situation and same remedy as `rehypePreToProse` above, which is why it sits here rather than in
+ * the sanitize schema: this is about *shape*, not about safety.
+ */
+function wrapRootImages(tree: HastNode) {
+  if (!tree.children) return;
+  tree.children = tree.children.map((child) =>
+    child.type === 'element' && child.tagName === 'img'
+      ? { type: 'element', tagName: 'p', properties: {}, children: [child] }
+      : child,
+  );
+}
+
+function rehypeImgToParagraph() {
+  return (tree: HastRoot) => wrapRootImages(tree as unknown as HastNode);
+}
+
 /** Order is load-bearing: raw HTML is parsed first, reshaped, and only then sanitized. */
 export const rehypePlugins: PluggableList = [
   rehypeRaw,
   rehypePreToProse,
+  rehypeImgToParagraph,
   [rehypeSanitize, sanitizeSchema],
 ];
