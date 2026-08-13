@@ -7,6 +7,7 @@ import { TableRow } from '@tiptap/extension-table-row';
 import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
 import { Extension, Node, mergeAttributes, type AnyExtension, type JSONContent } from '@tiptap/core';
+import { NodeSelection, Plugin } from '@tiptap/pm/state';
 import { Marked } from 'marked';
 import { fenceParagraphs } from './legacyCode';
 import {
@@ -237,6 +238,53 @@ const MdImage = Node.create<{ resolveSrc: (src: string) => string }>({
   renderHTML({ HTMLAttributes }) {
     const src = typeof HTMLAttributes.src === 'string' ? HTMLAttributes.src : '';
     return ['img', mergeAttributes(HTMLAttributes, { src: this.options.resolveSrc(src) })];
+  },
+
+  /**
+   * Clicking an image selects it — by its DOM element, not by click coordinates.
+   *
+   * ProseMirror's own click handling maps the pointer through the browser's caret-from-point,
+   * and next to a float Chromium resolves a point that is visibly *on* one image to the start of
+   * the line beside it: with a floated `a=right` plan in the note, clicking the next image left
+   * the old NodeSelection standing and the size bar editing the wrong picture. `posAtDOM` on the
+   * `<img>` the event actually hit is immune to that geometry. Returning false for everything
+   * else keeps ProseMirror's handling — including drag — exactly as it was.
+   */
+  addProseMirrorPlugins() {
+    const { editor } = this;
+    return [
+      new Plugin({
+        props: {
+          handleDOMEvents: {
+            // Structural, not `MouseEvent`/`HTMLElement`: this module typechecks DOM-free
+            // through `check-markdown.ts` — same reason as `getAttrs` above.
+            mousedown: (view, event: { target?: unknown }) => {
+              const el = event.target as {
+                nodeName?: string;
+                classList?: { contains(name: string): boolean };
+              } | null;
+              if (!el || el.nodeName !== 'IMG' || el.classList?.contains('ProseMirror-separator')) {
+                return false;
+              }
+              const posAtDOM = (
+                view as unknown as { posAtDOM(node: unknown, offset: number): number }
+              ).posAtDOM.bind(view);
+              let pos: number;
+              try {
+                pos = posAtDOM(el, 0);
+              } catch {
+                return false;
+              }
+              if (pos < 0 || view.state.doc.nodeAt(pos)?.type.name !== editor.schema.nodes.image?.name) {
+                return false;
+              }
+              view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos)));
+              return true;
+            },
+          },
+        },
+      }),
+    ];
   },
 
   // The presentation legs of the spelling (`?w=384&a=right`) are lifted off here and written
