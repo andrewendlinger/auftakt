@@ -216,10 +216,21 @@ const RICH_PROJECT_NOTES = `**Bestätigt:** Termin, Saal und Honorar stehen. Rid
 
 ![Saalplan großer Saal](${SAALPLAN_REF})`;
 
+// The two image shapes only an *import* produces, side by side with the one the button writes —
+// so the branches that used to disagree between reader and editor have something to look at.
+// A raw `<img>` nested inside a block (here a quote) rendered outside any paragraph in the reader
+// while the editor read it into one, and `width`/`align` used to be dropped on the way to the DOM,
+// so the thumbnail jumped to full column width. Click into the note and out of it: nothing may
+// move.
 const RICH_ARTIST_NOTES = `Streichquartett, <u>Residenz</u> über das ganze Festival. Reisen gemeinsam an 🚐.
 
 - Bevorzugt vegetarisches Catering
-- Braucht Stimmzimmer ab Mittag`;
+- Braucht Stimmzimmer ab Mittag
+
+> Aus dem alten Notion-Export übernommen:
+> <img src="${SAALPLAN_REF}" alt="Saalplan aus dem Export" width="120" align="right">
+
+Und der Plan mit Link auf die Saalseite: [![Saalplan](${SAALPLAN_REF})](https://example.com/saal)`;
 
 const RICH_EVENT_NOTES = `Doors 19:00, Beginn **19:30**. Zugabe ist abgesprochen 🎻.`;
 

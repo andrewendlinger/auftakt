@@ -174,6 +174,12 @@ const corpus: Record<string, string> = {
   // while the editor read it into one: the note re-spaced itself when you clicked in and again
   // when you clicked away. A blockquote, not a `<div>`, because ProseMirror has a node for it —
   // an unknown wrapper is dropped by the editor for reasons that have nothing to do with images.
+  // The same tag in a list item is deliberately *not* a case here: the round-trip writes a loose
+  // item (`- …\n\n`), and remark then renders `<li>\n<p>…</p>\n</li>` against the tight
+  // `<li><p>…</p></li>`. The two differ only in whitespace between block elements — nothing a
+  // browser draws differently — but string equality cannot say so, and the list spread has nothing
+  // to do with images.
+  imageRawTagInQuote: `> <img src="${IMG}" alt="y">`,
   // Spelled from the escape, never typed: a literal U+00A0 in a fixture is invisible, and the
   // next editor to touch this file would „fix" it back into a plain space.
   nbspIndent: `${NBSP.repeat(3)}Aufbau ab 14:00\n${NBSP.repeat(6)}Soundcheck`,
