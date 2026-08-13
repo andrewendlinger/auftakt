@@ -643,49 +643,26 @@ const COPY_COLS: Record<string, string[]> = {
   custom_columns: ['id', 'name', 'type', 'scope', 'artist_id', 'project_id', 'options', 'icon', 'key', 'kind', 'enabled', 'deletable', 'sort_order'],
   custom_sections: ['id', 'artist_id', 'project_id', 'name', 'type', 'value', 'sort_order'],
   // No `id`: nothing references an image by row id — the Markdown names its content token — so
-  // the target is free to assign its own and `copyImages` can dedupe on the token instead.
+  // the target is free to assign its own and the copy dedupes on the token instead (the one caller
+  // that passes `onConflict`; see `copySeasonData`).
   images: ['token', 'mime', 'bytes', 'byte_size', 'width', 'height', 'name'],
 };
 
-function copyRows(target: Database.Database, table: string, rows: unknown[]): void {
+function copyRows(
+  target: Database.Database,
+  table: string,
+  rows: unknown[],
+  /** Appended to the INSERT — `images` dedupes on its content token; see the call site. */
+  opts: { onConflict?: string } = {},
+): void {
   if (rows.length === 0) return;
   const cols = COPY_COLS[table]!;
   const stmt = target.prepare(
-    `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map((c) => '@' + c).join(', ')})`,
+    `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map((c) => '@' + c).join(', ')})` +
+      (opts.onConflict ? ` ${opts.onConflict}` : ''),
   );
   const tx = target.transaction(() => {
     for (const r of rows as Array<Record<string, unknown>>) {
-      const o: Record<string, unknown> = {};
-      for (const c of cols) o[c] = r[c] === undefined ? null : r[c];
-      stmt.run(o);
-    }
-  });
-  tx();
-}
-
-/**
- * Copy the season's images (WP-37), deduping on the content token.
- *
- * **Unconditional — no copy group gates this.** A reference to an image lives inside a Markdown
- * string, and the set of strings that can hold one is not closable: eight text columns, plus every
- * text-typed custom column inside the `tasks.custom_values` JSON blob, plus the landing notes in
- * `seasons.json`, which is not even in the file being copied. Gating images on the group that
- * carried the text means any miss shows up as a broken picture in the new season, and no gate here
- * can see it. Copying a few unreferenced megabytes is the cheaper mistake, and the visible one.
- *
- * `ON CONFLICT DO NOTHING` makes this correct on a *non-empty* target too — the property an
- * autoincrement id could never have, and the reason a future „copy into an existing season" needs
- * no rewriting of stored prose.
- */
-function copyImages(target: Database.Database, rows: Array<Record<string, unknown>>): void {
-  if (rows.length === 0) return;
-  const cols = COPY_COLS.images!;
-  const stmt = target.prepare(
-    `INSERT INTO images (${cols.join(', ')}) VALUES (${cols.map((c) => '@' + c).join(', ')})
-     ON CONFLICT(token) DO NOTHING`,
-  );
-  const tx = target.transaction(() => {
-    for (const r of rows) {
       const o: Record<string, unknown> = {};
       for (const c of cols) o[c] = r[c] === undefined ? null : r[c];
       stmt.run(o);
@@ -1023,14 +1000,32 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
     );
     copyRows(target, 'links', links);
 
-    // Images travel whatever was selected — see copyImages. Source seasons are opened raw, so a
-    // file written before WP-37 has no `images` table at all; that is the ordinary case for every
-    // existing installation, not an error.
+    /**
+     * Images travel whatever was selected — **unconditional, no copy group gates them.** A
+     * reference to an image lives inside a Markdown string, and the set of strings that can hold
+     * one is not closable: eight text columns, plus every text-typed custom column inside the
+     * `tasks.custom_values` JSON blob, plus the landing notes in `seasons.json`, which is not even
+     * in the file being copied. Gating images on the group that carried the text means any miss
+     * shows up as a broken picture in the new season, and no gate here can see it. Copying a few
+     * unreferenced megabytes is the cheaper mistake, and the visible one.
+     *
+     * `ON CONFLICT DO NOTHING` dedupes on the content token, which makes this correct on a
+     * *non-empty* target too — the property an autoincrement id could never have, and the reason a
+     * future „copy into an existing season" needs no rewriting of stored prose.
+     *
+     * Only the **read** is guarded: source seasons are opened raw, so a file written before WP-37
+     * has no `images` table at all — the ordinary case for every existing installation, not an
+     * error. A failure *writing* to the target (a busy or full disk, an oversized blob) is a real
+     * copy failure and has to surface, or the user is told the season copied while every note in
+     * it shows „Bild nicht gefunden" (IMG-02).
+     */
+    let images: Array<Record<string, unknown>> = [];
     try {
-      copyImages(target, live('images'));
+      images = live('images');
     } catch {
-      /* pre-WP-37 source: no images to carry */
+      /* pre-WP-37 source: no images table to read */
     }
+    copyRows(target, 'images', images, { onConflict: 'ON CONFLICT(token) DO NOTHING' });
 
     if (o.settings) copySettings(target, q('SELECT key, value FROM settings'));
 

@@ -107,9 +107,12 @@ whatever groups were ticked. A reference lives inside a Markdown string — `/ap
 where the token is `sha256(bytes)` — and the set of strings that can hold one is not closable
 (eight text columns, every text-typed custom column inside the `tasks.custom_values` JSON, and the
 landing notes in `seasons.json`, which is not even in the file being copied). Gating them would
-surface as a broken picture at the customer. `copyImages` dedupes on the token rather than keeping
+surface as a broken picture at the customer. They go through the same `copyRows` as every other
+table, with `ON CONFLICT(token) DO NOTHING` passed in: dedupe on the content token rather than kept
 ids, so the copy is also correct into a *non-empty* target, and no stored prose ever has to be
-rewritten. The stored URL carries **no season**: an `<img>` request sends no headers, so the
+rewritten. Only the *read* of the source table is wrapped in a `try` — a season file written before
+WP-37 has none — because a failure **writing** to the new season has to surface rather than be
+reported as a successful copy. The stored URL carries **no season**: an `<img>` request sends no headers, so the
 window's pin is appended at render time (`Markdown.tsx`, and the editor's `resolveSrc`) and stripped
 again on the way back in — see `client/src/lib/imageRef.ts`. The table is deliberately absent from
 `lib/cascade.ts`, so nothing purges it; `docs/DECISIONS.md` has the reasoning.

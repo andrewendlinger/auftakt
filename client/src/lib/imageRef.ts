@@ -13,7 +13,7 @@
  *   `http`/`https` and the `rehypeRaw → rehypeSanitize` order stays exactly as WP-49 left it. A
  *   `data:` URL would have needed the opposite.
  * - **It survives a season copy.** The path carries no season id and the token is content-derived,
- *   so nothing in any text column is ever rewritten. See `server/src/db.ts` (`copyImages`).
+ *   so nothing in any text column is ever rewritten. See `server/src/db.ts` (`copySeasonData`).
  *
  * The season pin is added when the `<img>` is *drawn* and stripped when one is *read back*, never
  * stored. That asymmetry is the whole point of this module: a browser fetching an `<img src>` sends

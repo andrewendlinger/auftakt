@@ -1615,6 +1615,24 @@ try {
     const copiedRow = db5.prepare('SELECT token, byte_size FROM images').get();
     check('das Token überlebt die Kopie unverändert', copiedRow?.token === up.token, JSON.stringify(copiedRow));
     db5.close();
+
+    // A season file written before WP-37 has no `images` table at all — the ordinary state of
+    // every existing installation, and the *only* thing the try/catch around the copy is allowed
+    // to swallow. It used to span the write as well, so a failure inserting into the new season
+    // was reported as a successful copy; the guard now covers the read alone, and this is the
+    // case that proves the read is still guarded. Faked by dropping the table, because the app
+    // cannot create a pre-WP-37 file any more.
+    const db6 = new Database(seasonFile('auftakt.db'));
+    db6.exec('DROP TABLE images');
+    db6.close();
+    await startServer();
+    const fromLegacy = await req('POST', '/seasons', {
+      label: 'Kopie einer Saison ohne Bildertabelle',
+      copyFrom: 1,
+      includeArtists: true,
+    });
+    check('eine Saison ohne Bildertabelle lässt sich kopieren', fromLegacy.status === 201, `${fromLegacy.status} ${JSON.stringify(fromLegacy.body)}`);
+    await stopServer();
   }
 } catch (err) {
   check('run completed', false, String(err));
