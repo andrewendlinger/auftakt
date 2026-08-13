@@ -1,170 +1,182 @@
-# Auftakt
+<p align="center">
+  <img src="build/icon.png" alt="" width="96">
+</p>
 
-Lokale Desktop-App (Electron) zur Verwaltung von Künstlern und ihren Projekten
-bei einem klassischen Musikfestival. **Eine Datenbank = eine Saison.** Alle Daten
-liegen lokal; Phase 1 ist Einzelnutzer.
+<h1 align="center">Auftakt</h1>
 
-## Stack
+<p align="center">
+  Lokale Desktop-App für die Künstler- und Projektverwaltung<br>
+  eines klassischen Musikfestivals. Alle Daten bleiben auf dem eigenen Rechner.
+</p>
 
-- **Frontend:** React + TypeScript + Vite + Tailwind CSS + TanStack Query
-- **Backend:** Express + better-sqlite3 (eine SQLite-Datei = die ganze Datenbank)
-- **Shell/Packaging:** Electron + electron-builder
+<p align="center">
+  <a href="https://github.com/andrewendlinger/auftakt/releases/latest"><strong>→ Auftakt herunterladen</strong></a>
+</p>
 
-Der Alltag läuft im Browser (`npm run dev`); Electron ist nur Fenster + Packaging
-und die nativen Funktionen (Datei-Dialoge, Backups, externe Links). Klare
-REST-Grenze — **keine Electron-APIs in React** (nur eine schmale
-`window.auftakt`-Preload-Brücke für externe Links / DB-Export/Import).
+<p align="center">
+  <img src="docs/images/uebersicht.png" width="900"
+       alt="Die Übersicht einer Saison: Künstlerkarten mit offenen und überfälligen Aufgaben, darunter die nächsten Termine">
+</p>
 
-## Erste Schritte
+## Was Auftakt ist
+
+Auftakt hält an einer Stelle zusammen, was sonst auf Tabellen, Mail-Ordner und Notizzettel
+verteilt liegt:
+
+- **Künstler** mit Notizen, Kontakten und einem Ein-Pager zum Ausdrucken (PDF)
+- **Projekte** je Künstler — Konzert, Workshop, Aufnahme — jedes mit eigenem Stand
+- **Termine**: Auftritte, Proben, Deadlines; ganztägig oder mit Uhrzeit
+- **Aufgaben** mit Unteraufgaben, Fälligkeiten, Farben und selbst angelegten Spalten
+- **Kontakte, Dokumente & Links** dort, wo man sie sucht — am Künstler, am Projekt, an der Saison
+- **Eine Saison = eine Datenbank.** Mehrere Saisons nebeneinander, jede in ihrem eigenen Fenster
+
+Auftakt läuft **offline**. Es gibt kein Konto, keine Cloud und keinen Server: Die Daten liegen als
+Datei auf dem Rechner und werden nirgendwohin übertragen. Die einzige Verbindung nach außen ist
+die Frage „gibt es eine neuere Version?".
+
+## Installation
+
+Die fertigen Installationsdateien liegen auf der
+**[Releases-Seite](https://github.com/andrewendlinger/auftakt/releases/latest)**:
+
+| System | Datei | Größe |
+| --- | --- | --- |
+| macOS (Apple Silicon) | `Auftakt-<Version>-arm64.dmg` | ~120 MB |
+| Windows (64-Bit) | `Auftakt-Setup-<Version>.exe` | ~100 MB |
+
+Für Linux und für Intel-Macs gibt es keine Version.
+
+### macOS
+
+Voraussetzung: **macOS 12 oder neuer**, Mac mit **Apple Silicon** (M1, M2, M3, M4).
+
+1. `Auftakt-<Version>-arm64.dmg` herunterladen und per Doppelklick öffnen.
+2. **Auftakt** in den Ordner **Programme** ziehen.
+3. Einmalig im Terminal (Programme → Dienstprogramme → Terminal) ausführen:
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Auftakt.app
+   ```
+
+4. Auftakt starten.
+
+**Warum dieser Schritt?** Ohne ihn meldet macOS „Auftakt.app ist beschädigt und kann nicht
+geöffnet werden". Die App ist **nicht** beschädigt: Sie ist nicht bei Apple signiert und
+notarisiert — dafür wäre ein kostenpflichtiger Apple-Developer-Account nötig. macOS versieht
+heruntergeladene, unsignierte Programme mit einem Quarantäne-Flag, und der Befehl entfernt genau
+dieses Flag. Je nach macOS-Version funktioniert auch ein Rechtsklick auf die App → **Öffnen**;
+verlässlich ist der Terminal-Befehl.
+
+### Windows
+
+Voraussetzung: **Windows 10 oder 11**, 64-Bit.
+
+1. `Auftakt-Setup-<Version>.exe` herunterladen und ausführen.
+2. Windows meldet **„Der Computer wurde durch Windows geschützt"** → auf **„Weitere
+   Informationen"** klicken, dann auf **„Trotzdem ausführen"**.
+3. Dem Installationsdialog folgen. Der Zielordner lässt sich ändern, und
+   **Administratorrechte sind nicht nötig** — installiert wird für den angemeldeten Benutzer.
+
+**Warum diese Warnung?** Der Installer trägt keine Windows-Code-Signatur (ein Zertifikat dafür
+kostet jährlich Geld). SmartScreen kennt den Herausgeber deshalb nicht und warnt, wie bei jedem
+unbekannten Programm.
+
+### Ist der Download echt?
+
+Beide Installationsdateien werden von GitHub Actions aus dem hier veröffentlichten Quellcode
+gebaut und tragen seit v0.5.0 eine Build-Provenance-Attestierung — einen Nachweis, aus welchem
+Commit und welchem Build-Lauf die Datei stammt. Prüfen lässt sie sich mit der
+[GitHub CLI](https://cli.github.com):
 
 ```bash
-npm run setup     # installiert root, server und client
-npm run demo      # Demo-Datenbank bauen + starten → http://localhost:5317
+gh attestation verify Auftakt-*.dmg --repo andrewendlinger/auftakt
 ```
 
-`npm run demo` baut eine Demo-Datenbank aus `server/src/demo.ts` und startet die
-Anwendung damit. Der Datensatz deckt alle Sonderfälle ab (Unteraufgaben, farbige
-Aufgaben, archivierte Aufgaben, eigene Spalten, festivalweite Todos) und liegt in
-`./.demo/` — **die echte Datenbank in `./.data/` wird dabei nie angefasst.**
-`npm run demo:seed` baut ihn neu, jeder Lauf beginnt bei null.
+Was das ersetzt und was nicht, steht in [SECURITY.md](SECURITY.md).
 
-Für die echten Daten stattdessen:
+## Erste Schritte in der App
 
-```bash
-npm run seed      # befüllt ./.data/ (Achtung: löscht den bisherigen Inhalt)
-npm run dev       # Server (4317) + Client (5317) → http://localhost:5317
-```
+Beim ersten Start ist Auftakt leer. Einen Einrichtungsassistenten gibt es nicht, weil es nichts
+einzurichten gibt:
 
-`npm run seed` importiert aus CSVs, wenn `AUFTAKT_IMPORT_DIR` auf einen Ordner mit
-`{artists,contacts,projects,events,tasks,links}.csv` zeigt (UTF-8, komma-getrennt,
-ISO-Daten, leere Zellen = unbekannt) — sonst legt es einen minimalen Beispieldatensatz
-aus fünf Zeilen an.
+1. Eine erste Saison **„Festival 2026"** ist bereits angelegt. Umbenennen und weitere Saisons
+   anlegen: **Einstellungen → „Saison & Daten"**. **⌘N** (macOS) bzw. **Strg+N** (Windows) öffnet
+   ein weiteres Fenster — jedes Fenster kann eine andere Saison zeigen.
+2. **„+ Künstler"** auf der Übersicht legt den ersten Eintrag an. Projekte, Termine, Aufgaben,
+   Kontakte und Links hängen daran.
+3. Sobald die ersten Daten drin sind, fragt Auftakt beim **nächsten** Start: „Automatische
+   Sicherungen einrichten?" Dort einen Ordner wählen — z. B. in Google Drive oder OneDrive. Die
+   Frage kommt bei jedem Start wieder, bis ein Ordner gewählt ist.
+4. Eine vorhandene Datenbank übernehmen: **Datei → Datenbank importieren…**
 
-## Daten & Speicherorte
+Gut zu wissen:
 
-- **Live-DB (dev):** `./.data/auftakt.db` (nie in einen Cloud-Ordner legen)
-- **Live-DB (App):** Electron `userData`-Verzeichnis
-- **Backups:** beim App-Start eine datierte Kopie in den einmalig gewählten Ordner
-  (z. B. Google Drive); die letzten 30 bleiben erhalten
-- Soft-Delete überall (`deleted_at`), Undo per Toast, Purge nach 30 Tagen — sobald
-  nichts mehr auf den Eintrag verweist; sonst bleibt er im Papierkorb
-- Erledigte Aufgaben rutschen nach unten (ausgegraut) und wandern 30 Tage nach
-  Abschluss ins Archiv
+- Die **Suche** oben rechts findet Künstler, Projekte, Aufgaben, Termine und Kontakte.
+- **„Ein-Pager (PDF)"** druckt eine Künstler- oder Projektseite auf ein Blatt; **„⬇ Excel"**
+  exportiert die Aufgabenliste.
+- **„Bereiche bearbeiten"** baut jede Seite um: Abschnitte verschieben, ausblenden, hinzufügen.
+  Überschriften lassen sich per **✎** umbenennen.
+- Das **Archiv** hält erledigte Aufgaben und den Papierkorb.
 
-## Desktop-App (Electron)
+## Deine Daten
 
-```bash
-# Entwicklung: erst `npm run dev`, dann in einem zweiten Terminal
-npm run electron:dev
+- **Wo sie liegen:** macOS `~/Library/Application Support/auftakt`, Windows `%APPDATA%\auftakt`
+  — je Saison eine `.db`-Datei.
+- **Nicht in einen Cloud-Ordner legen.** Eine laufende Datenbank verträgt keinen Sync-Dienst, der
+  Dateien im Hintergrund austauscht. Für die *Sicherungen* ist ein Cloud-Ordner dagegen genau
+  richtig.
+- **Sicherungen:** Bei jedem Start legt Auftakt eine datierte Kopie jeder Saison im gewählten
+  Ordner ab und behält die letzten 30. Im Sicherungsordner liegt eine Anleitung zum Zurückspielen.
+- **Papierkorb statt Löschen:** Gelöschtes lässt sich sofort rückgängig machen und liegt danach
+  30 Tage im Papierkorb.
+- **Erledigte Aufgaben** rutschen nach unten und wandern 30 Tage nach Abschluss ins Archiv.
 
-# Installer bauen (Ausgabe in ./release)
-npm run dist         # aktuelle Plattform
-npm run dist:mac     # macOS .dmg
-npm run dist:win     # Windows NSIS
-```
+## Updates
 
-`npm run build` baut den Client (`client/dist`) und bündelt Server + Electron
-(`server/dist`, `electron/dist`) via esbuild; `electron-builder` verpackt das
-Ergebnis und baut better-sqlite3 für Electrons ABI neu.
+- **Windows:** **Einstellungen → „Saison & Daten" → „Version & Updates"**, dort „Nach Updates
+  suchen" und dann „Herunterladen & installieren". Die App startet dafür neu.
+- **macOS:** Auftakt meldet nur, dass es eine neue Version gibt — automatische Updates brauchen
+  eine Apple-Signatur. Also die neue `.dmg` von der Releases-Seite laden, Auftakt in „Programme"
+  ersetzen und den `xattr`-Befehl von oben erneut ausführen.
+- **Die Daten bleiben bei einem Update erhalten.**
 
-## CI
+## Was noch nicht drin ist
 
-`.github/workflows/build.yml` hat drei Jobs:
+- Kein Kalender-Sync und kein `.ics`-Export (die Termine sind dafür vorbereitet)
+- Kein Mehrbenutzerbetrieb — Auftakt ist eine Einzelplatz-App
+- Kein Linux-Build, kein Intel-Mac-Build
 
-- **`checks`** — bei jedem Push, jedem Pull Request und jedem Tag: `npm run
-  typecheck` und `npm run check` auf `ubuntu-latest`.
-- **`build`** — nur bei einem Tag `v*` oder manuell (`workflow_dispatch`): baut
-  `.dmg` auf `macos-latest` und den NSIS-Installer auf `windows-latest`.
-- **`release`** — nur bei einem Tag `v*`: veröffentlicht beide Installer samt
-  `latest.yml` auf der
-  [Releases-Seite](https://github.com/andrewendlinger/auftakt/releases).
+## Hilfe & Fehler melden
 
-## macOS: „Auftakt.app ist beschädigt"
+Fehlerberichte und Ideen sind sehr willkommen — als
+[Issue](https://github.com/andrewendlinger/auftakt/issues). Hilfreich sind: was du getan hast, was
+du erwartet hast, was stattdessen passiert ist, dazu die Version (Einstellungen → „Saison &
+Daten" → „Version & Updates") und dein Betriebssystem.
 
-Die App ist **nicht bei Apple signiert/notarisiert** (dafür bräuchte es einen
-kostenpflichtigen Apple-Developer-Account). Nach dem Download setzt macOS ein
-Quarantäne-Flag, weshalb die App als „beschädigt" gemeldet wird. Sie ist **nicht**
-beschädigt — das Flag muss einmal entfernt werden. Nach dem Verschieben in den
-Programme-Ordner im Terminal:
+**Bitte keine echten Festivaldaten hineinkopieren** — keine Namen, Adressen, Telefonnummern oder
+Notizen zu identifizierbaren Personen. Dieses Repository ist öffentlich.
 
-```bash
-xattr -dr com.apple.quarantine /Applications/Auftakt.app
-```
-
-Danach startet die App normal (sie ist Ad-hoc-signiert, läuft also auf Apple
-Silicon). Alternativ: Rechtsklick auf die App → **Öffnen**. Für einen warnungsfreien
-Download-Start wäre Apple-Signierung + Notarisierung nötig (Developer-Account).
-
-**Nur Apple Silicon:** CI baut auf `macos-latest`, das Ergebnis heißt
-`Auftakt-<version>-arm64.dmg`. Für Intel-Macs gibt es derzeit keinen Build.
-
-## Struktur
-
-```
-server/   Express + better-sqlite3: db.ts (Schema), seed.ts, routes/, lib/
-client/   React-App: pages/, components/, api/, lib/ (linkify, dates, colors)
-electron/ main.ts, preload.ts, menu.ts, backup.ts
-shared/   time.ts — die Zeitstempel-Konvention, von Server und Electron geteilt
-scripts/  build.mjs (esbuild-Bündel), icons.mjs (npm run icons) + die check-*.mjs-Gates
-build/    App-Icons für electron-builder (icon.icns, icon.ico, icon.png)
-docs/     Architektur, Entscheidungen, Test-Checklisten
-```
-
-## Dokumentation
-
-| Datei | Inhalt |
-| --- | --- |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Aufbau der drei Schichten, Zeitstempel-Konvention, Saisons, CRUD-Factory, Soft-Delete, Spalten-Modell, Client-Verträge |
-| [`docs/DECISIONS.md`](docs/DECISIONS.md) | Bewusst *nicht* umgesetzte Dinge, mit Begründung |
-| [`docs/VERIFYING.md`](docs/VERIFYING.md) | Fallstricke beim manuellen Prüfen im Browser |
-| [`docs/BACKUP-TESTING.md`](docs/BACKUP-TESTING.md) | Manuelle Backup-/Import-Checkliste vor jedem Release |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Issues, lokale Einrichtung, Prüf-Gates, Commit-Konvention |
-| [`SECURITY.md`](SECURITY.md) | Meldeweg, Signierung, Download-Verifikation |
-
-## Skripte
-
-| Befehl | Zweck |
-| --- | --- |
-| `npm run dev` | Server + Client im Browser |
-| `npm run demo` | Demo-Datenbank bauen und damit starten (rührt `./.data/` nicht an) |
-| `npm run demo:seed` | Nur die Demo-Datenbank neu bauen |
-| `npm run seed` | Echte Datenbank in `./.data/` neu befüllen |
-| `npm run typecheck` | Typecheck Server + Client + Electron |
-| `npm run check` | Alle vier Prüfskripte (Backup, Datum/Zeitzone, API-Invarianten, Markdown) |
-| `npm run build` | Client-Build + Server-/Electron-Bündel |
-| `npm run dist` | Installer für die aktuelle Plattform |
-
-## Phase 2 (vorbereitet, noch nicht gebaut)
-
-- `.ics`-Export / Google-Calendar-Sync (Termine sind zeitzonenbewusst als
-  Europe/Berlin gespeichert)
-- Mehrbenutzer: derselbe Server auf einem geteilten Rechner
-
-## Sicherheit
-
-Alle Festivaldaten bleiben lokal — die App überträgt sie nirgendwohin. Die
-einzige ausgehende Verbindung ist eine automatische Update-Prüfung beim Start:
-sie fragt bei GitHub die neueste veröffentlichte Versionsnummer ab und sendet
-dabei keine Daten ([`electron/updateCheck.ts`](electron/updateCheck.ts)).
-
-Die Installer auf der [Releases-Seite](https://github.com/andrewendlinger/auftakt/releases)
-werden von GitHub Actions aus diesem Quellcode gebaut und tragen ab v0.5.0 eine
-Build-Provenance-Attestierung — prüfbar mit `gh attestation verify`. Details und
-Meldeweg für Sicherheitsprobleme: [SECURITY.md](SECURITY.md).
+Sicherheitsprobleme bitte nicht als Issue, sondern vertraulich über [SECURITY.md](SECURITY.md).
 
 ## Lizenz
 
-[PolyForm Strict License 1.0.0](LICENSE.md) — der Quellcode ist einsehbar, und
-die App darf für nichtkommerzielle Zwecke genutzt werden (privat, Hobby, sowie
-gemeinnützige, Bildungs- und öffentliche Einrichtungen). Weitergabe und
-Veränderung sind nicht gestattet.
+[PolyForm Strict License 1.0.0](LICENSE.md) — der Quellcode ist einsehbar, und die App darf für
+nichtkommerzielle Zwecke genutzt werden (privat, Hobby, sowie gemeinnützige, Bildungs- und
+öffentliche Einrichtungen). Weitergabe und Veränderung sind nicht gestattet.
 
-**Kommerzielle bzw. betriebliche Nutzung ist damit nicht abgedeckt.** Für eine
-kommerzielle Lizenz bitte melden — siehe [LICENSE.md](LICENSE.md).
+**Kommerzielle bzw. betriebliche Nutzung ist damit nicht abgedeckt.** Für eine kommerzielle
+Lizenz bitte melden — siehe [LICENSE.md](LICENSE.md).
 
-## Beiträge
+## Für Entwickler
 
-Dies ist ein Einzelentwickler-Projekt. Pull Requests werden nicht angenommen —
-die Lizenz erlaubt weder Veränderung noch Weitergabe, ein PR wäre beides.
-Fehlerberichte und Ideen sind als Issue sehr willkommen; bitte dabei **keine
-echten Festivaldaten** einfügen. Details: [CONTRIBUTING.md](CONTRIBUTING.md).
+Der Quellcode ist einsehbar, aber nicht frei veränderbar (siehe Lizenz). Pull Requests werden
+deshalb nicht angenommen — Issues dagegen gern.
+
+| Datei | Inhalt |
+| --- | --- |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | lokal starten, Stack, Repository-Aufbau, Prüf-Gates, Installer bauen, Commit-Konvention |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | die drei Schichten, Zeitstempel-Konvention, Saisons, Backups, Soft-Delete, Spalten-Modell, Client-Verträge |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | bewusst *nicht* umgesetzte Dinge, mit Begründung |
+| [`docs/VERIFYING.md`](docs/VERIFYING.md) | Fallstricke beim Prüfen im Browser |
+| [`docs/BACKUP-TESTING.md`](docs/BACKUP-TESTING.md) | manuelle Backup-/Import-Checkliste vor jedem Release |
+| [`SECURITY.md`](SECURITY.md) | Meldeweg, Signierung, Download-Verifikation |
