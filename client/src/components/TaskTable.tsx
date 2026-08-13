@@ -28,7 +28,7 @@ import { Markdown } from './Markdown';
 import { RichTextEditor } from './RichTextEditor';
 import { ColorSwatchPicker } from './ColorSwatchPicker';
 import { CHILD_BAND, TREE, TreeGutterCell, spineColorFor } from './TaskTreeGutter';
-import { MoveIcon, TrashIcon } from './icons';
+import { MoveIcon, PlusIcon, TrashIcon } from './icons';
 import { MoveTaskDialog } from './MoveTaskDialog';
 import { PillSelect } from './PillSelect';
 import { InlineInput } from './InlineInput';
@@ -832,11 +832,11 @@ function ActionsCell({ row }: TaskCellProps) {
       {task.parent_id == null && (
         <IconButton
           size="sm"
-          className="text-base"
           title="Unteraufgabe hinzufügen"
+          aria-label="Unteraufgabe hinzufügen"
           onClick={() => api.startSubtask(task.id)}
         >
-          ＋
+          <PlusIcon className="h-4 w-4" />
         </IconButton>
       )}
       {/* Depth, not `parent_id`: subtasks travel with their parent, but an orphan renders at
@@ -1187,7 +1187,7 @@ function AddTaskRow({
   const onEnter = onEnterKey(() => void submit());
   return (
     <div className="flex items-center gap-2 border-b border-neutral-100 px-3 py-2">
-      <span className="text-neutral-300">＋</span>
+      <PlusIcon className="h-4 w-4 shrink-0 text-neutral-300" />
       {/* No `autoFocus`, deliberately (WP-43): this row is permanently visible, so focusing it on
           mount would take the caret on every artist and project page the user opened to read —
           and scroll it into view besides. Escape therefore clears the draft rather than closing
@@ -1284,7 +1284,7 @@ function SubtaskAddRow({
       <TreeGutterCell kind="composer" spineColor={spineColor} />
       <td colSpan={colSpan} className="px-3 py-1.5">
         <div className="flex items-center gap-2">
-          <span className="text-neutral-300">＋</span>
+          <PlusIcon className="h-4 w-4 shrink-0 text-neutral-300" />
           <input
             autoFocus
             className="flex-1 bg-transparent px-1 py-1 text-sm outline-none placeholder:text-neutral-300"

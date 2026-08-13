@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ID } from '../api/types';
 import { switchSeason } from '../lib/season';
+import { ChevronRightIcon } from './icons';
 import {
   useCurrentSeasonId,
   useSeasons,
@@ -51,7 +52,7 @@ export function SeasonSwitcher() {
         title={`${term.singular} wechseln`}
       >
         {active?.label ?? term.singular}
-        <span className="text-[9px] opacity-70">▾</span>
+        <ChevronRightIcon className="h-3 w-3 rotate-90 opacity-70" />
       </button>
       {open && (
         <>

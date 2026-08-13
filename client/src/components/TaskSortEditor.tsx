@@ -3,6 +3,7 @@ import type { TaskSortRule } from '../api/types';
 import { arrayMove } from '../lib/arrays';
 import { SORTABLE_TASK_COLUMNS, describeSortColumn, type SortRuleState } from '../lib/taskSort';
 import { useGlobalColumns } from '../hooks';
+import { XIcon } from './icons';
 import { Btn, IconButton, ReorderArrows } from './ui';
 
 /**
@@ -132,8 +133,8 @@ export function TaskSortEditor({
                   </button>
                 ))}
               </div>
-              <IconButton variant="danger" size="sm" onClick={() => removeAt(i)} title="Entfernen">
-                ✕
+              <IconButton variant="danger" size="sm" onClick={() => removeAt(i)} title="Entfernen" aria-label="Entfernen">
+                <XIcon className="h-3.5 w-3.5" />
               </IconButton>
             </li>
           );

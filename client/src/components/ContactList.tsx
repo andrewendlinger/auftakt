@@ -8,7 +8,7 @@ import { linkify } from '../lib/linkify';
 import { withAlpha } from '../lib/colors';
 import { InlineNotes } from './InlineNotes';
 import { ColorSwatchPicker } from './ColorSwatchPicker';
-import { TrashIcon } from './icons';
+import { PencilIcon, TrashIcon } from './icons';
 import { EditableLabel } from './EditableLabel';
 import type { LabelKey } from '../lib/labels';
 import { useInvalidateAll, useUndoableDelete, useUndoablePatch, resourceUndo } from '../hooks';
@@ -123,7 +123,7 @@ export function ContactList({
               <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
                 <ColorSwatchPicker value={c.color} onChange={(color) => setColor(c, color)} />
                 <Btn variant="ghost" title="Bearbeiten" onClick={() => setEditing(c)}>
-                  ✎
+                  <PencilIcon className="h-4 w-4" />
                 </Btn>
                 <Btn
                   variant="danger"

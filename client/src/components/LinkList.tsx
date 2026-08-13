@@ -8,7 +8,7 @@ import type { CustomColumnOption, LinkCreate, LinkItem } from '../api/types';
 import { withAlpha } from '../lib/colors';
 import { normalizeUrl } from '../lib/url';
 import { ColorSwatchPicker } from './ColorSwatchPicker';
-import { TrashIcon } from './icons';
+import { PencilIcon, TrashIcon } from './icons';
 import { EditableLabel } from './EditableLabel';
 import type { LabelKey } from '../lib/labels';
 import {
@@ -168,7 +168,7 @@ export function LinkList({
         <>
           <ColorSwatchPicker value={l.color} onChange={(color) => setColor(l, color)} />
           <Btn variant="ghost" title="Bearbeiten" onClick={() => setEditing(l)}>
-            ✎
+            <PencilIcon className="h-4 w-4" />
           </Btn>
           <Btn
             variant="danger"

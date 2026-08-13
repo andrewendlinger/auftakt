@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { useLabel, useRenameLabel } from '../hooks';
 import type { LabelKey } from '../lib/labels';
 import { LABEL_DEFAULTS } from '../lib/labels';
+import { PencilIcon } from './icons';
 import { InlineInput } from './InlineInput';
 
 /**
- * A heading the user can rename in place. Renders the resolved text plus a ✎ that appears on
+ * A heading the user can rename in place. Renders the resolved text plus a pencil that appears on
  * hover; clicking it swaps in an input (Enter or blur saves, Esc cancels, empty resets to the
  * default). Drop it inside `SectionTitle` — or anywhere a heading string is rendered — and the
  * new name is picked up everywhere else that resolves the same id, including the
@@ -49,7 +50,7 @@ export function EditableLabel({ k }: { k: LabelKey }) {
             className="rounded px-0.5 text-[11px] leading-none text-neutral-400 opacity-0 transition group-hover/label:opacity-100 hover:text-neutral-700 focus:opacity-100"
             onClick={() => setEditing(true)}
           >
-            ✎
+            <PencilIcon className="h-3 w-3" />
           </button>
         </>
       )}
