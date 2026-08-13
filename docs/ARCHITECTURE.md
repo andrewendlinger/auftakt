@@ -236,8 +236,9 @@ for — the same line `liveSubtreeIds` draws for task trees. Both share `depende
 
 There is a pattern here, and it is worth matching rather than re-deciding per surface:
 
-- **row deletes** — the hover-revealed ✎/🗑 pair (Kontakte, Termine, Dokumente & Links) and the
-  task table's always-visible 🗑
+- **row deletes** — the hover-revealed `PencilIcon`/`TrashIcon` pair (Kontakte, Termine, Dokumente
+  & Links) and the task table's always-visible `TrashIcon`. Every symbol that *is* a button's face
+  comes from `client/src/components/icons.tsx`; see `docs/DECISIONS.md`, WP-38
 - **section deletes** — only inside „✎ Bereiche bearbeiten" (`SectionArranger`'s strip)
 - **config deletes** — only inside their manager (⚙ Spalten, the option editors in Einstellungen)
 - **record deletes** (artist, project) — inside „✎ Bearbeiten", behind a second confirm, never on

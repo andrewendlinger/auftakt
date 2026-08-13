@@ -283,7 +283,8 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   the page behind it, so `.first()` silently addresses the wrong field and the dialog looks
   unresponsive. `div.max-h-\[calc\(100vh-5rem\)\]` is `Modal`'s own card; `.last()` of those is
   the topmost dialog.
-- **An event row is `li.group` and its ✎ is `[title="Bearbeiten"]` — neither is unique to events.**
+- **An event row is `li.group` and its edit button is `[title="Bearbeiten"]` — neither is unique to
+  events.**
   Contact rows are `li.group` too, and the same `[title="Bearbeiten"]` button sits on every
   contact, link and document row, so on an artist page an unscoped selector picks whichever card
   the layout puts first. Scope to the section: `[data-section="termine"] li.group` (the arranger
@@ -504,6 +505,25 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **Project 1's notes contain a Markdown table**, so `thead` first matches *that*, not the task
   table. Project 1 also shares its name with its opening concert, so a text match there hits the
   page heading rather than the event row.
+- **An icon button has no text at all — select it by `title`, never by its symbol.** Since WP-38
+  every symbol that is a button's whole face is an `<svg aria-hidden>` from `icons.tsx`, so
+  `getByText('✎')`, `:has-text("▲")` and `innerText()` assertions match nothing. `title` and
+  `aria-label` are identical on these buttons and both survive, so `[title="Bearbeiten"]` and
+  `getByRole('button', { name: 'Nach oben' })` are the stable handles. The glyphs that *do* still
+  render sit beside a word — „⚙ Spalten", „🖨 Ein-Pager (PDF)", „✎ Bearbeiten" — so a text match
+  there hits the label, not the symbol.
+- **The rich-text toolbar does not exist until a note is being edited.** `InlineNotes` renders the
+  *reading* view — a `.cursor-text` div, or a „+ hinzufügen" button when the note is empty — and
+  only mounts `RichTextEditor` on click. A script that opens a page and looks for „Zitat" or the
+  emoji button waits 30 s for markup that was never there. Click the note first, then wait for
+  `.rte-content.ProseMirror-focused`.
+- **The emoji picker's search box is not `type="search"`.** `emoji-picker-react` renders a plain
+  `<input type="text">` under `.epr-search-container` with hashed class names, so the obvious
+  `input[type="search"]` selector matches nothing and looks like the picker failed to open. Its
+  placeholder is „Suchen" (we pass it; `emojiData` does not localize chrome). Results carry
+  `[data-unified="<codepoint>"]` — `1f3b5` is 🎵, `1f3b8` is 🎸 — and appear in both the suggested
+  strip and the list, so *count > 0*, never an exact count. Typing needs ~500 ms before the list
+  settles.
 - **`getByRole('button', { name: 'Einfügen' })` is ambiguous in the rich-text editor** — it hits
   the toolbar's „Tabelle einfügen" (via its `aria-label`) as well as the link bar's „Einfügen".
   Use `{ exact: true }`. Every toolbar button carries `title` *and* `aria-label`, so accessible

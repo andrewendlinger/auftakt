@@ -1075,3 +1075,56 @@ The cost is accepted: a note that deliberately held code loses its formatting. B
 the characters they are, fences read as the prose they contain. Nothing is deleted, and the
 customer reports never having used fences — „(i dont think users encountered code fences) its
 exclusively indentation". Revisit only if someone stores code in a festival note on purpose.
+
+## App symbols are drawn, user symbols are typed (2026-08-13, WP-38)
+
+The report was „Musik-Emoji fehlen" and „allgemein es sind bissi random Emojis". The first half
+was a bug with a one-line cause and is in the commit log (`emojiData`). The second half was true
+of thirty-one characters and needed a rule, because they had never been decided at all — they had
+accumulated.
+
+**The rule: a symbol that is the sole content of a control is an icon from `icons.tsx`. A symbol
+that sits beside a word stays a character. Emoji remain for what the user chooses.**
+
+The reason is not taste. A character in JSX is drawn by whatever font the operating system picks
+for it, so `✎ ✕ ▲ ▼` came out one way on macOS and another on Windows, and monochrome line
+symbols ended up in the same row as full-colour emoji (`🔗 🙂 📍`). Nobody chose that mixture and
+nobody could correct it, because the choice was never ours. Where the symbol *is* the button, that
+is the whole face of the control and it has to be ours. Where it precedes a word — „⚙ Spalten",
+„🖨 Ein-Pager (PDF)", „⬇ Excel", „📍 {Ort}", „⚠ überfällig", „👁 sichtbar" — the word carries the
+meaning and the symbol only tints it, so the font's wobble costs nothing and eleven more icons
+would buy nothing.
+
+Three of the thirty-one needed no new drawing at all: `🔗` was rendered in `DocumentRow` while
+`LinkIcon` was already used in the rich-text toolbar, `⌂` sat in `SectionArranger` while
+`HomeIcon` was in `Breadcrumbs`, and `▲ ▼ ▾` had `ChevronRightIcon` a rotation away. The same
+concept existed twice, once drawn and once typed. That is the evidence that these were never
+decisions — nobody would pick both.
+
+Deliberately **not** converted, beyond the beside-a-word rule:
+
+- **The sort indicator** (`▲`/`▼` beside a task-table column name). It reads a *state*; it is not
+  the face of a control. The `<th>` is the click target and its own text is the label.
+- **`☐` in the print sheets.** That belongs to the paper, and the print stylesheet is a separate
+  surface with its own constraints.
+- **`🎭` as the photo placeholder** and **`–` in the symbol picker.** Both are stand-ins for a
+  missing user choice, sitting where the user's own emoji will go. An icon there would look like
+  a decision the app had made.
+- **`⠿`, the drag handle.** It is `aria-hidden` and Braille-derived, which is why it reads as
+  texture rather than as a symbol — and every reorderable list in the app is trained on that exact
+  shape (WP-35).
+
+The font chain is the other half. `--font-sans` named six text faces and no emoji face, so the
+emoji that remain — and every emoji a user picks or types — were drawn by the browser's
+last-resort choice. The three platform emoji faces now sit at the end of the chain, after
+`sans-serif`: unreachable for anything a text font can draw, so nothing else moves.
+
+Accessible names were normalised in passing, because with the glyph gone `title` is the only name
+some of these buttons have: `ReorderArrows` had `title` and no `aria-label`, `SectionArranger`'s
+pair had `aria-label` and no `title`, lowercased. Both strings are identical, so no accessible
+name actually changed.
+
+What this does not settle: whether „✎ Bearbeiten" and the row pencil should look alike. After this
+pass they do not — one is a glyph beside a word, the other an icon — and that is visible on the
+project page. The beside-a-word rule is what keeps the change bounded; the alternative is a second
+pass that converts them too and leaves the word.
