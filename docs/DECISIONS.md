@@ -1345,3 +1345,12 @@ Hence `MdLinkedImage`, standing in for the built-in `link` handler at a higher p
 is the only place both tokens are visible at once, and `wrapImageMarks` on the write side.
 `**…**`/`*…*` are written but not read back: bold on an image has no rendered effect, so the
 asymmetry costs nothing observable and the read side stays the library's.
+
+**The alt text escapes brackets and not the backslash**, which looks wrong and is forced. micromark
+(the reader) unescapes `\\` to `\`; marked (the editor's parser) leaves it alone inside an alt. So
+escaping every backslash grew one per save — `a\b` → `a\\b` → `a\\\\b` — while the reader kept
+drawing the original: a stored string that changed every time a note was opened, and one that only
+the round-trip gate's *idempotence* assertion can catch, since the first pass still rendered equal.
+Bare is a fixed point on both sides. The mechanism still survives a backslash before a bracket
+(`a\[b` → `a\\[b`, which the two parse differently and agree on the result); a doubled backslash is
+where they part, and no file name from the picker has one.

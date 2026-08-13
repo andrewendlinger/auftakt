@@ -95,9 +95,17 @@ describe('escapeAlt / escapeTitle', () => {
     expect(escapeAlt('Saalplan [Entwurf]')).toBe('Saalplan \\[Entwurf\\]');
   });
 
-  it('escapes the backslash first, so escapes are not double-escaped', () => {
-    expect(escapeAlt('a\\b')).toBe('a\\\\b');
-    expect(escapeAlt('\\[')).toBe('\\\\\\[');
+  it('leaves the backslash alone, because the two parsers disagree about it', () => {
+    // Escaping it grew one on every save: the reader unescapes `\\` to `\`, marked does not touch
+    // it inside an alt, so `a\b` was stored as `a\\b`, then `a\\\\b`, forever (IMG-06). Bare is a
+    // fixed point on both sides — a backslash before a non-punctuation character means nothing to
+    // either. `escapeTitle` keeps its own escaping: a title is read back by neither of these
+    // paths as an alt is.
+    expect(escapeAlt('a\\b')).toBe('a\\b');
+    // The escape mechanism still survives a backslash in front of a bracket: the reader reads
+    // this as (escaped backslash)(literal bracket), marked as (literal backslash)(escaped
+    // bracket) — two parses of one string, both yielding `\[`.
+    expect(escapeAlt('\\[')).toBe('\\\\[');
   });
 
   it('escapes the quote a title is delimited by', () => {

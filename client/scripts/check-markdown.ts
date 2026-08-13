@@ -149,6 +149,12 @@ const corpus: Record<string, string> = {
   imageHttpsLegacy: '![x](https://example.com/a.jpg)',
   imageDataUrlLegacy: '![x](data:image/jpeg;base64,AAAA)',
   imageSpacedUrlLegacy: '![x](<https://e.org/a b.jpg>)',
+  // A backslash in the alt — a file name really can carry one, and the alt fallback *is* the file
+  // name. It used to gain one on every save (`a\b` → `a\\b` → `a\\\\b`) because the reader
+  // unescapes `\\` and marked does not: the first pass still rendered equal, so only the
+  // idempotence assertion catches it. That is why this entry exists rather than a bracket variant.
+  imageBackslashAlt: `![a\\b](${IMG})`,
+  imageBackslashBeforeBracket: `![a\\\\[b](${IMG})`,
   // A link around an image, which no toolbar authors but an import carries. The destination used
   // to be dropped on save — the mark reached neither the node (the parser cannot mark an atom) nor
   // the output (the serializer only writes marks around text).

@@ -83,11 +83,24 @@ export function canonicalImageSrc(src: string): string {
 /**
  * Escape the alt text so `![…]` closes where the author meant it to.
  *
- * Backslash first, or the escapes this adds would themselves be escaped. A file name is the alt
- * fallback and file names really do carry brackets („Saalplan [Entwurf].jpg").
+ * Brackets only — **the backslash is deliberately left alone**, and that asymmetry is forced by
+ * the two parsers disagreeing about it. The reader (micromark) unescapes `\\` to `\`; marked, which
+ * is what reads the text back into the editor, does not touch it inside an alt. Writing `\\` for
+ * every backslash therefore grew one on each save — `a\b` → `a\\b` → `a\\\\b`, forever — while the
+ * reader kept drawing the original: a stored string that changes every time the note is opened
+ * (IMG-06). Leaving it bare is a fixed point on both sides, because a backslash before a
+ * non-punctuation character means nothing to either.
+ *
+ * The escape mechanism still survives a backslash that precedes a bracket: `a\[b` is written
+ * `a\\[b`, which the reader reads as (escaped backslash)(literal bracket) and marked as (literal
+ * backslash)(escaped bracket) — two different parses of the same string, both yielding `a\[b`. The
+ * one input where they part is a *doubled* backslash, which no file name the picker produces has.
+ *
+ * A file name is the alt fallback and file names really do carry brackets („Saalplan
+ * [Entwurf].jpg"), which is what this exists for.
  */
 export function escapeAlt(alt: string): string {
-  return alt.replace(/\\/g, '\\\\').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+  return alt.replace(/\[/g, '\\[').replace(/\]/g, '\\]');
 }
 
 /** Escape a Markdown title, which is delimited by the double quotes this has to keep inside. */
