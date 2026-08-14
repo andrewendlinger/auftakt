@@ -3,13 +3,18 @@ import { Btn, Card, PickerRow } from './ui';
 import { FooterHint, Label, Modal, TextArea } from './fields';
 import { useToast } from './Toast';
 import { useSeasonTerm } from '../hooks';
-import { openExternal, type BootDiagnostics } from '../lib/external';
+import { openExternal, type Diagnostics } from '../lib/external';
 import {
   FEEDBACK_FIELD_MAX,
+  FEEDBACK_KINDS,
   FEEDBACK_TO,
   feedbackBody,
   feedbackMailto,
+  feedbackRef,
+  requiredField,
+  type FeedbackContext,
   type FeedbackDraft,
+  type FeedbackKind,
 } from '../lib/feedbackMail';
 import { useRovingFocus, rovingItem } from '../lib/rovingFocus';
 
@@ -19,21 +24,29 @@ import { useRovingFocus, rovingItem } from '../lib/rovingFocus';
  * A „Feedback" button that opens a blank mail gets „es geht nicht" back, which costs a round
  * of questions before anything can be looked at — and the one answer that would settle the
  * boot-gesture report (WP-61) is in a file the customer has no way to reach. So the dialog
- * asks the three questions a usable report answers, and attaches a short summary of the last
- * program starts, which the composer keeps inside what a mail client will carry.
+ * asks the questions a usable report answers, and hands over the diagnostics: a short summary
+ * inside the mail, and the log in full as a file on the desktop, because a `mailto:` cannot
+ * carry an attachment (see `electron/diagnostics.ts`).
+ *
+ * What it asks depends on the first answer. A wish and a fault are not the same question, and
+ * asking „Was ist passiert?" about a wish is how feature requests arrive phrased as bugs.
  *
  * Everything shaped like logic is somewhere else and unit-tested: `feedbackMailto` builds the
- * URL, `summarizeBootLog` builds the diagnostic block. What is left here is the form.
+ * URL, `FEEDBACK_KINDS` holds the questions, `summarizeBootLog` builds the diagnostic block.
+ * What is left here is the form.
  */
 export function FeedbackDialog({ onClose }: { onClose: () => void }) {
   const term = useSeasonTerm();
   const toast = useToast();
+  const [kind, setKind] = useState<FeedbackKind | null>(null);
   const [area, setArea] = useState<string | null>(null);
-  const [did, setDid] = useState('');
-  const [happened, setHappened] = useState('');
-  const [expected, setExpected] = useState('');
-  const [diag, setDiag] = useState<BootDiagnostics | null>(null);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [diag, setDiag] = useState<Diagnostics | null>(null);
   const [version, setVersion] = useState('');
+  const [sending, setSending] = useState(false);
+  // Stamped once, when the dialog opened: it names both the mail and the file written next to
+  // it, so it has to be the same value in the preview below and in what actually goes out.
+  const [ref] = useState(() => feedbackRef(new Date()));
 
   // Same shape as UpdateCard's mount effect: optional-chained twice over, because there is no
   // bridge in browser dev and an older packaged preload would not carry these members.
@@ -52,23 +65,48 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
   // work out from the text, and it decides which screen to open first.
   const areas = ['Allgemein', term.singular, 'Künstler', 'Projekt', 'Termine'];
 
-  const roving = useRovingFocus();
-  const stop = area ?? areas[0];
+  const kindRoving = useRovingFocus();
+  const areaRoving = useRovingFocus();
+  const kinds = Object.keys(FEEDBACK_KINDS) as FeedbackKind[];
 
-  const draft: FeedbackDraft = { area: area ?? '', did, happened, expected };
-  const ctx = {
+  const spec = kind ? FEEDBACK_KINDS[kind] : null;
+  const draft: FeedbackDraft = { kind: kind ?? 'bug', area: area ?? '', answers };
+  const ctx: FeedbackContext = {
+    ref,
     version,
     platform: window.auftakt?.platform ?? '',
-    diagnostics: diag?.summary ?? '',
+    system: diag?.system ?? '',
+    // A wish carries none: startup timings say nothing about it, and the budget they would
+    // spend is better spent on what the person wrote.
+    diagnostics: spec?.diagnostics ? (diag?.summary ?? '') : '',
+    // Filled in at send time, once the file it names actually exists.
+    attachment: '',
   };
-  const ready = area !== null && happened.trim().length > 0;
+  const required = kind ? requiredField(kind) : null;
+  const ready =
+    kind !== null && area !== null && (answers[required?.key ?? '']?.trim().length ?? 0) > 0;
   const hasBridge = typeof window.auftakt?.revealDiagnostics === 'function';
+  const canSave = spec?.diagnostics === true && typeof window.auftakt?.saveDiagnostics === 'function';
 
-  const send = () => {
-    openExternal(feedbackMailto(draft, ctx));
+  const send = async () => {
+    setSending(true);
+    let sent = ctx;
+    if (canSave) {
+      // Written and revealed before the mail opens, in that order: the compose window should
+      // be the thing on top when this is over, not a file manager.
+      const saved = await window.auftakt?.saveDiagnostics?.(ref, feedbackBody(draft, ctx));
+      // A failed write costs the attachment line, not the mail — the body's summary still
+      // travels, and promising a file that was never written is worse than not offering one.
+      if (saved?.ok) sent = { ...ctx, attachment: saved.name };
+    }
+    openExternal(feedbackMailto(draft, sent));
     // A mailto: is fire-and-forget — the app can never learn whether it was sent, and a
     // customer who reads „gesendet" and closes their client is a bug report nobody gets.
-    toast.show({ message: 'E-Mail-Programm geöffnet — bitte dort noch abschicken.' });
+    toast.show({
+      message: sent.attachment
+        ? `E-Mail-Programm geöffnet — bitte ${sent.attachment} vom Schreibtisch anhängen und abschicken.`
+        : 'E-Mail-Programm geöffnet — bitte dort noch abschicken.',
+    });
     onClose();
   };
 
@@ -90,46 +128,27 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
     });
   };
 
-  const field = (
-    label: string,
-    value: string,
-    onChange: (v: string) => void,
-    placeholder: string,
-    autoFocus = false,
-  ) => (
-    <div>
-      <Label>{label}</Label>
-      <TextArea
-        autoFocus={autoFocus}
-        rows={3}
-        maxLength={FEEDBACK_FIELD_MAX}
-        className="resize-y"
-        placeholder={placeholder}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      />
-    </div>
-  );
+  const hint = () => {
+    if (kind === null) return 'Bitte zuerst Fehler oder Wunsch wählen.';
+    if (area === null) return 'Bitte einen Bereich wählen.';
+    return `Bitte „${required?.ask}“ ausfüllen.`;
+  };
 
   return (
     <Modal
       title="Feedback & Diagnose"
       onClose={onClose}
-      // Only typed text is worth a question — a picked area is one click to redo.
-      dirty={[did, happened, expected].some((v) => v.trim() !== '')}
+      // Only typed text is worth a question — a picked kind or area is one click to redo.
+      dirty={Object.values(answers).some((v) => v.trim() !== '')}
       size="lg"
       footer={
         <>
-          {!ready && (
-            <FooterHint>
-              {area === null ? 'Bitte zuerst einen Bereich wählen.' : 'Bitte „Was ist passiert?“ ausfüllen.'}
-            </FooterHint>
-          )}
+          {!ready && <FooterHint>{hint()}</FooterHint>}
           <Btn onClick={onClose}>Abbrechen</Btn>
-          <Btn onClick={copy} disabled={!ready}>
+          <Btn onClick={copy} disabled={!ready || sending}>
             Text kopieren
           </Btn>
-          <Btn variant="primary" onClick={send} disabled={!ready}>
+          <Btn variant="primary" onClick={() => void send()} disabled={!ready || sending}>
             E-Mail schreiben
           </Btn>
         </>
@@ -137,52 +156,87 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
     >
       <div className="space-y-4">
         <div>
-          <Label>Worum geht’s?</Label>
-          {/* One tab stop for the whole group, arrows inside it: five rows between the
-              dialog's first stop and the text fields is four Tabs of nothing. */}
-          <div ref={roving.ref} onKeyDown={roving.onKeyDown} className="space-y-1.5">
-            {areas.map((a) => (
+          <Label>Was möchtest du melden?</Label>
+          {/* First, because it decides the questions below it — and because a wish filed on a
+              form that only asks „Was ist passiert?" comes out looking like a fault. */}
+          <div ref={kindRoving.ref} onKeyDown={kindRoving.onKeyDown} className="flex gap-2">
+            {kinds.map((k) => (
               <PickerRow
-                key={a}
-                {...rovingItem(a === stop)}
-                selected={area === a}
-                onClick={() => setArea(a)}
+                key={k}
+                {...rovingItem(k === (kind ?? kinds[0]))}
+                selected={kind === k}
+                onClick={() => setKind(k)}
               >
-                {a}
+                {FEEDBACK_KINDS[k].label}
+                <span className="ml-2 text-xs text-neutral-400">
+                  {k === 'bug' ? 'etwas geht nicht' : 'etwas fehlt'}
+                </span>
               </PickerRow>
             ))}
           </div>
         </div>
 
-        {/* The fields appear once an area is picked, so the dialog opens on one question
-            rather than on a form. Mounting them here is also what lets autoFocus land. */}
-        {area !== null && (
+        {kind !== null && spec && (
           <>
-            {field(
-              'Was ist passiert?',
-              happened,
-              setHappened,
-              'z. B. „Beim Start war die Animation nur kurz zu sehen, dann kam die Übersicht.“',
-              true,
-            )}
-            {field('Was hast du davor gemacht?', did, setDid, 'z. B. „Auftakt neu gestartet.“')}
-            {field(
-              'Was hättest du erwartet?',
-              expected,
-              setExpected,
-              'Optional — hilft, wenn es nicht offensichtlich ist.',
-            )}
+            <div>
+              <Label>Worum geht’s?</Label>
+              {/* One tab stop for the whole group, arrows inside it: five rows between the
+                  dialog's first stop and the text fields is four Tabs of nothing. */}
+              <div ref={areaRoving.ref} onKeyDown={areaRoving.onKeyDown} className="space-y-1.5">
+                {areas.map((a) => (
+                  <PickerRow
+                    key={a}
+                    {...rovingItem(a === (area ?? areas[0]))}
+                    selected={area === a}
+                    onClick={() => setArea(a)}
+                  >
+                    {a}
+                  </PickerRow>
+                ))}
+              </div>
+            </div>
 
-            <details className="text-xs text-neutral-500">
-              <summary className="cursor-pointer select-none font-medium text-neutral-600">
-                Was wird mitgeschickt?
-              </summary>
-              {/* Shown in full before it leaves: the diagnostics are timings and a version,
-                  but „technische Angaben" is not something to ask anyone to take on trust. */}
-              <pre className="mt-2 overflow-x-auto rounded-lg bg-neutral-50 p-3 text-xs text-neutral-600">
-                {feedbackBody(draft, ctx)}
-              </pre>
-            </details>
+            {/* The fields appear once an area is picked, so the dialog opens on one question
+                rather than on a form. Mounting them here is also what lets autoFocus land. */}
+            {area !== null && (
+              <>
+                {spec.fields.map((f, i) => (
+                  <div key={f.key}>
+                    <Label>{f.ask}</Label>
+                    <TextArea
+                      autoFocus={i === 0}
+                      rows={3}
+                      maxLength={FEEDBACK_FIELD_MAX}
+                      className="resize-y"
+                      placeholder={f.placeholder}
+                      value={answers[f.key] ?? ''}
+                      onChange={(e) =>
+                        setAnswers((prev) => ({ ...prev, [f.key]: e.target.value }))
+                      }
+                    />
+                  </div>
+                ))}
+
+                <details className="text-xs text-neutral-500">
+                  <summary className="cursor-pointer select-none font-medium text-neutral-600">
+                    Was wird mitgeschickt?
+                  </summary>
+                  {/* Shown in full before it leaves: the diagnostics are timings and a version,
+                      but „technische Angaben" is not something to ask anyone to take on trust. */}
+                  <pre className="mt-2 overflow-x-auto rounded-lg bg-neutral-50 p-3 text-xs text-neutral-600">
+                    {feedbackBody(draft, ctx)}
+                  </pre>
+                  {canSave && (
+                    <p className="mt-2">
+                      Dazu die Datei <code>Auftakt-Diagnose-{ref}.txt</code> auf dem Schreibtisch:
+                      das vollständige Startprotokoll und die Angaben zum Rechner. Sie wird beim
+                      Klick auf „E-Mail schreiben“ angelegt — du kannst sie vorher lesen und
+                      entscheidest selbst, ob du sie anhängst.
+                    </p>
+                  )}
+                </details>
+              </>
+            )}
           </>
         )}
 
@@ -191,10 +245,7 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
             <Btn onClick={reveal} disabled={!hasBridge}>
               Diagnoseordner öffnen
             </Btn>
-            <span>
-              Für ein Startproblem: den Ordner öffnen und <code>boot-log.jsonl</code> an die E-Mail
-              anhängen.
-            </span>
+            <span>Zeigt die Rohdaten, aus denen die Startdiagnose gebildet wird.</span>
           </div>
           {diag && <p className="mt-2 break-all text-neutral-400">{diag.file}</p>}
           {!hasBridge && (

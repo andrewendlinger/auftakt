@@ -197,6 +197,15 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   dialog — read the summary itself under `check:unit`, where the four record species and the
   untrusted-`why` case are pinned. **Dev mode writes no log, so that button opens the folder
   rather than revealing a file**, and the toast says so; that is the branch, not a failure.
+- **A Fehler also writes `Auftakt-Diagnose-<ref>.txt` to the desktop and reveals it**, because a
+  `mailto:` cannot attach anything. Three things follow for anyone verifying it. It is a *real
+  file on the desktop of whoever runs the app*, so never drive the unstubbed path from a script —
+  the browser stub in `lib/drive.mjs` records `saveDiagnostics`'s arguments into `window.__saved`
+  and the assertion belongs on the filename the mail body then carries. The file persists between
+  runs, so a manual pass that does not delete it is reading a stale bundle a minute later — the
+  reference in it is the tell. And **dev writes no boot log**, so a bundle built in dev holds the
+  machine section and „noch keinen Start protokolliert" under the log heading; that is the branch,
+  not a truncated file. A Wunsch writes nothing at all.
 - **A traced launch: `AUFTAKT_BOOT_TRACE=1`.** Records from before the window until ~750 ms after
   the overlay settles — capped at ~6 s, or the env var's value in milliseconds — to
   `boot-trace-<stamp>.json` in userData, loadable at ui.perfetto.dev. Quitting does not lose it:
@@ -432,6 +441,14 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   `window.__external.push(url)` — then read it back with `new URL(...)` and `searchParams`, which
   is also the only honest check of the encoding. Asserting on the dialog after „E-Mail schreiben"
   asserts on nothing; it has already closed itself.
+- **The dialog asks nothing until a kind is picked, and the questions differ per kind.** „Was ist
+  passiert?" exists only under Fehler — a script keyed on it hangs on a Wunsch, where the same
+  first box reads „Was möchtest du tun können?". Click `getByRole('button', {name: /^Fehler/})`
+  first, then the area, then fill `locator('textarea').nth(0)` by position rather than by label
+  (the `getByLabel` trap below applies here too). The subject is
+  `[AF-<10 digits>] Auftakt-(Fehler|Wunsch): <Bereich>`, and the reference is stamped once when
+  the dialog opens — the same value appears in the preview, in the subject, in the body's
+  „Kennung:" line and in the diagnostics filename, which is what to assert they agree on.
 - **`getByLabel` finds nothing in a `RecordFormModal`.** Its `<label>` (`fields.tsx`) carries no
   `htmlFor` and does not wrap the input, so the two are not associated and Playwright's
   accessible-name lookup times out — 30 s per field, reading as „the dialog never opened".

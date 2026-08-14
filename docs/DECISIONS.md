@@ -26,6 +26,39 @@ sent, so the toast says „bitte dort noch abschicken" rather than „gesendet".
 client configured — a real possibility on the target Windows machine — falls back to „Text
 kopieren" and the address in plain text, which is why both are in the dialog rather than one.
 
+## A `mailto:` cannot attach, so the app writes the file instead (2026-08-14, WP-54)
+
+The obvious follow-up to the decision above was: if the mail only carries five folded boot entries
+and the rest sits in a folder, why not send the whole log, or attach it automatically?
+
+Neither is available. RFC 6068 limits which headers a `mailto:` client may honour; `attach=` was a
+Thunderbird extension and was disabled precisely because a URL naming a local file is an
+exfiltration primitive. Apple Mail, Outlook and web handlers ignore it, `shell.openExternal` hands
+the URL to the OS with nothing in between, and Electron has no cross-platform compose-with-
+attachment API. Putting the log in the body fails on size rather than on policy: the file keeps up
+to 100 records, ~35 KB, and even one folded line per boot is ~12 KB against a budget of 1900
+*encoded* characters. Five is what is left after three German fields, not timidity.
+
+So the file is made attachable instead of the mail made bigger. `save-diagnostics` writes one
+`Auftakt-Diagnose-<ref>.txt` and reveals it selected, and the mail names that filename.
+
+- **The desktop, not beside the log in userData.** The file exists to be dragged into a mail. A
+  folder they already have open beats one they have to be sent into, and `boot-log.jsonl` sits
+  among `Cache/`, `Code Cache/`, `GPUCache/` and `blob_storage/`. It is also plainly theirs to
+  delete afterwards, which a file in `AppData` is not.
+- **`.txt`, not a copy of the `.jsonl`.** A `.jsonl` does not open on double-click on Windows, and
+  the person carrying the file is the one who should be able to read it before they send it.
+- **It carries more than the log**, because the questions that follow a startup report are always
+  the same ones: which Windows build, how the screen is scaled, whether GPU compositing is on. That
+  is the WP-61 shortlist, and none of it is guessable from timings.
+- **Home paths are redacted to `~`.** It is mail, not a local file: `C:\Users\<name>\AppData\…`
+  names the customer, and the shape of the path is the half that has ever explained a fault. The
+  scrub runs over the finished text, so a path the person typed into the report is covered too.
+
+What it costs is one manual step — the drag — and that is the floor, not a shortfall. „E-Mail
+schreiben" reveals the file first and opens the client second, so the compose window is what ends
+up in front.
+
 ## No menu entry for feedback (2026-08-14, WP-54)
 
 „Dauerhaft sichtbar" was the alternative to a settings entry, and a Hilfe menu was the obvious
@@ -46,10 +79,47 @@ ladder drops entries from the top when the `mailto:` is too long, so the boot th
 report is the last thing to go. Below that, the whole block is replaced by a pointer at the reveal
 button rather than by silence, and only then does the person's own text get cut — marked.
 
+Once the diagnostics file exists, that middle rung goes the other way: the block is dropped
+outright rather than replaced. The line above it already names the file the log is in, and a
+sentence under it saying so costs 140 encoded characters to repeat what the reader just read. The
+budget is not abstract — three fields at the dialog's own `maxLength` plus a reference, a machine
+clause and an attachment line come to 1931 encoded characters against a ceiling of 1900, and
+`check:unit` holds that arithmetic. What gets spent at that size is the summary, never a word the
+person wrote, because the summary's 100 entries are in the attachment in full.
+
+A wish carries no summary at all. Startup timings say nothing about a feature request, and the
+budget they would spend is better spent on what was actually asked for.
+
 `why` is read back out under the same distrust it was written with. `bootLogLine` caps the payload
 as a whole and never inspects the fields inside it, so a literal newline in `why` would forge an
 extra report line in a support mail and a long one would eat the mailto budget. Every string
 lifted out of the log is flattened and sliced.
+
+## The kind is asked first, and it rewrites the questions (2026-08-14, WP-54)
+
+The first version asked „Was ist passiert?" of everyone, which is the only sentence a wish can then
+be filed under — so feature requests arrive phrased as faults, and the first reply is spent working
+out which one it was. Fehler and Wunsch are asked before anything else, and each brings its own
+three questions and its own required field.
+
+Two kinds, not three. „Frage" was the candidate for a third; a question about how something works
+is a report that the thing is not discoverable, which is a Wunsch, and a third row would have to
+earn a permanent place in the first thing anyone sees.
+
+The questions live in one table (`FEEDBACK_KINDS`), which the dialog renders from and the mail
+composes from. They used to be written twice — as questions in the form, as statements in the body —
+with nothing keeping them in step.
+
+## The report carries its own reference (2026-08-14, WP-54)
+
+Every mail out of the dialog used to have the same subject, so an inbox of them could not be sorted
+and a reply could not say which one it answered. `AF-` plus `YYMMDDHHMM` in naive local time (the
+convention `shared/time.ts` sets) leads the subject, repeats in the body — a subject is the first
+thing a forward rewrites — and names the diagnostics file, which is what lets a mail and a loose
+attachment on a desktop find each other.
+
+Minute resolution, not seconds: it is read aloud and typed into replies. Two reports inside one
+minute from one person is not the collision worth designing against.
 
 ---
 

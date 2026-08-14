@@ -149,10 +149,16 @@ Gut zu wissen:
 ## Hilfe & Fehler melden
 
 Am einfachsten aus der App heraus: **Einstellungen → „Programm & Hilfe" → „Feedback senden…"**.
-Der Dialog fragt die Angaben ab, die eine Meldung brauchbar machen, legt Version, System und eine
-kurze Zusammenfassung der letzten Programmstarts bei und öffnet damit dein E-Mail-Programm — du
-siehst vorher, was drinsteht. Geht es um einen Fehler beim Start, hilft zusätzlich die Datei
-`boot-log.jsonl`: derselbe Dialog hat einen Knopf, der den Ordner dazu öffnet.
+Der Dialog fragt zuerst, ob es um einen **Fehler** oder einen **Wunsch** geht, und stellt danach
+die passenden Fragen. Er legt Version und System bei und öffnet damit dein E-Mail-Programm — du
+siehst vorher, was drinsteht. Jede Meldung bekommt eine Kennung wie `AF-2608141542`, die im Betreff
+steht; darauf lässt sich später Bezug nehmen.
+
+Bei einem **Fehler** legt Auftakt zusätzlich einen Diagnosebericht auf dem Schreibtisch ab —
+`Auftakt-Diagnose-<Kennung>.txt`, mit dem vollständigen Startprotokoll und den Angaben zum Rechner.
+Anhängen musst du ihn selbst: eine E-Mail lässt sich von außen nicht mit einem Anhang öffnen. Die
+Datei ist reiner Text, enthält keine Termine, Künstler oder Kontakte, und du kannst sie vorher in
+Ruhe durchlesen.
 
 Fehlerberichte und Ideen sind ebenso willkommen als
 [Issue](https://github.com/andrewendlinger/auftakt/issues). Hilfreich sind: was du getan hast, was

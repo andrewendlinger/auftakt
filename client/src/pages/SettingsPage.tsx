@@ -512,9 +512,10 @@ function FeedbackCard() {
         Feedback & Diagnose
       </SectionTitle>
       <p className="mt-1 text-xs text-neutral-400">
-        Rückmeldung, Fehler oder Wunsch: Auftakt schreibt die E-Mail vor und legt eine kurze
-        technische Zusammenfassung der letzten Programmstarts bei. Verschickt wird sie in deinem
-        eigenen E-Mail-Programm — du siehst vorher, was drinsteht.
+        Fehler oder Wunsch: Auftakt fragt das Nötige ab und schreibt die E-Mail vor. Bei einem
+        Fehler legt es zusätzlich einen Diagnosebericht auf dem Schreibtisch ab, den du anhängen
+        kannst. Verschickt wird in deinem eigenen E-Mail-Programm — du siehst vorher, was
+        drinsteht.
       </p>
       {open && <FeedbackDialog onClose={() => setOpen(false)} />}
     </Card>

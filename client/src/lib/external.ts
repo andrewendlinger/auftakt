@@ -14,18 +14,23 @@ export interface UpdateStatus {
   canInstall: boolean;
 }
 
-/** Mirror of `BootDiagnostics` in electron/bootLog.ts — the support mail's diagnostic block. */
-export interface BootDiagnostics {
+/** Mirror of `Diagnostics` in electron/diagnostics.ts — what the support mail draws on. */
+export interface Diagnostics {
   /** German, already sanitized, ready to paste into a mail body. Never empty. */
   summary: string;
   /** false when no log file exists yet — dev never writes one, nor does a first launch. */
   hasLog: boolean;
   /** Display only — the renderer never sends a path back over the bridge (X-02). */
   file: string;
+  /** „Windows 11 Pro (10.0.26100) · 2560×1440 @1.5×" — one line, built by main. */
+  system: string;
 }
 
 /** Mirror of `DiagnosticsReveal` in electron/main.ts. */
 export type DiagnosticsReveal = 'revealed' | 'opened' | 'failed';
+
+/** Mirror of `DiagnosticsSave` in electron/main.ts — `name` is what the mail says to attach. */
+export type DiagnosticsSave = { ok: true; name: string } | { ok: false };
 
 declare global {
   interface Window {
@@ -55,9 +60,15 @@ declare global {
        */
       bootSettled?: (report?: unknown) => Promise<void>;
       /** The last boots, already summarized by main — see electron/bootLog.ts (WP-54). */
-      getDiagnostics?: () => Promise<BootDiagnostics>;
+      getDiagnostics?: () => Promise<Diagnostics>;
       /** Show `boot-log.jsonl` in Finder/Explorer, or its folder when there is none yet. */
       revealDiagnostics?: () => Promise<DiagnosticsReveal>;
+      /**
+       * Write the full log + machine details to the desktop as `Auftakt-Diagnose-<ref>.txt`
+       * and reveal it, because a `mailto:` cannot attach a file. `ref` is the mail's own
+       * reference; main re-validates its shape before it becomes a filename (X-02).
+       */
+      saveDiagnostics?: (ref: string, report: string) => Promise<DiagnosticsSave>;
       platform?: string;
     };
   }
