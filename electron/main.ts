@@ -691,9 +691,22 @@ async function createWindow(): Promise<void> {
     },
   });
 
-  // Before the window is ever shown, so it appears maximized rather than growing into it.
-  // The rectangle above is the one it will restore to, which is what getNormalBounds saved.
-  if (maximized) win.maximize();
+  // Maximized before the first frame, so the renderer never paints at one size and reflows to
+  // another: the reflow would land in the gesture's opening frames, re-rastering a path that
+  // cannot composite (WP-61) at exactly the moment being measured. The rectangle above is the
+  // one it will restore to, which is what getNormalBounds saved.
+  //
+  // The immediate hide() is the point of this pair, not a leftover. `maximize()` *shows* a
+  // hidden window — "this will also show (but not focus) the window if it isn't being
+  // displayed already", and it does — so on its own it puts an empty #f6f6f4 rectangle on
+  // screen for the whole renderer boot, which is the failure `show: false` below exists to
+  // prevent, and it leaves the showAnyway guard's isVisible() check permanently true. Both
+  // calls run in the same synchronous tick, before the platform's display cycle, so no frame
+  // is ever presented; hide() keeps isMaximized() true and leaves getNormalBounds() untouched.
+  if (maximized) {
+    win.maximize();
+    win.hide();
+  }
 
   // On `close`, not `closed`: the window has to still exist to be measured. getNormalBounds is
   // the un-maximized, un-fullscreened rectangle — the size the user actually chose — so a

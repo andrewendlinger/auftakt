@@ -164,7 +164,12 @@ focused-window season resolution. Run with at least two seasons present.
 - [ ] **Zwei Fenster nebeneinander** (WP-55): shrink one window to its minimum — it must reach
       624×560, i.e. roughly a third of a 1920 panel — and put two side by side. Then quit and
       relaunch: the **first** window comes back where the last one closed, and Cmd+N still
-      cascades rather than restoring. Maximize, quit, relaunch → maximized.
+      cascades rather than restoring.
+- [ ] **Maximized comes back maximized, with nothing on screen before the boot gesture**
+      (WP-55): maximize, quit, relaunch → the window appears already maximized, and the *first*
+      thing visible in it is the boot gesture — never an empty cream rectangle that sits there
+      while the renderer loads. `maximize()` shows a hidden window, so this is the regression
+      that shape guards against. Un-maximize afterwards → back to the size chosen before.
 - [ ] **Saved bounds outlive the screen they were saved on** (WP-55): put a window on an external
       monitor, quit, unplug it, relaunch → a normal centred window on the laptop panel, *not* an
       app that appears not to start. `~/Library/Application Support/auftakt/window-bounds.json`
