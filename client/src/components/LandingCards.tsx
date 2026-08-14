@@ -308,11 +308,19 @@ export function LandingLinksSection({ section }: { section: LandingSection }) {
         creating={creating}
         onCloseCreate={() => setCreating(false)}
         // The same lens one level in: this section's own documents, found by id in the sections
-        // array as the server has it. A section deleted in another window mid-gesture is simply
-        // not found, and the write becomes the no-op it should be.
+        // array as the server has it.
         updateDocs={async (fn) => {
           await update((cur) => {
-            const docs = cur.sections.find((s) => s.id === section.id)?.documents ?? [];
+            // The section itself can be gone — deleted in another window while this modal stood
+            // open. Bail before computing: `?? []` would hand `fn` a *fresh* array, so the
+            // identity check below could never fire, and the write went ahead as a `map` that
+            // matched nothing. That stored the sections array as itself and bumped the
+            // generation for a change nobody made, which can refuse an innocent write in a
+            // third window. There is nowhere to put the document either way; this at least
+            // stops paying for it.
+            const target = cur.sections.find((s) => s.id === section.id);
+            if (!target) return null;
+            const docs = target.documents ?? [];
             const next = fn(docs);
             if (next === docs) return null;
             return {

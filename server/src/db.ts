@@ -537,7 +537,13 @@ export function getLanding(): LandingContent {
       ...s,
       type: s.type === 'links' ? 'links' : 'text',
     })),
-    rev: reg.landing?.rev ?? 0,
+    // Coerced, not merely defaulted, for the reason every other field here is normalised:
+    // seasons.json is a hand-editable file this module already rescues when it is corrupt. A
+    // string `rev` would make `cur.rev + 1` concatenate ("5" → "51") and the route's `!==`
+    // never match a numeric client rev again — every landing write would 409 for ever, burn
+    // the retry budget and toast „ein anderes Fenster hat gespeichert" at a user who has no
+    // other window. A nonsense value restarts the count instead, which costs one refused write.
+    rev: typeof reg.landing?.rev === 'number' && Number.isInteger(reg.landing.rev) ? reg.landing.rev : 0,
   };
 }
 

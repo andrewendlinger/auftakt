@@ -22,6 +22,7 @@ import { doneValueOf } from './api/types';
 import { postBroadcast } from './lib/broadcast';
 import { retryOnConflict } from './lib/conflict';
 import { errorMessage } from './lib/errors';
+import { pendingKey, settlePending, trackPending } from './lib/pending';
 import { DEFAULT_EVENT_WINDOW_DAYS } from './lib/eventGroups';
 import { LABEL_DEFAULTS, isLabelKey, type LabelKey } from './lib/labels';
 import { getWindowSeason } from './lib/season';
@@ -83,13 +84,22 @@ export function useInvalidateAll(): () => Promise<void> {
  * It also **rejects** where a warm-cache `ensureQueryData` could not, and that is wanted: the
  * throw lands before anything is written, so a failed refresh leaves the store untouched. An undo
  * that reports a failure beats one that writes a stale array over the truth.
+ *
+ * The `settlePending` wait is the other half of asking for real. A GET is authoritative about
+ * other windows and *behind* on this one: `useSettingsArray.write` publishes its array before
+ * awaiting the PATCH, so a refresh fired inside that gap would read the pre-write state over the
+ * optimistic value — and `removalUndoEntry.revert` refreshes and then looks for the tombstone it
+ * just wrote. See `lib/pending.ts`; the landing needs none of this, since its generation makes
+ * the server authoritative about every window including this one.
  */
 export function refetchNow<T>(
   qc: QueryClient,
   queryKey: QueryKey,
   queryFn: () => Promise<T>,
 ): Promise<T> {
-  return qc.fetchQuery({ queryKey, queryFn, staleTime: 0 });
+  return settlePending(pendingKey(queryKey as readonly unknown[])).then(() =>
+    qc.fetchQuery({ queryKey, queryFn, staleTime: 0 }),
+  );
 }
 
 /**
@@ -486,11 +496,19 @@ export function useSettingsArray<K extends SettingsArrayKey>(
       // what breaks if `Settings[K]` and `next` ever stop agreeing.
       const patch = { [key]: next } as Pick<WritableSettings, K>;
       qc.setQueryData<Settings>(['settings'], (old) => (old ? { ...old, ...patch } : old));
-      const ok = await guard('Einstellung konnte nicht gespeichert werden.', async () => {
-        qc.setQueryData<Settings>(['settings'], await api.patchSettings(patch));
-      });
-      await invalidate();
-      return ok;
+      // Registered while it is in flight, so a `refresh()` issued inside this round trip — an
+      // undo pressed straight after the click that started it — waits rather than reading the
+      // pre-write server state over the value published above (lib/pending.ts).
+      return trackPending(
+        pendingKey(['settings']),
+        (async () => {
+          const ok = await guard('Einstellung konnte nicht gespeichert werden.', async () => {
+            qc.setQueryData<Settings>(['settings'], await api.patchSettings(patch));
+          });
+          await invalidate();
+          return ok;
+        })(),
+      );
     },
     [qc, key, guard, invalidate],
   );
@@ -556,41 +574,58 @@ export function useLanding(): {
     await refetchNow(qc, ['landing'], api.landing.get);
   }, [qc]);
   const update = useCallback(
-    async (fn: (cur: LandingContent) => LandingPatch | null) => {
-      try {
-        return await retryOnConflict(async (conflict) => {
-          // The 409 already carries what the write lost to, so the retry costs no extra GET;
-          // the fetch is for the first attempt, and for a server too old to send the content.
-          const cur =
-            conflictContent(conflict) ?? (await refetchNow(qc, ['landing'], api.landing.get));
-          const next = fn(cur);
-          // A mutation that turns out to be a no-op writes nothing rather than storing the list
-          // as itself: the write would bump the generation for no reason and could refuse an
-          // in-flight write in another window over a change nobody made.
-          if (next === null) return cur;
-          // Publish before awaiting, so the row appears at once instead of a round trip later.
-          // Purely cosmetic now — a second edit issued inside this window does its own
-          // authoritative read and, if it truly races, conflicts and retries — where it used to
-          // be the only thing making two quick edits compose (SHL-10). Still skipped when the
-          // patch adds a row: ids are the server's to assign and rendering an id-less row would
-          // break the list keys (and the ✎/🗑 that address rows by id) for one request. The
-          // published value carries `cur.rev`, one generation behind, which no reader consults —
-          // `update` never takes a rev from the cache.
-          if (rowsAllHaveIds(next)) {
-            qc.setQueryData<LandingContent>(['landing'], { ...cur, ...next } as LandingContent);
-          }
-          const res = await api.landing.patch(next, cur.rev);
-          qc.setQueryData<LandingContent>(['landing'], res);
-          return res;
-        });
-      } finally {
-        // Also on the failure path: the optimistic value above must not outlive a rejected write.
-        await invalidate();
-      }
-    },
+    (fn: (cur: LandingContent) => LandingPatch | null) =>
+      // Registered for the length of the write, so the layout store's `refresh()` — which
+      // `removalUndoEntry.revert` runs before looking for the tombstone it just wrote — waits
+      // instead of reading pre-write server state over the optimistic publish below. The
+      // generation guard keeps the *write* safe; this keeps a concurrent *read* honest.
+      trackPending(pendingKey(['landing']), landingUpdate(qc, invalidate, fn)),
     [qc, invalidate],
   );
   return { data, current, refresh, update };
+}
+
+async function landingUpdate(
+  qc: QueryClient,
+  invalidate: () => Promise<void>,
+  fn: (cur: LandingContent) => LandingPatch | null,
+): Promise<LandingContent> {
+  try {
+    return await retryOnConflict(async (conflict) => {
+      // The 409 already carries what the write lost to, so the retry costs no extra GET;
+      // the fetch is for the first attempt, and for a server too old to send the content.
+      // `fetchQuery` directly and not `refetchNow`: this call *is* the pending write on
+      // `['landing']`, and waiting for itself to settle would never return.
+      const cur: LandingContent =
+        conflictContent(conflict) ??
+        (await qc.fetchQuery<LandingContent>({
+          queryKey: ['landing'],
+          queryFn: api.landing.get,
+          staleTime: 0,
+        }));
+      const next = fn(cur);
+      // A mutation that turns out to be a no-op writes nothing rather than storing the list as
+      // itself: the write would bump the generation for no reason and could refuse an in-flight
+      // write in another window over a change nobody made.
+      if (next === null) return cur;
+      // Publish before awaiting, so the row appears at once instead of a round trip later.
+      // Purely cosmetic now — a second edit issued inside this window does its own authoritative
+      // read and, if it truly races, conflicts and retries — where it used to be the only thing
+      // making two quick edits compose (SHL-10). Still skipped when the patch adds a row: ids are
+      // the server's to assign and rendering an id-less row would break the list keys (and the
+      // ✎/🗑 that address rows by id) for one request. The published value carries `cur.rev`, one
+      // generation behind, which no reader consults — `update` never takes a rev from the cache.
+      if (rowsAllHaveIds(next)) {
+        qc.setQueryData<LandingContent>(['landing'], { ...cur, ...next } as LandingContent);
+      }
+      const res = await api.landing.patch(next, cur.rev);
+      qc.setQueryData<LandingContent>(['landing'], res);
+      return res;
+    });
+  } finally {
+    // Also on the failure path: the optimistic value above must not outlive a rejected write.
+    await invalidate();
+  }
 }
 
 /**
