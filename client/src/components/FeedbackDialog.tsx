@@ -77,7 +77,14 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
 
   // „Worum geht's?" is a *where*, not a severity: it is the one thing the maintainer cannot
   // work out from the text, and it decides which screen to open first.
-  const areas = ['Allgemein', term.singular, 'Künstler', 'Projekt', 'Termine'];
+  //
+  // Deduplicated because one of the five is free text: „Bezeichnung" set to „Termine" would
+  // otherwise put two identical rows in the list, both selected by either click — the label
+  // is also the value that travels in the mail, so the second row could not say anything the
+  // first does not. An empty or blank season term drops out for the same reason.
+  const areas = ['Allgemein', term.singular, 'Künstler', 'Projekt', 'Termine']
+    .map((a) => a.trim())
+    .filter((a, i, all) => a.length > 0 && all.indexOf(a) === i);
 
   const kindRoving = useRovingFocus();
   const areaRoving = useRovingFocus();
