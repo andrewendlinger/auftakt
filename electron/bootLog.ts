@@ -208,12 +208,33 @@ export function summarizeBootLog(content: string, keep = BOOT_SUMMARY_LINES): st
   // call sites, so a caller asking for nothing gets nothing.
   const tail = keep > 0 ? records.slice(-keep) : [];
   const entries = records.length === 1 ? '1 Eintrag' : `${records.length} Einträge`;
-  const header =
-    tail.length < records.length
-      ? `Startdiagnose — ${entries}, hier die letzten ${tail.length} (Zeit in UTC):`
-      : `Startdiagnose — ${entries} (Zeit in UTC):`;
+  // Newest first, so the ceiling below spends the oldest line rather than the boot that
+  // prompted the report — and so it spends whole lines: a `slice()` over the finished text
+  // cuts the last one mid-clause, which reads as a corrupted record rather than as a cut.
+  const head = `Startdiagnose — ${entries}, hier die neuesten (Zeit in UTC):`;
+  const lines: string[] = [];
+  let used = head.length;
+  for (let i = tail.length - 1; i >= 0; i--) {
+    const line = summaryLine(tail[i] ?? {});
+    if (used + 1 + line.length > BOOT_SUMMARY_MAX_CHARS) break;
+    used += 1 + line.length;
+    lines.unshift(line);
+  }
 
-  return [header, ...tail.map(summaryLine)].join('\n').slice(0, BOOT_SUMMARY_MAX_CHARS);
+  // A single line longer than the whole ceiling would leave a „Startdiagnose —" header with
+  // nothing under it, which reads as a diagnostic that was collected and says nothing. Out of
+  // reach while every field is capped at 40 characters, and one raised cap from being in it.
+  if (lines.length === 0 && tail.length > 0) {
+    const newest = summaryLine(tail[tail.length - 1] ?? {});
+    lines.push(`${newest.slice(0, Math.max(0, BOOT_SUMMARY_MAX_CHARS - head.length - 5)).trimEnd()} […]`);
+  }
+
+  // The count is of the log, not of what is shown, so it stays true however much is dropped
+  // here — and „die neuesten" carries no number for the same reason: the mail composer's
+  // truncation ladder drops further lines from under this header on its way into a `mailto:`,
+  // and a header promising five entries above two is a header that has to be checked by hand.
+  const header = lines.length < records.length ? head : `Startdiagnose — ${entries} (Zeit in UTC):`;
+  return [header, ...lines].join('\n');
 }
 
 /**

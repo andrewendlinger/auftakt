@@ -167,10 +167,36 @@ describe('summarizeBootLog', () => {
     expect(lines).toHaveLength(5);
     expect(lines[0]).toContain('play/w4');
     expect(lines[lines.length - 1]).toContain('play/w8');
-    // Fewer records than asked for: all of them, and the header drops its "hier die letzten".
+    // Fewer records than asked for: all of them, and the header drops its "hier die neuesten".
     const few = summarizeBootLog(log({ outcome: 'play' }, { outcome: 'skip' }));
     expect(few.split('\n')[0]).toBe('Startdiagnose — 2 Einträge (Zeit in UTC):');
     expect(summarizeBootLog(log({ outcome: 'play' })).split('\n')[0]).toContain('1 Eintrag ');
+  });
+
+  it('counts the log in the header and never what is under it', () => {
+    // The mail composer's ladder deletes lines from beneath this header to make a `mailto:`
+    // fit, so a header saying „hier die letzten 5" is a header that arrives showing two of
+    // them. The count that stays is the log's own, which trimming cannot make untrue.
+    const many = log(...Array.from({ length: 9 }, (_, i) => ({ outcome: 'play', why: `w${i}` })));
+    expect(summarizeBootLog(many).split('\n')[0]).toBe(
+      'Startdiagnose — 9 Einträge, hier die neuesten (Zeit in UTC):',
+    );
+    expect(summarizeBootLog(many)).not.toMatch(/letzten \d/);
+  });
+
+  it('spends whole lines at its ceiling, oldest first', () => {
+    // A `slice()` over the finished text cut the last line mid-clause — „· Ende 21" reads as a
+    // corrupted record, and the record it corrupted is the newest one, which is the one the
+    // report is about. Dropping from the top spends the boot nobody asked about.
+    const fat = log(...Array.from({ length: 10 }, (_, i) => ({ ...PLAY, why: `w${i}`.padEnd(38, 'x') })));
+    // Ten asked for, ~170 characters each: more than the ceiling, so the ceiling has to choose.
+    const out = summarizeBootLog(fat, 10);
+    const lines = out.split('\n').slice(1);
+    expect(out.length).toBeLessThanOrEqual(BOOT_SUMMARY_MAX_CHARS);
+    expect(lines.length).toBeLessThan(10);
+    for (const line of lines) expect(line).toMatch(/Aussetzer$/);
+    expect(out).toContain('play/w9');
+    expect(out).not.toContain('play/w0');
   });
 
   it('cannot be made to forge a line or blow the mail up', () => {
