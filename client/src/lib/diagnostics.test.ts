@@ -11,6 +11,7 @@ import {
   systemLine,
   type SystemFacts,
 } from '../../../electron/diagnostics';
+import { diagnosticsFileName as predictedFileName } from './feedbackMail';
 
 /**
  * The bundle is what a `mailto:` cannot carry: the whole boot log and the machine's details,
@@ -93,6 +94,15 @@ describe('isBundleRef', () => {
 describe('diagnosticsFileName', () => {
   it('is a .txt, because .jsonl does not open on double-click on Windows', () => {
     expect(diagnosticsFileName('AF-2608141542')).toBe('Auftakt-Diagnose-AF-2608141542.txt');
+  });
+
+  it('agrees with the name the dialog predicts before the file exists', () => {
+    // Two definitions, because the client cannot import this module (it reaches node:fs) and
+    // „Was wird mitgeschickt?" has to name the file one step before main writes it. This is
+    // the assertion that keeps them from drifting into naming two different files.
+    for (const ref of ['AF-2608141542', 'AF-0101010000']) {
+      expect(predictedFileName(ref)).toBe(diagnosticsFileName(ref));
+    }
   });
 });
 

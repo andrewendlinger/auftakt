@@ -26,9 +26,6 @@ export interface Diagnostics {
   system: string;
 }
 
-/** Mirror of `DiagnosticsReveal` in electron/main.ts. */
-export type DiagnosticsReveal = 'revealed' | 'opened' | 'failed';
-
 /** Mirror of `DiagnosticsSave` in electron/main.ts — `name` is what the mail says to attach. */
 export type DiagnosticsSave = { ok: true; name: string } | { ok: false };
 
@@ -61,8 +58,6 @@ declare global {
       bootSettled?: (report?: unknown) => Promise<void>;
       /** The last boots, already summarized by main — see electron/bootLog.ts (WP-54). */
       getDiagnostics?: () => Promise<Diagnostics>;
-      /** Show `boot-log.jsonl` in Finder/Explorer, or its folder when there is none yet. */
-      revealDiagnostics?: () => Promise<DiagnosticsReveal>;
       /**
        * Write the full log + machine details to the desktop as `Auftakt-Diagnose-<ref>.txt`
        * and reveal it, because a `mailto:` cannot attach a file. `ref` is the mail's own

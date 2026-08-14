@@ -8,6 +8,7 @@ import {
   FEEDBACK_FIELD_MAX,
   FEEDBACK_KINDS,
   FEEDBACK_TO,
+  diagnosticsFileName,
   feedbackBody,
   feedbackMailto,
   feedbackRef,
@@ -30,6 +31,10 @@ import { useRovingFocus, rovingItem } from '../lib/rovingFocus';
  *
  * What it asks depends on the first answer. A wish and a fault are not the same question, and
  * asking „Was ist passiert?" about a wish is how feature requests arrive phrased as bugs.
+ *
+ * There is exactly one way out of it: „E-Mail schreiben". No second button, no folder to go
+ * looking in — the one step the app genuinely cannot do for anybody is attaching the file,
+ * so that is the one step the dialog spends its words on, before and after the click.
  *
  * Everything shaped like logic is somewhere else and unit-tested: `feedbackMailto` builds the
  * URL, `FEEDBACK_KINDS` holds the questions, `summarizeBootLog` builds the diagnostic block.
@@ -71,61 +76,53 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
 
   const spec = kind ? FEEDBACK_KINDS[kind] : null;
   const draft: FeedbackDraft = { kind: kind ?? 'bug', area: area ?? '', answers };
+  // Named before it exists, so „Was wird mitgeschickt?" shows the body that will really go
+  // out. Main returns the name it actually wrote and that is what gets sent; this is the
+  // prediction the preview is drawn from, and the two are pinned to agree in the tests.
+  const willAttach =
+    spec?.diagnostics === true && typeof window.auftakt?.saveDiagnostics === 'function'
+      ? diagnosticsFileName(ref)
+      : '';
   const ctx: FeedbackContext = {
     ref,
     version,
     platform: window.auftakt?.platform ?? '',
     system: diag?.system ?? '',
     // A wish carries none: startup timings say nothing about it, and the budget they would
-    // spend is better spent on what the person wrote.
+    // spend is better spent on what the person wrote. Nor does a report whose log is
+    // travelling in full as a file — `feedbackBody` drops it rather than send it twice.
     diagnostics: spec?.diagnostics ? (diag?.summary ?? '') : '',
-    // Filled in at send time, once the file it names actually exists.
-    attachment: '',
+    attachment: willAttach,
   };
   const required = kind ? requiredField(kind) : null;
   const ready =
     kind !== null && area !== null && (answers[required?.key ?? '']?.trim().length ?? 0) > 0;
-  const hasBridge = typeof window.auftakt?.revealDiagnostics === 'function';
-  const canSave = spec?.diagnostics === true && typeof window.auftakt?.saveDiagnostics === 'function';
 
   const send = async () => {
     setSending(true);
     let sent = ctx;
-    if (canSave) {
+    if (willAttach) {
       // Written and revealed before the mail opens, in that order: the compose window should
       // be the thing on top when this is over, not a file manager.
-      const saved = await window.auftakt?.saveDiagnostics?.(ref, feedbackBody(draft, ctx));
-      // A failed write costs the attachment line, not the mail — the body's summary still
-      // travels, and promising a file that was never written is worse than not offering one.
-      if (saved?.ok) sent = { ...ctx, attachment: saved.name };
+      //
+      // The copy that goes *into* the file carries neither the attach instruction nor the
+      // summary: a file telling its reader to attach that same file is nonsense, and the log
+      // it would summarize is printed in full two sections further down.
+      const forFile = feedbackBody(draft, { ...ctx, attachment: '', diagnostics: '' });
+      const saved = await window.auftakt?.saveDiagnostics?.(ref, forFile);
+      // A failed write drops the attachment line and puts the summary back, because promising
+      // a file that was never written is worse than sending the short version of it.
+      sent = saved?.ok ? { ...ctx, attachment: saved.name } : { ...ctx, attachment: '' };
     }
     openExternal(feedbackMailto(draft, sent));
     // A mailto: is fire-and-forget — the app can never learn whether it was sent, and a
     // customer who reads „gesendet" and closes their client is a bug report nobody gets.
     toast.show({
       message: sent.attachment
-        ? `E-Mail-Programm geöffnet — bitte ${sent.attachment} vom Schreibtisch anhängen und abschicken.`
+        ? `Die Datei ${sent.attachment} liegt auf dem Schreibtisch — bitte an die E-Mail anhängen und abschicken.`
         : 'E-Mail-Programm geöffnet — bitte dort noch abschicken.',
     });
     onClose();
-  };
-
-  const copy = () => {
-    void navigator.clipboard
-      ?.writeText(`${FEEDBACK_TO}\n\n${feedbackBody(draft, ctx)}`)
-      .then(() => toast.show({ message: 'Text kopiert — in eine E-Mail einfügen.' }))
-      .catch(() => toast.show({ message: 'Text konnte nicht kopiert werden.' }));
-  };
-
-  const reveal = () => {
-    void window.auftakt?.revealDiagnostics?.().then((r) => {
-      // Silence on 'revealed': the window that just opened in Finder is the feedback.
-      if (r === 'opened') {
-        toast.show({ message: 'Noch keine Startprotokolle — der Ordner ist geöffnet.' });
-      } else if (r !== 'revealed') {
-        toast.show({ message: 'Der Ordner konnte nicht geöffnet werden.' });
-      }
-    });
   };
 
   const hint = () => {
@@ -145,9 +142,6 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
         <>
           {!ready && <FooterHint>{hint()}</FooterHint>}
           <Btn onClick={onClose}>Abbrechen</Btn>
-          <Btn onClick={copy} disabled={!ready || sending}>
-            Text kopieren
-          </Btn>
           <Btn variant="primary" onClick={() => void send()} disabled={!ready || sending}>
             E-Mail schreiben
           </Btn>
@@ -217,6 +211,29 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
                   </div>
                 ))}
 
+                {/* What „E-Mail schreiben" is about to do, before it does it — the file
+                    appearing on the desktop and a mail opening on top of it is two surprises
+                    at once otherwise, and the attaching only happens if they expect it. */}
+                <Card className="bg-neutral-50 p-3 text-xs text-neutral-600 shadow-none">
+                  <p className="font-medium">Was beim Klick auf „E-Mail schreiben“ passiert:</p>
+                  <ol className="mt-1 list-decimal space-y-0.5 pl-4">
+                    {willAttach && (
+                      <li>
+                        Auftakt legt <code>{willAttach}</code> auf deinem Schreibtisch ab — das
+                        vollständige Startprotokoll und die Angaben zu deinem Rechner.
+                      </li>
+                    )}
+                    <li>Dein E-Mail-Programm öffnet sich mit dem fertigen Text.</li>
+                    {willAttach && (
+                      <li className="font-medium text-neutral-800">
+                        Die Datei hängst du selbst an — zieh sie vom Schreibtisch in die E-Mail.
+                        Das kann kein Programm für dich übernehmen.
+                      </li>
+                    )}
+                    <li>Abschicken.</li>
+                  </ol>
+                </Card>
+
                 <details className="text-xs text-neutral-500">
                   <summary className="cursor-pointer select-none font-medium text-neutral-600">
                     Was wird mitgeschickt?
@@ -226,37 +243,16 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
                   <pre className="mt-2 overflow-x-auto rounded-lg bg-neutral-50 p-3 text-xs text-neutral-600">
                     {feedbackBody(draft, ctx)}
                   </pre>
-                  {canSave && (
-                    <p className="mt-2">
-                      Dazu die Datei <code>Auftakt-Diagnose-{ref}.txt</code> auf dem Schreibtisch:
-                      das vollständige Startprotokoll und die Angaben zum Rechner. Sie wird beim
-                      Klick auf „E-Mail schreiben“ angelegt — du kannst sie vorher lesen und
-                      entscheidest selbst, ob du sie anhängst.
-                    </p>
-                  )}
+                  <p className="mt-2">
+                    {willAttach
+                      ? 'Die Datei ist reine Textdatei und enthält keine Termine, Künstler oder Kontakte — du kannst sie vor dem Anhängen in Ruhe durchlesen.'
+                      : `Ohne E-Mail-Programm: direkt an ${FEEDBACK_TO} schreiben.`}
+                  </p>
                 </details>
               </>
             )}
           </>
         )}
-
-        <Card className="bg-neutral-50 p-3 text-xs text-neutral-500 shadow-none">
-          <div className="flex flex-wrap items-center gap-2">
-            <Btn onClick={reveal} disabled={!hasBridge}>
-              Diagnoseordner öffnen
-            </Btn>
-            <span>Zeigt die Rohdaten, aus denen die Startdiagnose gebildet wird.</span>
-          </div>
-          {diag && <p className="mt-2 break-all text-neutral-400">{diag.file}</p>}
-          {!hasBridge && (
-            <p className="mt-2 text-amber-600">
-              Der Diagnoseordner steht nur in der Desktop-App zur Verfügung, nicht im Browser-Modus.
-            </p>
-          )}
-          <p className="mt-2">
-            Ohne E-Mail-Programm: direkt an <strong>{FEEDBACK_TO}</strong> schreiben.
-          </p>
-        </Card>
       </div>
     </Modal>
   );

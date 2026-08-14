@@ -22,9 +22,24 @@ sent until they press send. The diagnostic block is timings, a version and a vie
 personal data.
 
 What it costs is knowing. A `mailto:` is fire-and-forget: the app cannot learn whether the mail was
-sent, so the toast says „bitte dort noch abschicken" rather than „gesendet". A machine with no mail
-client configured — a real possibility on the target Windows machine — falls back to „Text
-kopieren" and the address in plain text, which is why both are in the dialog rather than one.
+sent, so the toast says „bitte dort noch abschicken" rather than „gesendet".
+
+**„Text kopieren" was removed on 2026-08-14**, and with it the reasoning that a machine with no
+mail client needs a second button. It was a hedge: two buttons of equal weight, and the customer
+deciding which situation they are in before they know they are in one. The path that matters is the
+one that works, and the fallback survives as a sentence — the address in plain text under „Was wird
+mitgeschickt?", where somebody actually stuck will look. One button, no branch to choose.
+
+## „Diagnoseordner öffnen" was removed once the file was written for them (2026-08-14, WP-54)
+
+It shipped as the route to `boot-log.jsonl`, and the diagnostics bundle replaced it the same week:
+a button that opens a folder full of Chromium caches is not a better answer than a named file
+already lying on the desktop. Two routes to the same evidence is one route more than the feature
+needs, and the one being kept is the one that ends with the file attached.
+
+The `reveal-diagnostics` channel went with it rather than staying behind as an unused handler —
+`shell.showItemInFolder` no longer appears in the codebase at all. If a bundle cannot be written,
+the mail carries the five-line summary instead; nothing routes the customer into `userData` again.
 
 ## A `mailto:` cannot attach, so the app writes the file instead (2026-08-14, WP-54)
 
@@ -59,6 +74,16 @@ What it costs is one manual step — the drag — and that is the floor, not a s
 schreiben" reveals the file first and opens the client second, so the compose window is what ends
 up in front.
 
+Because that step is the floor, it is where the words go. The dialog numbers what the click is
+about to do *before* it happens — a file appearing on the desktop and a mail opening on top of it
+is two surprises at once otherwise — and the draft opens on the instruction to attach it, above
+what the person wrote, because a mail client shows the first line and not the signature. The
+instruction is addressed to the customer rather than the maintainer and says the lines may stay:
+every sentence asking the reader to decide something is a sentence that can be decided wrong. The
+copy written *into* the bundle drops both the instruction and the summary — a file telling its
+reader to attach that same file is nonsense, and the log it would digest is printed in full two
+sections below.
+
 ## No menu entry for feedback (2026-08-14, WP-54)
 
 „Dauerhaft sichtbar" was the alternative to a settings entry, and a Hilfe menu was the obvious
@@ -71,8 +96,11 @@ in use, and then by moving it, not by adding a second door.
 
 Five entries, and `outcome/why` is the one clause never dropped — it is the field that separates
 WP-61's three candidate causes. `warm` and `quick` are left out and the timings are rounded to
-whole milliseconds, because a support mail is read by a person deciding what to look at, and the
-full record is one button away via „Diagnoseordner öffnen".
+whole milliseconds, because a support mail is read by a person deciding what to look at.
+
+Since the bundle exists the summary is the *fallback*, not the default: a mail that carries the
+file carries no digest at all. It was the same data twice, and the half in the mail was the
+truncated half.
 
 The order is oldest-first for a mechanical reason, not a stylistic one: the composer's truncation
 ladder drops entries from the top when the `mailto:` is too long, so the boot that prompted the

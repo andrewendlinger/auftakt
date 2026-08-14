@@ -192,11 +192,12 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   `%APPDATA%\Auftakt\boot-log.jsonl`). Dev mode writes nothing, matching the overlay it reports
   on. The writer is `electron/bootLog.ts`, electron-import-free so `check:unit` covers it.
 - **Since WP-54 the customer can reach it too**, which is the point of the file: Einstellungen →
-  „Programm & Hilfe" → „Feedback senden…" attaches `summarizeBootLog`'s five-line digest to the
-  mail, and „Diagnoseordner öffnen" reveals the raw file. Do not verify the digest by reading the
-  dialog — read the summary itself under `check:unit`, where the four record species and the
-  untrusted-`why` case are pinned. **Dev mode writes no log, so that button opens the folder
-  rather than revealing a file**, and the toast says so; that is the branch, not a failure.
+  „Programm & Hilfe" → „Feedback senden…" writes the whole log into a bundle on the desktop and
+  asks them to attach it. `summarizeBootLog`'s five-line digest is now the **fallback** — it rides
+  in the mail body only when no bundle was written (a Wunsch, the browser build, or a failed
+  write), so a mail that carries the file carries no digest at all. Do not verify the digest by
+  reading the dialog; read the summary itself under `check:unit`, where the four record species
+  and the untrusted-`why` case are pinned.
 - **A Fehler also writes `Auftakt-Diagnose-<ref>.txt` to the desktop and reveals it**, because a
   `mailto:` cannot attach anything. Three things follow for anyone verifying it. It is a *real
   file on the desktop of whoever runs the app*, so never drive the unstubbed path from a script —
@@ -206,6 +207,10 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   reference in it is the tell. And **dev writes no boot log**, so a bundle built in dev holds the
   machine section and „noch keinen Start protokolliert" under the log heading; that is the branch,
   not a truncated file. A Wunsch writes nothing at all.
+- **There is one button and no folder.** „Text kopieren" and „Diagnoseordner öffnen" were removed
+  once the bundle existed, so a script that waits for either hangs; `shell.showItemInFolder` is
+  gone from the codebase with them. The address in plain text under „Was wird mitgeschickt?" is
+  the whole of the no-mail-client fallback now.
 - **A traced launch: `AUFTAKT_BOOT_TRACE=1`.** Records from before the window until ~750 ms after
   the overlay settles — capped at ~6 s, or the env var's value in milliseconds — to
   `boot-trace-<stamp>.json` in userData, loadable at ui.perfetto.dev. Quitting does not lose it:

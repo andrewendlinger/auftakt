@@ -140,36 +140,6 @@ function openExternalSafely(url: string): void {
   }
 }
 
-/** What showing the user where their boot log lives ended up doing. */
-export type DiagnosticsReveal = 'revealed' | 'opened' | 'failed';
-
-/**
- * Reveal `boot-log.jsonl`, or its folder when there is none yet (WP-54).
- *
- * The path is derived here, from `app.getPath('userData')` — the renderer supplies nothing.
- * A path argument would hand the untrusted side a way to point `showItemInFolder` at any
- * file on the machine, which is the same hole the scheme allowlist closes above (X-02).
- *
- * There is often no file: dev never writes one (see `boot-settled` below) and neither has a
- * fresh install that has not settled a boot. Opening the folder anyway is the honest answer
- * — the renderer says so — and beats a button that silently does nothing, which is what
- * `showItemInFolder` on a missing path amounts to on macOS.
- */
-async function revealDiagnostics(): Promise<DiagnosticsReveal> {
-  try {
-    const dir = app.getPath('userData');
-    const diag = bootDiagnostics(dir);
-    if (diag.hasLog) {
-      shell.showItemInFolder(diag.file);
-      return 'revealed';
-    }
-    // openPath resolves to '' on success, and to the error message on failure.
-    return (await shell.openPath(dir)) === '' ? 'opened' : 'failed';
-  } catch {
-    return 'failed';
-  }
-}
-
 /**
  * Everything the machine can say about itself, for the diagnostics bundle (WP-54).
  *
@@ -1076,13 +1046,12 @@ ipcMain.handle('get-version', () => app.getVersion());
 ipcMain.handle('check-updates', (_e, refresh: boolean) => checkForUpdates(refresh));
 ipcMain.handle('install-update', () => downloadAndInstallUpdate());
 // The customer's route to their own boot log (WP-54). Main reads and summarizes; the
-// renderer receives finished text and a path it may only display. The first two take no
-// argument — see revealDiagnostics for why the path is not one.
+// renderer receives finished text and never a path it could send back (X-02). Takes no
+// argument at all: everything it reads is derived from userData here.
 ipcMain.handle('get-diagnostics', async () => ({
   ...bootDiagnostics(app.getPath('userData')),
   system: systemLine(await collectSystemFacts({ gpu: false })),
 }));
-ipcMain.handle('reveal-diagnostics', () => revealDiagnostics());
 // The one that does take arguments, and the reasoning that keeps the rule intact is in
 // saveDiagnostics: a ten-digit ref cannot name a directory, and the body is capped.
 ipcMain.handle('save-diagnostics', (_e, ref: unknown, report: unknown) =>

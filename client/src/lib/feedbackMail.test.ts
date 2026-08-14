@@ -134,11 +134,25 @@ describe('feedbackBody', () => {
     expect(body).toContain('Was passiert ist');
   });
 
-  it('names the attached file only when one was written', () => {
+  it('tells the reader to attach the file, above what they wrote', () => {
+    // The instruction is for the customer, not the maintainer, so it has to be where a mail
+    // client opens — the top — not under a „Technische Angaben" rule they will never scroll to.
     const withFile = feedbackBody(DRAFT, { ...CTX, attachment: 'Auftakt-Diagnose-AF-2608141542.txt' });
-    expect(withFile).toContain('Anhang (vom Schreibtisch): Auftakt-Diagnose-AF-2608141542.txt');
+    expect(withFile).toContain('Bitte noch anhängen: Auftakt-Diagnose-AF-2608141542.txt');
+    expect(withFile).toContain('liegt auf deinem Schreibtisch');
+    expect(withFile.indexOf('Bitte noch anhängen')).toBeLessThan(
+      withFile.indexOf('Nichts — die Seite blieb leer.'),
+    );
     // Promising an attachment the browser build never wrote is worse than offering none.
-    expect(feedbackBody(DRAFT, CTX)).not.toContain('Anhang');
+    expect(feedbackBody(DRAFT, CTX)).not.toContain('anhängen');
+  });
+
+  it('sends the summary or the file, never both', () => {
+    // The file holds the whole log; the summary is five folded lines of the same thing, and
+    // the budget it costs is the person's to spend on words.
+    const withFile = feedbackBody(DRAFT, { ...CTX, attachment: 'Auftakt-Diagnose-AF-2608141542.txt' });
+    expect(withFile).not.toContain('Startdiagnose');
+    expect(feedbackBody(DRAFT, CTX)).toContain('Startdiagnose — 2 Einträge');
   });
 
   it('drops the technical lines it has no values for', () => {
@@ -190,33 +204,19 @@ describe('feedbackMailto', () => {
     expect(body).not.toContain('Zeile 0 ');
   });
 
-  it('trades the block for a pointer at the file rather than for silence', () => {
+  it('spends the whole block rather than the words, when nothing was attached', () => {
+    // There is nowhere to redirect the reader to — the file that would have carried it is the
+    // one that could not be written — so it goes, and what they typed stays.
     const ctx = { ...CTX, diagnostics: 'Startdiagnose:\n' + 'ü'.repeat(4000) };
     const body = new URL(feedbackMailto(DRAFT, ctx)).searchParams.get('body') ?? '';
-    expect(body).toContain('Diagnoseordner öffnen');
-    expect(body).toContain('boot-log.jsonl');
-    // The person's own words are never the first thing cut.
-    expect(body).toContain('Nichts — die Seite blieb leer.');
-  });
-
-  it('points at the attachment instead once there is one', () => {
-    const ctx = {
-      ...CTX,
-      diagnostics: 'Startdiagnose:\n' + 'ü'.repeat(4000),
-      attachment: 'Auftakt-Diagnose-AF-2608141542.txt',
-    };
-    const body = new URL(feedbackMailto(DRAFT, ctx)).searchParams.get('body') ?? '';
-    // The Anhang line is the pointer. A sentence under it saying the log is in the file named
-    // directly above is redundant, and it costs the budget the person's own words need.
-    expect(body).toContain('Anhang (vom Schreibtisch): Auftakt-Diagnose-AF-2608141542.txt');
     expect(body).not.toContain('Startdiagnose');
-    // Sending someone to a folder for a file already on their desktop is the wrong answer.
-    expect(body).not.toContain('Diagnoseordner öffnen');
+    expect(body).toContain('Kennung: AF-2608141542');
+    expect(body).toContain('Nichts — die Seite blieb leer.');
   });
 
   it('never spends the attachment line, which is the one that matters', () => {
     // The line naming the file survives every rung: without it the person is holding a file
-    // nothing asked them for, and the summary it replaces is the redundant half.
+    // nothing asked them for, and no other line in the mail can replace it.
     const ctx = {
       ...CTX,
       diagnostics: summaryOf(100),
@@ -224,7 +224,7 @@ describe('feedbackMailto', () => {
     };
     const fat = { ...DRAFT, answers: { happened: 'ö'.repeat(5000), did: 'ä'.repeat(5000) } };
     const body = new URL(feedbackMailto(fat, ctx)).searchParams.get('body') ?? '';
-    expect(body).toContain('Auftakt-Diagnose-AF-2608141542.txt');
+    expect(body).toContain('Bitte noch anhängen: Auftakt-Diagnose-AF-2608141542.txt');
   });
 
   it('marks the cut when even the text has to go', () => {
@@ -272,11 +272,10 @@ describe('feedbackMailto', () => {
     expect(body).toContain('Zeile 4');
   });
 
-  it('spends the whole summary before a word, once the file carries it', () => {
-    // The same three maxed fields against the longest header the feature can produce — ref,
-    // system clause and attachment line all present. Something has to give at that size, and
-    // this is the assertion that it is never the person's text: the 100 entries the summary
-    // folded five of are in the attachment in full.
+  it('fits three full fields beside the attachment instructions', () => {
+    // The tightest shape the feature can produce: a reference, a machine clause and the
+    // two-line attach instruction, with no diagnostic block left to spend — the file has it,
+    // so the person's own text is the only thing the ladder could still take. It must not.
     const full = {
       ...CTX,
       diagnostics: summaryOf(5),
@@ -285,6 +284,6 @@ describe('feedbackMailto', () => {
     const body = new URL(feedbackMailto(maxed, full)).searchParams.get('body') ?? '';
     expect(body).not.toContain('[…]');
     expect(body).toContain(one.trimEnd());
-    expect(body).toContain('Auftakt-Diagnose-AF-2608141542.txt');
+    expect(body).toContain('Bitte noch anhängen: Auftakt-Diagnose-AF-2608141542.txt');
   });
 });

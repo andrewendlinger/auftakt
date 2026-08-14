@@ -156,9 +156,10 @@ steht; darauf lässt sich später Bezug nehmen.
 
 Bei einem **Fehler** legt Auftakt zusätzlich einen Diagnosebericht auf dem Schreibtisch ab —
 `Auftakt-Diagnose-<Kennung>.txt`, mit dem vollständigen Startprotokoll und den Angaben zum Rechner.
-Anhängen musst du ihn selbst: eine E-Mail lässt sich von außen nicht mit einem Anhang öffnen. Die
-Datei ist reiner Text, enthält keine Termine, Künstler oder Kontakte, und du kannst sie vorher in
-Ruhe durchlesen.
+Der Dialog sagt vorher, dass das passiert, und die E-Mail beginnt mit der Bitte, die Datei
+anzuhängen. **Anhängen musst du sie selbst** — eine E-Mail lässt sich von außen nicht mit einem
+Anhang öffnen, das kann kein Programm für dich übernehmen. Die Datei ist reiner Text, enthält keine
+Termine, Künstler oder Kontakte, und du kannst sie vorher in Ruhe durchlesen.
 
 Fehlerberichte und Ideen sind ebenso willkommen als
 [Issue](https://github.com/andrewendlinger/auftakt/issues). Hilfreich sind: was du getan hast, was

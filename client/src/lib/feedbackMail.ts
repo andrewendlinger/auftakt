@@ -149,6 +149,18 @@ export function feedbackRef(now: Date): string {
   return `AF-${p(now.getFullYear() % 100)}${p(now.getMonth() + 1)}${p(now.getDate())}${p(now.getHours())}${p(now.getMinutes())}`;
 }
 
+/**
+ * The name the diagnostics file will have, before main has written it.
+ *
+ * The dialog needs it one step early: „Was wird mitgeschickt?" has to show the body that
+ * will actually go out, and that body names the attachment. Main returns the real name once
+ * it has written the file, and that is what is sent — this only has to agree with it, which
+ * `diagnostics.test.ts` asserts across both modules.
+ */
+export function diagnosticsFileName(ref: string): string {
+  return `Auftakt-Diagnose-${ref}.txt`;
+}
+
 /* ---- the draft and its context ------------------------------------------------------ */
 
 /** What the dialog collected. Answers are keyed by `FeedbackField.key`, any of them empty. */
@@ -210,10 +222,22 @@ export function feedbackBody(draft: FeedbackDraft, ctx: FeedbackContext): string
     .map(([label, text]) => `${label}:\n${text}`)
     .join('\n\n');
 
+  const head = [`Art: ${FEEDBACK_KINDS[draft.kind].label} · Bereich: ${draft.area}`];
+  // The ref is repeated in the body because a subject is the first thing a forward or a
+  // reply rewrites, and the file on the desktop is named after it.
+  if (ctx.ref) head.push(`Kennung: ${ctx.ref}`);
+
+  // The one instruction the person still has to act on, at the top of the draft where they
+  // will actually be looking — a mail client opens on the first line, not on the signature.
+  // Addressed to them rather than to the maintainer, and explicitly not something to tidy
+  // away first: every sentence that asks the reader to decide something is a sentence that
+  // can be decided wrong.
+  const todo = ctx.attachment
+    ? `\n\nBitte noch anhängen: ${ctx.attachment}\n` +
+      'Die Datei liegt auf deinem Schreibtisch. Diese Zeilen können stehen bleiben.'
+    : '';
+
   const technical = ['Technische Angaben (bitte stehen lassen):'];
-  // The ref is repeated here because a subject is the first thing a forward or a reply
-  // rewrites, and the file on the desktop is named after it.
-  if (ctx.ref) technical.push(`Kennung: ${ctx.ref}`);
   // `system` already names the OS, so it stands in for the platform label rather than
   // following it — otherwise every mail says „Windows · Windows 11".
   const machine = ctx.system || platformLabel(ctx.platform);
@@ -222,15 +246,11 @@ export function feedbackBody(draft: FeedbackDraft, ctx: FeedbackContext): string
   } else if (machine) {
     technical.push(machine);
   }
-  // Terse on purpose. It was a sentence explaining what the file holds, and 211 encoded
-  // characters is a quarter of what three full fields cost — the file says that on its own
-  // first page, and the dialog said it before the file was written.
-  if (ctx.attachment) technical.push(`Anhang (vom Schreibtisch): ${ctx.attachment}`);
-  // The block brings its own header out of summarizeBootLog, so nothing is repeated here.
-  if (ctx.diagnostics) technical.push(ctx.diagnostics);
+  // Only when nothing was attached. With the file there it is the same data twice, and the
+  // half in the mail is the truncated one — five folded lines against the whole log.
+  if (ctx.diagnostics && !ctx.attachment) technical.push(ctx.diagnostics);
 
-  const kind = FEEDBACK_KINDS[draft.kind].label;
-  return `Art: ${kind} · Bereich: ${draft.area}\n\n${said}\n\n----------\n${technical.join('\n')}\n`;
+  return `${head.join('\n')}${todo}\n\n${said}\n\n----------\n${technical.join('\n')}\n`;
 }
 
 function url(subject: string, body: string): string {
@@ -247,15 +267,13 @@ function clip(text: string, max: number): string {
 /**
  * The finished URL, shrunk until it fits.
  *
- * The ladder has a deliberate order: diagnostic entries go first (oldest first, which is
- * why the summary is written newest-last), then the whole diagnostic block — replaced by a
- * pointer at where the full version is, so this is a redirection rather than a loss — and
- * only then the person's own words. Their text is never the first casualty, and a
- * truncation is never silent.
+ * With a file attached there is only one rung: the body holds no diagnostics to spend, so
+ * the person's own words are the only thing left to cut. That case is the one the field cap
+ * is sized against, and `check:unit` holds the arithmetic.
  *
- * The attachment line is not on the ladder at all. It is one sentence, and it is the one
- * sentence that makes the summary above it redundant: dropping it to save 120 characters
- * would leave the customer holding a file nothing asked them for.
+ * Without one, diagnostic entries go first (oldest first, which is why the summary is
+ * written newest-last), then the whole block, and only then the text. Their words are never
+ * the first casualty, and a truncation is never silent.
  */
 export function feedbackMailto(draft: FeedbackDraft, ctx: FeedbackContext): string {
   const subject = feedbackSubject(draft, ctx);
@@ -263,31 +281,27 @@ export function feedbackMailto(draft: FeedbackDraft, ctx: FeedbackContext): stri
 
   if (fits(ctx, draft) <= MAILTO_MAX_CHARS) return url(subject, feedbackBody(draft, ctx));
 
-  // 1 · drop diagnostic entries from the top, keeping the header and the newest boots.
-  // Stops one short of emptying it: a „Startdiagnose —" header with nothing under it reads
-  // as a diagnostic that was collected and says nothing, which is worse than step 2's
-  // honest pointer at the file.
-  const lines = ctx.diagnostics.split('\n');
-  const head = lines[0] ?? '';
-  for (let drop = 1; drop <= lines.length - 2; drop++) {
-    const kept = [head, ...lines.slice(1 + drop)].join('\n');
-    const trimmed = { ...ctx, diagnostics: kept };
-    if (fits(trimmed, draft) <= MAILTO_MAX_CHARS) return url(subject, feedbackBody(draft, trimmed));
-  }
+  let spent = ctx;
+  if (!ctx.attachment) {
+    // 1 · drop diagnostic entries from the top, keeping the header and the newest boots.
+    // Stops one short of emptying it: a „Startdiagnose —" header with nothing under it reads
+    // as a diagnostic that was collected and says nothing, which is worse than step 2.
+    const lines = ctx.diagnostics.split('\n');
+    const head = lines[0] ?? '';
+    for (let drop = 1; drop <= lines.length - 2; drop++) {
+      const kept = [head, ...lines.slice(1 + drop)].join('\n');
+      const trimmed = { ...ctx, diagnostics: kept };
+      if (fits(trimmed, draft) <= MAILTO_MAX_CHARS) {
+        return url(subject, feedbackBody(draft, trimmed));
+      }
+    }
 
-  // 2 · drop the block entirely. With an attachment that is simply the end of it: the line
-  // above already names the file the log is in, and a sentence under it saying the log is in
-  // the file named above is 140 encoded characters of nothing. Without one — browser mode, or
-  // a write that failed — the block is replaced by the route to the file, so this stays a
-  // redirection rather than a loss.
-  const pointer = {
-    ...ctx,
-    diagnostics: ctx.attachment
-      ? ''
-      : 'Diagnose zu lang für diese E-Mail — bitte in Auftakt unter „Programm & Hilfe“ auf ' +
-        '„Diagnoseordner öffnen“ klicken und boot-log.jsonl anhängen.',
-  };
-  if (fits(pointer, draft) <= MAILTO_MAX_CHARS) return url(subject, feedbackBody(draft, pointer));
+    // 2 · drop the block. There is nowhere to redirect the reader to — the file that would
+    // have carried it is the one that could not be written — so it goes, and the machine
+    // line plus the reference are what the report still arrives with.
+    spent = { ...ctx, diagnostics: '' };
+    if (fits(spent, draft) <= MAILTO_MAX_CHARS) return url(subject, feedbackBody(draft, spent));
+  }
 
   // 3 · backstop, so the function is total. Unreachable for ordinary text at the field cap
   // the dialog enforces; it exists for the umlaut-heavy worst case and marks what it cut.
@@ -298,7 +312,7 @@ export function feedbackMailto(draft: FeedbackDraft, ctx: FeedbackContext): stri
     const answers: Record<string, string> = {};
     for (const [key, text] of Object.entries(draft.answers)) answers[key] = clip(text, budget);
     clipped = { ...draft, answers };
-    if (fits(pointer, clipped) <= MAILTO_MAX_CHARS) break;
+    if (fits(spent, clipped) <= MAILTO_MAX_CHARS) break;
   }
-  return url(subject, feedbackBody(clipped, pointer));
+  return url(subject, feedbackBody(clipped, spent));
 }

@@ -12,11 +12,9 @@ contextBridge.exposeInMainWorld('auftakt', {
   getVersion: () => ipcRenderer.invoke('get-version'),
   checkForUpdates: (refresh: boolean) => ipcRenderer.invoke('check-updates', refresh),
   installUpdate: () => ipcRenderer.invoke('install-update'),
-  // The support mail's diagnostic block, and the button showing the customer where the raw
-  // log lives (WP-54). Neither takes an argument: main derives the path from userData, so
-  // the renderer cannot point either of them at a file of its choosing.
+  // The support mail's diagnostic block (WP-54). Takes no argument: main derives the path
+  // from userData, so the renderer cannot point it at a file of its choosing.
   getDiagnostics: () => ipcRenderer.invoke('get-diagnostics'),
-  revealDiagnostics: () => ipcRenderer.invoke('reveal-diagnostics'),
   // The exception, because a `mailto:` cannot attach anything: this writes the full log plus
   // the machine's details to the desktop, so the customer has one named file to drag in. Both
   // arguments are untrusted — `ref` only ever picks a *name* out of a ten-digit alphabet, and
