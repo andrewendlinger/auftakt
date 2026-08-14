@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Btn, Card, PickerRow } from './ui';
+import { Btn, PickerRow } from './ui';
 import { FooterHint, Label, Modal, TextArea } from './fields';
 import { useToast } from './Toast';
 import { useSeasonTerm } from '../hooks';
@@ -32,9 +32,10 @@ import { useRovingFocus, rovingItem } from '../lib/rovingFocus';
  * What it asks depends on the first answer. A wish and a fault are not the same question, and
  * asking „Was ist passiert?" about a wish is how feature requests arrive phrased as bugs.
  *
- * There is exactly one way out of it: „E-Mail schreiben". No second button, no folder to go
- * looking in — the one step the app genuinely cannot do for anybody is attaching the file,
- * so that is the one step the dialog spends its words on, before and after the click.
+ * There is exactly one way out of it: „Weiter". No second button, no folder to go looking in —
+ * the one step the app genuinely cannot do for anybody is attaching the file, so that is the
+ * one step the dialog spends its words on. It spends them in a second dialog rather than in a
+ * card above the button: a card is scrolled past, a dialog is answered.
  *
  * Everything shaped like logic is somewhere else and unit-tested: `feedbackMailto` builds the
  * URL, `FEEDBACK_KINDS` holds the questions, `summarizeBootLog` builds the diagnostic block.
@@ -49,6 +50,9 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
   const [diag, setDiag] = useState<Diagnostics | null>(null);
   const [version, setVersion] = useState('');
   const [sending, setSending] = useState(false);
+  // The form, then the steps. Nothing is written and no client is opened until the second
+  // one is answered — „Weiter" is a question, not the action.
+  const [step, setStep] = useState<'form' | 'confirm'>('form');
   // Stamped once, when the dialog opened: it names both the mail and the file written next to
   // it, so it has to be the same value in the preview below and in what actually goes out.
   const [ref] = useState(() => feedbackRef(new Date()));
@@ -109,7 +113,11 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
       // summary: a file telling its reader to attach that same file is nonsense, and the log
       // it would summarize is printed in full two sections further down.
       const forFile = feedbackBody(draft, { ...ctx, attachment: '', diagnostics: '' });
-      const saved = await window.auftakt?.saveDiagnostics?.(ref, forFile);
+      // Main answers `{ ok: false }` rather than throwing, but a channel that is not there at
+      // all rejects — and an unhandled rejection here would leave „E-Mail öffnen" disabled
+      // with no mail opened, which is the one state the second dialog must not be able to
+      // end in. A failed write is a mail without an attachment, never a dead button.
+      const saved = await window.auftakt?.saveDiagnostics?.(ref, forFile).catch(() => null);
       // A failed write drops the attachment line and puts the summary back, because promising
       // a file that was never written is worse than sending the short version of it.
       sent = saved?.ok ? { ...ctx, attachment: saved.name } : { ...ctx, attachment: '' };
@@ -142,8 +150,8 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
         <>
           {!ready && <FooterHint>{hint()}</FooterHint>}
           <Btn onClick={onClose}>Abbrechen</Btn>
-          <Btn variant="primary" onClick={() => void send()} disabled={!ready || sending}>
-            E-Mail schreiben
+          <Btn variant="primary" onClick={() => setStep('confirm')} disabled={!ready}>
+            Weiter
           </Btn>
         </>
       }
@@ -211,29 +219,6 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
                   </div>
                 ))}
 
-                {/* What „E-Mail schreiben" is about to do, before it does it — the file
-                    appearing on the desktop and a mail opening on top of it is two surprises
-                    at once otherwise, and the attaching only happens if they expect it. */}
-                <Card className="bg-neutral-50 p-3 text-xs text-neutral-600 shadow-none">
-                  <p className="font-medium">Was beim Klick auf „E-Mail schreiben“ passiert:</p>
-                  <ol className="mt-1 list-decimal space-y-0.5 pl-4">
-                    {willAttach && (
-                      <li>
-                        Auftakt legt <code>{willAttach}</code> auf deinem Schreibtisch ab — das
-                        vollständige Startprotokoll und die Angaben zu deinem Rechner.
-                      </li>
-                    )}
-                    <li>Dein E-Mail-Programm öffnet sich mit dem fertigen Text.</li>
-                    {willAttach && (
-                      <li className="font-medium text-neutral-800">
-                        Die Datei hängst du selbst an — zieh sie vom Schreibtisch in die E-Mail.
-                        Das kann kein Programm für dich übernehmen.
-                      </li>
-                    )}
-                    <li>Abschicken.</li>
-                  </ol>
-                </Card>
-
                 <details className="text-xs text-neutral-500">
                   <summary className="cursor-pointer select-none font-medium text-neutral-600">
                     Was wird mitgeschickt?
@@ -252,6 +237,50 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
               </>
             )}
           </>
+        )}
+
+        {/* What „Weiter" is about to set off, before any of it happens — a file appearing on
+            the desktop and a mail opening on top of it is two surprises at once otherwise,
+            and the attaching only happens if they are expecting to have to do it.
+
+            A dialog rather than the card this used to be, and rendered inside the one above
+            so `ModalDepthCtx` gives it a depth of its own: Escape peels it off and leaves the
+            filled-in form standing. Both buttons are in the footer, „Zurück" first, because a
+            confirm has no body tabbable and `Modal` focuses the footer's first button — the
+            keystroke that reaches the question should answer it with the safe answer. */}
+        {step === 'confirm' && (
+          <Modal
+            title="So geht es weiter"
+            onClose={() => setStep('form')}
+            footer={
+              <>
+                <Btn onClick={() => setStep('form')}>Zurück</Btn>
+                <Btn variant="primary" onClick={() => void send()} disabled={sending}>
+                  E-Mail öffnen
+                </Btn>
+              </>
+            }
+          >
+            <ol className="list-decimal space-y-2 pl-5 text-sm text-neutral-600">
+              {willAttach && (
+                <li>
+                  Auftakt legt <code>{willAttach}</code> auf deinem Schreibtisch ab — das
+                  vollständige Startprotokoll und die Angaben zu deinem Rechner.
+                </li>
+              )}
+              <li>Dein E-Mail-Programm öffnet sich mit dem fertigen Text.</li>
+              {willAttach && (
+                <li className="font-medium text-neutral-800">
+                  Die Datei hängst du selbst an — zieh sie vom Schreibtisch in die E-Mail. Das
+                  kann kein Programm für dich übernehmen.
+                </li>
+              )}
+              <li>
+                Abschicken
+                {willAttach ? '.' : ' — Auftakt kann die E-Mail nicht selbst verschicken.'}
+              </li>
+            </ol>
+          </Modal>
         )}
       </div>
     </Modal>
