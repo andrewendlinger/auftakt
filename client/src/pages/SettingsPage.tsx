@@ -511,11 +511,12 @@ function FeedbackCard() {
       >
         Feedback & Diagnose
       </SectionTitle>
+      {/* One sentence. The paragraph this replaces explained the diagnostics file, the review
+          step and whose mail client sends it — all true, all four lines long, and all said
+          again inside the dialog at the moment each one applies. Nobody reads the second
+          telling of something under a button they have not pressed yet. */}
       <p className="mt-1 text-xs text-neutral-400">
-        Fehler oder Wunsch: Auftakt fragt das Nötige ab und schreibt die E-Mail vor. Bei einem
-        Fehler legt es zusätzlich einen Diagnosebericht auf dem Schreibtisch ab, den du anhängen
-        kannst. Verschickt wird in deinem eigenen E-Mail-Programm — du siehst vorher, was
-        drinsteht.
+        Etwas geht nicht oder fehlt? Auftakt schreibt die E-Mail vor.
       </p>
       {open && <FeedbackDialog onClose={() => setOpen(false)} />}
     </Card>
