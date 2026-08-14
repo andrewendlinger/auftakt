@@ -217,7 +217,10 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   with German come back holding fewer — the last one typed is the short one, and „Die E-Mail ist
   voll" appears under the fields. A script that types 300 characters into each and asserts on the
   value, or that expects its own string back out of the third box, is asserting on a cap that is
-  not the one in force. `fill()` counts as one paste: it lands cut, not refused.
+  not the one in force. `fill()` counts as one paste: it lands cut, not refused. What the preview
+  shows is `feedbackMailBody`, i.e. the body *after* the composer's truncation ladder — with a fat
+  boot summary and no attachment, the block in the preview is shorter than the one
+  `get-diagnostics` returned, and that is correct rather than a stale render.
 - **A traced launch: `AUFTAKT_BOOT_TRACE=1`.** Records from before the window until ~750 ms after
   the overlay settles — capped at ~6 s, or the env var's value in milliseconds — to
   `boot-trace-<stamp>.json` in userData, loadable at ui.perfetto.dev. Quitting does not lose it:

@@ -369,3 +369,31 @@ describe('the encoded budget, as the dialog spends it', () => {
     expect(feedbackHeadroom(over, attached)).toBeLessThan(0);
   });
 });
+
+describe('feedbackMailBody', () => {
+  it('is what the URL carries, which is what „Was wird mitgeschickt?" shows', () => {
+    // The dialog previews this function and hands `feedbackMailto` to the mail client. If the
+    // two could differ, the preview would be of a mail nobody received — and they differ
+    // exactly where it matters, on the reports long enough for the ladder to bite.
+    const cases: [FeedbackDraft, FeedbackContext][] = [
+      [DRAFT, CTX],
+      [DRAFT, { ...CTX, diagnostics: summaryOf(100) }],
+      [{ ...DRAFT, answers: { happened: 'ö'.repeat(5000) } }, CTX],
+    ];
+    for (const [draft, ctx] of cases) {
+      expect(new URL(feedbackMailto(draft, ctx)).searchParams.get('body')).toBe(
+        feedbackMailBody(draft, ctx),
+      );
+    }
+  });
+
+  it('shows the trimmed diagnostic block rather than the one that was collected', () => {
+    const ctx = { ...CTX, diagnostics: summaryOf(20) };
+    const shown = feedbackMailBody(DRAFT, ctx);
+    expect(shown).toContain('Zeile 19');
+    expect(shown).not.toContain('Zeile 0 ');
+    // The untrimmed composition is what the preview used to show — 20 entries of a block the
+    // mail carries two of.
+    expect(feedbackBody(DRAFT, ctx)).toContain('Zeile 0 ');
+  });
+});

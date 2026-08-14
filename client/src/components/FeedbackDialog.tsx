@@ -10,6 +10,7 @@ import {
   FEEDBACK_TO,
   diagnosticsFileName,
   feedbackBody,
+  feedbackMailBody,
   feedbackMailto,
   feedbackRef,
   fitFeedbackAnswer,
@@ -246,9 +247,12 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
                     Was wird mitgeschickt?
                   </summary>
                   {/* Shown in full before it leaves: the diagnostics are timings and a version,
-                      but „technische Angaben" is not something to ask anyone to take on trust. */}
+                      but „technische Angaben" is not something to ask anyone to take on trust.
+                      `feedbackMailBody`, not `feedbackBody` — the composer may still drop the
+                      diagnostic block to make the mail fit, and a preview of a body that was
+                      never sent is worse than none in a dialog promising this one. */}
                   <pre className="mt-2 overflow-x-auto rounded-lg bg-neutral-50 p-3 text-xs text-neutral-600">
-                    {feedbackBody(draft, ctx)}
+                    {feedbackMailBody(draft, ctx)}
                   </pre>
                   <p className="mt-2">
                     {willAttach
