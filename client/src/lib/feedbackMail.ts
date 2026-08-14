@@ -209,35 +209,44 @@ export function feedbackSubject(draft: FeedbackDraft, ctx: FeedbackContext): str
 }
 
 /**
- * The body, human part first so the mail opens on what the person wrote.
+ * The body: the one thing left to do, then what the person wrote, then the machine.
  *
- * The separator is ten plain hyphens rather than `-- `, which several clients read as the
- * signature delimiter and fold away — taking the diagnostics with it — and rather than
- * box-drawing characters, which cost nine characters each once encoded.
+ * A mail client opens on the first line, so that line is the only instruction the reader
+ * still has to act on — not the metadata it used to open with, which says nothing to them
+ * and is in the subject anyway. Everything below is headed, because three answers and a
+ * technical block separated by nothing but blank lines is one paragraph to a reader in a
+ * hurry, which is what a support mail is read by.
+ *
+ * The decoration is `!!` and `---` rather than `===`, `##` or box-drawing characters for a
+ * reason that is not taste: `encodeURIComponent` leaves `!` and `-` alone and spends three
+ * characters on `=` or `#` and nine on `─`, against the budget below. `---` is also not the
+ * `-- ` several clients read as a signature delimiter and fold away.
  */
 export function feedbackBody(draft: FeedbackDraft, ctx: FeedbackContext): string {
   const said = FEEDBACK_KINDS[draft.kind].fields
     .map((f) => [f.said, (draft.answers[f.key] ?? '').trim()] as const)
     .filter(([, text]) => text.length > 0)
-    .map(([label, text]) => `${label}:\n${text}`)
+    .map(([label, text]) => `--- ${label}\n${text}`)
     .join('\n\n');
 
-  const head = [`Art: ${FEEDBACK_KINDS[draft.kind].label} · Bereich: ${draft.area}`];
-  // The ref is repeated in the body because a subject is the first thing a forward or a
-  // reply rewrites, and the file on the desktop is named after it.
-  if (ctx.ref) head.push(`Kennung: ${ctx.ref}`);
-
-  // The one instruction the person still has to act on, at the top of the draft where they
-  // will actually be looking — a mail client opens on the first line, not on the signature.
-  // Addressed to them rather than to the maintainer, and explicitly not something to tidy
-  // away first: every sentence that asks the reader to decide something is a sentence that
-  // can be decided wrong.
+  // First, in capitals, addressed to the customer rather than the maintainer: it is the one
+  // step no program can take for them, and every earlier place it was said is a place it
+  // could be scrolled past. Not phrased as something to tidy away afterwards either —
+  // every sentence asking the reader to decide something is a sentence that can be decided
+  // wrong; „(bitte stehen lassen)" below marks what is not theirs to touch.
   const todo = ctx.attachment
-    ? `\n\nBitte noch anhängen: ${ctx.attachment}\n` +
-      'Die Datei liegt auf deinem Schreibtisch. Diese Zeilen können stehen bleiben.'
+    ? `!! BITTE NOCH ANHÄNGEN: ${ctx.attachment}\n` +
+      'Die Datei liegt auf deinem Schreibtisch. Hineinziehen, dann abschicken.\n\n'
     : '';
 
-  const technical = ['Technische Angaben (bitte stehen lassen):'];
+  const technical = ['--- Technische Angaben (bitte stehen lassen)'];
+  // Kind, area and reference travel down here as one line. They read as a filing stamp, not
+  // as something to act on, and the subject carries the same three — but a subject is the
+  // first thing a forward or a reply rewrites, and the file on the desktop is named after
+  // the reference. Labelling only the reference: the other two are self-evident, and the
+  // 24 encoded characters the labels would cost are the person's to spend on words.
+  const stamp = `${FEEDBACK_KINDS[draft.kind].label}${draft.area ? ` · ${draft.area}` : ''}`;
+  technical.push(ctx.ref ? `${stamp} · Kennung: ${ctx.ref}` : stamp);
   // `system` already names the OS, so it stands in for the platform label rather than
   // following it — otherwise every mail says „Windows · Windows 11".
   const machine = ctx.system || platformLabel(ctx.platform);
@@ -250,7 +259,7 @@ export function feedbackBody(draft: FeedbackDraft, ctx: FeedbackContext): string
   // half in the mail is the truncated one — five folded lines against the whole log.
   if (ctx.diagnostics && !ctx.attachment) technical.push(ctx.diagnostics);
 
-  return `${head.join('\n')}${todo}\n\n${said}\n\n----------\n${technical.join('\n')}\n`;
+  return `${todo}${said}\n\n${technical.join('\n')}\n`;
 }
 
 function url(subject: string, body: string): string {

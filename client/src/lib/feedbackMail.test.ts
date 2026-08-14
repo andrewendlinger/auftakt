@@ -105,20 +105,24 @@ describe('feedbackSubject', () => {
 });
 
 describe('feedbackBody', () => {
-  it('puts the person first and the machine after the rule', () => {
+  it('puts the person first and the machine under its own heading', () => {
     const body = feedbackBody(DRAFT, CTX);
-    expect(body.indexOf('Nichts — die Seite blieb leer.')).toBeLessThan(body.indexOf('----------'));
-    expect(body).toContain('Art: Fehler · Bereich: Künstler');
-    expect(body).toContain('Kennung: AF-2608141542');
+    expect(body.indexOf('Nichts — die Seite blieb leer.')).toBeLessThan(
+      body.indexOf('--- Technische Angaben'),
+    );
+    // Kind, area and reference read as a filing stamp, so they sit with the machine rather
+    // than above what the person wrote — the subject carries the same three.
+    expect(body).toContain('Fehler · Künstler · Kennung: AF-2608141542');
+    expect(body.indexOf('Fehler · Künstler')).toBeGreaterThan(body.indexOf('--- Was passiert ist'));
     expect(body).toContain('Startdiagnose — 2 Einträge');
   });
 
   it('heads each answer with the kind it was asked under', () => {
-    expect(feedbackBody(DRAFT, CTX)).toContain('Was passiert ist:');
+    expect(feedbackBody(DRAFT, CTX)).toContain('--- Was passiert ist');
     // The same three text boxes, a different report — the wish must not inherit bug wording.
     const wish = feedbackBody(WISH, CTX);
-    expect(wish).toContain('Was ich tun können möchte:');
-    expect(wish).not.toContain('Was passiert ist:');
+    expect(wish).toContain('--- Was ich tun können möchte');
+    expect(wish).not.toContain('Was passiert ist');
   });
 
   it('lets the machine line stand in for the platform rather than repeat it', () => {
@@ -138,13 +142,12 @@ describe('feedbackBody', () => {
     // The instruction is for the customer, not the maintainer, so it has to be where a mail
     // client opens — the top — not under a „Technische Angaben" rule they will never scroll to.
     const withFile = feedbackBody(DRAFT, { ...CTX, attachment: 'Auftakt-Diagnose-AF-2608141542.txt' });
-    expect(withFile).toContain('Bitte noch anhängen: Auftakt-Diagnose-AF-2608141542.txt');
+    expect(withFile).toContain('!! BITTE NOCH ANHÄNGEN: Auftakt-Diagnose-AF-2608141542.txt');
     expect(withFile).toContain('liegt auf deinem Schreibtisch');
-    expect(withFile.indexOf('Bitte noch anhängen')).toBeLessThan(
-      withFile.indexOf('Nichts — die Seite blieb leer.'),
-    );
+    // The very first line, not merely an early one: a mail client opens on line 1.
+    expect(withFile.startsWith('!! BITTE NOCH ANHÄNGEN')).toBe(true);
     // Promising an attachment the browser build never wrote is worse than offering none.
-    expect(feedbackBody(DRAFT, CTX)).not.toContain('anhängen');
+    expect(feedbackBody(DRAFT, CTX)).not.toMatch(/anhängen/i);
   });
 
   it('sends the summary or the file, never both', () => {
@@ -224,7 +227,7 @@ describe('feedbackMailto', () => {
     };
     const fat = { ...DRAFT, answers: { happened: 'ö'.repeat(5000), did: 'ä'.repeat(5000) } };
     const body = new URL(feedbackMailto(fat, ctx)).searchParams.get('body') ?? '';
-    expect(body).toContain('Bitte noch anhängen: Auftakt-Diagnose-AF-2608141542.txt');
+    expect(body).toContain('!! BITTE NOCH ANHÄNGEN: Auftakt-Diagnose-AF-2608141542.txt');
   });
 
   it('marks the cut when even the text has to go', () => {
@@ -273,9 +276,13 @@ describe('feedbackMailto', () => {
   });
 
   it('fits three full fields beside the attachment instructions', () => {
-    // The tightest shape the feature can produce: a reference, a machine clause and the
+    // The tightest shape the feature can produce: a stamp line, a machine clause and the
     // two-line attach instruction, with no diagnostic block left to spend — the file has it,
     // so the person's own text is the only thing the ladder could still take. It must not.
+    //
+    // This case is the ceiling the whole layout is written against: 1873 encoded characters
+    // of 1900. It was 1897 before the head moved into the technical stamp, i.e. three to
+    // spare — so a copy edit up here is not free, and this is the assertion that says so.
     const full = {
       ...CTX,
       diagnostics: summaryOf(5),
@@ -284,6 +291,6 @@ describe('feedbackMailto', () => {
     const body = new URL(feedbackMailto(maxed, full)).searchParams.get('body') ?? '';
     expect(body).not.toContain('[…]');
     expect(body).toContain(one.trimEnd());
-    expect(body).toContain('Bitte noch anhängen: Auftakt-Diagnose-AF-2608141542.txt');
+    expect(body).toContain('!! BITTE NOCH ANHÄNGEN: Auftakt-Diagnose-AF-2608141542.txt');
   });
 });
