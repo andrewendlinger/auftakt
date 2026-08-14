@@ -127,8 +127,8 @@
          and on <html> that subtree is the whole document, including the React tree that
          phase A has just finished mounting and laying out underneath. Toggling the class
          then re-resolved style for every element in the app, twice per launch, and the
-         first of those two lands inside the gesture's opening frame: the one frame the
-         warm-up exemption means nobody would ever see charged. Scoped here it is eight
+         first of those two lands inside the gesture's opening frame: the first of the two
+         frames the warm-up exemption means nobody would ever see charged. Scoped here it is eight
          nodes. Specificity still clears the paused base rules — (1,1,0) over (1,0,0), both
          flagged — and the svg rule below clears (1,0,1) the same way. */
       #boot-overlay.boot-play {
@@ -806,11 +806,27 @@
            2600 ms animation unmonitored, and the things that stutter it arrive late by
            nature: a query retry's backoff, a route effect, font or image decode, a GC. */
         var WATCH_MS = 200;
-        /* One visibly dropped run of frames, as an absolute: three frames at 60 Hz, six
-           at 120. Deliberately not expressed as a multiple of the measured period — the
+        /* How many measured deltas at the head of the gesture are exempt from every test.
+           Two, and the second one is WP-61 — see the exemption itself for why the number
+           is a property of the rendering pipeline rather than a tuned tolerance. */
+        var WARM_FRAMES = 2;
+        /* One visibly dropped run of frames, as an absolute: ~50 ms of wall clock, which
+           is three frames at 60 Hz and six at 120. The constant is 58 rather than 50, and
+           the gap is the whole point. Deltas quantize to the display's interval — 16.7 /
+           33.3 / 50.1 / 66.8 at 60 Hz — so a threshold of 50 sat exactly *on* a value the
+           panel produces, and `>=` therefore aborted on the smallest gap this comment
+           calls tolerable, which is also the only gap it could ever fire on below 66.8.
+           Three of a customer's fourteen cold runs carry a 50.1 ms frame on an otherwise
+           16.7 ms machine: that is background noise, not a stutter (WP-61). Placed at the
+           midpoint of the two steps it tolerates three intervals at 60 Hz and six at 120 —
+           the same ~50 ms of wall clock this comment always meant — and catches the next
+           one up at either rate. Sustained three-interval stutter is still caught: `drops`
+           counts every 50.1 ms gap as two lost frames at the window's end, and that safety
+           net is what makes raising the absolute safe.
+           Deliberately still not expressed as a multiple of the measured period — the
            period estimate is only trustworthy once the window has some samples, and a
            hitch has to be catchable on the very first one. */
-        var HITCH_MS = 50;
+        var HITCH_MS = 58;
         /* Floor for the uniformly-slow test, ~45 fps, and the allowance over the quickest
            cadence actually observed. See the test itself for why both are needed. */
         var SLOW_MS = 22;
@@ -818,7 +834,7 @@
 
         function watchFrames() {
           var prev = -1;
-          var warmed = false;
+          var warmed = 0;
           /* Start of the current window: the timestamp of the frame *before* its first
              recorded delta, so that `elapsed` is exactly the sum of what `deltas` holds.
              It used to be the timestamp of the very first callback, which left the
@@ -832,7 +848,7 @@
              this has seen, the likelier it is to have caught frames that landed on actual
              vsyncs. Ranked rather than minimised at verdict time — see the slow test. */
           var seen = [];
-          frames = { seen: seen, tail: [], warm: -1, lead: -1 };
+          frames = { seen: seen, tail: [], warm: -1, warm2: -1, lead: -1 };
 
           function tick(now) {
             /* The loop used to die with `fading`, which kept aborts honest — once
@@ -864,14 +880,33 @@
               frames.tail.push(d);
               return;
             }
-            /* The first measured frame carries the cost of promoting layers for
-               animations that have only just started. Expected rather than perceived,
-               and judging it aborts healthy runs — so it is exempt from every test and
-               from the window's clock, but no longer discarded: the report keeps it,
-               because on a cold first launch this is the frame with the most to say. */
-            if (!warmed) {
-              warmed = true;
-              frames.warm = d;
+            /* The head of the gesture is exempt, and it is two frames rather than one
+               because two is how long it takes the first animated frame to reach the
+               screen. rAF callbacks run *before* paint, and raster is asynchronous: this
+               callback only records the first painted frame, the raster is still in flight
+               when the delta it opened closes on schedule, and the wait for the compositor
+               to present it lands in the *next* delta — the first one the judge ever saw.
+               `onReady` above already waits two frames for exactly this reason ("the first
+               only schedules the paint"); the watchdog waited one, so on a machine where
+               that first raster costs more than HITCH_MS the gesture could not survive it.
+               Twelve of a customer's fourteen cold boots aborted there (WP-61), ten of them
+               with a textbook 16.7 ms in the single exempt slot and 99.6–316.5 ms in the
+               frame immediately after it. On a fast GPU the raster fits inside a frame,
+               which is why this held for as long as it did.
+
+               Exempt from every test and from the window's clock, but not discarded: the
+               report keeps both, because on a cold launch these are the frames with the
+               most to say. Two and not three — in fourteen logged runs the cost never
+               reached the third delta, and every exempt frame is choreography the user
+               never sees, since the animations' clocks start at style application and run
+               through them. A report showing both slots clean and `n: 1` with a fat frame
+               is this number being one short again; that is the shape to look for. */
+            if (warmed < WARM_FRAMES) {
+              // WARM_FRAMES and the report's two slots move together: a third exempt frame
+              // would be measured and never reported.
+              if (warmed === 0) frames.warm = d;
+              else if (warmed === 1) frames.warm2 = d;
+              warmed++;
               first = now;
               return;
             }
@@ -974,7 +1009,12 @@
            not have changed what the user saw. */
         function buildReport() {
           var report = {
-            v: 1,
+            /* 2 since WP-61: two head frames are exempt instead of one (so `frames.n`
+               counts one delta fewer, and `warm2` joins `warm`) and HITCH_MS moved 50 → 58.
+               A v:1 line stays readable field for field — nothing branches on this — but
+               `n`, `why` and `tail.verdict` were produced under the old rules, so a log
+               holding both generations must not be compared across the boundary. */
+            v: 2,
             outcome: crossing ? 'cross' : playing ? 'play' : 'skip',
             why: why || 'done',
             readyMs: readyAt ? r10(readyAt - t0) : null,
@@ -989,6 +1029,7 @@
           var f = packed(frames.seen) || { n: 0, med: null, p95: null, worst: null };
           f.lead = frames.lead < 0 ? null : r10(frames.lead);
           f.warm = frames.warm < 0 ? null : r10(frames.warm);
+          f.warm2 = frames.warm2 < 0 ? null : r10(frames.warm2);
           f.quick = null;
           if (frames.seen.length) {
             var ranked = frames.seen.slice().sort(function (a, b) {

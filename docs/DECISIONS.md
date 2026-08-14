@@ -740,6 +740,13 @@ contention so uniform that not one frame in 2.6 s lands on vsync: from inside th
 indistinguishable from a genuinely slower panel. Real contention jitters, and `drops` catches
 jitter.
 
+The blind spot at the *head* of the gesture is larger than it sounds, and WP-61 made it larger
+still. Three quantities there are recorded and never judged: `lead` (release → first callback),
+and now both `warm` and `warm2`, the two exempt head frames. In the worst run of the customer log
+that is 3.6 + 432.9 + 167 ms — about 600 ms, a fifth of the envelope, with no watchdog on it. That
+is the right trade, because those frames are structurally expensive and judging them aborts
+healthy runs, but it should not be described as „one extra frame".
+
 **Every boot now files a report, because the first field stutter was unfalsifiable.** The first
 launch after a local install visibly hitched once — and left nothing to read: `data-boot` and
 `data-abort` die with the overlay node, so there was no way to tell whether the watchdog had
@@ -747,8 +754,9 @@ aborted, whether the gesture had played at all, or which frame was late. The ove
 what the watchdog measured into a small JSON report in its single exit path — outcome, the door
 the reveal came through, ready/start/end on the deadline's own clock, frame statistics — and
 writes it to `localStorage['auftakt-boot-report']` and through the `bootSettled` bridge. Three
-recording gaps close with it, and all three stay unjudged: the exempt first frame is kept
-(`frames.warm`); the gap between release and the first rAF callback is kept (`frames.lead` — the
+recording gaps close with it, and all three stay unjudged: the exempt head frames are kept
+(`frames.warm`, and `frames.warm2` since WP-61); the gap between release and the first rAF
+callback is kept (`frames.lead` — the
 animations' clocks start at style application, so a long first presentation is a jump no delta
 ever carried); and the reveal-fade tail is recorded instead of abandoned (`tail`, with a
 retrospective verdict). The watchdog's rules are unchanged: recording past `fading` keeps every
@@ -1664,3 +1672,111 @@ conflict at all: the other window's write broadcasts an invalidate, the held win
 refetches, and that second GET supersedes the held one inside react-query. The lost update is a
 write *arriving* after a newer generation landed, not a stale read, and no amount of invalidation
 can prevent it. That is why the guard is on the write and not merely on the read.
+
+---
+
+## The gesture's first raster is paid one frame later than the watchdog thought (2026-08-14, WP-61)
+
+A customer's boot log — the one WP-54 built the path to — closed WP-61's three-way triage in a
+single field. Fourteen cold boots on a Windows 11 laptop (Intel UHD via ANGLE D3D11, Electron 43):
+twelve `abort:hitch`, one `click`, one `done`. Not `deadline` (`readyMs` was 187–996 ms, always
+inside the 1200), not `reduced-motion` (the gesture started every time), and not the shelved
+plan's favourite either — a first-launch-ever skip would have fixed launch one and left eleven,
+because this fired across eight hours and two app versions, not on the debut.
+
+**The exemption was one frame short, and the frame it missed is the one that matters.**
+`start()` adds `.boot-play`, which makes the svg visible and unpauses all twelve animations at
+once, so the svg's first raster is paid inside the gesture and never before it. rAF callbacks run
+*before* paint and raster is asynchronous: the first callback only records the frame, the delta it
+opened closes on schedule, and the wait for the compositor to present that first raster lands in
+the **next** delta — the first one the judge ever sees. The single exempt slot was therefore spent
+on the frame that *schedules* the raster, and the frame that *pays* for it was judged and aborted.
+Ten of the twelve show it exactly: a textbook 16.4–17.4 ms in the exempt slot, then `n: 1` with a
+single judged frame of 99.6–316.5 ms.
+
+The strongest evidence that this is an accounting error rather than a slow machine is in the same
+file. Two runs happened to land the expensive frame *in* the exempt slot (`warm` 116.5 and 99.9);
+one of them went on to render 126 frames at a 16.7 ms median, p95 16.9, one drop. The tail median
+is 16.6–16.8 ms in all fourteen runs. The machine plays the gesture perfectly — the watchdog was
+killing it on frame two.
+
+**The fix is two exempt head frames, and two is the length of the pipeline, not a tolerance.**
+`onReady` already waits two rAFs before `start()` for precisely this reason, commented „two frames,
+because the first only schedules the paint" — the correct model was in the file 120 lines above the
+bug, applied to `#root`'s paint and missed for the svg's. A time box was rejected: covering the
+worst observed head (603 ms) would blind the judge for a quarter of the gesture, including the
+anticipation flick, where two frames costs ~33 ms on a healthy machine. Three was rejected because
+in fourteen runs the cost never reached the third delta.
+
+**`HITCH_MS` moved 50 → 58 because 50 sat on a quantization step.** Deltas quantize to the
+display's interval — 16.7 / 33.3 / 50.1 / 66.8 at 60 Hz — so `d >= 50` could only ever fire at
+50.1, which is the smallest gap the constant's own comment calls tolerable, and 50.0 is not a value
+the panel can produce. Three of the fourteen runs carry a 50.1 ms frame on an otherwise 16.7 ms
+machine: background noise, not a stutter. At the midpoint of the two steps the test tolerates three
+intervals at 60 Hz and six at 120 and catches the next one up at either rate — which is what „three
+frames at 60 Hz, six at 120" always meant. `drops` still counts every 50.1 ms gap as two lost
+frames at the window's end, and that is what makes raising the absolute safe.
+
+**Softening the hitch bound with `quick` was tried against the data and rejected.** TODO.md had
+pre-registered it as the likely fix, by analogy with `SLOW_MS`. On this machine `quick` is
+16.5–16.6, so `max(HITCH_MS, quick * k)` is inert for every sensible `k` — at `k = 3` it evaluates
+to 49.8, *lower* than the constant it was meant to soften — and it fixes none of the twelve. Worse,
+at the moment the first judged delta arrives `quick` does not exist yet: it is computed only at a
+window boundary, and no window has closed. The analogy does not transfer. `quick` normalizes
+`SLOW_MS` for **refresh rate**, because a 30 Hz panel's honest median is 33 ms; a hitch is a
+**discontinuity**, and how visible a discontinuity is depends on human vision, not on the panel.
+Scaling it by the display would make the test strictest on the fastest hardware, which is backwards.
+
+**The report is `v: 2`.** Two head frames are exempt instead of one, so `frames.n` counts one delta
+fewer, `warm2` joins `warm`, and `why` and `tail.verdict` were decided under a different
+`HITCH_MS`. Nothing branches on `v` and a `v: 1` line stays readable field for field, but the two
+generations will share one file — the log keeps 100 lines — and must not be compared across the
+boundary. `warm2` stays out of the German summary for the same reason `warm` and `quick` do: that
+digest is for triage, not analysis.
+
+### The raster pre-warm was declined, and the reason is not the obvious one
+
+Paying the svg's first raster during phase A would fix the cause rather than the accounting. Three
+findings killed the version that suggests itself, and they are recorded because the idea is easy to
+re-derive:
+
+- **It would not be invisible.** `.mover` carries `bootActorFade … both` with a 2410 ms delay, and
+  that keyframe's `from` is `opacity: 1`. A paused animation sitting inside its delay with a
+  backwards fill is in effect, so the hand's computed opacity during the hold is **1** — the base
+  `opacity: 0` never applies. `visibility: hidden` is the only thing hiding the parked baton, and
+  making the svg visible in phase A would park it on screen for the whole hold, which the rule's own
+  comment forbids by name. (The other three are genuinely invisible: `.lt`, `.ripple` and `.trailg`
+  all fill backwards at zero.)
+- **The cost is per-launch, not a cold-cache artifact.** It recurs across three sessions eight hours
+  apart at 99.6–316.5 ms. A pre-warm therefore moves 100–300 ms into the hold on *every* launch —
+  the window `readyMs` is measured in, on a machine already observed at 996.5 ms of a 1200 ms
+  deadline. That trades `abort:hitch` for `deadline`.
+- **What the exemption does not fix, and a pre-warm would.** The animations' clocks start at style
+  application, so the stall means the gesture begins already jumped forward — ~100 ms typically,
+  ~600 ms in the worst logged run, where the baton would materialize about a fifth of the way along
+  its stroke. That is the artefact the attacca choreography was reworked to avoid.
+
+**The variant worth keeping** is a `.boot-show` class — svg visible, animations still paused —
+applied two frames before `.boot-play` inside `start()`. It pays the raster before the clocks
+start, and it confines the parked hand to the head of phase B instead of the whole hold. **Gate it
+on** a second customer log *and* on a measurement that pre-rastering actually makes the following
+frames cheap, which is not obvious: every animated frame re-rasters anyway, so only tile
+allocation, the GPU upload and the program cache are pre-payable.
+
+### What the second log has to answer
+
+The local repro proves the accounting — inject the same 150 ms block one frame apart and the
+outcomes invert — but it runs on a Mac with a synchronous main-thread stall, while the customer's
+is compositor back-pressure. Same delta *sequence*, which is the watchdog's entire input, different
+mechanism. It cannot prove their raster now fits under the new rules. Two predictions to check
+against the next log:
+
+- **One run may trade `abort:hitch` for `abort:drops`.** The run at 10:08:26 delivered a 33.3 and a
+  50.2 inside its first window — three lost frame-slots. Post-fix it reaches the window boundary
+  instead of aborting at frame nine, and `drops >= 0.2 * (deltas.length + drops)` aborts on any
+  window holding twelve or fewer judged deltas; a 200 ms window at 16.7 ms holds about twelve. If
+  that is what the log shows, the coherent follow-up is that a 50.1 ms gap cannot be noise for the
+  hitch test and two lost frames for `drops` — but that is a second decision, and one data point is
+  not enough to take it.
+- **How far into its swing the gesture starts.** `warm` + `warm2` + `lead` is that number, and it
+  is what decides `.boot-show`.

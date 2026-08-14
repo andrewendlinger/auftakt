@@ -159,7 +159,8 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   - `cross` → a 200 ms fade instead of the gesture. Four ways in: readiness arrived past the
     1200 ms deadline, the app signalled that it collapsed (`html[data-app-failed]`, see below), the
     user clicked, or the frame watchdog aborted. `#boot-overlay[data-abort]` distinguishes the last
-    one and names the reason (`hitch` — one frame over 50 ms; `slow` — a median well over the
+    one and names the reason (`hitch` — one frame over 58 ms, so a 50.1 ms gap, which is three
+    vsync intervals at 60 Hz, is deliberately tolerated; `slow` — a median well over the
     cadence this display has been seen to deliver; `drops` — a fifth of frames lost; `starved` —
     too few frames delivered).
   - `done` → the node is gone and `#root` is no longer `inert`.
@@ -172,11 +173,17 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   `abort:<reason>`, `hold-max`, `gesture-max`, `warm`, `secondary`, `reduced-motion`, `no-prod`),
   `readyMs`/`startMs`/`endMs` on the same clock the 1200 ms deadline reads, and — when the
   gesture played — `frames` (judged deltas: `n`, `med`, `p95`, `worst`, `quick`, `drops`, plus
-  `lead`, the release→first-callback gap, and `warm`, the exempt first frame's delta) and `tail`
-  (deltas recorded unjudged during the reveal fade, with a retrospective `verdict`). A
+  `lead`, the release→first-callback gap, and `warm`/`warm2`, the two exempt head frames) and
+  `tail` (deltas recorded unjudged during the reveal fade, with a retrospective `verdict`). A
   `tail.verdict` of `hitch` on a run with **no** `data-abort` is not a contradiction: the
   attribute still means the watchdog *changed the outcome*, the tail is record-only. Under
   Electron the same report goes out over the `bootSettled` bridge.
+- **The report is versioned, and WP-61 made it `v: 2`.** Two head frames are exempt instead of
+  one (so `frames.n` counts one delta fewer, and `warm2` joins `warm`) and `HITCH_MS` moved
+  50 → 58. Nothing branches on `v` — a `v: 1` line stays readable field for field — but `n`,
+  `why` and `tail.verdict` were produced under the old rules, so a log holding both generations
+  must not be compared across the boundary. Old lines are *stricter*: a `tail.verdict` of
+  `hitch` needed only 50 ms there. `grep '"v":2'` separates them.
 - **Under Electron the reports accumulate: `boot-log.jsonl` in userData.** One line per settle —
   including warm reloads (a season switch writes `skip / warm`; that line is the reload proving
   itself, not noise) — wrapped by the main process with `at` (ISO time, main's clock, so a
@@ -261,8 +268,18 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **A blocked main thread makes the gesture abort, so do not block it and then blame the overlay.**
   Injecting a busy-loop to simulate load, or attaching a debugger, trips the watchdog and you get
   `cross` instead of `play`. That is the feature working, and it applies for the *whole* gesture —
-  the watchdog judges rolling 200 ms windows to the last frame, not just the opening one. The one
-  exception is a block that lands after the reveal fade has begun (~2230 ms in): from there the app
+  the watchdog judges rolling 200 ms windows to the last frame, not just the opening one. There are
+  two exceptions. The first is the **head of the gesture**: the first two measured deltas after
+  `data-boot="play"` are exempt from every test (WP-61 — the first schedules the svg's first
+  raster, the second waits for it), so a block landing there does not abort and shows up as
+  `frames.warm` / `frames.warm2` instead. That is also the handle for driving it: `start()` sets
+  `data-boot="play"` and calls `watchFrames()` inside one task, and a `MutationObserver` callback
+  is a microtask, so an observer on that attribute is registered *after* the watchdog's first rAF
+  and runs after it in every frame from then on — blocking inside your own rAF callback *k*
+  therefore inflates measured delta *k*, where delta 1 is `warm`. Slot-addressable injection with
+  no polling and no rAF patching: 150 ms at slot 1 stays a clean `play`/`done`, the same 150 ms at
+  slot 3 is `cross`/`abort:hitch`. Before WP-61 slot 2 aborted, which is the whole bug.
+  The second exception is a block that lands after the reveal fade has begun (~2230 ms in): from there the app
   is already showing through, so the watchdog stops judging — it keeps recording, and the block
   shows up in the report's `tail` — and the overlay lets the fade finish rather than throwing the
   splash back to full opacity. That run stays a clean `play` → `done` with no `data-abort` — the

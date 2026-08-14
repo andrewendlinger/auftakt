@@ -121,6 +121,15 @@ describe('summarizeBootLog', () => {
     ]);
   });
 
+  it('summarizes a v:2 report exactly like its v:1 predecessor', () => {
+    // WP-61 bumped the report to v:2 and added `frames.warm2` beside `warm`. Neither is a
+    // summary field — `warm`/`warm2`/`quick` are triage noise (see summarizeBootLog) — so a
+    // log holding both generations must render them identically. This is the property the
+    // schema bump promises: nothing here branches on `v`, and an old line stays readable.
+    const v2 = { ...PLAY, v: 2, frames: { ...PLAY.frames, warm2: 210.4 } };
+    expect(body(log(v2))).toEqual(body(log(PLAY)));
+  });
+
   it('keeps outcome/why when there is nothing else — the markers main writes itself', () => {
     expect(body(log({ outcome: 'no-report', why: 'quit' }))).toEqual([
       '2026-08-11 12:00 · v0.5.0 · no-report/quit',
