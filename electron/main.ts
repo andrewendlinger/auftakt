@@ -19,8 +19,9 @@ import { pathToFileURL } from 'node:url';
 import { fileStamp, localStamp } from '../shared/time';
 import { buildMenu } from './menu';
 import { backupDirProblem, runStartupBackup } from './backup';
-import { cascadeBounds, fittedSize } from './cascade';
+import { WINDOW_MINIMUM, WINDOW_PREFERRED, cascadeBounds, fittedSize } from './cascade';
 import { exportFileName } from './exportName';
+import { readWindowBounds, usableBounds, writeWindowBounds } from './windowBounds';
 import {
   BOOT_LOG_NAME,
   BOOT_REPORT_MAX_CHARS,
@@ -627,10 +628,11 @@ async function runImport(seasonId: number | undefined, win: BrowserWindow | null
   }
 }
 
-/** The window size the app asks for; `fittedSize` shrinks it to whatever the display allows. */
-const PREFERRED = { width: 1440, height: 900 };
-/** Enforced by Electron itself, so the placement arithmetic must never go below it. */
-const MINIMUM = { width: 1024, height: 680 };
+/* The preferred and minimum window sizes used to be two constants here. They live in
+ * `cascade.ts` since WP-55 (WINDOW_PREFERRED / WINDOW_MINIMUM), because the only automated
+ * coverage they have is `client/src/lib/cascade.test.ts`, which cannot import this file —
+ * `electron/tsconfig.json` is `include: ["*.ts"]` and this one imports `electron`. The test
+ * carried a hand-copied twin of the minimum instead, coupled to the original by a comment. */
 
 async function createWindow(): Promise<void> {
   // Sampled BEFORE construction — a moment later the count would include this window.
@@ -640,23 +642,39 @@ async function createWindow(): Promise<void> {
   const others = BrowserWindow.getAllWindows();
   const isSecondary = others.length > 0;
   let bounds;
+  let maximized = false;
   if (isSecondary) {
     // getDisplayMatching keeps the cascade on the monitor the user is working on, and the
     // windows already open are the state that decides where this one may go — a counter drifts
     // out of step with them and never frees the place a closed window left (see cascade.ts).
     const src = (BrowserWindow.getFocusedWindow() ?? others[others.length - 1]!).getBounds();
     const taken = others.filter((w) => !w.isDestroyed()).map((w) => w.getBounds());
-    bounds = cascadeBounds(src, screen.getDisplayMatching(src).workArea, PREFERRED, MINIMUM, taken);
+    bounds = cascadeBounds(src, screen.getDisplayMatching(src).workArea, WINDOW_PREFERRED, WINDOW_MINIMUM, taken);
   } else {
-    // Size only: with no window to match a display against, Electron's own centering is the
-    // better answer than guessing which monitor of several the user is sitting at.
-    bounds = fittedSize(screen.getPrimaryDisplay().workArea, PREFERRED, MINIMUM);
+    // The first window of a launch goes back where the last one closed (WP-55) — arranging two
+    // windows side by side is the point of the smaller minimum, and it is worth nothing if the
+    // arrangement dies with the app. `usableBounds` refuses a rectangle that no longer lands on
+    // any attached screen, which is the failure that matters: bounds saved on a monitor that is
+    // no longer there restore a window nobody can see, i.e. an app that did not start.
+    const restored = usableBounds(
+      readWindowBounds(app.getPath('userData')),
+      screen.getAllDisplays().map((d) => d.workArea),
+      WINDOW_MINIMUM,
+    );
+    if (restored) {
+      bounds = { x: restored.x, y: restored.y, width: restored.width, height: restored.height };
+      maximized = restored.maximized;
+    } else {
+      // Size only: with no window to match a display against, Electron's own centering is the
+      // better answer than guessing which monitor of several the user is sitting at.
+      bounds = fittedSize(screen.getPrimaryDisplay().workArea, WINDOW_PREFERRED, WINDOW_MINIMUM);
+    }
   }
 
   const win = new BrowserWindow({
     ...bounds,
-    minWidth: MINIMUM.width,
-    minHeight: MINIMUM.height,
+    minWidth: WINDOW_MINIMUM.width,
+    minHeight: WINDOW_MINIMUM.height,
     title: 'Auftakt',
     // Created hidden. A window shown at construction is on screen before loadURL has
     // fetched anything, so the user gets an empty rectangle for the whole renderer boot
@@ -671,6 +689,21 @@ async function createWindow(): Promise<void> {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+
+  // Before the window is ever shown, so it appears maximized rather than growing into it.
+  // The rectangle above is the one it will restore to, which is what getNormalBounds saved.
+  if (maximized) win.maximize();
+
+  // On `close`, not `closed`: the window has to still exist to be measured. getNormalBounds is
+  // the un-maximized, un-fullscreened rectangle — the size the user actually chose — so a
+  // maximized window remembers both halves of its state instead of saving the whole screen and
+  // reopening as an unmaximizable full-screen rectangle on the next, smaller display.
+  win.on('close', () => {
+    writeWindowBounds(app.getPath('userData'), {
+      ...win.getNormalBounds(),
+      maximized: win.isMaximized(),
+    });
   });
 
   // ready-to-show never fires if the load fails, and a window that stays hidden is worse

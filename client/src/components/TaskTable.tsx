@@ -557,140 +557,148 @@ export function TaskTable({
   return (
     <TaskTableCtx.Provider value={cellApi}>
     <div className="overflow-x-auto rounded-2xl bg-white shadow-sm ring-1 ring-black/5">
-      {/* Add row at the top so new tasks don't require scrolling past the done items. */}
-      {parent && (
-        <AddTaskRow
-          parent={parent}
-          defaultStatus={defaultStatus}
-          defaultPriority={defaultPriority}
-          onAdded={invalidate}
-        />
-      )}
-      <table className="w-full border-collapse text-sm">
-        <thead>
-          <tr className="border-b border-neutral-100 text-left text-xs uppercase tracking-wide text-neutral-400">
-            {/* Gutter header. Rendered outside the map so it carries no sort handler. */}
-            <th className="p-0" style={{ width: TREE.width, minWidth: TREE.width }} aria-hidden />
-            {columns.map(({ id, header }) => {
-              const active = sort?.id === id;
-              return (
-                <th
-                  key={id}
-                  className={`px-3 py-2 font-semibold ${sortableIds.has(id) ? 'cursor-pointer select-none hover:text-neutral-600' : ''}`}
-                  title={sortableIds.has(id) ? 'Sortieren: aufsteigend → absteigend → Standard' : undefined}
-                  onClick={() => toggleSort(id)}
-                >
-                  <span className="inline-flex items-center gap-1">
-                    {header}
-                    {active && <span>{sort?.dir === 'asc' ? '▲' : '▼'}</span>}
-                  </span>
-                </th>
-              );
-            })}
-          </tr>
-        </thead>
-        {/* One <tbody> per top-level task, so a task and its subtasks form one framed group. */}
-        {groupRows(rows).map((group) => {
-          const head = group[0]!;
-          const spineColor = spineColorFor(head.original.color);
-          const composerOpen = addingChildFor === head.original.id;
-          const lastIdx = group.length - 1;
-          return (
-            <tbody key={head.id} data-group-id={head.original.id}>
-              {group.map((row, i) => {
-                const done = row.original.status === doneValue;
-                const color = row.original.color;
-                const colored = !done && !!color;
-                const child = row.depth > 0;
-                const closesGroup = i === lastIdx && !composerOpen;
-                // Three cues, three channels that cannot overwrite one another: `done` owns
-                // background-color, the colour tint and the nesting band composite as
-                // background-image layers, and the colour accent moves to the gutter cell.
-                const layers: string[] = [];
-                if (colored) {
-                  const tint = withAlpha(color, 0.16);
-                  layers.push(`linear-gradient(${tint}, ${tint})`);
-                }
-                if (child) layers.push(CHILD_BAND);
+      {/* `min-w-min` = min-width: min-content, which is the table's own minimum — so the add row
+          above it stretches to the width the table actually took instead of stopping at the
+          container's edge, and scrolling right no longer leaves „Neue Aufgabe" and its bottom
+          border ending in mid-air (WP-55). `w-max` here would be wrong: that is the table's
+          *preferred* width, i.e. nothing wraps any more and every table scrolls further than it
+          has to. On a display with room, min-content is under the container and nothing changes. */}
+      <div className="min-w-min">
+        {/* Add row at the top so new tasks don't require scrolling past the done items. */}
+        {parent && (
+          <AddTaskRow
+            parent={parent}
+            defaultStatus={defaultStatus}
+            defaultPriority={defaultPriority}
+            onAdded={invalidate}
+          />
+        )}
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-neutral-100 text-left text-xs uppercase tracking-wide text-neutral-400">
+              {/* Gutter header. Rendered outside the map so it carries no sort handler. */}
+              <th className="p-0" style={{ width: TREE.width, minWidth: TREE.width }} aria-hidden />
+              {columns.map(({ id, header }) => {
+                const active = sort?.id === id;
                 return (
-                  <tr
-                    key={row.id}
-                    data-task-id={row.original.id}
-                    data-depth={row.depth}
-                    className={`group border-b align-top ${
-                      closesGroup ? 'border-neutral-200/60' : 'border-neutral-100/70'
-                    } ${
-                      done
-                        ? 'bg-neutral-50/60 text-neutral-400'
-                        : child
-                          ? 'hover:bg-neutral-50/70'
-                          : 'hover:bg-neutral-50/40'
-                    } ${
-                      drag.isDropTarget(row.original.id)
-                        ? 'outline outline-2 -outline-offset-2 outline-neutral-500'
-                        : ''
-                    } ${drag.isDragging(row.original.id) ? 'opacity-40' : ''}`}
-                    style={layers.length ? { backgroundImage: layers.join(', ') } : undefined}
-                    {...drag.itemProps(row.original.id)}
+                  <th
+                    key={id}
+                    className={`px-3 py-2 font-semibold ${sortableIds.has(id) ? 'cursor-pointer select-none hover:text-neutral-600' : ''}`}
+                    title={sortableIds.has(id) ? 'Sortieren: aufsteigend → absteigend → Standard' : undefined}
+                    onClick={() => toggleSort(id)}
                   >
-                    <TreeGutterCell
-                      // A subtask that has subtasks of its own gets the connector *and* a
-                      // chevron. The UI only builds two levels, but an import can produce more,
-                      // and without the third kind those rows rendered exactly like their own
-                      // children and could not be folded (TTU-37).
-                      kind={
-                        child
-                          ? row.canExpand
-                            ? 'branch'
-                            : 'child'
-                          : row.canExpand
-                            ? 'parent'
-                            : 'leaf'
-                      }
-                      expanded={row.isExpanded}
-                      continues={i < lastIdx || composerOpen}
-                      spineColor={spineColor}
-                      accentColor={colored ? color : null}
-                      onToggle={() => toggleExpand(row.original.id)}
-                      dragHandle={
-                        // `override`, not `sort`: an override whose column has been hidden no
-                        // longer orders anything, so a handle explaining itself with „Spalten-
-                        // sortierung aktiv" would point at a header that is not on screen to
-                        // click a third time.
-                        override ? (
-                          <DragHandle
-                            disabled
-                            title="Spaltensortierung aktiv — zum Verschieben die Sortierung zurücksetzen (Spaltenkopf erneut klicken)"
-                          />
-                        ) : (
-                          <DragHandle {...drag.handleProps(row.original.id)} />
-                        )
-                      }
-                    />
-                    {columns.map(({ id, cell: Cell }) => (
-                      <td key={id} className="px-3 py-2">
-                        <Cell row={row} columnId={id} />
-                      </td>
-                    ))}
-                  </tr>
+                    <span className="inline-flex items-center gap-1">
+                      {header}
+                      {active && <span>{sort?.dir === 'asc' ? '▲' : '▼'}</span>}
+                    </span>
+                  </th>
                 );
               })}
-              {composerOpen && (
-                <SubtaskAddRow
-                  parentTask={head.original}
-                  /* Data columns only — the composer supplies its own gutter cell. */
-                  colSpan={columns.length}
-                  spineColor={spineColor}
-                  defaultStatus={defaultStatus}
-                  defaultPriority={defaultPriority}
-                  onAdded={invalidate}
-                  onClose={() => setAddingChildFor(null)}
-                />
-              )}
-            </tbody>
-          );
-        })}
-      </table>
+            </tr>
+          </thead>
+          {/* One <tbody> per top-level task, so a task and its subtasks form one framed group. */}
+          {groupRows(rows).map((group) => {
+            const head = group[0]!;
+            const spineColor = spineColorFor(head.original.color);
+            const composerOpen = addingChildFor === head.original.id;
+            const lastIdx = group.length - 1;
+            return (
+              <tbody key={head.id} data-group-id={head.original.id}>
+                {group.map((row, i) => {
+                  const done = row.original.status === doneValue;
+                  const color = row.original.color;
+                  const colored = !done && !!color;
+                  const child = row.depth > 0;
+                  const closesGroup = i === lastIdx && !composerOpen;
+                  // Three cues, three channels that cannot overwrite one another: `done` owns
+                  // background-color, the colour tint and the nesting band composite as
+                  // background-image layers, and the colour accent moves to the gutter cell.
+                  const layers: string[] = [];
+                  if (colored) {
+                    const tint = withAlpha(color, 0.16);
+                    layers.push(`linear-gradient(${tint}, ${tint})`);
+                  }
+                  if (child) layers.push(CHILD_BAND);
+                  return (
+                    <tr
+                      key={row.id}
+                      data-task-id={row.original.id}
+                      data-depth={row.depth}
+                      className={`group border-b align-top ${
+                        closesGroup ? 'border-neutral-200/60' : 'border-neutral-100/70'
+                      } ${
+                        done
+                          ? 'bg-neutral-50/60 text-neutral-400'
+                          : child
+                            ? 'hover:bg-neutral-50/70'
+                            : 'hover:bg-neutral-50/40'
+                      } ${
+                        drag.isDropTarget(row.original.id)
+                          ? 'outline outline-2 -outline-offset-2 outline-neutral-500'
+                          : ''
+                      } ${drag.isDragging(row.original.id) ? 'opacity-40' : ''}`}
+                      style={layers.length ? { backgroundImage: layers.join(', ') } : undefined}
+                      {...drag.itemProps(row.original.id)}
+                    >
+                      <TreeGutterCell
+                        // A subtask that has subtasks of its own gets the connector *and* a
+                        // chevron. The UI only builds two levels, but an import can produce more,
+                        // and without the third kind those rows rendered exactly like their own
+                        // children and could not be folded (TTU-37).
+                        kind={
+                          child
+                            ? row.canExpand
+                              ? 'branch'
+                              : 'child'
+                            : row.canExpand
+                              ? 'parent'
+                              : 'leaf'
+                        }
+                        expanded={row.isExpanded}
+                        continues={i < lastIdx || composerOpen}
+                        spineColor={spineColor}
+                        accentColor={colored ? color : null}
+                        onToggle={() => toggleExpand(row.original.id)}
+                        dragHandle={
+                          // `override`, not `sort`: an override whose column has been hidden no
+                          // longer orders anything, so a handle explaining itself with „Spalten-
+                          // sortierung aktiv" would point at a header that is not on screen to
+                          // click a third time.
+                          override ? (
+                            <DragHandle
+                              disabled
+                              title="Spaltensortierung aktiv — zum Verschieben die Sortierung zurücksetzen (Spaltenkopf erneut klicken)"
+                            />
+                          ) : (
+                            <DragHandle {...drag.handleProps(row.original.id)} />
+                          )
+                        }
+                      />
+                      {columns.map(({ id, cell: Cell }) => (
+                        <td key={id} className="px-3 py-2">
+                          <Cell row={row} columnId={id} />
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+                {composerOpen && (
+                  <SubtaskAddRow
+                    parentTask={head.original}
+                    /* Data columns only — the composer supplies its own gutter cell. */
+                    colSpan={columns.length}
+                    spineColor={spineColor}
+                    defaultStatus={defaultStatus}
+                    defaultPriority={defaultPriority}
+                    onAdded={invalidate}
+                    onClose={() => setAddingChildFor(null)}
+                  />
+                )}
+              </tbody>
+            );
+          })}
+        </table>
+      </div>
 
       {tasks.length === 0 && <div className="p-3"><EmptyState>Keine Aufgaben.</EmptyState></div>}
 
@@ -1186,6 +1194,8 @@ function AddTaskRow({
   );
   const onEnter = onEnterKey(() => void submit());
   return (
+    // Width comes from the `min-w-min` box this shares with the <table> (see TaskTable): as a
+    // block-level sibling it would otherwise take the scroll container's width, not the table's.
     <div className="flex items-center gap-2 border-b border-neutral-100 px-3 py-2">
       <PlusIcon className="h-4 w-4 shrink-0 text-neutral-300" />
       {/* No `autoFocus`, deliberately (WP-43): this row is permanently visible, so focusing it on

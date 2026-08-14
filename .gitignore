@@ -77,6 +77,11 @@ TODO.md
 TODone.md
 TODO-security.md
 
+# Diagnoseberichte, die ein Kunde per Mail schickt (WP-54 schreibt sie auf den Desktop, sie
+# landen beim Lesen im Repo-Wurzelverzeichnis). Sie tragen keine Termine, Künstler oder Notizen,
+# aber sehr wohl den Rechner: OS-Build, CPU, GPU-Treiberstand, Benutzerpfade.
+Auftakt-Diagnose-*.txt
+
 # Session-Notizen für einen manuellen Testlauf — ephemer, nicht die Checkliste selbst.
 # Was sich davon als dauerhaft herausstellt, gehört nach docs/BACKUP-TESTING.md, nicht hierher.
 MACOS-SESSION.md

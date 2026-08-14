@@ -46,7 +46,10 @@ export function SectionTitle({
     <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">{children}</h2>
   );
   return (
-    <div className="section-title mb-3 flex items-center justify-between gap-3">
+    // `flex-wrap` (WP-55): `right` can be a w-64 search box (ArchivePage), and without it a
+    // narrow window squeezes that box and wraps the heading beside it instead of putting the
+    // two on separate lines.
+    <div className="section-title mb-3 flex flex-wrap items-center justify-between gap-3">
       {hint == null ? (
         heading
       ) : (

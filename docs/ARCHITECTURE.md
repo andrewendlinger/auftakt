@@ -496,6 +496,26 @@ land on the same pixel (PR50-06). New windows open unpinned and adopt the regist
 default from the first response echo — `switchSeason()` moves that default, so Cmd+N opens the
 last-switched season, not necessarily the opener's.
 
+`WINDOW_PREFERRED` (1440×900) and `WINDOW_MINIMUM` (624×560) live in `cascade.ts` rather than
+`main.ts`, because the only thing that ever checks them is `cascade.test.ts`, which cannot import
+`main.ts` — `electron/tsconfig.json` is `include: ["*.ts"]` and `main.ts` imports `electron`. The
+minimum is a **window** size, not a viewport: `useContentSize` is false, so the frame comes off
+before the renderer sees anything (a customer's boot log shows a 1440-wide window reporting
+`innerWidth: 1426` on Windows 11, and macOS takes nothing off the sides). That difference is why
+it is 624 and not 640 — 640 is exactly Tailwind's `sm:` breakpoint, and a floor that lands on it
+would give the *same* window a two-column layout on one platform and one column on the other.
+
+**The first window of a launch may come from disk** (`electron/windowBounds.ts`, WP-55): every
+window writes `getNormalBounds()` plus its maximized flag to `window-bounds.json` in `userData` on
+`close`, so the last one closed wins, and the first window of the next launch reopens there.
+Secondary windows always cascade — restoring more than one would have to decide which season goes
+where, which is not something bounds know. `usableBounds()` is the pure half and the one that is
+tested: it refuses a rectangle that no longer overlaps any attached work area, because bounds
+saved on an external monitor otherwise restore a window onto coordinates that no longer exist,
+and the symptom the user reports is that the app does not start. The file sits beside
+`boot-log.jsonl` and deliberately **not** in `seasons.json` — the registry is exported, imported
+and backed up, and one machine's monitor layout has no business travelling inside another's data.
+
 **Main never reloads a window to refresh it.** The one thing main knows and the renderers do not
 — the registry-wide backup folder changed, from any window's picker, the Datei menu or the
 first-launch prompt — travels as `backup-config-changed`, the app's only `webContents.send` and

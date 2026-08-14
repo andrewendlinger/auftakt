@@ -161,6 +161,14 @@ focused-window season resolution. Run with at least two seasons present.
       tell apart, none of them under the menu bar or past the screen edge. The old wrap reset
       to one fixed anchor, so from the second onward they were pixel-identical (PR50-06).
       `client/src/lib/cascade.test.ts` pins the arithmetic; this checks the real displays.
+- [ ] **Zwei Fenster nebeneinander** (WP-55): shrink one window to its minimum — it must reach
+      624×560, i.e. roughly a third of a 1920 panel — and put two side by side. Then quit and
+      relaunch: the **first** window comes back where the last one closed, and Cmd+N still
+      cascades rather than restoring. Maximize, quit, relaunch → maximized.
+- [ ] **Saved bounds outlive the screen they were saved on** (WP-55): put a window on an external
+      monitor, quit, unplug it, relaunch → a normal centred window on the laptop panel, *not* an
+      app that appears not to start. `~/Library/Application Support/auftakt/window-bounds.json`
+      (`%APPDATA%\auftakt\` on Windows) is the file; deleting it must also be harmless.
 - [ ] Edit a task in window A → window B (same season) shows it without any interaction. Then
       break the fast path once: edit in A and merely *focus* B — the focus refetch is the
       backstop and must also bring the edit in.
