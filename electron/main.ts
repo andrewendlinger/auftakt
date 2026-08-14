@@ -708,16 +708,25 @@ async function createWindow(): Promise<void> {
     win.hide();
   }
 
+  // Only the first window of a launch, matching the one rectangle that is saved: a secondary
+  // window's position is a cascade offset off whichever window was focused, so letting it write
+  // meant the remembered rectangle walked +28/+28 down the screen on every launch that quit with
+  // two windows open (Cmd+Q closes both, in an order Electron does not specify, so the cascaded
+  // one can close last and win). See DECISIONS.md, „Only the first window's bounds are
+  // remembered" — the code now says what that entry always claimed.
+  //
   // On `close`, not `closed`: the window has to still exist to be measured. getNormalBounds is
   // the un-maximized, un-fullscreened rectangle — the size the user actually chose — so a
   // maximized window remembers both halves of its state instead of saving the whole screen and
   // reopening as an unmaximizable full-screen rectangle on the next, smaller display.
-  win.on('close', () => {
-    writeWindowBounds(app.getPath('userData'), {
-      ...win.getNormalBounds(),
-      maximized: win.isMaximized(),
+  if (!isSecondary) {
+    win.on('close', () => {
+      writeWindowBounds(app.getPath('userData'), {
+        ...win.getNormalBounds(),
+        maximized: win.isMaximized(),
+      });
     });
-  });
+  }
 
   // ready-to-show never fires if the load fails, and a window that stays hidden is worse
   // than one that flashes empty: app.on('activate') counts hidden windows too, so it

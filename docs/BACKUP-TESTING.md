@@ -163,8 +163,11 @@ focused-window season resolution. Run with at least two seasons present.
       `client/src/lib/cascade.test.ts` pins the arithmetic; this checks the real displays.
 - [ ] **Zwei Fenster nebeneinander** (WP-55): shrink one window to its minimum — it must reach
       624×560, i.e. roughly a third of a 1920 panel — and put two side by side. Then quit and
-      relaunch: the **first** window comes back where the last one closed, and Cmd+N still
-      cascades rather than restoring.
+      relaunch: the **first** window comes back where the *first* window was, and Cmd+N still
+      cascades rather than restoring. Repeat the whole cycle — open a second window, quit with
+      both open, relaunch — three or four times: the first window must land on the same spot
+      every time. Only the first window writes, so the cascade's +28/+28 must never accumulate
+      into the remembered position.
 - [ ] **Maximized comes back maximized, with nothing on screen before the boot gesture**
       (WP-55): maximize, quit, relaunch → the window appears already maximized, and the *first*
       thing visible in it is the boot gesture — never an empty cream rectangle that sits there

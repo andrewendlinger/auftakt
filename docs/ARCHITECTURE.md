@@ -505,11 +505,14 @@ before the renderer sees anything (a customer's boot log shows a 1440-wide windo
 it is 624 and not 640 — 640 is exactly Tailwind's `sm:` breakpoint, and a floor that lands on it
 would give the *same* window a two-column layout on one platform and one column on the other.
 
-**The first window of a launch may come from disk** (`electron/windowBounds.ts`, WP-55): every
-window writes `getNormalBounds()` plus its maximized flag to `window-bounds.json` in `userData` on
-`close`, so the last one closed wins, and the first window of the next launch reopens there.
-Secondary windows always cascade — restoring more than one would have to decide which season goes
-where, which is not something bounds know. `usableBounds()` is the pure half and the one that is
+**The first window of a launch may come from disk** (`electron/windowBounds.ts`, WP-55): the
+first window of a launch — and only it — writes `getNormalBounds()` plus its maximized flag to
+`window-bounds.json` in `userData` on `close`, and the first window of the next launch reopens
+there. Secondary windows never write, because their position is a cascade offset off whatever was
+focused: letting them save it walked the remembered rectangle +28/+28 down the screen on every
+launch that quit with two windows open. Secondary windows always cascade on the way in too —
+restoring more than one would have to decide which season goes where, which is not something
+bounds know. `usableBounds()` is the pure half and the one that is
 tested: it refuses a rectangle that no longer overlaps any attached work area, because bounds
 saved on an external monitor otherwise restore a window onto coordinates that no longer exist,
 and the symptom the user reports is that the app does not start. The file sits beside
