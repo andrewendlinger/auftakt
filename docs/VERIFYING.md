@@ -207,10 +207,11 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   reference in it is the tell. And **dev writes no boot log**, so a bundle built in dev holds the
   machine section and „noch keinen Start protokolliert" under the log heading; that is the branch,
   not a truncated file. A Wunsch writes nothing at all.
-- **There is one button and no folder.** „Text kopieren" and „Diagnoseordner öffnen" were removed
-  once the bundle existed, so a script that waits for either hangs; `shell.showItemInFolder` is
-  gone from the codebase with them. The address in plain text under „Was wird mitgeschickt?" is
-  the whole of the no-mail-client fallback now.
+- **There is one way through and no folder.** „Text kopieren" and „Diagnoseordner öffnen" were
+  removed once the bundle existed, so a script that waits for either hangs. `shell.showItemInFolder`
+  did *not* go with them: `save-diagnostics` still reveals the file it just wrote, which is one more
+  reason a driving script must stub the bridge rather than let the real one run. The address in
+  plain text under „Was wird mitgeschickt?" is the whole of the no-mail-client fallback now.
 - **A traced launch: `AUFTAKT_BOOT_TRACE=1`.** Records from before the window until ~750 ms after
   the overlay settles — capped at ~6 s, or the env var's value in milliseconds — to
   `boot-trace-<stamp>.json` in userData, loadable at ui.perfetto.dev. Quitting does not lose it:
@@ -444,16 +445,25 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   Its only observable is the URL handed to `openExternal`, and the real one opens a mail client
   on the machine running the script. Stub the bridge with an `openExternal` that *records* —
   `window.__external.push(url)` — then read it back with `new URL(...)` and `searchParams`, which
-  is also the only honest check of the encoding. Asserting on the dialog after „E-Mail schreiben"
+  is also the only honest check of the encoding. Asserting on the dialog after „E-Mail öffnen"
   asserts on nothing; it has already closed itself.
+- **Sending takes two clicks, and the first one opens a dialog rather than closing one.** „Weiter"
+  in the form only opens the steps dialog („So geht es weiter"); „E-Mail öffnen" inside it is what
+  writes the bundle and hands over the `mailto:`. So `dialogs(page)` counts **2** in between —
+  scope to `topDialog(page)` or a bare `getByRole('button', {name: 'Zurück'})` matches nothing
+  useful — and a script that clicks „Weiter" and waits for `window.__external` hangs for ever.
+  Escape and the backdrop peel off the steps dialog only; the filled-in form is still behind it,
+  which is also how to check that a „Zurück" kept the typed answers.
 - **The dialog asks nothing until a kind is picked, and the questions differ per kind.** „Was ist
   passiert?" exists only under Fehler — a script keyed on it hangs on a Wunsch, where the same
   first box reads „Was möchtest du tun können?". Click `getByRole('button', {name: /^Fehler/})`
   first, then the area, then fill `locator('textarea').nth(0)` by position rather than by label
   (the `getByLabel` trap below applies here too). The subject is
   `[AF-<10 digits>] Auftakt-(Fehler|Wunsch): <Bereich>`, and the reference is stamped once when
-  the dialog opens — the same value appears in the preview, in the subject, in the body's
-  „Kennung:" line and in the diagnostics filename, which is what to assert they agree on.
+  the dialog opens — the same value appears in the preview, in the subject, in the body's stamp
+  line („Fehler · Künstler · Kennung: AF-…", in the technical block, not at the top) and in the
+  diagnostics filename, which is what to assert they agree on. With a bundle written the body's
+  first line is `!! BITTE NOCH ANHÄNGEN: …`; without one it starts straight in on `--- <heading>`.
 - **`getByLabel` finds nothing in a `RecordFormModal`.** Its `<label>` (`fields.tsx`) carries no
   `htmlFor` and does not wrap the input, so the two are not associated and Playwright's
   accessible-name lookup times out — 30 s per field, reading as „the dialog never opened".

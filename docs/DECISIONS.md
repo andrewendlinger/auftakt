@@ -37,9 +37,12 @@ a button that opens a folder full of Chromium caches is not a better answer than
 already lying on the desktop. Two routes to the same evidence is one route more than the feature
 needs, and the one being kept is the one that ends with the file attached.
 
-The `reveal-diagnostics` channel went with it rather than staying behind as an unused handler —
-`shell.showItemInFolder` no longer appears in the codebase at all. If a bundle cannot be written,
-the mail carries the five-line summary instead; nothing routes the customer into `userData` again.
+The `reveal-diagnostics` channel went with it rather than staying behind as an unused handler.
+`shell.showItemInFolder` itself stays, in `save-diagnostics` and nowhere else (`electron/main.ts`):
+it reveals the bundle it has just written, on a path the renderer cannot aim — the removed thing is
+the standalone button and the channel that let a renderer ask for a folder, not the reveal. If a
+bundle cannot be written, the mail carries the five-line summary instead; nothing routes the
+customer into `userData` again.
 
 ## A `mailto:` cannot attach, so the app writes the file instead (2026-08-14, WP-54)
 
@@ -71,18 +74,32 @@ So the file is made attachable instead of the mail made bigger. `save-diagnostic
   scrub runs over the finished text, so a path the person typed into the report is covered too.
 
 What it costs is one manual step — the drag — and that is the floor, not a shortfall. „E-Mail
-schreiben" reveals the file first and opens the client second, so the compose window is what ends
-up in front.
+öffnen" reveals the file first and opens the client second, so the compose window is what ends up
+in front.
 
-Because that step is the floor, it is where the words go. The dialog numbers what the click is
-about to do *before* it happens — a file appearing on the desktop and a mail opening on top of it
-is two surprises at once otherwise — and the draft opens on the instruction to attach it, above
-what the person wrote, because a mail client shows the first line and not the signature. The
-instruction is addressed to the customer rather than the maintainer and says the lines may stay:
-every sentence asking the reader to decide something is a sentence that can be decided wrong. The
-copy written *into* the bundle drops both the instruction and the summary — a file telling its
-reader to attach that same file is nonsense, and the log it would digest is printed in full two
-sections below.
+Because that step is the floor, it is where the words go, and **the words are a dialog rather than
+a card (2026-08-14).** The steps were first written as a numbered card above the send button, which
+put the one thing the customer has to do at the bottom of a scrolling form under three text boxes —
+the easiest place in the feature to skip. „Weiter" now opens a second dialog carrying those steps
+and nothing else, and only its „E-Mail öffnen" writes the file and opens the client. A card is
+scrolled past; a dialog is answered. It also settles what the button may claim: „E-Mail schreiben"
+promised a mail this click does not write, and „verschicken" would have promised a send that is not
+this app's to make.
+
+The draft then opens on the instruction to attach the file, on the first line, because a mail
+client shows the first line and not the signature. Kind, area and reference used to sit above it
+and now sit in the technical block: they are what the report is filed under, the subject carries
+all three, and nothing about them is for the reader to act on. The instruction is addressed to the
+customer rather than the maintainer, and „(bitte stehen lassen)" heads the block that is not theirs
+to tidy — every sentence asking the reader to decide something is a sentence that can be decided
+wrong. The copy written *into* the bundle drops both the instruction and the summary: a file
+telling its reader to attach that same file is nonsense, and the log it would digest is printed in
+full two sections below.
+
+The body's headings are `--- ` and the attach block is `!!` for a reason that outlives taste:
+`encodeURIComponent` leaves `!` and `-` alone, spends three characters on `=` or `#` and nine on a
+box-drawing rule, and the budget below is measured in encoded characters. Structure that reads as
+free in an editor is not free in a `mailto:`.
 
 ## No menu entry for feedback (2026-08-14, WP-54)
 
@@ -114,6 +131,13 @@ budget is not abstract — three fields at the dialog's own `maxLength` plus a r
 clause and an attachment line come to 1931 encoded characters against a ceiling of 1900, and
 `check:unit` holds that arithmetic. What gets spent at that size is the summary, never a word the
 person wrote, because the summary's 100 entries are in the attachment in full.
+
+That ceiling is also what any re-wording of the body has to be measured against, and it has almost
+no slack: the same worst case *without* the summary measured 1897 of 1900 in the layout this
+feature shipped with. The restructure on 2026-08-14 paid for its headings by taking the duplicated
+`Art: … · Bereich: …` line out of the head — 1873 — so the structure cost nothing the person could
+have spent on words. `feedbackMail.test.ts` asserts the whole shape fits with no `[…]` in it, which
+is the only reason the arithmetic is discovered before a customer's report arrives truncated.
 
 A wish carries no summary at all. Startup timings say nothing about a feature request, and the
 budget they would spend is better spent on what was actually asked for.
