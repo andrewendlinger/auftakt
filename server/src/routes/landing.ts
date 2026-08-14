@@ -12,8 +12,36 @@ landingRouter.get('/', (_req, res) => {
   res.json(getLanding());
 });
 
+/**
+ * Optimistic concurrency, and the whole of WP-53's server half.
+ *
+ * A PATCH replaces whole arrays, so a client has to compute one from a read — and two windows
+ * computing from the *same* read silently destroyed each other's rows, with no Papierkorb behind
+ * seasons.json. A body carrying `rev` says which generation it was computed from; if the stored
+ * blob has moved on, nothing is written and the current content comes back with the 409 so the
+ * caller can re-apply its change without a second GET.
+ *
+ * **An omitted `rev` still writes unconditionally.** The conditional half is the *client's*
+ * contract, not this route's precondition: `demo.ts` calls `patchLanding` in-process and the check
+ * scripts drive the route directly, and neither has a generation to name.
+ *
+ * The compare and the write sit in the same handler with no `await` between them, so no second
+ * request can interleave into the gap — a route-level guard is as atomic here as one inside
+ * `patchLanding`, and this way `patchLanding` keeps the signature `demo.ts` already calls.
+ */
 landingRouter.patch('/', (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
+  if ('rev' in body) {
+    if (typeof body.rev !== 'number' || !Number.isInteger(body.rev)) {
+      return res.status(400).json({ error: 'rev must be an integer' });
+    }
+    const stored = getLanding();
+    if (body.rev !== stored.rev) {
+      return res
+        .status(409)
+        .json({ error: 'Ein anderes Fenster hat inzwischen gespeichert.', landing: stored });
+    }
+  }
   const patch: Parameters<typeof patchLanding>[0] = {};
   if ('notes' in body) {
     if (body.notes !== null && typeof body.notes !== 'string') {

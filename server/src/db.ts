@@ -71,6 +71,23 @@ export interface LandingContent {
   documents: LandingDoc[];
   layout: LandingLayoutEntry[];
   sections: LandingSection[];
+  /**
+   * Which generation of the blob this is — bumped by every `patchLanding`. A client sends the
+   * rev it computed from and the route refuses the write if the stored one has moved on
+   * (WP-53): a PATCH replaces whole arrays, so two windows writing from the same read silently
+   * destroy each other's rows, and `seasons.json` has no Papierkorb behind it.
+   *
+   * One counter for the whole blob, not one per key. It is coarser than the per-key merge
+   * below — a notes edit conflicts with a concurrent document add that could never have
+   * collided — but the client answers a conflict by re-reading and re-applying, so the cost is
+   * one extra round trip against a local process.
+   *
+   * Absent in files written before this and in files an older build has written since (its
+   * `patchLanding` rebuilds `reg.landing` from the four named keys and drops the rest). Both
+   * read as 0, which costs one rejected write and then self-heals — so there is nothing to
+   * migrate.
+   */
+  rev: number;
 }
 
 interface Registry {
@@ -520,6 +537,7 @@ export function getLanding(): LandingContent {
       ...s,
       type: s.type === 'links' ? 'links' : 'text',
     })),
+    rev: reg.landing?.rev ?? 0,
   };
 }
 
@@ -586,6 +604,9 @@ export function patchLanding(patch: {
     documents,
     layout: patch.layout !== undefined ? patch.layout : cur.layout,
     sections,
+    // Unconditional: every write is a new generation, including one that changes nothing.
+    // Callers that care whether they raced read `rev` back and compare — see the route.
+    rev: cur.rev + 1,
   };
   saveRegistry(reg);
   return reg.landing as LandingContent;
