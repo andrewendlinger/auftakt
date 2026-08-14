@@ -1414,3 +1414,56 @@ the size bar edited the wrong picture. The image node now handles its own `mouse
 whose target is an `<img>` that maps to an image node becomes a NodeSelection via `posAtDOM`,
 which asks the DOM tree instead of the layout. This was the predicted cost of float semantics
 (the editor-UX tail), found by the headless verification run on the first try.
+
+---
+
+## Landing-Schreibzugriffe: eine Generation pro Blob, Konflikt statt stillem Verlust (2026-08-14, WP-53)
+
+Cross-window season races were left *bounded* (PR #50 review, above). This one is closed, because
+the cost is not a transient mixed render but destroyed customer data with nothing behind it.
+
+**Der Befund.** A landing `PATCH` replaces whole arrays, so every mutation computes one from a
+read — and `useLanding().refresh()` was `ensureQueryData`, which returns the cache whenever an
+entry exists. Two windows computing from the same read each stored their own array, and the other
+window's document, Bereich or note ceased to exist: no message, no `deleted_at`, no Archiv, and no
+Papierkorb behind `seasons.json`. Reachable in normal operation since multi-window seasons — the
+landing content is cross-season, so it is on `#/` in every window, and Cmd+N adopts the registry
+default, which makes *two windows on the same season* the ordinary case rather than the odd one.
+
+**Konflikt erkennen schlägt frisch lesen.** Reading honestly before every write (which we now also
+do) only shrinks the window to one round trip and leaves the loss inside it silent. `patchLanding`
+therefore stamps a `rev`, the route refuses a patch built on a superseded one with 409, and
+`useLanding().update(fn)` takes a *function*: on refusal it re-applies `fn` to the content the 409
+carried and writes again, up to `MAX_CONFLICT_ATTEMPTS`. So a concurrent write is merged, and an
+exhausted budget is reported through the caller's existing catch → German toast. Taking an array
+instead of a function would defeat the whole thing — a retry can only re-apply an *intent*, and
+every mutation on that page was already written as one (`now.filter(…)`, `[...now, added]`,
+`arrayMoveTo(now, …)`).
+
+**Eine Generation für den ganzen Blob, nicht eine je Schlüssel.** The server still merges per
+top-level key, so the counter is coarser than the storage: a notes edit is refused over a
+concurrent document add that could never have collided with it. Deliberate — the client answers
+that with one extra round trip against a local Express process, and the user cannot tell. Per-key
+generations would buy nothing anybody can perceive and would put a second bookkeeping scheme into
+the registry.
+
+**Nichts zu migrieren, in beide Richtungen.** A registry written before this has no `rev` and
+reads as 0. An *older* build rebuilds `reg.landing` from its four named keys and so drops the
+counter, which the next new build also reads as 0 — one refused write, then self-healed. An
+omitted `rev` still writes unconditionally, because `demo.ts` and the seeders call `patchLanding`
+in-process and have no generation to name; the conditional half is the client's contract.
+
+**`useSettingsArray` bleibt bei der halben Lösung, mit Absicht.** It has the identical shape and
+its `refresh()` got the same honest refetch, but `write` still posts a snapshot, so two windows on
+one season can still replace each other's `dashboard_layout` or `labels`. Those are configuration
+arrays: a lost edit is on screen and one gesture from being redone, where a lost document is gone.
+Giving them the same guarantee means a generation column on the key/value `settings` table and a
+response-shape change, in the same migration chain WP-R5 is about to rework. **Revisit** if a
+customer reports a lost setting, or once WP-R5 has landed and the chain is being touched anyway.
+
+**Der Broadcast ist die erste Verteidigungslinie und funktioniert** — which the verification found
+the hard way. Holding a window's `GET /api/landing` back to force a stale read produces no
+conflict at all: the other window's write broadcasts an invalidate, the held window's active query
+refetches, and that second GET supersedes the held one inside react-query. The lost update is a
+write *arriving* after a newer generation landed, not a stale read, and no amount of invalidation
+can prevent it. That is why the guard is on the write and not merely on the read.

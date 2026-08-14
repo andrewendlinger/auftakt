@@ -13,7 +13,8 @@ import { ChevronRightIcon, HomeIcon, TrashIcon } from './icons';
 import { useToast } from './Toast';
 import { useUndo, type UndoEntry } from './UndoProvider';
 import type { LabelKey } from '../lib/labels';
-import { useGuardedAction, useInvalidateAll, useLabel, useSettingsArray } from '../hooks';
+import { refetchNow, useGuardedAction, useInvalidateAll, useLabel, useSettingsArray } from '../hooks';
+import { pendingKey, trackPending } from '../lib/pending';
 
 export type LayoutKey = 'artist_layout' | 'project_layout' | 'dashboard_layout';
 
@@ -75,7 +76,7 @@ export interface LayoutStore {
   current: () => LayoutEntry[];
   write: (next: LayoutEntry[]) => Promise<boolean>;
   /**
-   * Put the store's query back in the cache, so the two readers below answer from stored truth.
+   * Re-read the store's query from the server, so the two readers below answer from stored truth.
    *
    * `current()` and `owned()` read the query cache, and react-query evicts an entry `gcTime`
    * after its last observer unmounts — five minutes, the default, since `main.tsx` sets only
@@ -83,8 +84,12 @@ export interface LayoutStore {
    * minutes on another page found no `['artist', 1]` row, read that as „this page holds no
    * layout of its own" and refused, and on the landing `current()` would have answered with
    * `DEFAULT_LANDING_LAYOUT` and overwritten the real arrangement with it. The undo arms
-   * therefore await this first. It costs nothing while the entry is still cached —
-   * `ensureQueryData` only fetches on an actual miss.
+   * therefore await this first.
+   *
+   * It is a real request, not `ensureQueryData` (`refetchNow` in hooks.ts): a cached entry is no
+   * evidence about what another window wrote, and every implementation of this reads and then
+   * *writes back* (WP-53). It can therefore reject — which is the wanted end, since the throw
+   * lands before any write and leaves the store untouched.
    */
   refresh?: () => Promise<void>;
   /**
@@ -167,13 +172,13 @@ export function useEntityLayout(
   );
   const refresh = useCallback(async () => {
     if (id == null) return;
-    await qc.ensureQueryData({
-      queryKey: [kind, id],
+    await refetchNow(
+      qc,
+      [kind, id],
       // Annotated, or the union collapses to whichever branch is written first and the other
       // stops assigning — the same reason `patch` picks the resource with a ternary too.
-      queryFn: (): Promise<Artist | Project> =>
-        kind === 'artist' ? api.artists.get(id) : api.projects.get(id),
-    });
+      (): Promise<Artist | Project> => (kind === 'artist' ? api.artists.get(id) : api.projects.get(id)),
+    );
   }, [qc, kind, id]);
   const current = useCallback(() => {
     const stored = ownRows();
@@ -189,9 +194,17 @@ export function useEntityLayout(
           : old,
       );
       const res = kind === 'artist' ? api.artists : api.projects;
-      const ok = await guard(fallback, () => res.update(id, { layout: next }));
-      await invalidate();
-      return ok;
+      // Registered for the length of the round trip, so this page's own `refresh()` waits for it
+      // instead of GETting the pre-write entity over the value published above — the removal undo
+      // reads `current()`/`owned()` straight after refreshing (lib/pending.ts).
+      return trackPending(
+        pendingKey([kind, id]),
+        (async () => {
+          const ok = await guard(fallback, () => res.update(id, { layout: next }));
+          await invalidate();
+          return ok;
+        })(),
+      );
     },
     [qc, kind, id, guard, invalidate],
   );

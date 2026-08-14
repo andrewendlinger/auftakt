@@ -50,9 +50,17 @@ const BASE = '/api';
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /**
+   * The parsed error response, when there was one. `failure()` reads it anyway to find the
+   * German `error` string, so keeping it costs nothing and it is what lets a caller act on a
+   * rejection rather than only report it: the landing's 409 carries the content the write lost
+   * to, so `useLanding().update()` re-applies onto it without a second GET.
+   */
+  body?: unknown;
+  constructor(status: number, message: string, body?: unknown) {
     super(message);
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -82,13 +90,15 @@ function applySeason(res: Response): void {
 /** A non-ok response as the thrown error, preferring the server's German `error` over the status text. */
 async function failure(res: Response): Promise<ApiError> {
   let msg = res.statusText;
+  let body: unknown;
   try {
-    const j = (await res.json()) as { error?: string };
+    body = await res.json();
+    const j = body as { error?: string };
     if (j?.error) msg = j.error;
   } catch {
     /* ignore */
   }
-  return new ApiError(res.status, msg);
+  return new ApiError(res.status, msg, body);
 }
 
 async function http<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -265,6 +275,13 @@ export const api = {
   /** Cross-season landing-page content (Notizen, Dokumente, Textfelder, Layout). */
   landing: {
     get: () => http<LandingContent>('GET', '/landing'),
-    patch: (patch: LandingPatch) => http<LandingContent>('PATCH', '/landing', patch),
+    /**
+     * `rev` names the generation the patch was computed from; the server answers 409 (carrying
+     * the current content) instead of overwriting a newer one. Omit it only where there is no
+     * generation to name — nothing in the client does, and `useLanding().update()` is the one
+     * caller.
+     */
+    patch: (patch: LandingPatch, rev?: number) =>
+      http<LandingContent>('PATCH', '/landing', rev === undefined ? patch : { ...patch, rev }),
   },
 };

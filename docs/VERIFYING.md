@@ -445,10 +445,31 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **Some repros only fire inside a refetch window.** On a local server the refetch beats a human's
   second click, so the defect looks fixed when it is not — delay the relevant request with
   `page.route` (CCL-21 and PGS-10 both need `GET /api/settings` held back).
+- **To stage a two-window landing conflict, hold the second window's WRITE, not its read.**
+  The obvious setup — snapshot `GET /api/landing` at generation N and deliver it late, so the
+  window computes from stale content — does not work, and produces a green run with zero 409s:
+  the other window's write broadcasts an invalidate, the held window's `['landing']` query is
+  active, so it refetches, and *that* GET supersedes the held one inside react-query. Measured
+  during WP-53: two GETs from the same page, the second carrying the newer generation, and
+  `update()` computing from it. That is the app's first line of defence working. The lost update
+  the package is actually about is a write computed from N *arriving* after N+1 landed, so route
+  the `PATCH` and sleep before `route.continue()`, then fire the other window's write inside that
+  window. Release the hold before the retry (`hold = 0` inside the handler) or the run measures
+  the sleep twice.
+- **Assert the 409 actually arrived.** Every one of these cases passes for the wrong reason if the
+  timing slips and no conflict happens — the outcome is correct either way, which is the whole
+  point of the fix. Count them off `page.on('response')` and fail on zero.
 - **A hash navigation does not refetch `['settings']`**, so a fixture written straight to the API
   needs a real `reload()` or the page persists the stale array over it.
 - **Clean up fixtures between runs.** A script that throws mid-way leaves its rows behind, and the
   next run then matches two elements with the same name and picks the wrong one.
+- **`EditableText` opens from its hover-revealed ✎, not from a click on the text.** Those headings
+  sit in clickable surroundings (widget cards, season cards), so click-anywhere would misfire —
+  the component says so and a script that clicks the heading simply never opens an editor, then
+  times out waiting for the input. Use the pencil's accessible name:
+  `getByRole('button', { name: '„Verträge 2027“ umbenennen' })`, German quotes included. The input
+  it opens is an `InlineInput`, so find it by class (`input.uppercase` for a section heading) or
+  as `input:focus` — never `input[value="…"]`, see above. Enter commits.
 - **Open an `InlineNotes` editor by clicking a text run, never the prose box.** A `.click()` on
   `.prose-md` lands at the element's center, and the demo notes put links and a linked image
   there — the click then navigates (or selects the image) and `.rte-content` never mounts, which

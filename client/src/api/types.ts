@@ -440,6 +440,12 @@ export interface LandingContent {
   documents: LandingDoc[];
   layout: LayoutEntry[];
   sections: LandingSection[];
+  /**
+   * The generation this content is, bumped by every write. Send it back with a patch and the
+   * server refuses the write if another window got there first (409) — `useLanding().update()`
+   * is the only place that does, and the only place that needs to.
+   */
+  rev: number;
 }
 
 /** New documents/sections are sent id-less; the server assigns max+1. */
@@ -451,8 +457,8 @@ export type LandingSectionInput = Omit<LandingSection, 'id' | 'documents'> & {
 
 /**
  * A landing write. Every key present replaces its whole value — the registry stores what it is
- * given, it does not merge — which is why the caller has to compute each array from the list as
- * it is *now* (`useLanding().current()`) rather than from a render snapshot.
+ * given, it does not merge — which is why a patch is never composed from a render snapshot but
+ * computed from the content the server just answered with, inside `useLanding().update()`.
  */
 export interface LandingPatch {
   notes?: string | null;

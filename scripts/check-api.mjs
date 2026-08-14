@@ -415,6 +415,70 @@ try {
     check('a scalar saved layout is refused', savedScalar.status === 400, String(savedScalar.status));
   }
 
+  // ------------------------------------------------------------- landing conflicts (WP-53)
+  // The two-window lost update, driven as what it actually is: two reads of one generation and
+  // two writes computed from it. No browser needed — this is a server invariant, and the
+  // interesting assertion is not the 409 but that the refused write left the blob untouched.
+  console.log('\n== a landing write built on a superseded read is refused (WP-53)');
+  {
+    const fresh = await ok('GET', '/landing');
+    check('a landing that has never been written is generation 0', fresh.rev === 0, String(fresh.rev));
+
+    // The in-process path — demo.ts and the seeders have no generation to name, and must not
+    // need one.
+    const unconditional = await ok('PATCH', '/landing', { documents: [{ label: 'Ohne rev', url: null }] });
+    check('a patch without a rev still writes', unconditional.documents.length === 1);
+    check('…and bumps the generation anyway', unconditional.rev === 1, String(unconditional.rev));
+
+    const bad = await req('PATCH', '/landing', { notes: 'x', rev: 'nonsense' });
+    check('a non-numeric rev is refused', bad.status === 400, String(bad.status));
+
+    // Two windows read the same generation.
+    const windowA = await ok('GET', '/landing');
+    const windowB = await ok('GET', '/landing');
+    check('both windows read the same generation', windowA.rev === windowB.rev, `${windowA.rev} / ${windowB.rev}`);
+
+    // B gets there first: it adds a document, computed from what it read.
+    const afterB = await ok('PATCH', '/landing', {
+      documents: [...windowB.documents, { label: 'Von B', url: null }],
+      rev: windowB.rev,
+    });
+    check('the first writer wins normally', afterB.documents.some((d) => d.label === 'Von B'));
+
+    // A now writes the array *it* read — the whole of the old bug. Before WP-53 this stored A's
+    // array verbatim and „Von B" ceased to exist, with no Papierkorb behind seasons.json.
+    const refused = await req('PATCH', '/landing', {
+      documents: [...windowA.documents, { label: 'Von A', url: null }],
+      rev: windowA.rev,
+    });
+    check('a write from the superseded generation is refused', refused.status === 409, String(refused.status));
+    check('…and the 409 carries the content it lost to, so the client need not re-GET', refused.body?.landing?.rev === afterB.rev, JSON.stringify(refused.body?.landing?.rev));
+
+    const afterRefusal = await ok('GET', '/landing');
+    check('…and nothing was written', afterRefusal.rev === afterB.rev, `${afterRefusal.rev} / ${afterB.rev}`);
+    check("…so the other window's document is still there", afterRefusal.documents.some((d) => d.label === 'Von B'));
+    check('…and the refused one is not', !afterRefusal.documents.some((d) => d.label === 'Von A'));
+
+    // The retry: A re-applies its change to what the 409 handed back. This is the case the whole
+    // package exists for — both windows' work survives, and neither user was asked anything.
+    const retried = await ok('PATCH', '/landing', {
+      documents: [...refused.body.landing.documents, { label: 'Von A', url: null }],
+      rev: refused.body.landing.rev,
+    });
+    check('a retry at the current generation is accepted', retried.rev === afterB.rev + 1, String(retried.rev));
+    check('…and both windows kept their document', ['Von A', 'Von B'].every((l) => retried.documents.some((d) => d.label === l)), JSON.stringify(retried.documents.map((d) => d.label)));
+
+    // The generation covers the whole blob, so an omitted key is not an untouched one as far as
+    // the guard is concerned — that is the deliberate false conflict the client answers with one
+    // extra round trip (see useLanding().update).
+    const staleNotes = await req('PATCH', '/landing', { notes: 'Notiz', rev: windowA.rev });
+    check('a stale write is refused even for a key nobody else touched', staleNotes.status === 409, String(staleNotes.status));
+
+    // …while the per-key merge itself is unchanged: writing one key leaves the others alone.
+    const notesOnly = await ok('PATCH', '/landing', { notes: 'Notiz', rev: retried.rev });
+    check('a notes write leaves the documents alone', notesOnly.documents.length === retried.documents.length, String(notesOnly.documents.length));
+  }
+
   // ------------------------------------------------------------------ task tree (SRV-11)
   // The two-level rule is an API invariant, enforced only here — see migrateFlattenDeepSubtasks
   // in db.ts for the back door that raw SQL used to leave open.

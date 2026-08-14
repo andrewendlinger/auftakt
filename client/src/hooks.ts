@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import { api } from './api/client';
 import type {
   CustomColumn,
@@ -19,7 +20,9 @@ import type {
 } from './api/types';
 import { doneValueOf } from './api/types';
 import { postBroadcast } from './lib/broadcast';
+import { retryOnConflict } from './lib/conflict';
 import { errorMessage } from './lib/errors';
+import { pendingKey, settlePending, trackPending } from './lib/pending';
 import { DEFAULT_EVENT_WINDOW_DAYS } from './lib/eventGroups';
 import { LABEL_DEFAULTS, isLabelKey, type LabelKey } from './lib/labels';
 import { getWindowSeason } from './lib/season';
@@ -61,6 +64,42 @@ export function useInvalidateAll(): () => Promise<void> {
     postBroadcast({ v: 1, type: 'invalidate' });
     return qc.invalidateQueries();
   }, [qc]);
+}
+
+/**
+ * A refresh that actually goes to the server. **Reach for this, not `ensureQueryData`, wherever a
+ * store is about to be read and then written back.**
+ *
+ * `ensureQueryData` hands back whatever is cached whenever an entry exists — `revalidateIfStale`
+ * is off by default and `staleTime` does not enter into it. That is enough for the hole it was
+ * added for (react-query drops a query `gcTime` after its last observer unmounts, five minutes,
+ * and an undo pressed from another screen then reads the miss as an empty store), but it cannot
+ * see what another *window* wrote, and the landing content is on `#/` in every one of them. Two
+ * windows computing an array from the same cached read overwrote each other silently, with no
+ * Papierkorb behind seasons.json (WP-53).
+ *
+ * `staleTime: 0` overrides the client-wide five seconds for this call only, so the request is
+ * unconditional rather than „unless it looks recent enough".
+ *
+ * It also **rejects** where a warm-cache `ensureQueryData` could not, and that is wanted: the
+ * throw lands before anything is written, so a failed refresh leaves the store untouched. An undo
+ * that reports a failure beats one that writes a stale array over the truth.
+ *
+ * The `settlePending` wait is the other half of asking for real. A GET is authoritative about
+ * other windows and *behind* on this one: `useSettingsArray.write` publishes its array before
+ * awaiting the PATCH, so a refresh fired inside that gap would read the pre-write state over the
+ * optimistic value — and `removalUndoEntry.revert` refreshes and then looks for the tombstone it
+ * just wrote. See `lib/pending.ts`; the landing needs none of this, since its generation makes
+ * the server authoritative about every window including this one.
+ */
+export function refetchNow<T>(
+  qc: QueryClient,
+  queryKey: QueryKey,
+  queryFn: () => Promise<T>,
+): Promise<T> {
+  return settlePending(pendingKey(queryKey as readonly unknown[])).then(() =>
+    qc.fetchQuery({ queryKey, queryFn, staleTime: 0 }),
+  );
 }
 
 /**
@@ -414,7 +453,8 @@ export function useSettingsArray<K extends SettingsArrayKey>(
   value: SettingsArrayValue<K>;
   /** The array as it is now, not as it was when the caller rendered — the `useLanding` twin. */
   current: () => SettingsArrayValue<K>;
-  /** Put `['settings']` back in the cache first, so `current()` cannot read an eviction as empty. */
+  /** Re-read `['settings']` from the server first, so `current()` reads neither an eviction nor
+   *  another window's leftovers. */
   refresh: () => Promise<void>;
   write: (next: SettingsArrayValue<K>) => Promise<boolean>;
 } {
@@ -436,9 +476,16 @@ export function useSettingsArray<K extends SettingsArrayKey>(
   // unmounts (five minutes, the default — `main.tsx` sets only `staleTime`), and `current()`
   // then reads the miss as an empty array. A closure that outlives its page — the section
   // removal undo, pressed from the keyboard elsewhere in the app — awaits this first.
-  // `ensureQueryData` returns what is cached without a request, so the usual path is free.
+  //
+  // **This shrinks the two-window race, it does not close it** (WP-53). `write` still posts a
+  // whole array computed by its caller, so two windows on the same season can still each replace
+  // the other's `dashboard_layout` or `labels`; the read is now merely honest about where it came
+  // from. That is a deliberate stop, not an oversight: these are user *configuration* arrays —
+  // a lost edit is on screen and one gesture away from being redone. `useLanding` carries the
+  // real fix because its arrays are customer content with no Papierkorb behind them, and the
+  // per-key `settings` table would need a generation column of its own to get the same guarantee.
   const refresh = useCallback(async () => {
-    await qc.ensureQueryData({ queryKey: ['settings'], queryFn: api.getSettings });
+    await refetchNow(qc, ['settings'], api.getSettings);
   }, [qc]);
   const write = useCallback(
     async (next: SettingsArrayValue<K>) => {
@@ -449,11 +496,19 @@ export function useSettingsArray<K extends SettingsArrayKey>(
       // what breaks if `Settings[K]` and `next` ever stop agreeing.
       const patch = { [key]: next } as Pick<WritableSettings, K>;
       qc.setQueryData<Settings>(['settings'], (old) => (old ? { ...old, ...patch } : old));
-      const ok = await guard('Einstellung konnte nicht gespeichert werden.', async () => {
-        qc.setQueryData<Settings>(['settings'], await api.patchSettings(patch));
-      });
-      await invalidate();
-      return ok;
+      // Registered while it is in flight, so a `refresh()` issued inside this round trip — an
+      // undo pressed straight after the click that started it — waits rather than reading the
+      // pre-write server state over the value published above (lib/pending.ts).
+      return trackPending(
+        pendingKey(['settings']),
+        (async () => {
+          const ok = await guard('Einstellung konnte nicht gespeichert werden.', async () => {
+            qc.setQueryData<Settings>(['settings'], await api.patchSettings(patch));
+          });
+          await invalidate();
+          return ok;
+        })(),
+      );
     },
     [qc, key, guard, invalidate],
   );
@@ -476,21 +531,36 @@ export function useSettingsArray<K extends SettingsArrayKey>(
  * row there is no Papierkorb to get any of it back from (SHL-01, SHL-02).
  *
  * `current()` is the answer for a closure that runs later: read the list as it is *now*.
- * `patch` publishes its own value into the cache before awaiting, so an edit issued inside the
- * round trip composes with the pending one instead of replacing it.
+ *
+ * **`update` is the only way to write, and it takes a function, not an array** (WP-53). Per
+ * attempt it re-reads the blob from the server, hands that to `fn`, and sends the resulting patch
+ * stamped with the generation it read. If another window has written in between, the server
+ * refuses with 409 and the whole thing runs again against what is actually stored — so a
+ * concurrent write is merged rather than destroyed, and after `MAX_CONFLICT_ATTEMPTS` it is
+ * reported rather than lost. Taking an array instead would defeat that: the retry can only
+ * re-apply an *intent*, and every mutation on the landing page is already written as one
+ * (`now.filter(…)`, `[...now, added]`, `arrayMoveTo(now, …)`).
+ *
+ * That the read is authoritative also retires a whole class rather than guarding against it: an
+ * evicted `['landing']` used to read as „no documents" and then get *written back*, which is what
+ * SHL-01/02/03 were, and no closure has to remember to `refresh()` first any more.
  *
  * Unlike `useSettingsArray` this **throws** instead of guarding: `useUndoableDelete`,
  * `RecordFormModal`, `InlineNotes` and `EditableText` all own a catch → German toast already,
  * and swallowing the rejection here would raise a „Rückgängig" toast for a delete that never
- * happened.
+ * happened. An exhausted retry budget arrives there as the server's own German sentence.
  */
 export function useLanding(): {
   data: LandingContent | undefined;
   /** The content as it is now, not as it was when the caller rendered. */
   current: () => LandingContent | undefined;
-  /** Put `['landing']` back in the cache first, so `current()` cannot read an eviction as absent. */
+  /** Re-read `['landing']` from the server, so `current()` reads neither an eviction nor another
+   *  window's leftovers. `update` does this itself — this is for the `LayoutStore` contract,
+   *  whose undo arms read through `current()`. */
   refresh: () => Promise<void>;
-  patch: (next: LandingPatch) => Promise<LandingContent>;
+  /** Compute the patch from the content as the server has it. See the note above. `null` means
+   *  „nothing to write" and skips the request — a refused drag is the caller for it. */
+  update: (fn: (cur: LandingContent) => LandingPatch | null) => Promise<LandingContent>;
 } {
   const qc = useQueryClient();
   const invalidate = useInvalidateAll();
@@ -501,32 +571,70 @@ export function useLanding(): {
   // `DEFAULT_LANDING_LAYOUT`, so a redo computed from an evicted cache would write that default
   // over the arrangement the user actually has.
   const refresh = useCallback(async () => {
-    await qc.ensureQueryData({ queryKey: ['landing'], queryFn: api.landing.get });
+    await refetchNow(qc, ['landing'], api.landing.get);
   }, [qc]);
-  const patch = useCallback(
-    async (next: LandingPatch) => {
-      // Publish before awaiting so the next reader — including an editor the user clicks 200 ms
-      // later — computes from this value. Skipped when the patch adds a row: ids are the
-      // server's to assign, and rendering an id-less row would break the list keys (and the
-      // ✎/🗑 that address rows by id) for the length of one request. The response below covers
-      // that case a few milliseconds later.
-      if (rowsAllHaveIds(next)) {
-        qc.setQueryData<LandingContent>(['landing'], (old) =>
-          old ? ({ ...old, ...next } as LandingContent) : old,
-        );
-      }
-      try {
-        const res = await api.landing.patch(next);
-        qc.setQueryData<LandingContent>(['landing'], res);
-        return res;
-      } finally {
-        // Also on the failure path: the optimistic value above must not outlive a rejected write.
-        await invalidate();
-      }
-    },
+  const update = useCallback(
+    (fn: (cur: LandingContent) => LandingPatch | null) =>
+      // Registered for the length of the write, so the layout store's `refresh()` — which
+      // `removalUndoEntry.revert` runs before looking for the tombstone it just wrote — waits
+      // instead of reading pre-write server state over the optimistic publish below. The
+      // generation guard keeps the *write* safe; this keeps a concurrent *read* honest.
+      trackPending(pendingKey(['landing']), landingUpdate(qc, invalidate, fn)),
     [qc, invalidate],
   );
-  return { data, current, refresh, patch };
+  return { data, current, refresh, update };
+}
+
+async function landingUpdate(
+  qc: QueryClient,
+  invalidate: () => Promise<void>,
+  fn: (cur: LandingContent) => LandingPatch | null,
+): Promise<LandingContent> {
+  try {
+    return await retryOnConflict(async (conflict) => {
+      // The 409 already carries what the write lost to, so the retry costs no extra GET;
+      // the fetch is for the first attempt, and for a server too old to send the content.
+      // `fetchQuery` directly and not `refetchNow`: this call *is* the pending write on
+      // `['landing']`, and waiting for itself to settle would never return.
+      const cur: LandingContent =
+        conflictContent(conflict) ??
+        (await qc.fetchQuery<LandingContent>({
+          queryKey: ['landing'],
+          queryFn: api.landing.get,
+          staleTime: 0,
+        }));
+      const next = fn(cur);
+      // A mutation that turns out to be a no-op writes nothing rather than storing the list as
+      // itself: the write would bump the generation for no reason and could refuse an in-flight
+      // write in another window over a change nobody made.
+      if (next === null) return cur;
+      // Publish before awaiting, so the row appears at once instead of a round trip later.
+      // Purely cosmetic now — a second edit issued inside this window does its own authoritative
+      // read and, if it truly races, conflicts and retries — where it used to be the only thing
+      // making two quick edits compose (SHL-10). Still skipped when the patch adds a row: ids are
+      // the server's to assign and rendering an id-less row would break the list keys (and the
+      // ✎/🗑 that address rows by id) for one request. The published value carries `cur.rev`, one
+      // generation behind, which no reader consults — `update` never takes a rev from the cache.
+      if (rowsAllHaveIds(next)) {
+        qc.setQueryData<LandingContent>(['landing'], { ...cur, ...next } as LandingContent);
+      }
+      const res = await api.landing.patch(next, cur.rev);
+      qc.setQueryData<LandingContent>(['landing'], res);
+      return res;
+    });
+  } finally {
+    // Also on the failure path: the optimistic value above must not outlive a rejected write.
+    await invalidate();
+  }
+}
+
+/**
+ * The content a refused write lost to, off the 409 the server answered with. `undefined` for
+ * anything else, including a 409 without a body — the caller then falls back to a plain read, so
+ * a server that stops sending it costs a round trip rather than correctness.
+ */
+function conflictContent(err: unknown): LandingContent | undefined {
+  return (err as { body?: { landing?: LandingContent } } | undefined)?.body?.landing;
 }
 
 /** Whether every row this patch carries already has a server-assigned id. */

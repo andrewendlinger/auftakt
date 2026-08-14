@@ -402,14 +402,22 @@ against what the removal wrote, and an arrangement of the user's own outranks th
 arms `await store.refresh?.()` before reading, because `current()`/`owned()` read a query cache
 that react-query empties `gcTime` (five minutes) after the page unmounts — a miss is
 indistinguishable from a store with nothing in it, and an undo pressed from the keyboard three
-screens later is exactly the case that hits it. The same `refresh()` guards the two *widget*
-removals (`useRemoveCustomSection`, `useRemoveLandingSection`), whose arms write what they read —
-so a cold cache there is not a refused undo but a wrong array persisted: the whole
-`dashboard_layout` replaced by the one entry being restored, or `landing.sections` replaced by
-the one section, which has no Papierkorb behind it. The landing has the same rule one level
-further in, where the blob itself is the store: every late reader goes through `useReadLanding`
-(or awaits `refresh()` itself), because `usePatchSections` writes back the whole `sections` array
-— so an undone *document* delete read from a cold cache took every Bereich on the page with it.
+screens later is exactly the case that hits it. The same `refresh()` guards the *widget* removal
+`useRemoveCustomSection`, whose arms write what they read — so a cold cache there is not a refused
+undo but a wrong array persisted: the whole `dashboard_layout` replaced by the one entry being
+restored.
+
+**`refresh()` is a real request** (`refetchNow`, hooks.ts), not `ensureQueryData` — that returns
+whatever is cached whenever an entry exists, which is silent about what another *window* wrote,
+and every implementation of `refresh()` reads and then writes back (WP-53). It can therefore
+reject, and that is the wanted end: the throw lands before any write, so a failed refresh leaves
+the store untouched rather than persisting a stale array over the truth.
+
+The landing goes further, because there the blob itself is the store and `usePatchSections` writes
+back a whole array: `useLanding().update(fn)` re-reads before applying `fn` and retries if the
+generation moved under it, so a late reader cannot read a cold cache as „no sections" and write
+that back (SHL-01/02/03 stop being a discipline), and a document delete cannot take the other
+window's Bereich with it.
 
 Since WP-46 a page declares its built-ins as **one `SectionSpec[]`** (`lib/sectionSpecs.ts`,
 re-exported through `components/SectionCatalog.tsx`): spec order is the default section order for
@@ -438,8 +446,9 @@ Which module owns which invariant. Reach for these rather than rebuilding the be
 | `useAllTasks()` (hooks.ts) | the one `['tasks','scope-all']` query — live **and** archived. Anything that must not stop at the archive edge takes this: the subtask tree (a subtree op derived from a `scope:'live'` list strands a child past `ARCHIVE_AFTER_DAYS`) and „Fortschritt" (`done`/`total`/`pct` were wrong on the live list; „offen" was not). A new *editable* table stays on the page's live list. |
 | `useGlobalColumns()` (hooks.ts) | the single `['customColumns','global']` reader. `useDoneValue()` sits on it, and so does `TaskSortEditor` — a `task_sort` rule is a season-wide setting, so only global columns can carry one. |
 | `useScopedColumns(owner, enabled)` (hooks.ts) | one entity page's column set: the globals plus that page's own, already merged. Both entity pages take it rather than writing the query out, because three things have to agree at once — the scope sent, the parent id sent with it (a scoped list without one is a 400) and the globals leading the merged list. |
-| `useSettingsArray(key, parse)` (hooks.ts) | immediate-save array settings. Publishes into the `['settings']` cache **before** awaiting, so a second edit inside the round trip composes. `current()` reads the array as it is *now* — use it in any closure that runs later (an undo six seconds on). `parse` must be module-level (it is a memo dep) and must read defensively; a throw there blanks the page. |
-| `useLanding()` (hooks.ts) | the same contract for every `seasons.json` write. Two deliberate differences: it **throws** rather than guarding (callers already own a catch → German toast), and the pre-await publish is skipped when the patch adds an id-less row. |
+| `useSettingsArray(key, parse)` (hooks.ts) | immediate-save array settings. Publishes into the `['settings']` cache **before** awaiting, so a second edit inside the round trip composes. `current()` reads the array as it is *now* — use it in any closure that runs later (an undo six seconds on). `parse` must be module-level (it is a memo dep) and must read defensively; a throw there blanks the page. **`write` still posts a snapshot, so two windows on one season can still replace each other's array** — a deliberate stop, not an oversight (WP-53): these are configuration arrays, a lost edit is on screen and one gesture from being redone, and the per-key `settings` table would need a generation column of its own to get `useLanding`'s guarantee. |
+| `useLanding()` (hooks.ts) | the same contract for every `seasons.json` write, plus the one that has no Papierkorb behind it. **`update(fn)` takes a function and is the only way to write**: it re-reads the blob, applies `fn`, and sends the generation it read; the server refuses a superseded one (409) and the whole thing re-runs against what is actually stored, so a concurrent write is merged rather than destroyed and an exhausted budget is *reported* rather than lost (`lib/conflict.ts`). An array argument would defeat that — a retry can only re-apply an intent. `fn` returning `null` writes nothing (a refused drag). Two further differences from `useSettingsArray`: it **throws** rather than guarding (callers already own a catch → German toast), and the pre-await publish is skipped when the patch adds an id-less row — that publish is now cosmetic, since every write reads for itself. |
+| `refetchNow(qc, key, fn)` (hooks.ts) | the one honest refresh. `ensureQueryData` hands back the cache whenever an entry exists, which says nothing about what another window wrote; this passes `staleTime: 0` and always asks. Reach for it wherever a store is read and then written back — all three `LayoutStore.refresh` implementations do. |
 | `useRetention()` (hooks.ts) | „wie lange bleibt das". **No German string may state a retention threshold again.** Both constants ride on the settings response. |
 | `useGuardedAction()` / `useErrorToast()` (hooks.ts) | the failure arm for any write. `guard(fallback, () => api.x(…))` returns `true` when the call resolved, so a caller can gate its success toast or dialog close on it. Wording policy lives in `client/src/lib/errors.ts`: the German sentence leads, an `ApiError`'s server text follows in parentheses; anything else goes to `console.error`. |
 | `pushWithToast(entry, message)` (UndoProvider) | pairing a stack entry with its toast. Never call `push` *and* wire a toast `onAction` — doing both is TTU-13, where the toast ran `revert` behind the stack's back. `DERIVED_INVERSE_KEYS` (hooks.ts) maps a resource to the columns the server derives. |
