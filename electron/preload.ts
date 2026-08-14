@@ -12,6 +12,11 @@ contextBridge.exposeInMainWorld('auftakt', {
   getVersion: () => ipcRenderer.invoke('get-version'),
   checkForUpdates: (refresh: boolean) => ipcRenderer.invoke('check-updates', refresh),
   installUpdate: () => ipcRenderer.invoke('install-update'),
+  // The support mail's diagnostic block, and the button showing the customer where the raw
+  // log lives (WP-54). Neither takes an argument: main derives the path from userData, so
+  // the renderer cannot point either of them at a file of its choosing.
+  getDiagnostics: () => ipcRenderer.invoke('get-diagnostics'),
+  revealDiagnostics: () => ipcRenderer.invoke('reveal-diagnostics'),
   // Fire-and-forget, but invoke rather than send: everything above is renderer→main, and a
   // second idiom for the sake of one unread reply on a local channel is not worth it. The
   // argument is the boot report (see client/index.html); main treats it as untrusted.

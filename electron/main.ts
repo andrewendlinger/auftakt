@@ -19,7 +19,7 @@ import { buildMenu } from './menu';
 import { backupDirProblem, runStartupBackup } from './backup';
 import { cascadeBounds, fittedSize } from './cascade';
 import { exportFileName } from './exportName';
-import { writeBootReport } from './bootLog';
+import { bootDiagnostics, writeBootReport } from './bootLog';
 import { checkForUpdates, downloadAndInstallUpdate, startSilentStartupCheck } from './updater';
 
 const isDev = !app.isPackaged;
@@ -123,6 +123,36 @@ function openExternalSafely(url: string): void {
     void shell.openExternal(url);
   } else {
     console.warn('Blockierter externer Link (nicht unterstütztes Format):', url);
+  }
+}
+
+/** What showing the user where their boot log lives ended up doing. */
+export type DiagnosticsReveal = 'revealed' | 'opened' | 'failed';
+
+/**
+ * Reveal `boot-log.jsonl`, or its folder when there is none yet (WP-54).
+ *
+ * The path is derived here, from `app.getPath('userData')` — the renderer supplies nothing.
+ * A path argument would hand the untrusted side a way to point `showItemInFolder` at any
+ * file on the machine, which is the same hole the scheme allowlist closes above (X-02).
+ *
+ * There is often no file: dev never writes one (see `boot-settled` below) and neither has a
+ * fresh install that has not settled a boot. Opening the folder anyway is the honest answer
+ * — the renderer says so — and beats a button that silently does nothing, which is what
+ * `showItemInFolder` on a missing path amounts to on macOS.
+ */
+async function revealDiagnostics(): Promise<DiagnosticsReveal> {
+  try {
+    const dir = app.getPath('userData');
+    const diag = bootDiagnostics(dir);
+    if (diag.hasLog) {
+      shell.showItemInFolder(diag.file);
+      return 'revealed';
+    }
+    // openPath resolves to '' on success, and to the error message on failure.
+    return (await shell.openPath(dir)) === '' ? 'opened' : 'failed';
+  } catch {
+    return 'failed';
   }
 }
 
@@ -908,6 +938,11 @@ ipcMain.handle('choose-backup-dir', (e) => chooseBackupDir(BrowserWindow.fromWeb
 ipcMain.handle('get-version', () => app.getVersion());
 ipcMain.handle('check-updates', (_e, refresh: boolean) => checkForUpdates(refresh));
 ipcMain.handle('install-update', () => downloadAndInstallUpdate());
+// The customer's route to their own boot log (WP-54). Main reads and summarizes; the
+// renderer receives finished text and a path it may only display. Neither takes an
+// argument — see revealDiagnostics for why the path is not one.
+ipcMain.handle('get-diagnostics', () => bootDiagnostics(app.getPath('userData')));
+ipcMain.handle('reveal-diagnostics', () => revealDiagnostics());
 /** Whether any renderer settle arrived, so the 8 s fallback can log its absence. */
 let bootReported = false;
 // Sent from the boot overlay's single exit path, not from React — see runStartupChores.

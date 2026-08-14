@@ -14,6 +14,19 @@ export interface UpdateStatus {
   canInstall: boolean;
 }
 
+/** Mirror of `BootDiagnostics` in electron/bootLog.ts — the support mail's diagnostic block. */
+export interface BootDiagnostics {
+  /** German, already sanitized, ready to paste into a mail body. Never empty. */
+  summary: string;
+  /** false when no log file exists yet — dev never writes one, nor does a first launch. */
+  hasLog: boolean;
+  /** Display only — the renderer never sends a path back over the bridge (X-02). */
+  file: string;
+}
+
+/** Mirror of `DiagnosticsReveal` in electron/main.ts. */
+export type DiagnosticsReveal = 'revealed' | 'opened' | 'failed';
+
 declare global {
   interface Window {
     auftakt?: {
@@ -41,6 +54,10 @@ declare global {
        * boot-log.jsonl in userData (electron/bootLog.ts).
        */
       bootSettled?: (report?: unknown) => Promise<void>;
+      /** The last boots, already summarized by main — see electron/bootLog.ts (WP-54). */
+      getDiagnostics?: () => Promise<BootDiagnostics>;
+      /** Show `boot-log.jsonl` in Finder/Explorer, or its folder when there is none yet. */
+      revealDiagnostics?: () => Promise<DiagnosticsReveal>;
       platform?: string;
     };
   }
