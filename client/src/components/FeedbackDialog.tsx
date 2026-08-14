@@ -254,11 +254,16 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
                   <pre className="mt-2 overflow-x-auto rounded-lg bg-neutral-50 p-3 text-xs text-neutral-600">
                     {feedbackMailBody(draft, ctx)}
                   </pre>
-                  <p className="mt-2">
-                    {willAttach
-                      ? 'Die Datei ist reine Textdatei und enthält keine Termine, Künstler oder Kontakte — du kannst sie vor dem Anhängen in Ruhe durchlesen.'
-                      : `Ohne E-Mail-Programm: direkt an ${FEEDBACK_TO} schreiben.`}
-                  </p>
+                  {willAttach && (
+                    <p className="mt-2">
+                      Die Datei ist reine Textdatei und enthält keine Termine, Künstler oder
+                      Kontakte — du kannst sie vor dem Anhängen in Ruhe durchlesen.
+                    </p>
+                  )}
+                  {/* Unconditional, because the branch that needs it most is the one that used
+                      to hide it: a Fehler on a machine with no mail handler opens nothing at
+                      all, and this is then the only address anywhere in the app. */}
+                  <p className="mt-2">Ohne E-Mail-Programm: direkt an {FEEDBACK_TO} schreiben.</p>
                 </details>
               </>
             )}

@@ -211,7 +211,9 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   removed once the bundle existed, so a script that waits for either hangs. `shell.showItemInFolder`
   did *not* go with them: `save-diagnostics` still reveals the file it just wrote, which is one more
   reason a driving script must stub the bridge rather than let the real one run. The address in
-  plain text under „Was wird mitgeschickt?" is the whole of the no-mail-client fallback now.
+  plain text under „Was wird mitgeschickt?" is the whole of the no-mail-client fallback now, and it
+  is there on **both** branches — it used to sit in the `else` of the attachment note, so the one
+  shape that shipped without it was the packaged Fehler, i.e. the one that needs it.
 - **The text boxes stop at the mail's budget, not at their `maxLength`.** `maxLength` is 300 per
   field, but every keystroke goes through `fitFeedbackAnswer` first, so three boxes filled to 300
   with German come back holding fewer — the last one typed is the short one, and „Die E-Mail ist

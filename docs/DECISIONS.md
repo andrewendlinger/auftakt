@@ -30,6 +30,11 @@ deciding which situation they are in before they know they are in one. The path 
 one that works, and the fallback survives as a sentence — the address in plain text under „Was wird
 mitgeschickt?", where somebody actually stuck will look. One button, no branch to choose.
 
+That sentence is **unconditional**, which it was not when it shipped: it sat in the `else` of the
+attachment note, so the packaged app reporting a *Fehler* — the main path — showed it to nobody. The
+branch that hides it is exactly the branch that needs it. A machine with no mail handler clicks
+„E-Mail öffnen", nothing opens, and the app then holds no address anywhere.
+
 ## „Diagnoseordner öffnen" was removed once the file was written for them (2026-08-14, WP-54)
 
 It shipped as the route to `boot-log.jsonl`, and the diagnostics bundle replaced it the same week:
