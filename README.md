@@ -133,7 +133,7 @@ Gut zu wissen:
 
 ## Updates
 
-- **Windows:** **Einstellungen → „Saison & Daten" → „Version & Updates"**, dort „Nach Updates
+- **Windows:** **Einstellungen → „Programm & Hilfe" → „Version & Updates"**, dort „Nach Updates
   suchen" und dann „Herunterladen & installieren". Die App startet dafür neu.
 - **macOS:** Auftakt meldet nur, dass es eine neue Version gibt — automatische Updates brauchen
   eine Apple-Signatur. Also die neue `.dmg` von der Releases-Seite laden, Auftakt in „Programme"
@@ -148,10 +148,23 @@ Gut zu wissen:
 
 ## Hilfe & Fehler melden
 
-Fehlerberichte und Ideen sind sehr willkommen — als
+Am einfachsten aus der App heraus: **Einstellungen → „Programm & Hilfe" → „Feedback senden…"**.
+Der Dialog fragt zuerst, ob es um einen **Fehler** oder einen **Wunsch** geht, und stellt danach
+die passenden Fragen. Er legt Version und System bei und öffnet damit dein E-Mail-Programm — du
+siehst vorher, was drinsteht. Jede Meldung bekommt eine Kennung wie `AF-2608141542`, die im Betreff
+steht; darauf lässt sich später Bezug nehmen.
+
+Bei einem **Fehler** legt Auftakt zusätzlich einen Diagnosebericht auf dem Schreibtisch ab —
+`Auftakt-Diagnose-<Kennung>.txt`, mit dem vollständigen Startprotokoll und den Angaben zum Rechner.
+Der Dialog sagt vorher, dass das passiert, und die E-Mail beginnt mit der Bitte, die Datei
+anzuhängen. **Anhängen musst du sie selbst** — eine E-Mail lässt sich von außen nicht mit einem
+Anhang öffnen, das kann kein Programm für dich übernehmen. Die Datei ist reiner Text, enthält keine
+Termine, Künstler oder Kontakte, und du kannst sie vorher in Ruhe durchlesen.
+
+Fehlerberichte und Ideen sind ebenso willkommen als
 [Issue](https://github.com/andrewendlinger/auftakt/issues). Hilfreich sind: was du getan hast, was
-du erwartet hast, was stattdessen passiert ist, dazu die Version (Einstellungen → „Saison &
-Daten" → „Version & Updates") und dein Betriebssystem.
+du erwartet hast, was stattdessen passiert ist, dazu die Version (Einstellungen → „Programm &
+Hilfe" → „Version & Updates") und dein Betriebssystem.
 
 **Bitte keine echten Festivaldaten hineinkopieren** — keine Namen, Adressen, Telefonnummern oder
 Notizen zu identifizierbaren Personen. Dieses Repository ist öffentlich.

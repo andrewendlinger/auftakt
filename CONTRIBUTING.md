@@ -22,8 +22,14 @@ licence, not a fork. Open an issue and we can talk.
 
 Bug reports and ideas are genuinely useful. Helpful things to include:
 
-- what you did, what you expected, what happened instead
-- the app version (Einstellungen → *Saison & Daten* → **Version & Updates**)
+- what you did, what you expected, what happened instead — Einstellungen → *Programm & Hilfe* →
+  **Feedback senden…** asks for exactly these (or the equivalent three for a *Wunsch*) and fills
+  the rest in
+- for anything that goes wrong during startup: the `Auftakt-Diagnose-<Kennung>.txt` that same
+  dialog writes to your desktop when you report a *Fehler*, and asks you to attach. It carries the
+  whole of `boot-log.jsonl` — the only record of what the boot animation actually did — plus the
+  machine's details
+- the app version (Einstellungen → *Programm & Hilfe* → **Version & Updates**)
 - your OS, and whether you are running the packaged app or the dev server
 - whether it reproduces against `npm run demo`, which uses invented data
 

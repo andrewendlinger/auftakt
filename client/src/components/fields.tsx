@@ -315,6 +315,27 @@ export function TextInput({
 }
 
 /**
+ * Plain multi-line text.
+ *
+ * Not `FieldType: 'textarea'`, which is the rich-text editor below and stores HTML. This is
+ * for text that leaves the app *as text* — the feedback mail's body (WP-54). Same shell as
+ * `TextInput` so the two cannot drift apart visually; callers add `rows` and, where the
+ * dialog can afford it, `resize-y`.
+ */
+export function TextArea({
+  invalid,
+  ...props
+}: React.TextareaHTMLAttributes<HTMLTextAreaElement> & Invalidatable) {
+  return (
+    <textarea
+      {...props}
+      aria-invalid={invalid || undefined}
+      className={`${invalid ? invalidInputCls : inputCls} ${props.className ?? ''}`}
+    />
+  );
+}
+
+/**
  * Inputs whose native picker reports `value === ''` for anything it considers incomplete, so
  * Enter pressed halfway through typing submits the empty string rather than the digits on
  * screen — in the event dialog that wrote „Datum offen" over a stored date and dropped both

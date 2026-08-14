@@ -499,7 +499,24 @@ last-switched season, not necessarily the opener's.
 **Main never reloads a window to refresh it.** The one thing main knows and the renderers do not
 — the registry-wide backup folder changed, from any window's picker, the Datei menu or the
 first-launch prompt — travels as `backup-config-changed`, the app's only `webContents.send` and
-only `ipcRenderer.on` (`electron/preload.ts` → `onBackupConfigChanged`). Renderers answer it with
+only `ipcRenderer.on` (`electron/preload.ts` → `onBackupConfigChanged`). WP-54's diagnostics pair
+(`get-diagnostics`, `save-diagnostics`) is `invoke`/`handle` like everything else, so that remains
+true. `get-diagnostics` takes **no argument**: main derives `boot-log.jsonl`'s path from
+`app.getPath('userData')` and hands the renderer finished summary text plus a path it may only
+display. A path *from* the renderer would be a `shell.showItemInFolder` pointed anywhere on the
+machine — the same hole the scheme allowlist closes for `openExternal` (X-02).
+
+`save-diagnostics` is the exception, and it exists because a `mailto:` cannot carry an attachment
+(see `docs/DECISIONS.md`): it writes the full log plus the machine's details to the desktop so the
+customer has one named file to drag into their mail. It takes two arguments and trusts neither. The
+report body is capped like the boot payload is, and the file name comes from the mail's own
+reference — validated by `isBundleRef` in `electron/diagnostics.ts` against `AF-` plus ten digits,
+an alphabet in which no separator, no `..` and no drive letter can be spelt. The renderer picks a
+*name*; main still picks the directory — and the suffix, when a bundle of that name is already
+lying on the desktop, returning the name it actually wrote so the mail can carry that one. So the
+rule above is narrowed rather than dropped. That
+validator is deliberately **not** imported from the client module that generates refs — main
+checking with the renderer's own checker is not checking. Renderers answer the broadcast with
 the same coalesced blanket invalidate the BroadcastChannel listener runs. A reload would be the
 one path in the app that destroys another window's unsaved editor drafts, which have no
 `beforeunload` behind them (PR50-05).

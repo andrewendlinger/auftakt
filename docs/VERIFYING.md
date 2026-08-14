@@ -191,6 +191,38 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   `tail -n 5 ~/Library/Application\ Support/Auftakt/boot-log.jsonl | jq .` (Windows:
   `%APPDATA%\Auftakt\boot-log.jsonl`). Dev mode writes nothing, matching the overlay it reports
   on. The writer is `electron/bootLog.ts`, electron-import-free so `check:unit` covers it.
+- **Since WP-54 the customer can reach it too**, which is the point of the file: Einstellungen →
+  „Programm & Hilfe" → „Feedback senden…" writes the whole log into a bundle on the desktop and
+  asks them to attach it. `summarizeBootLog`'s five-line digest is now the **fallback** — it rides
+  in the mail body only when no bundle was written (a Wunsch, the browser build, or a failed
+  write), so a mail that carries the file carries no digest at all. Do not verify the digest by
+  reading the dialog; read the summary itself under `check:unit`, where the four record species
+  and the untrusted-`why` case are pinned.
+- **A Fehler also writes `Auftakt-Diagnose-<ref>.txt` to the desktop and reveals it**, because a
+  `mailto:` cannot attach anything. Three things follow for anyone verifying it. It is a *real
+  file on the desktop of whoever runs the app*, so never drive the unstubbed path from a script —
+  the browser stub in `lib/drive.mjs` records `saveDiagnostics`'s arguments into `window.__saved`
+  and the assertion belongs on the filename the mail body then carries. The file persists between
+  runs, so a manual pass that does not delete it is reading a stale bundle a minute later — the
+  reference in it is the tell. And **dev writes no boot log**, so a bundle built in dev holds the
+  machine section and „noch keinen Start protokolliert" under the log heading; that is the branch,
+  not a truncated file. A Wunsch writes nothing at all.
+- **There is one way through and no folder.** „Text kopieren" and „Diagnoseordner öffnen" were
+  removed once the bundle existed, so a script that waits for either hangs. `shell.showItemInFolder`
+  did *not* go with them: `save-diagnostics` still reveals the file it just wrote, which is one more
+  reason a driving script must stub the bridge rather than let the real one run. The address in
+  plain text under „Was wird mitgeschickt?" is the whole of the no-mail-client fallback now, and it
+  is there on **both** branches — it used to sit in the `else` of the attachment note, so the one
+  shape that shipped without it was the packaged Fehler, i.e. the one that needs it.
+- **The text boxes stop at the mail's budget, not at their `maxLength`.** `maxLength` is 300 per
+  field, but every keystroke goes through `fitFeedbackAnswer` first, so three boxes filled to 300
+  with German come back holding fewer — the last one typed is the short one, and „Die E-Mail ist
+  voll" appears under the fields. A script that types 300 characters into each and asserts on the
+  value, or that expects its own string back out of the third box, is asserting on a cap that is
+  not the one in force. `fill()` counts as one paste: it lands cut, not refused. What the preview
+  shows is `feedbackMailBody`, i.e. the body *after* the composer's truncation ladder — with a fat
+  boot summary and no attachment, the block in the preview is shorter than the one
+  `get-diagnostics` returned, and that is correct rather than a stale render.
 - **A traced launch: `AUFTAKT_BOOT_TRACE=1`.** Records from before the window until ~750 ms after
   the overlay settles — capped at ~6 s, or the env var's value in milliseconds — to
   `boot-trace-<stamp>.json` in userData, loadable at ui.perfetto.dev. Quitting does not lose it:
@@ -416,7 +448,33 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   view of the still-settling dialog — „Globale Spalten" was missing from it while the same node's
   `textContent` had it all along. Assert on `textContent` (`locator.evaluate((el) => el.textContent)`).
 - **The Einstellungen tabs are links, not buttons** — `getByRole('button', …)` waits for ever.
-  Navigate straight to `#/einstellungen/aufgaben`.
+  Navigate straight to the slug: `#/einstellungen/aufgaben` („Aufgaben & Übersicht"),
+  `/kategorien`, `/daten` („<Saison> & Daten") or `/hilfe` („Programm & Hilfe"). The labels moved
+  in WP-54 and the slugs did not, so a script keyed on a slug survived it and one keyed on a
+  label did not.
+- **A `mailto:` is fire-and-forget, so the feedback dialog produces no app state to assert on.**
+  Its only observable is the URL handed to `openExternal`, and the real one opens a mail client
+  on the machine running the script. Stub the bridge with an `openExternal` that *records* —
+  `window.__external.push(url)` — then read it back with `new URL(...)` and `searchParams`, which
+  is also the only honest check of the encoding. Asserting on the dialog after „E-Mail öffnen"
+  asserts on nothing; it has already closed itself.
+- **Sending takes two clicks, and the first one opens a dialog rather than closing one.** „Weiter"
+  in the form only opens the steps dialog („So geht es weiter"); „E-Mail öffnen" inside it is what
+  writes the bundle and hands over the `mailto:`. So `dialogs(page)` counts **2** in between —
+  scope to `topDialog(page)` or a bare `getByRole('button', {name: 'Zurück'})` matches nothing
+  useful — and a script that clicks „Weiter" and waits for `window.__external` hangs for ever.
+  Escape and the backdrop peel off the steps dialog only; the filled-in form is still behind it,
+  which is also how to check that a „Zurück" kept the typed answers.
+- **The dialog asks nothing until a kind is picked, and the questions differ per kind.** „Was ist
+  passiert?" exists only under Fehler — a script keyed on it hangs on a Wunsch, where the same
+  first box reads „Was möchtest du tun können?". Click `getByRole('button', {name: /^Fehler/})`
+  first, then the area, then fill `locator('textarea').nth(0)` by position rather than by label
+  (the `getByLabel` trap below applies here too). The subject is
+  `[AF-<10 digits>] Auftakt-(Fehler|Wunsch): <Bereich>`, and the reference is stamped once when
+  the dialog opens — the same value appears in the preview, in the subject, in the body's stamp
+  line („Fehler · Künstler · Kennung: AF-…", in the technical block, not at the top) and in the
+  diagnostics filename, which is what to assert they agree on. With a bundle written the body's
+  first line is `!! BITTE NOCH ANHÄNGEN: …`; without one it starts straight in on `--- <heading>`.
 - **`getByLabel` finds nothing in a `RecordFormModal`.** Its `<label>` (`fields.tsx`) carries no
   `htmlFor` and does not wrap the input, so the two are not associated and Playwright's
   accessible-name lookup times out — 30 s per field, reading as „the dialog never opened".
@@ -661,10 +719,11 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **A write straight to `/api/custom-columns` does not refetch the client's column list**, and a
   synthetic `window.focus` event does not either. Toggle through the app's own ⚙ Spalten manager
   when the case depends on the table re-rendering with the new column set.
-- **There are two `type="number"` inputs, one per „Zeitfenster"**, and they sit on different
-  Settings tabs: „Braucht Aufmerksamkeit" under `#/einstellungen/aufgaben`, „Termine in der
-  Übersicht" (the „Danach" divider) under `#/einstellungen/kategorien`. Neither tab's „Speichern"
-  is its page's only one — scope to the card.
+- **There are two `type="number"` inputs, one per „Zeitfenster", and since WP-54 they share a
+  tab.** Both are under `#/einstellungen/aufgaben`: „Braucht Aufmerksamkeit" on the
+  „Aufgaben-Übersicht" card, „Termine in der Übersicht" (the „Danach" divider) on the card below
+  it, which moved there out of `#/einstellungen/kategorien`. Scoping to the card is now required
+  rather than merely tidy — a bare `input[type="number"]` is ambiguous, and so is „Speichern".
 - **`paletteFor('Deadline')` is `#fee2e2`, the same colour `LEGACY_EVENT_COLORS` holds for it**, so
   „Deadline" cannot distinguish the two code paths. „Termin" can (legacy `#e2e8f0` vs palette
   `#dcfce7`).

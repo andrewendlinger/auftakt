@@ -12,14 +12,28 @@ import {
   type SaveDialogOptions,
 } from 'electron';
 import { enableCompileCache } from 'node:module';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpus, freemem, homedir, totalmem, release, version as osVersionName } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { fileStamp } from '../shared/time';
+import { fileStamp, localStamp } from '../shared/time';
 import { buildMenu } from './menu';
 import { backupDirProblem, runStartupBackup } from './backup';
 import { cascadeBounds, fittedSize } from './cascade';
 import { exportFileName } from './exportName';
-import { writeBootReport } from './bootLog';
+import {
+  BOOT_LOG_NAME,
+  BOOT_REPORT_MAX_CHARS,
+  bootDiagnostics,
+  writeBootReport,
+} from './bootLog';
+import {
+  buildDiagnosticsBundle,
+  isBundleRef,
+  systemLine,
+  uniqueBundleName,
+  type SystemFacts,
+} from './diagnostics';
 import { checkForUpdates, downloadAndInstallUpdate, startSilentStartupCheck } from './updater';
 
 const isDev = !app.isPackaged;
@@ -123,6 +137,134 @@ function openExternalSafely(url: string): void {
     void shell.openExternal(url);
   } else {
     console.warn('Blockierter externer Link (nicht unterstütztes Format):', url);
+  }
+}
+
+/**
+ * Everything the machine can say about itself, for the diagnostics bundle (WP-54).
+ *
+ * Collected here because every source needs `electron` or `node:os`; the formatting is pure
+ * and lives in `diagnostics.ts`, which is what `check:unit` can reach. Displays and the GPU
+ * flags are the load-bearing half rather than padding: WP-61 is a boot gesture that flashes
+ * and vanishes on one Windows machine and nowhere else, and `scaleFactor` plus
+ * `gpu_compositing` are the two facts that separate a compositing fault from a timing one.
+ *
+ * `gpu` is opt-in because it is the only slow part. `get-diagnostics` runs on every open of
+ * the feedback dialog and needs nothing but the OS and the primary display for its one-line
+ * clause; making it wait on the GPU process for facts it does not print would leave the
+ * „Was wird mitgeschickt?" preview blank for up to two seconds.
+ */
+async function collectSystemFacts({ gpu: withGpu = true } = {}): Promise<SystemFacts> {
+  let gpuDevice = '';
+  const gpu: Record<string, string> = {};
+  if (withGpu) {
+    try {
+      // 'complete' carries the driver strings 'basic' leaves out, and those are what a
+      // graphics fault is actually matched against. It goes through the GPU process, so it
+      // can hang when that process is the thing that is wrong — which is exactly when this
+      // report is being written. Losing one line beats never writing the file.
+      const info = (await Promise.race([
+        app.getGPUInfo('complete'),
+        new Promise((r) => setTimeout(() => r(null), 2000)),
+      ])) as { gpuDevice?: unknown[]; auxAttributes?: Record<string, unknown> } | null;
+      const first = (info?.gpuDevice?.[0] ?? {}) as Record<string, unknown>;
+      const hex = (v: unknown) => (typeof v === 'number' ? `0x${v.toString(16)}` : '');
+      gpuDevice = [
+        String(info?.auxAttributes?.glRenderer ?? ''),
+        [hex(first.vendorId), hex(first.deviceId)].filter(Boolean).join(' / '),
+        [first.driverVendor, first.driverVersion].filter(Boolean).join(' '),
+      ]
+        .filter(Boolean)
+        .join(' · ');
+    } catch {
+      /* no GPU process to ask — the feature-status flags below still say something */
+    }
+    try {
+      for (const [k, v] of Object.entries(app.getGPUFeatureStatus())) gpu[k] = String(v);
+    } catch {
+      /* same */
+    }
+  }
+
+  const displays = screen.getAllDisplays().map((d) => ({
+    width: d.size.width,
+    height: d.size.height,
+    scale: d.scaleFactor,
+    rotation: d.rotation,
+    colorDepth: d.colorDepth,
+    internal: d.internal,
+  }));
+
+  return {
+    app: app.getVersion(),
+    packaged: app.isPackaged,
+    electron: process.versions.electron ?? '',
+    chrome: process.versions.chrome ?? '',
+    node: process.versions.node ?? '',
+    platform: process.platform,
+    arch: process.arch,
+    osVersion: process.getSystemVersion(),
+    osName: osVersionName(),
+    osRelease: release(),
+    cpu: cpus()[0]?.model.trim() ?? '',
+    cores: cpus().length,
+    memTotal: totalmem(),
+    memFree: freemem(),
+    displays,
+    locale: app.getLocale(),
+    systemLocale: app.getSystemLocale(),
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    gpu,
+    gpuDevice,
+    userData: app.getPath('userData'),
+    dataDir: dataDir(),
+    home: homedir(),
+  };
+}
+
+/** What `save-diagnostics` reports back. The name is what the mail body tells them to attach. */
+export type DiagnosticsSave = { ok: true; name: string } | { ok: false };
+
+/**
+ * Write the diagnostics bundle to the desktop and reveal it (WP-54).
+ *
+ * The desktop rather than beside the log in userData: this file exists to be dragged into a
+ * mail, and a folder the user already has open beats one they have to be sent into. It is
+ * plainly theirs to delete afterwards, which a file in `AppData` is not.
+ *
+ * `ref` is the mail's own reference and the only renderer value that becomes a filename —
+ * `isBundleRef` is why that is safe, and the directory is never the renderer's to choose.
+ * `report` is the mail body, capped like the boot payload is: the renderer is the untrusted
+ * side here too, and an unbounded string is a way to fill somebody's disk from a web page.
+ */
+async function saveDiagnostics(ref: unknown, report: unknown): Promise<DiagnosticsSave> {
+  try {
+    if (!isBundleRef(ref)) return { ok: false };
+    const text = typeof report === 'string' ? report.slice(0, BOOT_REPORT_MAX_CHARS) : '';
+    const logFile = join(app.getPath('userData'), BOOT_LOG_NAME);
+    const log = existsSync(logFile) ? readFileSync(logFile, 'utf8') : '';
+    const bundle = buildDiagnosticsBundle({
+      ref,
+      at: localStamp(),
+      report: text,
+      facts: await collectSystemFacts(),
+      log,
+      entries: log.split('\n').filter((l) => l.length > 0).length,
+    });
+    // Never over a bundle already lying there: the reference is minute resolution, and a
+    // second report inside that minute would otherwise replace the first one's file while the
+    // first one's mail still names it. `uniqueBundleName` picks the suffix and the renderer
+    // sends whatever name comes back, so the mail and the file agree either way.
+    const desktop = app.getPath('desktop');
+    const name = uniqueBundleName(ref, (candidate) => existsSync(join(desktop, candidate)));
+    const file = join(desktop, name);
+    writeFileSync(file, bundle, 'utf8');
+    shell.showItemInFolder(file);
+    return { ok: true, name };
+  } catch {
+    // A bundle that cannot be written must not cost the mail: the dialog composes without
+    // the attachment line instead, and the summary in the body still travels.
+    return { ok: false };
   }
 }
 
@@ -908,6 +1050,18 @@ ipcMain.handle('choose-backup-dir', (e) => chooseBackupDir(BrowserWindow.fromWeb
 ipcMain.handle('get-version', () => app.getVersion());
 ipcMain.handle('check-updates', (_e, refresh: boolean) => checkForUpdates(refresh));
 ipcMain.handle('install-update', () => downloadAndInstallUpdate());
+// The customer's route to their own boot log (WP-54). Main reads and summarizes; the
+// renderer receives finished text and never a path it could send back (X-02). Takes no
+// argument at all: everything it reads is derived from userData here.
+ipcMain.handle('get-diagnostics', async () => ({
+  ...bootDiagnostics(app.getPath('userData')),
+  system: systemLine(await collectSystemFacts({ gpu: false })),
+}));
+// The one that does take arguments, and the reasoning that keeps the rule intact is in
+// saveDiagnostics: a ten-digit ref cannot name a directory, and the body is capped.
+ipcMain.handle('save-diagnostics', (_e, ref: unknown, report: unknown) =>
+  saveDiagnostics(ref, report),
+);
 /** Whether any renderer settle arrived, so the 8 s fallback can log its absence. */
 let bootReported = false;
 // Sent from the boot overlay's single exit path, not from React — see runStartupChores.

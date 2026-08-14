@@ -53,7 +53,7 @@ from that source.
 
 The Windows installer is **not** Authenticode-signed, which has two consequences.
 Windows SmartScreen warns about an unknown publisher on first install, and the
-in-app updater (Settings → "Version & Updates", Windows only) cannot verify a
+in-app updater (Settings → "Programm & Hilfe" → "Version & Updates", Windows only) cannot verify a
 signature on the package it downloads — electron-updater skips that step when no
 publisher is configured.
 

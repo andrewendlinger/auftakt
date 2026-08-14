@@ -8,6 +8,203 @@ If you are about to re-raise one of these, the bar is new information, not a fre
 
 ---
 
+## Feedback leaves by `mailto:`, not through an endpoint (2026-08-14, WP-54)
+
+The raw note asked whether the app could send the mail itself. It could — with a mail service, an
+account, credentials shipped inside a source-available binary, and a network connection, in an app
+whose whole point is that it works offline and keeps a festival's contact data on one machine. That
+trade is not close.
+
+`mailto:` also buys something an endpoint would have to build: a review step. The composed body
+opens in the customer's own client, under „Was wird mitgeschickt?" *before* that, and nothing is
+sent until they press send. The diagnostic block is timings, a version and a viewport — but
+„technische Angaben" is not a thing to ask anyone to take on trust, least of all in an app holding
+personal data.
+
+What it costs is knowing. A `mailto:` is fire-and-forget: the app cannot learn whether the mail was
+sent, so the toast says „bitte dort noch abschicken" rather than „gesendet".
+
+**„Text kopieren" was removed on 2026-08-14**, and with it the reasoning that a machine with no
+mail client needs a second button. It was a hedge: two buttons of equal weight, and the customer
+deciding which situation they are in before they know they are in one. The path that matters is the
+one that works, and the fallback survives as a sentence — the address in plain text under „Was wird
+mitgeschickt?", where somebody actually stuck will look. One button, no branch to choose.
+
+That sentence is **unconditional**, which it was not when it shipped: it sat in the `else` of the
+attachment note, so the packaged app reporting a *Fehler* — the main path — showed it to nobody. The
+branch that hides it is exactly the branch that needs it. A machine with no mail handler clicks
+„E-Mail öffnen", nothing opens, and the app then holds no address anywhere.
+
+## „Diagnoseordner öffnen" was removed once the file was written for them (2026-08-14, WP-54)
+
+It shipped as the route to `boot-log.jsonl`, and the diagnostics bundle replaced it the same week:
+a button that opens a folder full of Chromium caches is not a better answer than a named file
+already lying on the desktop. Two routes to the same evidence is one route more than the feature
+needs, and the one being kept is the one that ends with the file attached.
+
+The `reveal-diagnostics` channel went with it rather than staying behind as an unused handler.
+`shell.showItemInFolder` itself stays, in `save-diagnostics` and nowhere else (`electron/main.ts`):
+it reveals the bundle it has just written, on a path the renderer cannot aim — the removed thing is
+the standalone button and the channel that let a renderer ask for a folder, not the reveal. If a
+bundle cannot be written, the mail carries the five-line summary instead; nothing routes the
+customer into `userData` again.
+
+## A `mailto:` cannot attach, so the app writes the file instead (2026-08-14, WP-54)
+
+The obvious follow-up to the decision above was: if the mail only carries five folded boot entries
+and the rest sits in a folder, why not send the whole log, or attach it automatically?
+
+Neither is available. RFC 6068 limits which headers a `mailto:` client may honour; `attach=` was a
+Thunderbird extension and was disabled precisely because a URL naming a local file is an
+exfiltration primitive. Apple Mail, Outlook and web handlers ignore it, `shell.openExternal` hands
+the URL to the OS with nothing in between, and Electron has no cross-platform compose-with-
+attachment API. Putting the log in the body fails on size rather than on policy: the file keeps up
+to 100 records, ~35 KB, and even one folded line per boot is ~12 KB against a budget of 1900
+*encoded* characters. Five is what is left after three German fields, not timidity.
+
+So the file is made attachable instead of the mail made bigger. `save-diagnostics` writes one
+`Auftakt-Diagnose-<ref>.txt` and reveals it selected, and the mail names that filename.
+
+- **The desktop, not beside the log in userData.** The file exists to be dragged into a mail. A
+  folder they already have open beats one they have to be sent into, and `boot-log.jsonl` sits
+  among `Cache/`, `Code Cache/`, `GPUCache/` and `blob_storage/`. It is also plainly theirs to
+  delete afterwards, which a file in `AppData` is not.
+- **`.txt`, not a copy of the `.jsonl`.** A `.jsonl` does not open on double-click on Windows, and
+  the person carrying the file is the one who should be able to read it before they send it.
+- **It carries more than the log**, because the questions that follow a startup report are always
+  the same ones: which Windows build, how the screen is scaled, whether GPU compositing is on. That
+  is the WP-61 shortlist, and none of it is guessable from timings.
+- **Home paths are redacted to `~`.** It is mail, not a local file: `C:\Users\<name>\AppData\…`
+  names the customer, and the shape of the path is the half that has ever explained a fault. The
+  scrub runs over the finished text, so a path the person typed into the report is covered too.
+
+What it costs is one manual step — the drag — and that is the floor, not a shortfall. „E-Mail
+öffnen" reveals the file first and opens the client second, so the compose window is what ends up
+in front.
+
+Because that step is the floor, it is where the words go, and **the words are a dialog rather than
+a card (2026-08-14).** The steps were first written as a numbered card above the send button, which
+put the one thing the customer has to do at the bottom of a scrolling form under three text boxes —
+the easiest place in the feature to skip. „Weiter" now opens a second dialog carrying those steps
+and nothing else, and only its „E-Mail öffnen" writes the file and opens the client. A card is
+scrolled past; a dialog is answered. It also settles what the button may claim: „E-Mail schreiben"
+promised a mail this click does not write, and „verschicken" would have promised a send that is not
+this app's to make.
+
+The draft then opens on the instruction to attach the file, on the first line, because a mail
+client shows the first line and not the signature. Kind, area and reference used to sit above it
+and now sit in the technical block: they are what the report is filed under, the subject carries
+all three, and nothing about them is for the reader to act on. The instruction is addressed to the
+customer rather than the maintainer, and „(bitte stehen lassen)" heads the block that is not theirs
+to tidy — every sentence asking the reader to decide something is a sentence that can be decided
+wrong. The copy written *into* the bundle drops both the instruction and the summary: a file
+telling its reader to attach that same file is nonsense, and the log it would digest is printed in
+full two sections below.
+
+The body's headings are `--- ` and the attach block is `!!` for a reason that outlives taste:
+`encodeURIComponent` leaves `!` and `-` alone, spends three characters on `=` or `#` and nine on a
+box-drawing rule, and the budget below is measured in encoded characters. Structure that reads as
+free in an editor is not free in a `mailto:`.
+
+## No menu entry for feedback (2026-08-14, WP-54)
+
+„Dauerhaft sichtbar" was the alternative to a settings entry, and a Hilfe menu was the obvious
+shape for it. It would need main to tell a renderer to open a dialog — a second `webContents.send`,
+against the uniqueness `docs/ARCHITECTURE.md` documents and `preload.ts` leans on, for an entry
+point that already exists two clicks away. Revisit only if the settings entry proves undiscoverable
+in use, and then by moving it, not by adding a second door.
+
+## The boot summary is triage, not analysis (2026-08-14, WP-54)
+
+Five entries, and `outcome/why` is the one clause never dropped — it is the field that separates
+WP-61's three candidate causes. `warm` and `quick` are left out and the timings are rounded to
+whole milliseconds, because a support mail is read by a person deciding what to look at.
+
+Since the bundle exists the summary is the *fallback*, not the default: a mail that carries the
+file carries no digest at all. It was the same data twice, and the half in the mail was the
+truncated half.
+
+The order is oldest-first for a mechanical reason, not a stylistic one: the composer's truncation
+ladder drops entries from the top when the `mailto:` is too long, so the boot that prompted the
+report is the last thing to go. Below that, the whole block is replaced by a pointer at the reveal
+button rather than by silence, and only then does the person's own text get cut — marked.
+
+Once the diagnostics file exists, that middle rung goes the other way: the block is dropped
+outright rather than replaced. The line above it already names the file the log is in, and a
+sentence under it saying so costs 140 encoded characters to repeat what the reader just read. The
+budget is not abstract — three fields at the dialog's own `maxLength` plus a reference, a machine
+clause and an attachment line come to 1931 encoded characters against a ceiling of 1900, and
+`check:unit` holds that arithmetic. What gets spent at that size is the summary, never a word the
+person wrote, because the summary's 100 entries are in the attachment in full.
+
+That ceiling is also what any re-wording of the body has to be measured against, and it has almost
+no slack: the same worst case *without* the summary measured 1897 of 1900 in the layout this
+feature shipped with. The restructure on 2026-08-14 paid for its headings by taking the duplicated
+`Art: … · Bereich: …` line out of the head — 1873 — so the structure cost nothing the person could
+have spent on words. `feedbackMail.test.ts` asserts the whole shape fits with no `[…]` in it, which
+is the only reason the arithmetic is discovered before a customer's report arrives truncated.
+
+**The dialog's `maxLength` cannot be that guarantee (2026-08-14, WP-54).** It was written as one —
+300 characters per field, „sized so three full fields of ordinary German prose still fit" — and the
+1873 above is what that claim was measured on: prose carrying one umlaut per 62 characters. Real
+German carries three to six. An umlaut costs six encoded characters against one for a letter, so
+about thirteen of them across three full fields is the whole 27 of slack, and past that every
+answer is halved by the ladder's last rung and marked `[…]` — a customer's report arriving cut,
+discovered by the maintainer reading it. A character count cannot express an encoded budget in any
+sizing: the cap that would hold the true worst case (300 umlauts encode to 1800 on their own) is
+about a hundred characters, which is not a report anybody could write.
+
+So the enforcement moved to where the budget can actually be measured. `feedbackHeadroom` composes
+the finished URL and reports what is left after the diagnostics have been spent, and
+`fitFeedbackAnswer` bisects the longest prefix that still fits; the dialog puts every keystroke
+through it. What the box holds is then always what the mail carries — a blocked keystroke leaves
+the text as it was, a pasted overflow lands cut in front of the person — and the ladder's last rung
+is left to what it is for: a mail that grew *after* it was typed, which is the failed-bundle-write
+case putting the summary back. `FEEDBACK_FIELD_MAX` stays as the shape of an answer, not as the
+budget. Ten URL compositions per keystroke is the cost, against a re-render that costs more.
+
+A wish carries no summary at all. Startup timings say nothing about a feature request, and the
+budget they would spend is better spent on what was actually asked for.
+
+`why` is read back out under the same distrust it was written with. `bootLogLine` caps the payload
+as a whole and never inspects the fields inside it, so a literal newline in `why` would forge an
+extra report line in a support mail and a long one would eat the mailto budget. Every string
+lifted out of the log is flattened and sliced.
+
+## The kind is asked first, and it rewrites the questions (2026-08-14, WP-54)
+
+The first version asked „Was ist passiert?" of everyone, which is the only sentence a wish can then
+be filed under — so feature requests arrive phrased as faults, and the first reply is spent working
+out which one it was. Fehler and Wunsch are asked before anything else, and each brings its own
+three questions and its own required field.
+
+Two kinds, not three. „Frage" was the candidate for a third; a question about how something works
+is a report that the thing is not discoverable, which is a Wunsch, and a third row would have to
+earn a permanent place in the first thing anyone sees.
+
+The questions live in one table (`FEEDBACK_KINDS`), which the dialog renders from and the mail
+composes from. They used to be written twice — as questions in the form, as statements in the body —
+with nothing keeping them in step.
+
+## The report carries its own reference (2026-08-14, WP-54)
+
+Every mail out of the dialog used to have the same subject, so an inbox of them could not be sorted
+and a reply could not say which one it answered. `AF-` plus `YYMMDDHHMM` in naive local time (the
+convention `shared/time.ts` sets) leads the subject, repeats in the body — a subject is the first
+thing a forward rewrites — and names the diagnostics file, which is what lets a mail and a loose
+attachment on a desktop find each other.
+
+Minute resolution, not seconds: it is read aloud and typed into replies. Two reports inside one
+minute from one person is not the collision worth designing against — in the *reference*. In the
+*file* it is, and the two are separable. Somebody who sends a report, spots a typo and sends
+another inside the minute is not a rare user; they are the one taking it seriously, and a second
+bundle written straight over the first leaves one file on a desktop that two mails ask for. So
+`uniqueBundleName` suffixes `-2`, `-3` on collision and main returns the name it wrote, which is
+the name that mail carries. Both mails still say the same reference, because they are two attempts
+at the same report.
+
+---
+
 ## Windows Authenticode signing — deferred (2026-07-31)
 
 The NSIS installer is unsigned, so SmartScreen warns about an unknown publisher and the in-app

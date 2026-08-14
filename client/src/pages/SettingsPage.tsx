@@ -6,6 +6,7 @@ import { Card, SectionTitle, Spinner, Btn, IconButton, ErrorState } from '../com
 import { Label, TextInput, Modal, onEnterKey } from '../components/fields';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { CustomColumnManager } from '../components/CustomColumnManager';
+import { FeedbackDialog } from '../components/FeedbackDialog';
 import {
   OptionsEditor,
   countWithNoun,
@@ -40,14 +41,20 @@ import {
 
 /**
  * Shell of the settings sub-navigation: heading + tab bar; the actual cards live in the
- * three tab pages below, rendered through the Outlet (routes in `main.tsx`).
+ * four tab pages below, rendered through the Outlet (routes in `main.tsx`).
+ *
+ * Four since WP-54, which needed somewhere for „Feedback & Diagnose" to live that was not
+ * „<Saison> & Daten". Grouping by what a setting *acts on* rather than by what it happens
+ * to sit next to also moved „Version & Updates" out of the data tab and „Termine in der
+ * Übersicht" out of the category tab.
  */
 export function SettingsPage() {
   const term = useSeasonTerm();
   const tabs = [
-    { to: 'aufgaben', label: 'Aufgaben' },
-    { to: 'kategorien', label: 'Kategorien & Optionen' },
+    { to: 'aufgaben', label: 'Aufgaben & Übersicht' },
+    { to: 'kategorien', label: 'Kategorien' },
     { to: 'daten', label: `${term.singular} & Daten` },
+    { to: 'hilfe', label: 'Programm & Hilfe' },
   ];
   return (
     <div className="max-w-3xl space-y-8">
@@ -102,7 +109,11 @@ function usePatchSettings(): (p: Partial<WritableSettings>) => Promise<boolean> 
     });
 }
 
-/** Tab „Aufgaben": global columns, automatic sort rules, overview metrics. */
+/**
+ * Tab „Aufgaben & Übersicht": global columns, automatic sort rules, and the two windows the
+ * Übersicht reads — task metrics and, since WP-54, the event window that used to sit with
+ * the categories.
+ */
 export function SettingsTasksTab() {
   const { data: settings, isLoading, isError, refetch } = useSettings();
   const patch = usePatchSettings();
@@ -174,6 +185,23 @@ export function SettingsTasksTab() {
         />
       </Card>
 
+      {/* Moved here from the category tab in WP-54: it is a display window, not a category,
+          and this tab is now named for the Übersicht it feeds. It used to sit beside the
+          event types precisely to keep the two „Zeitfenster" fields off one screen — they
+          are on one screen now, so this card stays last and the two labels have to keep
+          naming what they window („Braucht Aufmerksamkeit" vs „Danach"). */}
+      <Card className="p-5">
+        <SectionTitle>Termine in der Übersicht</SectionTitle>
+        <p className="mt-1 mb-3 text-xs text-neutral-400">
+          Wie weit die Übersicht nach vorn schaut. Spätere Termine verschwinden dadurch nicht – sie
+          stehen darunter unter „Danach“, der Rest hinter „weitere anzeigen“. Termine ohne Datum
+          stehen immer ganz oben; Vergangenes steht auf der Künstler- und Projektseite.
+        </p>
+        {/* String(): scalar settings are stored via String(v) server-side, and `useEventWindowDays`
+            parses them back with Number() — same round trip as attention_window_days. */}
+        <EventWindowSetting onSave={(days) => patch({ event_window_days: String(days) })} />
+      </Card>
+
       {managingColumns && (
         <CustomColumnManager columns={globalCols} onClose={() => setManagingColumns(false)} />
       )}
@@ -181,7 +209,7 @@ export function SettingsTasksTab() {
   );
 }
 
-/** Tab „Kategorien & Optionen": the three coloured-options lists. */
+/** Tab „Kategorien": the three coloured-options lists, and nothing else since WP-54. */
 export function SettingsCategoriesTab() {
   const patch = usePatchSettings();
 
@@ -213,20 +241,6 @@ export function SettingsCategoriesTab() {
           addLabel="+ Typ"
           onSave={(v) => patch({ event_types: v })}
         />
-      </Card>
-
-      {/* Next to the event types rather than beside the task „Zeitfenster" on the Aufgaben tab:
-          two identically-named windows on one screen is a confusion this card can simply avoid. */}
-      <Card className="p-5">
-        <SectionTitle>Termine in der Übersicht</SectionTitle>
-        <p className="mt-1 mb-3 text-xs text-neutral-400">
-          Wie weit die Übersicht nach vorn schaut. Spätere Termine verschwinden dadurch nicht – sie
-          stehen darunter unter „Danach“, der Rest hinter „weitere anzeigen“. Termine ohne Datum
-          stehen immer ganz oben; Vergangenes steht auf der Künstler- und Projektseite.
-        </p>
-        {/* String(): scalar settings are stored via String(v) server-side, and `useEventWindowDays`
-            parses them back with Number() — same round trip as attention_window_days. */}
-        <EventWindowSetting onSave={(days) => patch({ event_window_days: String(days) })} />
       </Card>
 
       <Card className="p-5">
@@ -395,7 +409,7 @@ function SeasonTermCard() {
   );
 }
 
-/** Tab „Saison & Daten": season management, Bezeichnung, database & backups, version & updates (WP-N). */
+/** Tab „<Saison> & Daten": season management, Bezeichnung, database & backups. */
 export function SettingsDataTab() {
   const { data: settings, isLoading, isError, refetch } = useSettings();
   const term = useSeasonTerm();
@@ -456,8 +470,56 @@ export function SettingsDataTab() {
         </div>
       </Card>
 
-      {hasElectron && <UpdateCard />}
     </div>
+  );
+}
+
+/**
+ * Tab „Programm & Hilfe": the app itself rather than what is in it — its version, and the
+ * way to report that something is wrong with it (WP-54).
+ */
+export function SettingsHelpTab() {
+  // The same predicate the Daten tab uses, deliberately: the question is „is there a
+  // preload bridge at all", not „does this one method exist", and one phrasing for it
+  // means one thing to keep true.
+  const hasElectron = typeof window.auftakt?.exportDatabase === 'function';
+  return (
+    <div className="space-y-8">
+      {hasElectron && <UpdateCard />}
+      <FeedbackCard />
+    </div>
+  );
+}
+
+/**
+ * „Feedback & Diagnose" — the entry point to the guided support mail (WP-54).
+ *
+ * Renders in the browser too, unlike its neighbour: `mailto:` works without a bridge, and
+ * the dialog itself greys out only the parts that need one. A card that vanished in browser
+ * mode would also be a card no driving script could ever see.
+ */
+function FeedbackCard() {
+  const [open, setOpen] = useState(false);
+  return (
+    <Card className="p-5">
+      <SectionTitle
+        right={
+          <Btn variant="primary" onClick={() => setOpen(true)}>
+            Feedback senden…
+          </Btn>
+        }
+      >
+        Feedback & Diagnose
+      </SectionTitle>
+      {/* One sentence. The paragraph this replaces explained the diagnostics file, the review
+          step and whose mail client sends it — all true, all four lines long, and all said
+          again inside the dialog at the moment each one applies. Nobody reads the second
+          telling of something under a button they have not pressed yet. */}
+      <p className="mt-1 text-xs text-neutral-400">
+        Etwas geht nicht oder fehlt? Auftakt schreibt die E-Mail vor.
+      </p>
+      {open && <FeedbackDialog onClose={() => setOpen(false)} />}
+    </Card>
   );
 }
 

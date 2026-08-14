@@ -24,6 +24,7 @@ import {
   SettingsTasksTab,
   SettingsCategoriesTab,
   SettingsDataTab,
+  SettingsHelpTab,
 } from './pages/SettingsPage';
 import { PrintArtist } from './pages/PrintArtist';
 import { PrintProject } from './pages/PrintProject';
@@ -158,6 +159,7 @@ createRoot(document.getElementById('root')!).render(
                     <Route path="aufgaben" element={<SettingsTasksTab />} />
                     <Route path="kategorien" element={<SettingsCategoriesTab />} />
                     <Route path="daten" element={<SettingsDataTab />} />
+                    <Route path="hilfe" element={<SettingsHelpTab />} />
                   </Route>
                   {/* Under Layout so the header navigation stays reachable from a dead link. */}
                   <Route path="*" element={<NotFound />} />
