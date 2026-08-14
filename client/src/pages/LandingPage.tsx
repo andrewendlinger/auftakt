@@ -54,7 +54,7 @@ export function LandingPage() {
     data: landing,
     current: landingCurrent,
     refresh: refreshLanding,
-    patch: patchLanding,
+    update: updateLanding,
   } = useLanding();
   const navigate = useNavigate();
   const toast = useToast();
@@ -158,12 +158,20 @@ export function LandingPage() {
       // has never been arranged, and an undo arm computing from `DEFAULT_LANDING_LAYOUT` would
       // persist it over the real one. The undo awaits this before it reads.
       refresh: refreshLanding,
+      // The one landing write that stays snapshot-based, and deliberately: `SectionArranger`
+      // computes the whole array from what it rendered, so there is no „apply my change to
+      // yours" to express here — and teaching it to would drag the entity and settings stores
+      // along with it. It still goes through `update`, so a refused write is re-applied to the
+      // current blob rather than dropped: two windows arranging at once is still last-one-wins
+      // for the *arrangement*, but it no longer takes the other window's documents, sections or
+      // notes with it (WP-53). A lost arrangement is also on screen and one gesture away; a lost
+      // document is not.
       write: (next: LayoutEntry[]) =>
         guard('Die Anordnung konnte nicht gespeichert werden.', () =>
-          patchLanding({ layout: next }),
+          updateLanding(() => ({ layout: next })),
         ),
     }),
-    [landing, landingCurrent, refreshLanding, patchLanding, guard],
+    [landing, landingCurrent, refreshLanding, updateLanding, guard],
   );
 
   const seasonGrid =

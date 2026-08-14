@@ -46,44 +46,25 @@ export function nonEmptyLandingKeys(landing: LandingContent): string[] {
 }
 
 /**
- * The landing content as it is *now*, with the cache guaranteed warm first.
- *
- * `current()` alone is only half of „now": react-query empties `['landing']` `gcTime` after the
- * page unmounts — five minutes, the default — and the landing is its only reader, so an undo
- * pressed from another screen reads `undefined`. Every reader here turns that into `?? []` and
- * then *writes* what it read, which is why the miss is not a blank list but a wipe: one
- * „Rückgängig" posts the restored row back as the only one the registry has, and there is no
- * Papierkorb behind seasons.json (SHL-03).
- *
- * So a late closure reads the blob through this, or awaits `refresh()` itself before its own
- * reads — which is what `useRemoveLandingSection` does, having three of them across two slices.
- */
-function useReadLanding(): () => Promise<LandingContent | undefined> {
-  const { current, refresh } = useLanding();
-  return async () => {
-    await refresh();
-    return current();
-  };
-}
-
-/**
- * Replace the landing's sections, computed from the list as it is *now*.
+ * Replace the landing's sections, computed from the list as the *server* has it.
  *
  * The `all` prop this replaced was a render snapshot shared by every section on the page, so a
  * write issued from one section — or an undo landing seconds after it was armed — carried the
  * other sections back to how they looked at that render, reverting a rename or a note the user
- * had typed in between (SHL-01, SHL-02).
+ * had typed in between (SHL-01, SHL-02). `useLanding().update` is now what guarantees the input:
+ * it re-reads before applying and retries if another window wrote in between (WP-53), which is
+ * also why the `useReadLanding` helper that used to sit here is gone — a cold cache can no
+ * longer be read as „no sections" and then written back (SHL-03).
  */
 function usePatchSections() {
-  const readLanding = useReadLanding();
-  const { patch } = useLanding();
-  return async (update: (sections: LandingSection[]) => LandingSectionInput[]) => {
-    await patch({ sections: update((await readLanding())?.sections ?? []) });
+  const { update } = useLanding();
+  return async (fn: (sections: LandingSection[]) => LandingSectionInput[]) => {
+    await update((cur) => ({ sections: fn(cur.sections) }));
   };
 }
 
 export function LandingNotesSection({ landing }: { landing: LandingContent }) {
-  const { patch } = useLanding();
+  const { update } = useLanding();
   return (
     <div>
       <SectionTitle>
@@ -93,8 +74,11 @@ export function LandingNotesSection({ landing }: { landing: LandingContent }) {
         <InlineNotes
           value={landing.notes}
           placeholder="+ Notiz hinzufügen"
+          // The one write here that ignores `cur`: a note is a scalar, so last-write-wins is the
+          // only semantics there is. It still goes through `update`, which is what keeps a
+          // concurrent *document* add in the other window from being the thing that loses.
           onSave={async (notes) => {
-            await patch({ notes });
+            await update(() => ({ notes }));
           }}
         />
       </Card>
@@ -109,30 +93,32 @@ const DOC_FIELDS: FieldDef[] = [
 
 /**
  * A document list plus its add/edit modal and undoable delete, parameterized by where the docs
- * live: the builtin Dokumente section patches `landing.documents`, a custom links section
- * patches its own `documents` inside the sections array.
+ * live: the builtin Dokumente section is `landing.documents`, a custom links section its own
+ * `documents` inside the sections array.
  *
- * `read` is that same location read at *write* time. Every mutation here computes a whole new
- * array, and the `docs` prop is only as fresh as the last render — see `remove`.
+ * That parameter is `updateDocs` — one lens, not the `read`/`onPatch` pair it replaced. Every
+ * mutation here computes a whole new array and the `docs` prop is only as fresh as the last
+ * render, so the two halves always had to be used together anyway; making them one function is
+ * what lets `useLanding().update` re-run a mutation against fresh content when another window
+ * wrote first (WP-53).
  */
 function DocList({
   docs,
-  read,
+  updateDocs,
   creating,
   onCloseCreate,
-  onPatch,
 }: {
   docs: LandingDoc[];
   /**
-   * The current contents of the list `onPatch` writes to. Async so it can go through
-   * `useReadLanding`: the undo arms below run after the landing has unmounted, by which time a
-   * plain cache read can answer „no documents" for a list that has three.
+   * Replace the list this section owns, computed from its contents as the server has them —
+   * never from the `docs` prop. The undo arms below run seconds after the click and from
+   * whatever screen the user has moved to by then; `docs` names the list as it looked at a
+   * render that is long past, and writing that back is SHL-01.
    */
-  read: () => Promise<LandingDoc[]>;
+  updateDocs: (fn: (docs: LandingDoc[]) => LandingDocInput[]) => Promise<void>;
   /** The "+ Dokument" button lives in the section title — the parent owns this state. */
   creating: boolean;
   onCloseCreate: () => void;
-  onPatch: (next: LandingDocInput[]) => Promise<void>;
 }) {
   const del = useUndoableDelete();
   const [editing, setEditing] = useState<LandingDoc | null>(null);
@@ -157,17 +143,17 @@ function DocList({
   const drag = useDragReorder<number>({
     mode: 'armed',
     onReorder: async (fromId, toId) => {
-      const now = await read();
-      const next = arrayMoveTo(
-        now,
-        now.findIndex((d) => d.id === fromId),
-        now.findIndex((d) => d.id === toId),
-      );
       // `arrayMoveTo` hands back the same array when either `findIndex` came up -1 — a row
-      // dropped from the list between the grab and the release — and the identity check then
-      // skips the request rather than rewriting the list to itself.
-      if (next === now) return;
-      await onPatch(next);
+      // dropped from the list between the grab and the release, or between a refused write and
+      // its retry — and returning it unchanged then rewrites the list to itself rather than
+      // renumbering it around a row that is not there.
+      await updateDocs((now) =>
+        arrayMoveTo(
+          now,
+          now.findIndex((d) => d.id === fromId),
+          now.findIndex((d) => d.id === toId),
+        ),
+      );
     },
   });
 
@@ -175,30 +161,30 @@ function DocList({
     const label = values.label ?? '';
     // Same field, same rule as LinkList: store a scheme so the row is openable (CCL-09).
     const url = values.url ? normalizeUrl(values.url) : null;
-    const now = await read();
-    if (editing) {
-      await onPatch(now.map((d) => (d.id === editing.id ? { ...d, label, url } : d)));
-    } else {
-      await onPatch([...now, { label, url }]); // id-less; the server assigns
-    }
+    await updateDocs((now) =>
+      editing
+        ? now.map((d) => (d.id === editing.id ? { ...d, label, url } : d))
+        : [...now, { label, url }], // id-less; the server assigns
+    );
   };
 
   const remove = (doc: LandingDoc) => {
-    // Both arms read the list as it is when they run, and the undo re-inserts this one document
-    // at the index it held. Posting the captured pre-delete array back instead — which is what
-    // this did — replayed the whole list six seconds later: a document added in the meantime was
-    // destroyed, a second one deleted came back, an edit to a third was reverted, all from one
-    // „Rückgängig" click and with nothing to recover any of it from (SHL-01).
+    // Both arms compute from the list as it is when they run, and the undo re-inserts this one
+    // document at the index it held. Posting the captured pre-delete array back instead — which
+    // is what this did — replayed the whole list six seconds later: a document added in the
+    // meantime was destroyed, a second one deleted came back, an edit to a third was reverted,
+    // all from one „Rückgängig" click and with nothing to recover any of it from (SHL-01).
     const index = docs.findIndex((d) => d.id === doc.id);
     return del({
       label: `Dokument „${doc.label}“`,
       // `remove` is the redo arm as well, so both of these run long after the click.
-      remove: async () => onPatch((await read()).filter((d) => d.id !== doc.id)),
-      restore: async () => {
-        const next = [...(await read())];
-        next.splice(index < 0 ? next.length : Math.min(index, next.length), 0, doc);
-        return onPatch(next);
-      },
+      remove: () => updateDocs((now) => now.filter((d) => d.id !== doc.id)),
+      restore: () =>
+        updateDocs((now) => {
+          const next = [...now];
+          next.splice(index < 0 ? next.length : Math.min(index, next.length), 0, doc);
+          return next;
+        }),
     });
   };
 
@@ -251,8 +237,7 @@ function DocList({
 
 /** The builtin Dokumente section, backed by the top-level `landing.documents`. */
 export function LandingDocsSection({ landing }: { landing: LandingContent }) {
-  const readLanding = useReadLanding();
-  const { patch } = useLanding();
+  const { update } = useLanding();
   const [creating, setCreating] = useState(false);
   return (
     <div>
@@ -261,11 +246,16 @@ export function LandingDocsSection({ landing }: { landing: LandingContent }) {
       </SectionTitle>
       <DocList
         docs={landing.documents}
-        read={async () => (await readLanding())?.documents ?? []}
         creating={creating}
         onCloseCreate={() => setCreating(false)}
-        onPatch={async (documents) => {
-          await patch({ documents });
+        // The lens: where this list lives, plus the „did anything actually move" check. A
+        // mutation that hands its own input back — `arrayMoveTo` on a refused drag — writes
+        // nothing rather than storing the list as itself.
+        updateDocs={async (fn) => {
+          await update((cur) => {
+            const next = fn(cur.documents);
+            return next === cur.documents ? null : { documents: next };
+          });
         }}
       />
     </div>
@@ -299,7 +289,7 @@ export function LandingTextSection({ section }: { section: LandingSection }) {
 
 /** One custom Dokumente list: renameable title, its own documents inside the section row. */
 export function LandingLinksSection({ section }: { section: LandingSection }) {
-  const readLanding = useReadLanding();
+  const { update } = useLanding();
   const patchSections = usePatchSections();
   const [creating, setCreating] = useState(false);
   return (
@@ -315,14 +305,23 @@ export function LandingLinksSection({ section }: { section: LandingSection }) {
       </SectionTitle>
       <DocList
         docs={section.documents ?? []}
-        read={async () =>
-          (await readLanding())?.sections.find((s) => s.id === section.id)?.documents ?? []
-        }
         creating={creating}
         onCloseCreate={() => setCreating(false)}
-        onPatch={(documents) =>
-          patchSections((all) => all.map((s) => (s.id === section.id ? { ...s, documents } : s)))
-        }
+        // The same lens one level in: this section's own documents, found by id in the sections
+        // array as the server has it. A section deleted in another window mid-gesture is simply
+        // not found, and the write becomes the no-op it should be.
+        updateDocs={async (fn) => {
+          await update((cur) => {
+            const docs = cur.sections.find((s) => s.id === section.id)?.documents ?? [];
+            const next = fn(docs);
+            if (next === docs) return null;
+            return {
+              sections: cur.sections.map((s) =>
+                s.id === section.id ? { ...s, documents: next } : s,
+              ),
+            };
+          });
+        }}
       />
     </div>
   );
@@ -338,16 +337,21 @@ export function LandingLinksSection({ section }: { section: LandingSection }) {
  * deleted on purpose. Registry sections have no `deleted_at` and never appear in „Archiv", so
  * none of that was recoverable (SHL-02).
  *
- * „As they are when they run" needs `refresh()` to be true, though — `current()` reads a query
- * cache react-query empties five minutes after the landing unmounts, and a miss answers `[]`,
- * which here is not a refusal but the whole registry: the redo arm would `PATCH` `sections: []`
- * and take every other Bereich with it, and the undo arm would post this one back as the only
- * one there is. Still SHL-02, reached by a different route and with the same absence of a
- * Papierkorb behind it.
+ * „As they are when they run" used to need an explicit `refresh()` in each arm — `current()`
+ * reads a query cache react-query empties five minutes after the landing unmounts, and a miss
+ * answers `[]`, which here is not a refusal but the whole registry: the redo arm would `PATCH`
+ * `sections: []` and take every other Bereich with it, and the undo arm would post this one back
+ * as the only one there is (SHL-02, reached by a different route and with the same absence of a
+ * Papierkorb). `update` reads authoritatively itself now, so the arms cannot be written the wrong
+ * way round any more.
+ *
+ * The three `current()` reads below stay, and are a different thing: they capture what is being
+ * deleted — the section, its position, its layout entry — at *click* time, from a page that is
+ * on screen. That is the pre-delete state by definition, and it is what the undo puts back.
  */
 export function useRemoveLandingSection(): (key: string) => void {
   const del = useUndoableDelete();
-  const { current, refresh, patch } = useLanding();
+  const { current, update } = useLanding();
   return (key) => {
     const sections = () => current()?.sections ?? [];
     const layout = () => current()?.layout ?? [];
@@ -365,26 +369,25 @@ export function useRemoveLandingSection(): (key: string) => void {
     const layoutEntry = layout()[layoutIndex];
     void del({
       label: `Bereich „${s.name}“`,
-      // Both arms refresh first: `remove` is the redo arm as well, so it runs late too.
-      remove: async () => {
-        await refresh();
-        return patch({
-          sections: sections().filter((x) => x.id !== s.id),
-          layout: layout().filter((e) => e.key !== key),
-        });
-      },
-      restore: async () => {
-        await refresh();
-        // `s` carries its id, so the server keeps it and the entry put back below still points
-        // at the restored row.
-        const next = [...sections()];
-        next.splice(index < 0 ? next.length : Math.min(index, next.length), 0, s);
-        const nextLayout = [...layout()];
-        if (layoutEntry) {
-          nextLayout.splice(Math.min(layoutIndex, nextLayout.length), 0, layoutEntry);
-        }
-        return patch({ sections: next, layout: nextLayout });
-      },
+      // Both arms compute from `cur`, never from the captured arrays: `remove` is the redo arm
+      // as well, so it runs late too, and both write back what they read.
+      remove: () =>
+        update((cur) => ({
+          sections: cur.sections.filter((x) => x.id !== s.id),
+          layout: cur.layout.filter((e) => e.key !== key),
+        })),
+      restore: () =>
+        update((cur) => {
+          // `s` carries its id, so the server keeps it and the entry put back below still points
+          // at the restored row.
+          const next = [...cur.sections];
+          next.splice(index < 0 ? next.length : Math.min(index, next.length), 0, s);
+          const nextLayout = [...cur.layout];
+          if (layoutEntry) {
+            nextLayout.splice(Math.min(layoutIndex, nextLayout.length), 0, layoutEntry);
+          }
+          return { sections: next, layout: nextLayout };
+        }),
     });
   };
 }
@@ -407,7 +410,7 @@ export function AddLandingSectionButton({
   onRestore: (key: string) => void;
   onPrepend: (key: string) => void;
 }) {
-  const { current, patch } = useLanding();
+  const { update } = useLanding();
   const [open, setOpen] = useState(false);
 
   return (
@@ -423,10 +426,13 @@ export function AddLandingSectionButton({
           onRestore={onRestore}
           onCreate={async (type, name) => {
             // Appended to the sections as they are now: a section added or deleted since this
-            // modal opened would otherwise be undone by the act of adding another one.
-            const res = await patch({
-              sections: [...(current()?.sections ?? []), { name, type, value: null }],
-            });
+            // modal opened — in this window or another one — would otherwise be undone by the
+            // act of adding another one.
+            const res = await update((cur) => ({
+              sections: [...cur.sections, { name, type, value: null }],
+            }));
+            // The winning response, so this is the section that was actually stored even when
+            // the first attempt was refused and re-applied.
             const created = res.sections.reduce((a, b) => (a.id > b.id ? a : b));
             onPrepend(landingSectionKey(created));
           }}
