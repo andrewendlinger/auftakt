@@ -512,7 +512,9 @@ customer has one named file to drag into their mail. It takes two arguments and 
 report body is capped like the boot payload is, and the file name comes from the mail's own
 reference — validated by `isBundleRef` in `electron/diagnostics.ts` against `AF-` plus ten digits,
 an alphabet in which no separator, no `..` and no drive letter can be spelt. The renderer picks a
-*name*; main still picks the directory, so the rule above is narrowed rather than dropped. That
+*name*; main still picks the directory — and the suffix, when a bundle of that name is already
+lying on the desktop, returning the name it actually wrote so the mail can carry that one. So the
+rule above is narrowed rather than dropped. That
 validator is deliberately **not** imported from the client module that generates refs — main
 checking with the renderer's own checker is not checking. Renderers answer the broadcast with
 the same coalesced blanket invalidate the BroadcastChannel listener runs. A reload would be the

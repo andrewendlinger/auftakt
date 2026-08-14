@@ -98,6 +98,33 @@ export function diagnosticsFileName(ref: string): string {
 }
 
 /**
+ * The first name on the desktop that is not taken yet — `…-2.txt`, `…-3.txt` after that.
+ *
+ * The reference is minute resolution on purpose (`docs/DECISIONS.md`): it is read aloud and
+ * typed into replies. What that leaves is two *files* of the same name, and the loser is the
+ * first report: it is overwritten by the second, while its mail still asks the customer to
+ * attach it. Somebody who sends a report, spots a typo and sends another is not a rare person
+ * — they are the one taking this seriously — so the second file gets its own name and main
+ * returns it, which is the name the mail then carries.
+ *
+ * Both mails still say the same reference. That is the point of one: they are two attempts at
+ * the same report, and the suffix is only what keeps a desktop from losing one of them.
+ *
+ * The caller supplies `taken`, so this stays free of `fs` and `check:unit` can reach it.
+ */
+export function uniqueBundleName(ref: string, taken: (name: string) => boolean): string {
+  const first = diagnosticsFileName(ref);
+  if (!taken(first)) return first;
+  for (let n = 2; n < 100; n++) {
+    const name = `${BUNDLE_PREFIX}${ref}-${n}.txt`;
+    if (!taken(name)) return name;
+  }
+  // A hundred reports inside one minute is not a case to design for; overwriting the last of
+  // them beats failing to write at all, which would cost the mail its attachment line.
+  return `${BUNDLE_PREFIX}${ref}-99.txt`;
+}
+
+/**
  * Replace the home directory with `~` wherever it appears.
  *
  * The bundle is going to be mailed. `C:\Users\Marianne Fürst\AppData\Roaming\Auftakt` names

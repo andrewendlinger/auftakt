@@ -9,6 +9,7 @@ import {
   osLabel,
   redactHome,
   systemLine,
+  uniqueBundleName,
   type SystemFacts,
 } from '../../../electron/diagnostics';
 import { diagnosticsFileName as predictedFileName } from './feedbackMail';
@@ -103,6 +104,35 @@ describe('diagnosticsFileName', () => {
     for (const ref of ['AF-2608141542', 'AF-0101010000']) {
       expect(predictedFileName(ref)).toBe(diagnosticsFileName(ref));
     }
+  });
+});
+
+describe('uniqueBundleName', () => {
+  const desktop = (...taken: string[]) => (name: string) => taken.includes(name);
+
+  it('uses the reference itself when nothing is in the way', () => {
+    expect(uniqueBundleName('AF-2608141542', desktop())).toBe('Auftakt-Diagnose-AF-2608141542.txt');
+  });
+
+  it('does not overwrite the report sent a moment earlier', () => {
+    // The reference is minute resolution by decision, so somebody who sends a report, spots a
+    // typo and sends another gets two files of the same name — and the first mail is still
+    // asking them to attach the one that was overwritten.
+    const first = 'Auftakt-Diagnose-AF-2608141542.txt';
+    expect(uniqueBundleName('AF-2608141542', desktop(first))).toBe(
+      'Auftakt-Diagnose-AF-2608141542-2.txt',
+    );
+    expect(uniqueBundleName('AF-2608141542', desktop(first, 'Auftakt-Diagnose-AF-2608141542-2.txt'))).toBe(
+      'Auftakt-Diagnose-AF-2608141542-3.txt',
+    );
+  });
+
+  it('still returns a name when the desktop is full of them', () => {
+    // A hundred reports inside one minute is not a case to design for, but a `save-diagnostics`
+    // that returns nothing costs the mail its attachment line, which is the line that matters.
+    expect(uniqueBundleName('AF-2608141542', () => true)).toBe(
+      'Auftakt-Diagnose-AF-2608141542-99.txt',
+    );
   });
 });
 

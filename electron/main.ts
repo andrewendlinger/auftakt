@@ -29,9 +29,9 @@ import {
 } from './bootLog';
 import {
   buildDiagnosticsBundle,
-  diagnosticsFileName,
   isBundleRef,
   systemLine,
+  uniqueBundleName,
   type SystemFacts,
 } from './diagnostics';
 import { checkForUpdates, downloadAndInstallUpdate, startSilentStartupCheck } from './updater';
@@ -251,8 +251,13 @@ async function saveDiagnostics(ref: unknown, report: unknown): Promise<Diagnosti
       log,
       entries: log.split('\n').filter((l) => l.length > 0).length,
     });
-    const name = diagnosticsFileName(ref);
-    const file = join(app.getPath('desktop'), name);
+    // Never over a bundle already lying there: the reference is minute resolution, and a
+    // second report inside that minute would otherwise replace the first one's file while the
+    // first one's mail still names it. `uniqueBundleName` picks the suffix and the renderer
+    // sends whatever name comes back, so the mail and the file agree either way.
+    const desktop = app.getPath('desktop');
+    const name = uniqueBundleName(ref, (candidate) => existsSync(join(desktop, candidate)));
+    const file = join(desktop, name);
     writeFileSync(file, bundle, 'utf8');
     shell.showItemInFolder(file);
     return { ok: true, name };

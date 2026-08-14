@@ -195,7 +195,13 @@ thing a forward rewrites — and names the diagnostics file, which is what lets 
 attachment on a desktop find each other.
 
 Minute resolution, not seconds: it is read aloud and typed into replies. Two reports inside one
-minute from one person is not the collision worth designing against.
+minute from one person is not the collision worth designing against — in the *reference*. In the
+*file* it is, and the two are separable. Somebody who sends a report, spots a typo and sends
+another inside the minute is not a rare user; they are the one taking it seriously, and a second
+bundle written straight over the first leaves one file on a desktop that two mails ask for. So
+`uniqueBundleName` suffixes `-2`, `-3` on collision and main returns the name it wrote, which is
+the name that mail carries. Both mails still say the same reference, because they are two attempts
+at the same report.
 
 ---
 
