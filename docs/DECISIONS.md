@@ -8,6 +8,51 @@ If you are about to re-raise one of these, the bar is new information, not a fre
 
 ---
 
+## Feedback leaves by `mailto:`, not through an endpoint (2026-08-14, WP-54)
+
+The raw note asked whether the app could send the mail itself. It could — with a mail service, an
+account, credentials shipped inside a source-available binary, and a network connection, in an app
+whose whole point is that it works offline and keeps a festival's contact data on one machine. That
+trade is not close.
+
+`mailto:` also buys something an endpoint would have to build: a review step. The composed body
+opens in the customer's own client, under „Was wird mitgeschickt?" *before* that, and nothing is
+sent until they press send. The diagnostic block is timings, a version and a viewport — but
+„technische Angaben" is not a thing to ask anyone to take on trust, least of all in an app holding
+personal data.
+
+What it costs is knowing. A `mailto:` is fire-and-forget: the app cannot learn whether the mail was
+sent, so the toast says „bitte dort noch abschicken" rather than „gesendet". A machine with no mail
+client configured — a real possibility on the target Windows machine — falls back to „Text
+kopieren" and the address in plain text, which is why both are in the dialog rather than one.
+
+## No menu entry for feedback (2026-08-14, WP-54)
+
+„Dauerhaft sichtbar" was the alternative to a settings entry, and a Hilfe menu was the obvious
+shape for it. It would need main to tell a renderer to open a dialog — a second `webContents.send`,
+against the uniqueness `docs/ARCHITECTURE.md` documents and `preload.ts` leans on, for an entry
+point that already exists two clicks away. Revisit only if the settings entry proves undiscoverable
+in use, and then by moving it, not by adding a second door.
+
+## The boot summary is triage, not analysis (2026-08-14, WP-54)
+
+Five entries, and `outcome/why` is the one clause never dropped — it is the field that separates
+WP-61's three candidate causes. `warm` and `quick` are left out and the timings are rounded to
+whole milliseconds, because a support mail is read by a person deciding what to look at, and the
+full record is one button away via „Diagnoseordner öffnen".
+
+The order is oldest-first for a mechanical reason, not a stylistic one: the composer's truncation
+ladder drops entries from the top when the `mailto:` is too long, so the boot that prompted the
+report is the last thing to go. Below that, the whole block is replaced by a pointer at the reveal
+button rather than by silence, and only then does the person's own text get cut — marked.
+
+`why` is read back out under the same distrust it was written with. `bootLogLine` caps the payload
+as a whole and never inspects the fields inside it, so a literal newline in `why` would forge an
+extra report line in a support mail and a long one would eat the mailto budget. Every string
+lifted out of the log is flattened and sliced.
+
+---
+
 ## Windows Authenticode signing — deferred (2026-07-31)
 
 The NSIS installer is unsigned, so SmartScreen warns about an unknown publisher and the in-app

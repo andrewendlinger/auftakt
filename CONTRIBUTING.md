@@ -22,8 +22,11 @@ licence, not a fork. Open an issue and we can talk.
 
 Bug reports and ideas are genuinely useful. Helpful things to include:
 
-- what you did, what you expected, what happened instead
-- the app version (Einstellungen → *Saison & Daten* → **Version & Updates**)
+- what you did, what you expected, what happened instead — Einstellungen → *Programm & Hilfe* →
+  **Feedback senden…** asks for exactly these and fills the rest in
+- for anything that goes wrong during startup: `boot-log.jsonl`, reachable from the same dialog
+  via **Diagnoseordner öffnen**. It is the only record of what the boot animation actually did
+- the app version (Einstellungen → *Programm & Hilfe* → **Version & Updates**)
 - your OS, and whether you are running the packaged app or the dev server
 - whether it reproduces against `npm run demo`, which uses invented data
 

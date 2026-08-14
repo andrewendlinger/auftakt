@@ -32,7 +32,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: Einstellungen → *Saison & Daten* → **Version & Updates**
+      description: Einstellungen → *Programm & Hilfe* → **Version & Updates**
       placeholder: "0.5.0"
     validations:
       required: true

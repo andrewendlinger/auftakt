@@ -133,7 +133,7 @@ Gut zu wissen:
 
 ## Updates
 
-- **Windows:** **Einstellungen → „Saison & Daten" → „Version & Updates"**, dort „Nach Updates
+- **Windows:** **Einstellungen → „Programm & Hilfe" → „Version & Updates"**, dort „Nach Updates
   suchen" und dann „Herunterladen & installieren". Die App startet dafür neu.
 - **macOS:** Auftakt meldet nur, dass es eine neue Version gibt — automatische Updates brauchen
   eine Apple-Signatur. Also die neue `.dmg` von der Releases-Seite laden, Auftakt in „Programme"
@@ -148,10 +148,16 @@ Gut zu wissen:
 
 ## Hilfe & Fehler melden
 
-Fehlerberichte und Ideen sind sehr willkommen — als
+Am einfachsten aus der App heraus: **Einstellungen → „Programm & Hilfe" → „Feedback senden…"**.
+Der Dialog fragt die Angaben ab, die eine Meldung brauchbar machen, legt Version, System und eine
+kurze Zusammenfassung der letzten Programmstarts bei und öffnet damit dein E-Mail-Programm — du
+siehst vorher, was drinsteht. Geht es um einen Fehler beim Start, hilft zusätzlich die Datei
+`boot-log.jsonl`: derselbe Dialog hat einen Knopf, der den Ordner dazu öffnet.
+
+Fehlerberichte und Ideen sind ebenso willkommen als
 [Issue](https://github.com/andrewendlinger/auftakt/issues). Hilfreich sind: was du getan hast, was
-du erwartet hast, was stattdessen passiert ist, dazu die Version (Einstellungen → „Saison &
-Daten" → „Version & Updates") und dein Betriebssystem.
+du erwartet hast, was stattdessen passiert ist, dazu die Version (Einstellungen → „Programm &
+Hilfe" → „Version & Updates") und dein Betriebssystem.
 
 **Bitte keine echten Festivaldaten hineinkopieren** — keine Namen, Adressen, Telefonnummern oder
 Notizen zu identifizierbaren Personen. Dieses Repository ist öffentlich.

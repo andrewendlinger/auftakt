@@ -191,6 +191,12 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   `tail -n 5 ~/Library/Application\ Support/Auftakt/boot-log.jsonl | jq .` (Windows:
   `%APPDATA%\Auftakt\boot-log.jsonl`). Dev mode writes nothing, matching the overlay it reports
   on. The writer is `electron/bootLog.ts`, electron-import-free so `check:unit` covers it.
+- **Since WP-54 the customer can reach it too**, which is the point of the file: Einstellungen →
+  „Programm & Hilfe" → „Feedback senden…" attaches `summarizeBootLog`'s five-line digest to the
+  mail, and „Diagnoseordner öffnen" reveals the raw file. Do not verify the digest by reading the
+  dialog — read the summary itself under `check:unit`, where the four record species and the
+  untrusted-`why` case are pinned. **Dev mode writes no log, so that button opens the folder
+  rather than revealing a file**, and the toast says so; that is the branch, not a failure.
 - **A traced launch: `AUFTAKT_BOOT_TRACE=1`.** Records from before the window until ~750 ms after
   the overlay settles — capped at ~6 s, or the env var's value in milliseconds — to
   `boot-trace-<stamp>.json` in userData, loadable at ui.perfetto.dev. Quitting does not lose it:
@@ -416,7 +422,16 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   view of the still-settling dialog — „Globale Spalten" was missing from it while the same node's
   `textContent` had it all along. Assert on `textContent` (`locator.evaluate((el) => el.textContent)`).
 - **The Einstellungen tabs are links, not buttons** — `getByRole('button', …)` waits for ever.
-  Navigate straight to `#/einstellungen/aufgaben`.
+  Navigate straight to the slug: `#/einstellungen/aufgaben` („Aufgaben & Übersicht"),
+  `/kategorien`, `/daten` („<Saison> & Daten") or `/hilfe` („Programm & Hilfe"). The labels moved
+  in WP-54 and the slugs did not, so a script keyed on a slug survived it and one keyed on a
+  label did not.
+- **A `mailto:` is fire-and-forget, so the feedback dialog produces no app state to assert on.**
+  Its only observable is the URL handed to `openExternal`, and the real one opens a mail client
+  on the machine running the script. Stub the bridge with an `openExternal` that *records* —
+  `window.__external.push(url)` — then read it back with `new URL(...)` and `searchParams`, which
+  is also the only honest check of the encoding. Asserting on the dialog after „E-Mail schreiben"
+  asserts on nothing; it has already closed itself.
 - **`getByLabel` finds nothing in a `RecordFormModal`.** Its `<label>` (`fields.tsx`) carries no
   `htmlFor` and does not wrap the input, so the two are not associated and Playwright's
   accessible-name lookup times out — 30 s per field, reading as „the dialog never opened".
@@ -661,10 +676,11 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **A write straight to `/api/custom-columns` does not refetch the client's column list**, and a
   synthetic `window.focus` event does not either. Toggle through the app's own ⚙ Spalten manager
   when the case depends on the table re-rendering with the new column set.
-- **There are two `type="number"` inputs, one per „Zeitfenster"**, and they sit on different
-  Settings tabs: „Braucht Aufmerksamkeit" under `#/einstellungen/aufgaben`, „Termine in der
-  Übersicht" (the „Danach" divider) under `#/einstellungen/kategorien`. Neither tab's „Speichern"
-  is its page's only one — scope to the card.
+- **There are two `type="number"` inputs, one per „Zeitfenster", and since WP-54 they share a
+  tab.** Both are under `#/einstellungen/aufgaben`: „Braucht Aufmerksamkeit" on the
+  „Aufgaben-Übersicht" card, „Termine in der Übersicht" (the „Danach" divider) on the card below
+  it, which moved there out of `#/einstellungen/kategorien`. Scoping to the card is now required
+  rather than merely tidy — a bare `input[type="number"]` is ambiguous, and so is „Speichern".
 - **`paletteFor('Deadline')` is `#fee2e2`, the same colour `LEGACY_EVENT_COLORS` holds for it**, so
   „Deadline" cannot distinguish the two code paths. „Termin" can (legacy `#e2e8f0` vs palette
   `#dcfce7`).

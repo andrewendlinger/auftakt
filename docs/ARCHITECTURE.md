@@ -499,7 +499,12 @@ last-switched season, not necessarily the opener's.
 **Main never reloads a window to refresh it.** The one thing main knows and the renderers do not
 — the registry-wide backup folder changed, from any window's picker, the Datei menu or the
 first-launch prompt — travels as `backup-config-changed`, the app's only `webContents.send` and
-only `ipcRenderer.on` (`electron/preload.ts` → `onBackupConfigChanged`). Renderers answer it with
+only `ipcRenderer.on` (`electron/preload.ts` → `onBackupConfigChanged`). WP-54's diagnostics pair
+(`get-diagnostics`, `reveal-diagnostics`) is `invoke`/`handle` like everything else, so that
+remains true. Both take **no argument**: main derives `boot-log.jsonl`'s path from
+`app.getPath('userData')` and hands the renderer finished summary text plus a path it may only
+display. A path *from* the renderer would be a `shell.showItemInFolder` pointed anywhere on the
+machine — the same hole the scheme allowlist closes for `openExternal` (X-02). Renderers answer it with
 the same coalesced blanket invalidate the BroadcastChannel listener runs. A reload would be the
 one path in the app that destroys another window's unsaved editor drafts, which have no
 `beforeunload` behind them (PR50-05).
