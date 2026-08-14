@@ -5,9 +5,12 @@ import {
   FEEDBACK_TO,
   MAILTO_MAX_CHARS,
   feedbackBody,
+  feedbackHeadroom,
+  feedbackMailBody,
   feedbackMailto,
   feedbackRef,
   feedbackSubject,
+  fitFeedbackAnswer,
   requiredField,
   type FeedbackContext,
   type FeedbackDraft,
@@ -265,8 +268,8 @@ describe('feedbackMailto', () => {
   };
 
   it('lets three full fields of ordinary German through beside a full summary', () => {
-    // The claim the dialog's maxLength rests on, in the shape where the mail is the only
-    // thing carrying diagnostics: no file was written, so the newest boot has to survive.
+    // The layout's own claim, in the shape where the mail is the only thing carrying
+    // diagnostics: no file was written, so the newest boot has to survive.
     const body = new URL(feedbackMailto(maxed, { ...CTX, diagnostics: summaryOf(5) })).searchParams.get(
       'body',
     );
@@ -292,5 +295,77 @@ describe('feedbackMailto', () => {
     expect(body).not.toContain('[…]');
     expect(body).toContain(one.trimEnd());
     expect(body).toContain('!! BITTE NOCH ANHÄNGEN: Auftakt-Diagnose-AF-2608141542.txt');
+  });
+});
+
+/**
+ * The budget is in *encoded* characters and the dialog's `maxLength` is in typed ones, which
+ * is why the cap alone was never the guarantee it was documented as: the prose above carries
+ * one umlaut per 62 characters and lands at 1873 of 1900, so ordinary German — three to six
+ * per line — walks straight through the cap and into the composer's last rung, where every
+ * answer is halved. That is a customer's report arriving cut, discovered by the maintainer.
+ * These three functions are what moved the enforcement into the box the person is typing in.
+ */
+describe('the encoded budget, as the dialog spends it', () => {
+  const attached = { ...CTX, diagnostics: summaryOf(5), attachment: 'Auftakt-Diagnose-AF-2608141542.txt' };
+  // Six umlauts per 71 characters — a sentence out of a real report, not a stress fixture.
+  const german = 'Die Übersicht für Künstler öffnete sich nicht, obwohl Termine da wären. '.repeat(10);
+  const one = german.slice(0, FEEDBACK_FIELD_MAX);
+  const empty: FeedbackDraft = { kind: 'bug', area: 'Allgemein', answers: {} };
+
+  /** What the dialog does to a keystroke or a paste: put through the fit, then stored. */
+  const type = (d: FeedbackDraft, ctx: FeedbackContext, key: string, text: string) => ({
+    ...d,
+    answers: { ...d.answers, [key]: fitFeedbackAnswer(d, ctx, key, text) },
+  });
+
+  const typedOut = (ctx: FeedbackContext) =>
+    ['happened', 'did', 'expected'].reduce((d, key) => type(d, ctx, key, one), empty);
+
+  it('keeps ordinary German off the rung that cuts what the person wrote', () => {
+    const typed = typedOut(attached);
+    const body = feedbackMailBody(typed, attached);
+    expect(body).not.toContain('[…]');
+    expect(feedbackMailto(typed, attached).length).toBeLessThanOrEqual(MAILTO_MAX_CHARS);
+    // The cap on its own does not: the same three fields at `maxLength`, which is exactly what
+    // the dialog used to hand over, reach the rung and lose half of every answer.
+    const capped = { ...empty, answers: { happened: one, did: one, expected: one } };
+    expect(feedbackMailBody(capped, attached)).toContain('[…]');
+  });
+
+  it('spends the last field rather than the first, and only the overflow', () => {
+    const typed = typedOut(attached);
+    // First come, first served — the answer being typed is the one that runs out of room.
+    expect(typed.answers.happened).toBe(one);
+    expect(typed.answers.expected?.length).toBeGreaterThan(0);
+    expect(one.startsWith(typed.answers.expected ?? '')).toBe(true);
+  });
+
+  it('cuts an over-long paste rather than refusing it', () => {
+    // A refused paste leaves an empty box and no explanation; a cut one is in front of the
+    // person, where it can be edited. Nothing is ever appended to what they pasted, either.
+    const pasted = german.repeat(2);
+    const fitted = fitFeedbackAnswer(empty, attached, 'happened', pasted);
+    expect(fitted.length).toBeGreaterThan(100);
+    expect(fitted.length).toBeLessThan(pasted.length);
+    expect(pasted.startsWith(fitted)).toBe(true);
+    expect(fitted).not.toContain('[…]');
+  });
+
+  it('measures the headroom after the diagnostics, not before them', () => {
+    // 100 folded boot entries are far past the budget on their own, and they are spendable —
+    // so they must not read as "no room for a word", which is what a naive measurement says.
+    const fat = { ...CTX, diagnostics: summaryOf(100) };
+    expect(feedbackHeadroom(empty, fat)).toBeGreaterThan(0);
+    const typed = typedOut(fat);
+    expect(typed.answers.happened).toBe(one);
+    expect(feedbackMailBody(typed, fat)).not.toContain('[…]');
+  });
+
+  it('reports a headroom that runs out, so a full box can say so', () => {
+    const typed = typedOut(attached);
+    expect(feedbackHeadroom(typed, attached)).toBeGreaterThanOrEqual(0);
+    const over = { ...typed, answers: { ...typed.answers, expected: one } };
+    expect(feedbackHeadroom(over, attached)).toBeLessThan(0);
   });
 });

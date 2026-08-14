@@ -24,11 +24,17 @@ export const MAILTO_MAX_CHARS = 1900;
 /**
  * Per free-text field, enforced by the dialog's `maxLength`.
  *
- * Sized so three full fields of ordinary German prose plus a five-line diagnostic block
- * still fit — that is the point of a cap the user can see coming, rather than a truncation
- * they find out about from the maintainer. It is not a worst-case guarantee: 300 characters
- * of nothing but umlauts encode to 1800 on their own, and that case falls to the ladder
- * below, which spends the diagnostics before it spends a word the person wrote.
+ * The size of an answer, not the size of the budget — those are two different measurements
+ * and only one of them can be a character count. Three fields at this length are longer than
+ * a `mailto:` can carry as soon as the German is ordinary German: an umlaut costs six encoded
+ * characters against one for a letter, so about thirteen of them across three full fields is
+ * the difference between fitting and not. No per-field character cap can express that, and
+ * one sized for the true worst case — 300 umlauts encode to 1800 on their own — would be
+ * around a hundred characters, which is not a report anybody could write.
+ *
+ * So the cap keeps a field to the shape of an answer, and the *encoded* length is what the
+ * dialog actually stops typing on: `feedbackHeadroom` measures it and `fitFeedbackAnswer`
+ * enforces it, keystroke by keystroke, where the person can still see what they wrote.
  */
 export const FEEDBACK_FIELD_MAX = 300;
 
@@ -274,54 +280,120 @@ function clip(text: string, max: number): string {
 }
 
 /**
- * The finished URL, shrunk until it fits.
+ * The ladder's first two rungs: everything that can be spent before a word the person wrote.
  *
- * With a file attached there is only one rung: the body holds no diagnostics to spend, so
- * the person's own words are the only thing left to cut. That case is the one the field cap
- * is sized against, and `check:unit` holds the arithmetic.
+ * With a file attached there is nothing to spend — the body carries no diagnostics when the
+ * whole log is travelling as an attachment — so the context comes back untouched and the
+ * words are the only thing left, which is what `fitFeedbackAnswer` exists to make impossible.
  *
- * Without one, diagnostic entries go first (oldest first, which is why the summary is
- * written newest-last), then the whole block, and only then the text. Their words are never
- * the first casualty, and a truncation is never silent.
+ * Without one, diagnostic entries go first (oldest first, which is why the summary is written
+ * newest-last), then the whole block.
  */
-export function feedbackMailto(draft: FeedbackDraft, ctx: FeedbackContext): string {
+function spend(draft: FeedbackDraft, ctx: FeedbackContext): FeedbackContext {
   const subject = feedbackSubject(draft, ctx);
-  const fits = (c: FeedbackContext, d: FeedbackDraft) => url(subject, feedbackBody(d, c)).length;
+  const fits = (c: FeedbackContext) =>
+    url(subject, feedbackBody(draft, c)).length <= MAILTO_MAX_CHARS;
 
-  if (fits(ctx, draft) <= MAILTO_MAX_CHARS) return url(subject, feedbackBody(draft, ctx));
+  if (fits(ctx) || ctx.attachment) return ctx;
 
-  let spent = ctx;
-  if (!ctx.attachment) {
-    // 1 · drop diagnostic entries from the top, keeping the header and the newest boots.
-    // Stops one short of emptying it: a „Startdiagnose —" header with nothing under it reads
-    // as a diagnostic that was collected and says nothing, which is worse than step 2.
-    const lines = ctx.diagnostics.split('\n');
-    const head = lines[0] ?? '';
-    for (let drop = 1; drop <= lines.length - 2; drop++) {
-      const kept = [head, ...lines.slice(1 + drop)].join('\n');
-      const trimmed = { ...ctx, diagnostics: kept };
-      if (fits(trimmed, draft) <= MAILTO_MAX_CHARS) {
-        return url(subject, feedbackBody(draft, trimmed));
-      }
-    }
-
-    // 2 · drop the block. There is nowhere to redirect the reader to — the file that would
-    // have carried it is the one that could not be written — so it goes, and the machine
-    // line plus the reference are what the report still arrives with.
-    spent = { ...ctx, diagnostics: '' };
-    if (fits(spent, draft) <= MAILTO_MAX_CHARS) return url(subject, feedbackBody(draft, spent));
+  // 1 · drop diagnostic entries from the top, keeping the header and the newest boots.
+  // Stops one short of emptying it: a „Startdiagnose —" header with nothing under it reads
+  // as a diagnostic that was collected and says nothing, which is worse than step 2. The
+  // header survives every rung because it names no count — see `summarizeBootLog`, which
+  // stopped promising „die letzten 5" precisely so this loop cannot make it a lie.
+  const lines = ctx.diagnostics.split('\n');
+  const head = lines[0] ?? '';
+  for (let drop = 1; drop <= lines.length - 2; drop++) {
+    const trimmed = { ...ctx, diagnostics: [head, ...lines.slice(1 + drop)].join('\n') };
+    if (fits(trimmed)) return trimmed;
   }
 
-  // 3 · backstop, so the function is total. Unreachable for ordinary text at the field cap
-  // the dialog enforces; it exists for the umlaut-heavy worst case and marks what it cut.
-  let budget = FEEDBACK_FIELD_MAX;
+  // 2 · drop the block. There is nowhere to redirect the reader to — the file that would
+  // have carried it is the one that could not be written — so it goes, and the machine
+  // line plus the reference are what the report still arrives with.
+  return { ...ctx, diagnostics: '' };
+}
+
+/**
+ * Encoded characters still free for the person's own words. Negative when the mail is over.
+ *
+ * Measured *after* the diagnostics have been spent, so it answers the only question the
+ * dialog has: is there room for one more character of theirs. It is the real unit — a
+ * character count cannot be, because the same 300 characters encode to anywhere between 300
+ * and 1800 depending on how many of them are umlauts.
+ */
+export function feedbackHeadroom(draft: FeedbackDraft, ctx: FeedbackContext): number {
+  const spent = spend(draft, ctx);
+  return MAILTO_MAX_CHARS - url(feedbackSubject(draft, ctx), feedbackBody(draft, spent)).length;
+}
+
+/**
+ * The longest prefix of `text` that still fits in `key`, given everything else in the draft.
+ *
+ * This is what the dialog puts in the box on every keystroke, which is the whole point: a cap
+ * enforced where the person is looking is a cap they can work with, and one enforced in
+ * `feedbackMailBody` on the way out is a truncation they hear about from the maintainer. A
+ * blocked keystroke leaves the box exactly as it was; a paste lands cut, in front of them,
+ * where it can be edited.
+ *
+ * Bisected rather than stepped: the cost of a character is not a constant, so the fit has to
+ * be measured, and ten measurements per keystroke is nothing next to a re-render.
+ */
+export function fitFeedbackAnswer(
+  draft: FeedbackDraft,
+  ctx: FeedbackContext,
+  key: string,
+  text: string,
+): string {
+  const at = (n: number) => ({
+    ...draft,
+    answers: { ...draft.answers, [key]: text.slice(0, n) },
+  });
+  if (feedbackHeadroom(at(text.length), ctx) >= 0) return text;
+
+  // `lo` is known to fit or is the floor, `hi` is known not to — length is monotonic in the
+  // encoded size, so the boundary between them is the answer.
+  let lo = 0;
+  let hi = text.length;
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (feedbackHeadroom(at(mid), ctx) >= 0) lo = mid;
+    else hi = mid;
+  }
+  return text.slice(0, lo);
+}
+
+/**
+ * The body as it will really be sent — the ladder's output, not its input.
+ *
+ * Exported because „Was wird mitgeschickt?" shows it: a preview of a body the composer then
+ * trims is a preview of something that was never sent, which is worse than no preview at all
+ * in a dialog whose promise is that the report is shown in full before it leaves.
+ */
+export function feedbackMailBody(draft: FeedbackDraft, ctx: FeedbackContext): string {
+  const subject = feedbackSubject(draft, ctx);
+  const spent = spend(draft, ctx);
+  const body = feedbackBody(draft, spent);
+  if (url(subject, body).length <= MAILTO_MAX_CHARS) return body;
+
+  // 3 · backstop, so the function is total. The dialog's own fit keeps ordinary typing off
+  // this rung entirely; what still reaches it is a mail that grew *after* it was typed — a
+  // bundle that failed to write, putting the summary back into a body sized without it — and
+  // any draft that did not come through the dialog at all. It marks what it cut.
+  const longest = Math.max(FEEDBACK_FIELD_MAX, ...Object.values(draft.answers).map((t) => t.length));
+  let budget = longest;
   let clipped = draft;
   while (budget > 40) {
     budget = Math.floor(budget / 2);
     const answers: Record<string, string> = {};
     for (const [key, text] of Object.entries(draft.answers)) answers[key] = clip(text, budget);
     clipped = { ...draft, answers };
-    if (fits(spent, clipped) <= MAILTO_MAX_CHARS) break;
+    if (url(subject, feedbackBody(clipped, spent)).length <= MAILTO_MAX_CHARS) break;
   }
-  return url(subject, feedbackBody(clipped, spent));
+  return feedbackBody(clipped, spent);
+}
+
+/** The finished URL: the subject, and the body the ladder settled on. */
+export function feedbackMailto(draft: FeedbackDraft, ctx: FeedbackContext): string {
+  return url(feedbackSubject(draft, ctx), feedbackMailBody(draft, ctx));
 }

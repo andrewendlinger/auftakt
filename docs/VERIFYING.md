@@ -212,6 +212,12 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   did *not* go with them: `save-diagnostics` still reveals the file it just wrote, which is one more
   reason a driving script must stub the bridge rather than let the real one run. The address in
   plain text under „Was wird mitgeschickt?" is the whole of the no-mail-client fallback now.
+- **The text boxes stop at the mail's budget, not at their `maxLength`.** `maxLength` is 300 per
+  field, but every keystroke goes through `fitFeedbackAnswer` first, so three boxes filled to 300
+  with German come back holding fewer — the last one typed is the short one, and „Die E-Mail ist
+  voll" appears under the fields. A script that types 300 characters into each and asserts on the
+  value, or that expects its own string back out of the third box, is asserting on a cap that is
+  not the one in force. `fill()` counts as one paste: it lands cut, not refused.
 - **A traced launch: `AUFTAKT_BOOT_TRACE=1`.** Records from before the window until ~750 ms after
   the overlay settles — capped at ~6 s, or the env var's value in milliseconds — to
   `boot-trace-<stamp>.json` in userData, loadable at ui.perfetto.dev. Quitting does not lose it:

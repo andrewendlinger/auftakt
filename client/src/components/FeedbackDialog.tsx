@@ -12,6 +12,7 @@ import {
   feedbackBody,
   feedbackMailto,
   feedbackRef,
+  fitFeedbackAnswer,
   requiredField,
   type FeedbackContext,
   type FeedbackDraft,
@@ -50,6 +51,9 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
   const [diag, setDiag] = useState<Diagnostics | null>(null);
   const [version, setVersion] = useState('');
   const [sending, setSending] = useState(false);
+  // Set by the last keystroke that did not fit, cleared by the next one that did — see
+  // `onAnswer`. A box that stops taking text without saying why reads as a broken keyboard.
+  const [full, setFull] = useState(false);
   // The form, then the steps. Nothing is written and no client is opened until the second
   // one is answered — „Weiter" is a question, not the action.
   const [step, setStep] = useState<'form' | 'confirm'>('form');
@@ -101,6 +105,16 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
   const required = kind ? requiredField(kind) : null;
   const ready =
     kind !== null && area !== null && (answers[required?.key ?? '']?.trim().length ?? 0) > 0;
+
+  // Every keystroke goes through the mail's own length budget, because that budget is in
+  // *encoded* characters and no `maxLength` can be: the same 300 characters cost 300 or 1800
+  // depending on how much German is in them. What the box holds is therefore always what the
+  // mail carries, and the composer's last rung — clipping their words — stays unreached.
+  const onAnswer = (key: string, text: string) => {
+    const fitted = fitFeedbackAnswer(draft, ctx, key, text);
+    setFull(fitted !== text);
+    setAnswers((prev) => ({ ...prev, [key]: fitted }));
+  };
 
   const send = async () => {
     setSending(true);
@@ -212,12 +226,20 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
                       className="resize-y"
                       placeholder={f.placeholder}
                       value={answers[f.key] ?? ''}
-                      onChange={(e) =>
-                        setAnswers((prev) => ({ ...prev, [f.key]: e.target.value }))
-                      }
+                      onChange={(e) => onAnswer(f.key, e.target.value)}
                     />
                   </div>
                 ))}
+
+                {/* Only after a keystroke was actually turned away, and gone again as soon as
+                    one is not: „noch 120 Zeichen" on a budget that counts umlauts as six would
+                    be a number nobody can type against. */}
+                {full && (
+                  <p className="text-xs text-amber-700">
+                    Die E-Mail ist voll — mehr Text passt nicht hinein. Alles Weitere lässt sich
+                    in der Antwort darauf nachreichen.
+                  </p>
+                )}
 
                 <details className="text-xs text-neutral-500">
                   <summary className="cursor-pointer select-none font-medium text-neutral-600">

@@ -139,6 +139,25 @@ feature shipped with. The restructure on 2026-08-14 paid for its headings by tak
 have spent on words. `feedbackMail.test.ts` asserts the whole shape fits with no `[…]` in it, which
 is the only reason the arithmetic is discovered before a customer's report arrives truncated.
 
+**The dialog's `maxLength` cannot be that guarantee (2026-08-14, WP-54).** It was written as one —
+300 characters per field, „sized so three full fields of ordinary German prose still fit" — and the
+1873 above is what that claim was measured on: prose carrying one umlaut per 62 characters. Real
+German carries three to six. An umlaut costs six encoded characters against one for a letter, so
+about thirteen of them across three full fields is the whole 27 of slack, and past that every
+answer is halved by the ladder's last rung and marked `[…]` — a customer's report arriving cut,
+discovered by the maintainer reading it. A character count cannot express an encoded budget in any
+sizing: the cap that would hold the true worst case (300 umlauts encode to 1800 on their own) is
+about a hundred characters, which is not a report anybody could write.
+
+So the enforcement moved to where the budget can actually be measured. `feedbackHeadroom` composes
+the finished URL and reports what is left after the diagnostics have been spent, and
+`fitFeedbackAnswer` bisects the longest prefix that still fits; the dialog puts every keystroke
+through it. What the box holds is then always what the mail carries — a blocked keystroke leaves
+the text as it was, a pasted overflow lands cut in front of the person — and the ladder's last rung
+is left to what it is for: a mail that grew *after* it was typed, which is the failed-bundle-write
+case putting the summary back. `FEEDBACK_FIELD_MAX` stays as the shape of an answer, not as the
+budget. Ten URL compositions per keystroke is the cost, against a re-render that costs more.
+
 A wish carries no summary at all. Startup timings say nothing about a feature request, and the
 budget they would spend is better spent on what was actually asked for.
 
