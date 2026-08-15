@@ -57,7 +57,13 @@ export function SeasonSwitcher() {
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 z-40 mt-2 w-64 rounded-xl bg-white p-1 text-neutral-800 shadow-xl ring-1 ring-black/10">
+          {/* Capped and scrollable (WP-55): this is the one popover that does not go through
+              `useAnchoredPopover`, which flips and caps height against the viewport. It hangs off
+              the *sticky* header, so an overlong list cannot be reached by scrolling the document
+              either — in a 560 px window, which is now the smallest allowed, the bottom seasons
+              were simply unreachable. `max-h` is expressed against the viewport for the same
+              reason the anchored popovers are. */}
+          <div className="absolute left-0 z-40 mt-2 max-h-[min(24rem,70vh)] w-64 overflow-y-auto rounded-xl bg-white p-1 text-neutral-800 shadow-xl ring-1 ring-black/10">
             <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
               {term.singular}
             </div>

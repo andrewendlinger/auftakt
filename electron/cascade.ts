@@ -26,6 +26,29 @@ export interface Size {
 /** The diagonal step between two cascaded windows. */
 export const CASCADE_STEP = 28;
 
+/** The window size the app asks for; `fittedSize` shrinks it to whatever the display allows. */
+export const WINDOW_PREFERRED: Size = { width: 1440, height: 900 };
+
+/**
+ * The `BrowserWindow` minWidth/minHeight, enforced by Electron itself — so the placement
+ * arithmetic below must never go below it.
+ *
+ * It lives here rather than in `main.ts` because `cascade.test.ts` cannot import `main.ts`
+ * (`electron/tsconfig.json` is `include: ["*.ts"]`, and `main.ts` imports `electron`) and used to
+ * carry a hand-copied twin instead, coupled to the original by nothing but a comment.
+ *
+ * **624, not 640** (WP-55). This is a *window* size, not a viewport: `useContentSize` is false, so
+ * the frame is subtracted before the renderer sees anything, and by a different amount per
+ * platform — a customer's boot log shows a 1440-wide window reporting `innerWidth: 1426` on
+ * Windows 11, while macOS takes nothing off the sides at all. Tailwind's `sm:` is exactly
+ * `min-width: 640px`, so a 640 floor would put the *narrowest window the app allows* on the wrong
+ * side of that boundary on macOS and the right side on Windows — the same window two-column on
+ * one machine and one-column on the other. 624 lands below it everywhere, which is where a floor
+ * belongs: the most collapsed layout at the smallest size. 560 tall fits a 1366×768 panel at
+ * 125 % scaling, which is 614 DIP less a taskbar ≈ 566, where 600 would already run underneath.
+ */
+export const WINDOW_MINIMUM: Size = { width: 624, height: 560 };
+
 /**
  * How much of the work area to keep free so a cascade has somewhere to go. Three steps is four
  * anchors per axis — enough that the cascade is visible rather than a stutter, and small enough
@@ -44,9 +67,11 @@ const CASCADE_ROOM = 3 * CASCADE_STEP;
  * windows in different places. It also stops the default window extending under the Dock, which
  * it has always done on that panel.
  *
- * The minimum can still bind and eat the room — 680 tall on a 728 work area leaves 48 px, not
- * 84 — which is why the anchors below are counted per axis from what is actually left rather
- * than assumed to be `CASCADE_ROOM`.
+ * The minimum can still bind and eat the room — 560 tall on a 566 work area (a 1366×768 laptop
+ * at 125 % Windows scaling) leaves 6 px, not 84 — which is why the anchors below are counted per
+ * axis from what is actually left rather than assumed to be `CASCADE_ROOM`. WP-55 lowered the
+ * minimum and so moved which panels that happens on; it did not make it stop happening, and a
+ * version of this that assumes `CASCADE_ROOM` is free would still be wrong.
  */
 export function fittedSize(workArea: Rect, preferred: Size, minimum: Size): Size {
   return {
@@ -63,10 +88,11 @@ function fitAxis(available: number, preferred: number, min: number): number {
  * Every position on the work area's cascade lattice, in the order to try them: the diagonal
  * first, so the fallback still looks like a cascade, then whatever anchors are left.
  *
- * Counted per axis, because the two are not always equal — on a 1366×768 panel the height
- * minimum binds and leaves 48 px against the width's 84, so there are four columns but only
- * two rows. Insisting on a square diagonal there would offer two positions where eight exist,
- * which is how this collapses back into the bug it is meant to fix.
+ * Counted per axis, because the two are not always equal — on a 1366×768 panel at 125 % Windows
+ * scaling (1092×614 DIP, ≈566 of work area) the height minimum binds and leaves 6 px against the
+ * width's 84, so there are four columns but only one row. Insisting on a square diagonal there
+ * would offer one position where four exist, which is how this collapses back into the bug it is
+ * meant to fix.
  */
 export function cascadeAnchors(workArea: Rect, size: Size): Point[] {
   const cols = Math.max(1, Math.floor((workArea.width - size.width) / CASCADE_STEP) + 1);
@@ -86,10 +112,10 @@ export function cascadeAnchors(workArea: Rect, size: Size): Point[] {
  * Whether a window already sits close enough to `p` to read as the same place.
  *
  * Half a step, not a whole one: a full step is the distance between two *adjacent anchors*, so
- * using it lets one off-lattice window — the first one, which Electron centres — veto four of
- * the eight anchors a 1366×768 panel has, and the cascade runs out of places to go by the sixth
- * window. Windows offset by a half step in both axes are visibly two windows; only something
- * nearer than that is stacked.
+ * using it lets one off-lattice window — the first one, which Electron centres — veto two of the
+ * four anchors a 1092×566 panel has, and the cascade starts repeating at the fourth window
+ * instead of the sixth. Windows offset by a half step in both axes are visibly two windows; only
+ * something nearer than that is stacked.
  */
 function occupied(p: Point, taken: readonly Point[]): boolean {
   const tolerance = CASCADE_STEP / 2;

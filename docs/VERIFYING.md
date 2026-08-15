@@ -782,6 +782,34 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   groups' (0, 5, 6, 7) — which is the case a per-group reorder must not disturb. The group
   headings are `span.rounded-full` inside the list's `div.space-y-4` and CSS-uppercased.
 
+## Narrow windows
+
+Since WP-55 the window can go down to **624×560**, which is smaller than anything the interface
+was designed against, and none of the checks above ever set a viewport — Playwright's default is
+1280×720, so nothing here would have noticed.
+
+- **The viewport is not the window.** `useContentSize` is false, so `WINDOW_MINIMUM` is the outer
+  size and the frame comes off before the renderer sees anything. Driving at 624×560 checks a
+  window nobody has: the real pair is **610×498** (Windows 11, whose frame measures 14×62 — a
+  customer's boot log shows a 1440-wide window reporting `innerWidth: 1426`) and **624×532**
+  (macOS, no side frame). Check both; they differ by more than the numbers suggest, because
+  Tailwind's `sm:` is exactly 640 and both must stay under it.
+- **`launch({ viewport })`** in `~/.claude/tools/playwright/lib/drive.mjs` takes it; nothing else
+  changes.
+- **The assertion that catches real breakage is `documentElement.scrollWidth <=
+  clientWidth`,** plus a sweep for elements whose `right` exceeds the viewport *and* have no
+  ancestor with `overflow-x: auto|scroll|hidden`. Without that second half the task table fails
+  the check by design — it is supposed to scroll inside its own box.
+- **`div.overflow-x-auto` has an inner `div.min-w-min` since WP-55**, holding the add row and the
+  `<table>` together so the two are the same width. A selector written as
+  `div.overflow-x-auto > div.flex` for the add row matched before that and matches nothing now.
+- **Measure the add row with `offsetWidth`, not `scrollWidth`.** Its content is short; the
+  question is how wide the box is, and `scrollWidth` answers the other one.
+- **`#/project/1` needs `waitForSelector('div.overflow-x-auto table tbody tr')`.**
+  `html[data-app-ready]` fires before the rows are laid out, and a table measured in that window
+  reports a *narrower* preferred width than the one the user sees — the same run gave 758 and 1347
+  for the same page.
+
 ## What is not verified this way
 
 The Electron half — dialogs, relaunch, the packaged app against a real data directory — has its own

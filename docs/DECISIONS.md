@@ -8,6 +8,34 @@ If you are about to re-raise one of these, the bar is new information, not a fre
 
 ---
 
+## Only the first window's bounds are remembered (2026-08-14, WP-55)
+
+Lowering the minimum window size so two windows fit side by side is worth nothing if the next
+launch throws the arrangement away, so bounds are now saved — but exactly one rectangle, applied
+to exactly one window.
+
+Restoring *every* window was the obvious larger version and it does not work: a window is a season
+(`sessionStorage`, `windowSeason()`), so reopening three windows means deciding which season goes
+in which rectangle, and the file would have to hold pins that the registry already owns and can
+contradict — a deleted season, an imported database, a `.db` that moved. Bounds do not know any of
+that. One rectangle needs no such answer, and secondary windows keep cascading, which is the
+behaviour that was already tested.
+
+**Bounds live in `window-bounds.json` in `userData`, not in `seasons.json`.** The registry is
+exported, imported and written into every backup; a monitor layout that travels with somebody's
+data restores a window onto a screen the receiving machine does not have. `usableBounds()` refuses
+that case anyway, but the right fix is for the geometry not to travel at all.
+
+**The refusal is one-sided, like the size clamp.** A rectangle that no longer overlaps *any*
+attached work area is dropped and the launch falls back to `fittedSize` + Electron's centring —
+the failure it exists for is a window saved on an external monitor and reopened without it, where
+faithful restoration produces an app that appears not to start. Everything short of that is
+clamped instead: dragging a window half off the bottom edge is deliberate, and answering it by
+re-centring would be more surprising than pulling it back on.
+
+**No decision was reversed here.** There was no prior decision against persisting window
+geometry — it had simply never been built (`setBounds` appears nowhere before this).
+
 ## Feedback leaves by `mailto:`, not through an endpoint (2026-08-14, WP-54)
 
 The raw note asked whether the app could send the mail itself. It could — with a mail service, an

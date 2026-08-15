@@ -77,6 +77,11 @@ TODO.md
 TODone.md
 TODO-security.md
 
+# Diagnoseberichte, die ein Kunde per Mail schickt (WP-54 schreibt sie auf den Desktop, sie
+# landen beim Lesen im Repo-Wurzelverzeichnis). Sie tragen keine Termine, Künstler oder Notizen,
+# aber sehr wohl den Rechner: OS-Build, CPU, GPU-Treiberstand, Benutzerpfade.
+Auftakt-Diagnose-*.txt
+
 # Session-Notizen für einen manuellen Testlauf — ephemer, nicht die Checkliste selbst.
 # Was sich davon als dauerhaft herausstellt, gehört nach docs/BACKUP-TESTING.md, nicht hierher.
 MACOS-SESSION.md
@@ -85,3 +90,10 @@ WINDOWS-SESSION.md
 # agent tooling (local only)
 CLAUDE.md
 .claude/
+
+# Lokales Install-Skript: baut, installiert nach /Applications, entfernt das Quarantäne-Flag
+# und startet gegen ein Wegwerfprofil mit Demodaten. Bleibt lokal, weil es eine Bequemlichkeit
+# für genau diesen Rechner ist und nichts an der App selbst ändert — entsprechend steht es auch
+# nicht in package.json (die ist committet):
+#   node scripts/install-mac.mjs --help
+/scripts/install-mac.mjs

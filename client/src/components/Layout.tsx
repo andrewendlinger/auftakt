@@ -33,7 +33,12 @@ export function Layout() {
               Einstellungen
             </NavLink>
           </nav>
-          <div className="ml-auto flex-1 md:min-w-72 md:max-w-md">
+          {/* `min-w-56` is what makes the header *wrap* instead of crushing this (WP-55). The
+              floor used to start at `md:`, and below it the input's own min-content is about
+              37 px — a percentage width contributes nothing to intrinsic sizing — so between the
+              point where the nav stops fitting and the point where it wraps, the search collapsed
+              to a stub instead of moving to its own line. */}
+          <div className="ml-auto min-w-56 flex-1 md:min-w-72 md:max-w-md">
             <GlobalSearch />
           </div>
         </div>
