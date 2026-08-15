@@ -90,3 +90,10 @@ WINDOWS-SESSION.md
 # agent tooling (local only)
 CLAUDE.md
 .claude/
+
+# Lokales Install-Skript: baut, installiert nach /Applications, entfernt das Quarantäne-Flag
+# und startet gegen ein Wegwerfprofil mit Demodaten. Bleibt lokal, weil es eine Bequemlichkeit
+# für genau diesen Rechner ist und nichts an der App selbst ändert — entsprechend steht es auch
+# nicht in package.json (die ist committet):
+#   node scripts/install-mac.mjs --help
+/scripts/install-mac.mjs

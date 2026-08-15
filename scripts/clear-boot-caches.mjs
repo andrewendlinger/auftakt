@@ -21,6 +21,8 @@
  * Honesty note: this reproduces cold Chromium/V8 state. It does not reproduce macOS
  * Gatekeeper's first-open assessment of a freshly quarantined bundle — re-installing from
  * the .dmg is the faithful (heavier) repro when the cache-cold run comes up clean.
+ *
+ *   node scripts/clear-boot-caches.mjs [profil-verzeichnis]
  */
 import { existsSync, rmSync } from 'node:fs';
 import net from 'node:net';
@@ -71,7 +73,10 @@ if (await portAnswers(port)) {
   process.exit(1);
 }
 
-const dir = userDataDir();
+// An explicit profile path overrides the installed app's userData — a packaged app started with
+// `--user-data-dir=…` keeps its caches there, and that profile deserves the same allowlist rather
+// than a second copy of it somewhere else.
+const dir = process.argv[2] ?? userDataDir();
 if (!existsSync(dir)) {
   console.error(`Kein userData-Verzeichnis unter ${dir} — war die App je installiert und gestartet?`);
   process.exit(1);
