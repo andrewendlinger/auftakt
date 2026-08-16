@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="build/icon.png" alt="" width="96">
+  <img src="build/icon.png" alt="" width="120">
 </p>
 
 <h1 align="center">Auftakt</h1>
