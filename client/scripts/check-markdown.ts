@@ -203,6 +203,24 @@ const corpus: Record<string, string> = {
   // an import can, and „alles unterstreichen" is one keystroke away.
   underlineSpansBold: '<u>aaa **bbb** ccc</u>',
   underlineSpansLink: '<u>Siehe [den Verlag](https://example.org/x) — final.</u>',
+  // Character references *inside* a mark, which the corpus had no case for at all — the blind spot
+  // that let the tokenizer above regress them. The path it replaced ran an HTML parser, so every
+  // reference was decoded; marked's inline lexer decodes four of them. A stored
+  // `<u>Fassung&nbsp;3</u>` — the shape a Notion export, a CSV import or a restored backup is full
+  // of — therefore opened as the literal text `Fassung&nbsp;3` and was written back as
+  // `&amp;nbsp;`, at which point the reader was wrong too and no further edit could recover it.
+  // The reference is decoded on the way in and comes back out as the character itself, exactly as
+  // it did before the tokenizer existed.
+  colorEntityNbsp: 'Der Termin: <span class="tc-rot">Fassung&nbsp;3</span> ist raus.',
+  underlineEntityNbsp: 'Der Termin: <u>Fassung&nbsp;3</u> ist raus.',
+  colorEntityNumeric: '<span class="tc-blau">10&#160;Uhr</span> bis <span class="tc-blau">11&#xa0;Uhr</span>.',
+  colorEntityNamed: '<span class="tc-gruen">Br&auml;uche</span> und <span class="tc-gruen">&copy; 2026</span>.',
+  // …decoded exactly *once*: `&amp;` is the manager's own job (after lexing), so leaving it alone
+  // here is what keeps `&amp;nbsp;` the literal text „&nbsp;" instead of a space.
+  colorEntityAmp: '<span class="tc-rot">Licht &amp; Ton</span>, und <span class="tc-rot">&amp;nbsp; wörtlich</span>.',
+  // …and a reference that decodes to Markdown syntax stays text, because that is what it was to the
+  // HTML parser. Without the escape the lexer that follows would read the `*` as emphasis.
+  colorEntityPunctuation: '<span class="tc-rot">Fu&szlig;note &ast; Stern</span>',
   colorInItalic: '*<span class="tc-tuerkis">kursiv und türkis</span>*',
   colorUnderlined: 'Ein <u><span class="tc-gruen">grün unterstrichenes</span></u> Wort.',
   // What the toolbar itself writes when all three are on: `**`, then `<u>`, then the colour.

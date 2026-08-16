@@ -189,11 +189,91 @@ markdownParser.use({
  * keeps whatever marked did with it), a `<u>` carrying attributes, and either tag nested in itself.
  * The closing tag is the first **unescaped** one, so a `\</span>` the serializer wrote for a
  * literal one in the text does not cut the run short — the same tag CommonMark leaves as text.
+ *
+ * **Character references are decoded first** (`decodeCharRefs`), because the path this replaces ran
+ * an HTML parser and that is what an HTML parser does. Skipping it turned a stored
+ * `<u>Fassung&nbsp;3</u>` — the shape every Notion export, CSV import and restored backup is full
+ * of, and `<u>` has been storable since WP-Q — into the literal text `Fassung&nbsp;3`, which the
+ * next save wrote back as `&amp;nbsp;`: from then on the *reader* was wrong too, and no further
+ * edit could recover it.
  */
 const RAW_MARK_TOKEN = 'auftaktRawMark';
 const RAW_MARK_OPEN = /^<(u|span)((?:\s[^<>]*)?)>/i;
 const RAW_MARK_START = /<(?:u|span)[\s>]/i;
 const CLASS_ATTR = /\bclass\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
+
+/** `&nbsp;`, `&#160;`, `&auml;` — a whole reference, name or number. */
+const CHAR_REF = /&(#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]{1,31});/g;
+
+/**
+ * The four `MarkdownManager` decodes for itself, *after* lexing (`decodeHtmlEntities`).
+ *
+ * Left encoded here so each is decoded exactly once, by the same pass that handles them everywhere
+ * else in a note — and so that `&amp;nbsp;`, which means the literal text „&nbsp;", still means it.
+ */
+const MANAGER_DECODES = new Set(['amp', 'lt', 'gt', 'quot']);
+
+/** ASCII punctuation, i.e. everything a backslash may legally escape in CommonMark. */
+const ASCII_PUNCT = /^[!-/:-@[-`{-~]$/;
+
+/** Named references are resolved by the platform's own table; the answers never change. */
+const namedRefs = new Map<string, string | null>();
+
+/**
+ * Resolve one named reference the way an HTML parser would — with the HTML parser.
+ *
+ * There are 2,231 named references in HTML5 and no table of them in this dependency tree; the
+ * environments this module runs in (a browser, and jsdom under `check-markdown.ts`) all carry one
+ * already. Reached structurally rather than by naming `DOMParser`, because this file is typechecked
+ * without the DOM library — the same reason `MdImage`'s `getAttrs` takes a shape rather than an
+ * `HTMLElement`. A reference the table does not know comes back unchanged and is then left alone.
+ */
+function decodeNamedRef(ref: string): string | null {
+  const cached = namedRefs.get(ref);
+  if (cached !== undefined) return cached;
+  const Parser = (
+    globalThis as {
+      DOMParser?: new () => {
+        parseFromString(src: string, type: string): { documentElement?: { textContent?: string | null } | null };
+      };
+    }
+  ).DOMParser;
+  let decoded: string | null = null;
+  try {
+    const text = Parser ? new Parser().parseFromString(ref, 'text/html').documentElement?.textContent : null;
+    decoded = text && text !== ref && !text.includes('&') ? text : null;
+  } catch {
+    decoded = null;
+  }
+  namedRefs.set(ref, decoded);
+  return decoded;
+}
+
+/**
+ * What the HTML parser did to the content of a raw-HTML mark, so the tokenizer can do it too.
+ *
+ * Numbers are arithmetic, names go through the platform's table, and the four the manager decodes
+ * after lexing are deliberately skipped — see `MANAGER_DECODES`.
+ *
+ * A decoded character that happens to be Markdown syntax is escaped on the way in: `&ast;` was
+ * *text* to the HTML parser, and without the backslash the lexer that follows would read it as
+ * emphasis, which is the one way this pass could invent formatting that nobody wrote.
+ */
+function decodeCharRefs(src: string): string {
+  if (!src.includes('&')) return src;
+  return src.replace(CHAR_REF, (whole: string, body: string) => {
+    if (MANAGER_DECODES.has(body.toLowerCase())) return whole;
+    let char: string | null;
+    if (body.startsWith('#')) {
+      const code = /^#[xX]/.test(body) ? Number.parseInt(body.slice(2), 16) : Number(body.slice(1));
+      char = code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : null;
+    } else {
+      char = decodeNamedRef(whole);
+    }
+    if (char === null) return whole;
+    return ASCII_PUNCT.test(char) ? `\\${char}` : char;
+  });
+}
 
 /** The first closing tag that is not escaped, or `null`. */
 function rawMarkClose(src: string, tag: string): { index: number; length: number } | null {
@@ -237,7 +317,7 @@ markdownParser.use({
           color,
           // Populated here rather than in the handler so that a token with no handler still
           // degrades to its content: `parseFallbackToken` walks `tokens` for anything unknown.
-          tokens: this.lexer.inlineTokens(inner),
+          tokens: this.lexer.inlineTokens(decodeCharRefs(inner)),
         };
       },
     },

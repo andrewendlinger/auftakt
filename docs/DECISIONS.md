@@ -86,6 +86,18 @@ which has had the identical flaw since WP-Q and no gesture common enough to expo
 entries hold it; seven of them fail on the unfixed code, and idempotence is the assertion that
 bites, because the *first* save was always right.
 
+**Whatever the HTML parser did, the tokenizer has to do**, and the first thing it does is decode
+character references: the path this replaces ran an HTML parser, and `&nbsp;` is what every Notion
+export, CSV import and restored backup is made of. Reading it as literal text wrote `&amp;nbsp;`
+back on the next save, and from there the reader was wrong too — the same trust boundary this whole
+entry is about, walked from the other side. Four of the references are left encoded on purpose
+(`&amp; &lt; &gt; &quot;`): the manager decodes those itself after lexing, so skipping them is what
+makes each exactly one decode and keeps `&amp;nbsp;` the literal text it says it is. A reference
+that decodes *into* Markdown syntax (`&ast;`) is escaped, because it was text to the HTML parser
+and must not become emphasis on the lexer pass that follows. The stored text is therefore
+normalised on the first save — the entity becomes the character — while the rendered HTML does not
+move at all.
+
 **⌘⇧F opens the picker, and `GlobalSearch` stopped swallowing it.** Every toolbar button carries
 `tabIndex={-1}` (WP-43), which is only defensible because each has another keyboard route, and a
 popover has no natural one. ⌘F/⌘K reach the search field from anywhere — deliberately including

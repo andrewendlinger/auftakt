@@ -798,6 +798,13 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   ⌘⇧F moved focus to the search field, which reads as „the shortcut does nothing" because the note
   commits and the whole toolbar unmounts underneath it. Plain ⌘F still reaches the search field
   from inside a note, deliberately, and *that* does commit the note on the way.
+- **Opening and saving a note *normalises* what is inside `<u>` and a colour span, and that is not
+  a bug in your fixture.** A character reference there is decoded on the way in, exactly as the
+  HTML parser used to decode it, so `<u>Fassung&nbsp;3</u>` comes back as `<u>Fassung 3</u>` with a
+  real U+00A0 (and `&auml;` as `ä`). The **rendered** HTML is identical before and after — that is
+  the assertion to write; a byte comparison of the stored text reports „the editor rewrote my note"
+  against working code. Outside any mark a bare `&nbsp;` is still read as literal text (older than
+  this branch, and the WP-57 blank-line marker is deliberately untouched by all of it).
 - **TipTap's `focus()` lands a frame later, so „focus came back to the text" is an eventually-true
   assertion.** Read straight after the menu closes, `document.activeElement` is still the trigger
   button and the check fails against working code. `waitForFunction(() =>
