@@ -1896,3 +1896,62 @@ The server half is complete either way, so moving a caller over later is a clien
 line to hold is the one above: **an intent may be retried, a snapshot may not**, and a caller that
 cannot express its change as a function of the stored array has not earned the guarantee by
 sending a `rev`.
+
+---
+
+## Eine Leerzeile ist ein `&nbsp;`-Absatz — in beiden Richtungen, und nur oben (2026-08-16, WP-57)
+
+Report: „nach einer liste etc. im texteditor mit ZWEI leeren zeilen, wird immernoch nur eine leere
+zeile angezeigt. bzw bei einer leerzeile zwischen zwei listen wird KEINE angezeigt. das ist ‚raw
+markdown' behaviour das unintuitiv ist und nicht den user erreichen sollte."
+
+The cause was the vendored serializer, not the app. `@tiptap/extension-paragraph` writes the
+empty-paragraph marker only from the **second** consecutive empty paragraph on
+(`previousNodeIsEmptyParagraph`), and blocks are joined by a blank line — so an unmarked empty
+paragraph is indistinguishable from the separator that was already there and simply evaporates.
+The list case is the same fault with a worse outcome: a run of blank lines does not end a list in
+marked or in micromark, so what the editor stored for „Liste, Leerzeile, Liste" was
+`- a\n- b\n\n\n\n- c\n- d`, i.e. **one** list of four items. The user's structure was gone from
+storage, not merely drawn wrong. It took one typo fix to lose it — `InlineNotes` only writes when
+the draft differs, so the note was intact until the day somebody edited it.
+
+The marker is now the only spelling of an empty paragraph, in both directions: `MdParagraph`
+writes `&nbsp;` for every empty paragraph, and `DialectLexer` stops the manager inventing paragraphs
+out of blank lines (`createImplicitEmptyParagraphsFromSpace` built `separatorCount - 1` of them —
+the mirror image of the swallowed marker). One `&nbsp;` paragraph ⇔ one empty paragraph, and a run
+of blank lines means to the editor exactly what it means to CommonMark: nothing. That last half is
+not optional. Without it, every note the old serializer wrote a `\n\n\n\n` into — which is what it
+wrote for two typed blank lines — would gain a blank line nobody typed on the next save.
+
+Three limits, each of them a decision rather than an implementation detail:
+
+- **Top level only** (`ctx.parentType === 'doc'`). Inside a table cell an empty paragraph is an
+  *empty cell*; writing the marker there put a visible `&nbsp;` in it and escaped it to
+  `&amp;nbsp;` on the save after that, since cell text is serialized verbatim. „Eine Leerzeile" is
+  a statement about the blocks of a note, nothing else.
+- **The trailing run is not stored** (`MdDocument`). `TrailingNode` appends an empty paragraph
+  whenever the last block is not one, so a note ending in a list, a heading or a table has
+  somewhere to click — it is an affordance of the editing surface and is there whether or not
+  anyone typed it. Storing it would have added a blank line to *every* such note on its first save.
+  The whole trailing run is dropped, not one per save, or a note holding two would shrink by one
+  every time it was opened. The cost is that a blank line at the very end cannot be stored, and at
+  the end there is nothing under it to push down.
+- **A stored blank line still ends up as a marker.** Legacy `\n\n\n\n` runs migrate to the
+  canonical spelling on the first save and render identically before and after, which is what
+  `blankLinesLegacy*` in the corpus asserts.
+
+Reaching the read half needed a lever the extension does not offer: the method is private and there
+is no option. The manager builds its lexer as `new markedInstance.Lexer(markedInstance.defaults)`,
+so replacing `Lexer` on the `Marked` instance this module already owns replaces the lexer the
+manager uses, and `raw` is the only thing a run of blank lines is read out of. Only the top-level
+`lex()` is touched; `blockTokens`/`inlineTokens`, which custom tokenizers reach through, keep
+marked's own behaviour.
+
+**Spacing parity was measured, not assumed.** `.prose-md--roomy > p` is `margin: 1em 0` against the
+compact `0.35em`, and the worry was that a surviving `&nbsp;` paragraph would draw taller in the
+reading view than in the editor. It does not: both surfaces carry the same `prose-md--roomy` class,
+the empty paragraph is a direct child of both, and `<p>&nbsp;</p>` and ProseMirror's
+`<p><br></p>` are both exactly one line box. Driving the demo's project 5 gives identical block
+sequences, identical margins per block and identical blank-line heights on both surfaces; the only
+difference is the +4 px a `<ul>` has in the editor, which is TipTap's `li > p` wrapper and predates
+this package. No CSS change was needed, and the measurement is the reason none was made.

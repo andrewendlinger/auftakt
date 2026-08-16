@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",
+    "@tiptap/extension-document": "^3.29.2",
     "@tiptap/extension-paragraph": "^3.29.2",
     "@tiptap/extension-table": "^3.29.2",
     "@tiptap/extension-table-cell": "^3.29.2",

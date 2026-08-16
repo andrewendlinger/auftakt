@@ -128,6 +128,30 @@ const corpus: Record<string, string> = {
   mailto: 'Mail [uns](mailto:info@example.com) bitte.',
   softBreak: 'line one\nline two\nline three',
   paraBreak: 'para one\n\npara two',
+  // WP-57. A *visible* blank line — an empty paragraph the user typed, over and above the gap
+  // every paragraph break already has — is spelled `&nbsp;` on a line of its own, and that is the
+  // only spelling either half of the dialect recognizes. The reader has always drawn it as
+  // `<p> </p>`; the editor used to drop the marker for the first of any run of empty paragraphs,
+  // so two typed blank lines came back as one and one between two lists came back as none — the
+  // reported bug. Every case here is stored text the editor now writes and reads unchanged.
+  blankLine: 'davor\n\n&nbsp;\n\ndanach',
+  twoBlankLines: 'davor\n\n&nbsp;\n\n&nbsp;\n\ndanach',
+  blankLineAtStart: '&nbsp;\n\ndanach',
+  blankLineBeforeHeading: 'davor\n\n&nbsp;\n\n## Abschnitt',
+  // The list cases the report names. A marker paragraph sits at column 0, so it ends the list in
+  // marked and in micromark alike — which is what keeps „Liste, Leerzeile, Liste" two lists
+  // instead of one run-together list of four items.
+  blankLineAfterList: '- eins\n- zwei\n\n&nbsp;\n\nDanach.',
+  twoBlankLinesAfterList: '- eins\n- zwei\n\n&nbsp;\n\n&nbsp;\n\nDanach.',
+  blankLineBetweenLists: '- eins\n- zwei\n\n&nbsp;\n\n- drei\n- vier',
+  // …and the shapes already in the database, written by the serializer this package repairs: a
+  // bare run of blank lines, and the run-plus-one-marker the old rule produced for two typed blank
+  // lines. A run of blank lines is a block separator and nothing more — CommonMark draws no gap
+  // for it — so the editor must not invent paragraphs from one either, or opening and saving an
+  // old note would add a blank line nobody typed. The second one migrates to the canonical
+  // spelling on that save, which is why it must render the same before and after.
+  blankLinesLegacy: 'davor\n\n\n\ndanach',
+  blankLinesLegacyAfterList: '- eins\n- zwei\n\n\n\n&nbsp;\n\nDanach.',
   heading: '# Titel\n\n## Abschnitt\n\n### Unterpunkt',
   quote: '> ein Zitat\n> über zwei Zeilen',
   table: '| Instrument | Anzahl |\n| --- | --- |\n| Geige | 4 |\n| Cello | 2 |',
@@ -489,6 +513,51 @@ if (
   console.log('  ok   node: ?w=/?a= werden zu width/align, im Dokument und im gezeichneten <img>');
 }
 
+/**
+ * What the editor *writes* for a document it built itself (WP-57).
+ *
+ * The corpus can only ever say „this stored string survives a round-trip". It cannot say how a
+ * document the user typed is spelled in the first place, and both halves of this package are
+ * exactly that: an empty paragraph between two lists has to come out as a `&nbsp;` at column 0 —
+ * the only thing that keeps the lists apart, and the case the report is about — while the empty
+ * paragraph `TrailingNode` appends after a list has to come out as nothing at all. Seeding the
+ * document directly is the only way to tell those two apart, since Markdown spells them the same.
+ */
+const bullet = (text: string) => ({ type: 'listItem', content: [para(text)] });
+const bulletList = (...texts: string[]) => ({ type: 'bulletList', content: texts.map(bullet) });
+const emptyPara = { type: 'paragraph' };
+const serialized: Array<[string, JSONContent, string]> = [
+  [
+    'eine Leerzeile zwischen zwei Listen',
+    { type: 'doc', content: [bulletList('eins', 'zwei'), emptyPara, bulletList('drei', 'vier')] },
+    '- eins\n- zwei\n\n&nbsp;\n\n- drei\n- vier',
+  ],
+  [
+    'zwei Leerzeilen nach einer Liste',
+    { type: 'doc', content: [bulletList('eins', 'zwei'), emptyPara, emptyPara, para('Danach.')] },
+    '- eins\n- zwei\n\n&nbsp;\n\n&nbsp;\n\nDanach.',
+  ],
+  [
+    'der Absatz, den TrailingNode anhängt, wird nicht gespeichert',
+    { type: 'doc', content: [bulletList('eins', 'zwei'), emptyPara] },
+    '- eins\n- zwei',
+  ],
+  ['eine leere Notiz bleibt leer', { type: 'doc', content: [emptyPara] }, ''],
+];
+
+for (const [name, doc, expected] of serialized) {
+  editor.commands.setContent(doc);
+  const out = editor.getMarkdown();
+  if (out === expected) {
+    console.log(`  ok   serialize: ${name}`);
+  } else {
+    failures++;
+    console.log(`  FAIL serialize: ${name}`);
+    console.log(`       out md : ${JSON.stringify(out)}`);
+    console.log(`       soll   : ${JSON.stringify(expected)}`);
+  }
+}
+
 editor.destroy();
 const total = Object.keys(corpus).length + Object.keys(jsonCorpus).length;
 if (failures) {
@@ -497,5 +566,5 @@ if (failures) {
 }
 console.log(
   `\nmarkdown round-trip: all ${total} cases render-equal, idempotent, control-char free and code free` +
-    `, and all ${clipboard.length + 6} clipboard and node assertions hold`,
+    `, and all ${clipboard.length + 6 + serialized.length} clipboard, node and serialize assertions hold`,
 );

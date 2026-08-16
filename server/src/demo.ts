@@ -266,6 +266,30 @@ const LEGACY_CODE_NOTES = [
   `${'\u00a0'.repeat(3)}Nachbereitung ab 23:00`,
 ].join('\n');
 
+// The three shapes WP-57 is about, in one note: a blank line between two lists (which used to run
+// them together into a single list of four), two consecutive blank lines, and a blank line after a
+// list. Each one is a `&nbsp;` on a line of its own — the only spelling the editor and the reading
+// view draw the same way — so this is also the fixture for eyeballing that they still do.
+const BLANK_LINE_NOTES = [
+  'Läuft durchgehend im Foyer.',
+  '',
+  '&nbsp;',
+  '',
+  '- Aufbau Dienstag',
+  '- Klangprobe Mittwoch',
+  '',
+  '&nbsp;',
+  '',
+  '- Publikum ab Donnerstag',
+  '- Abbau Sonntag',
+  '',
+  '&nbsp;',
+  '',
+  '&nbsp;',
+  '',
+  'Zwei Leerzeilen über diesem Absatz.',
+].join('\n');
+
 /**
  * A per-entity section arrangement (WP-25). Only artist 2 and project 3 carry one; everyone else
  * stays `NULL` and follows the `artist_layout`/`project_layout` template, so the two states — and
@@ -303,7 +327,7 @@ const PROJECTS = [
   { id: 2, artist_id: 1, code: 'NQ2', name: 'Schulworkshop', status: 'Not Started', description: 'Vormittagsformat für zwei Schulklassen.', color: '#8b5cf6' },
   { id: 3, artist_id: 2, code: 'AB1', name: 'Hauptkonzert', status: 'In Progress', description: null, layout: PROJECT_3_LAYOUT },
   { id: 4, artist_id: 2, code: 'AB2', name: 'Radio-Session', status: 'In Progress', description: 'Mitschnitt für den Kultursender.' },
-  { id: 5, artist_id: 3, code: 'KH1', name: 'Klanginstallation', status: 'In Progress', description: 'Läuft durchgehend im Foyer.' },
+  { id: 5, artist_id: 3, code: 'KH1', name: 'Klanginstallation', status: 'In Progress', description: BLANK_LINE_NOTES },
   { id: 6, artist_id: 3, code: 'KH2', name: 'Late-Night-Set', status: 'Not Started', description: LEGACY_CODE_NOTES },
   { id: 7, artist_id: 4, code: 'JW1', name: 'Solo-Rezital', status: 'Done', description: 'Programm steht, Werbung läuft.' },
   { id: 8, artist_id: 4, code: 'JW2', name: 'Meisterkurs', status: 'In Progress', description: 'Drei Tage, zwölf Teilnehmende.' },

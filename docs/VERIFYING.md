@@ -549,6 +549,18 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   `.prose-md` lands at the element's center, and the demo notes put links and a linked image
   there — the click then navigates (or selects the image) and `.rte-content` never mounts, which
   reads as „the editor is broken". `getByText('Streichquartett')` opens the artist note reliably.
+- **Opening and closing a note stores nothing — a serializer change needs a real keystroke.**
+  `InlineNotes.commit` compares the draft against the prop and returns early when they are equal,
+  and the draft only moves when `RichTextEditor` fires `onChange`. So the obvious repro for „what
+  does the editor write back" — click the note, click away, read the API — reports the stored text
+  unchanged whatever the serializer does, which reads as „the bug is fixed" against unfixed code.
+  It cost one wrong verdict on WP-57. Type something (`page.keyboard.type(' Nachtrag.')`; the
+  autofocus already parks the caret at the end) and then blur. That is also how the user meets such
+  a bug: the note is intact until the day somebody fixes a typo in it.
+- **Demo project 5 („Klanginstallation") is the blank-line fixture** (WP-57): a blank line between
+  two lists, two consecutive blank lines, a blank line after a list, four `&nbsp;` markers in all.
+  A script that edits it is not re-runnable against a dirty database — PATCH the description back
+  before the run rather than re-seeding under a live server.
 - **`h1` is not a safe blur target, because a note can contain one.** The demo project description
   begins with `# Eröffnungskonzert`, which renders an `<h1>` inside `.prose-md` — the same text as
   the page heading, so `locator('h1')` is a strict-mode violation that looks like a duplicated

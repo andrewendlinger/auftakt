@@ -22,6 +22,14 @@ import { splitImageSrc } from './imageRef';
  *
  * The editor twin lives in `richtext.ts`. Every change here needs the matching change there, and
  * the corpus is what proves they still agree.
+ *
+ * **Blank lines are the one rule this half already had right** (WP-57). To CommonMark a run of
+ * blank lines is a block separator and nothing more — however many there are, remark draws no gap
+ * — and the *only* thing that makes an empty paragraph is an explicit `&nbsp;` on a line of its
+ * own, which arrives here as a character reference and leaves as `<p> </p>`. So this file
+ * needed no change: `richtext.ts` was brought into line with it, in both directions, rather than
+ * the other way round. Anything that would make a bare blank line mean something here has to move
+ * `MdParagraph` and `DialectLexer` with it.
  */
 
 /**
