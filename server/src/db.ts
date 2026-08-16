@@ -1836,6 +1836,19 @@ export function backupStamp(at: Date = new Date()): string {
  */
 const DROPPED_SETTINGS = ['timezone'];
 
+/**
+ * **The one place that can lower `MAX(rev)`, and must not** (WP-R5). The settings table's
+ * generation is `MAX(rev)` over its rows, so deleting the row that happens to carry the highest
+ * one would hand the *next* write a generation already handed out — and a client still holding it
+ * would then pass the conflict check and overwrite what it should have been refused.
+ *
+ * It cannot happen today: `timezone` was written by a build that predates the column, so its row
+ * carries 0, and nothing writes it any more. **A key added to `DROPPED_SETTINGS` must be one no
+ * build ever wrote through `writeSettings`** — i.e. a dead key from before this column, not a
+ * setting the app has been saving. If a live key ever has to go, the delete has to carry the
+ * generation forward with it — `writeSettings(db, [])` will not, since it writes no row — or the
+ * counter has to move out of `MAX` first.
+ */
 function dropUnusedSettings(db: Database.Database): void {
   const stmt = db.prepare('DELETE FROM settings WHERE key = ?');
   for (const key of DROPPED_SETTINGS) stmt.run(key);

@@ -155,7 +155,12 @@ gone) and `copySeasonData`, which opens the *source* raw and copies a fixed colu
 The refusal is per season, never per app: `getDb()` closes the handle and throws, the boot warm in
 `index.ts` catches so one newer season cannot keep the process from starting, and `seasonStats`
 already degrades that season's card to `null` — so a window pinned to a file it cannot open can
-still list the seasons and switch away.
+still list the seasons and switch away. **`GET /api/backup/status` belongs to that list**: main
+reads it headerless (i.e. against the *default* season) and treats a failure as „no folder
+configured", so a 500 there would skip the startup backup for every season without throwing —
+`hasData()` therefore answers `true` for a season it cannot open rather than propagating the
+throw, and `ensureBackupDir` turns a non-OK response into a reported problem. Backups themselves
+never run the chain (`VACUUM INTO` on the file), so a refused season is still backed up.
 
 ## Backups and import — never copy a live DB with the filesystem
 

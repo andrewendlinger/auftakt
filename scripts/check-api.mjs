@@ -1866,9 +1866,16 @@ try {
 
     // …and nothing was replaced. Three separate ways of saying it, because the failure this
     // guards against is „refused *after* the old database was already gone".
+    //
+    // The pre-import assertion is the one that would actually catch it — the rows survive and no
+    // temp file is left behind however far into `importIntoCurrentSeason` the check sits, but
+    // the snapshot is written the moment it sits below `snapshotDb()`. `includes`, not
+    // `startsWith`: with no backup folder configured the snapshot lands *beside* the live file
+    // as `auftakt.db.pre-import-<stamp>.bak` (preImportBackupPath), so a prefix test could never
+    // fire and the assertion passed against a snapshot sitting right there.
     const alive = await req('GET', `/artists/${marker.id}`);
     check('the live database is untouched: its rows are still there', alive.status === 200, String(alive.status));
-    check('…no pre-import snapshot was written', !readdirSync(dataDir).some((f) => f.startsWith('pre-import')), readdirSync(dataDir).join(', '));
+    check('…no pre-import snapshot was written', !readdirSync(dataDir).some((f) => f.includes('pre-import')), readdirSync(dataDir).join(', '));
     check('…and no staged copy was left behind', !existsSync(seasonFile('auftakt.db.import-tmp')));
 
     // One-sided here as well: the candidate whose generation is *older* is precisely what the
@@ -1884,7 +1891,33 @@ try {
     check('an older, unstamped file is still importable', oldCheck.ok === true, JSON.stringify(oldCheck));
     check('…and the dialog can name its generation', oldCheck.schema?.file === 0 && oldCheck.schema?.app === APP, JSON.stringify(oldCheck.schema));
 
+    // 4. The refusal must not disable the backups — and the *default* season is the case that
+    // gets this wrong, because the main process reads `/backup/status` headerless. A 500 there
+    // is indistinguishable from „no folder configured" one caller up (`ensureBackupDir` finds no
+    // backupDir on the error body and returns ''), so `runStartupChores` would skip the startup
+    // backup for **every** season, without throwing and therefore without reporting: backups
+    // stop for the healthy seasons because a season nobody has open is from a newer build. That
+    // is the WP-39 failure mode, and it is the last thing this package should reintroduce.
     await stopServer();
+    setVersion('auftakt.db', APP + 1);
+    await startServer();
+
+    const status = await req('GET', '/backup/status');
+    check('a refused default season still answers /backup/status', status.status === 200, `${status.status} ${JSON.stringify(status.body)}`);
+    check('…and reports data worth protecting rather than none', status.body?.hasData === true, JSON.stringify(status.body));
+
+    // The backup itself never opens a season through the migration chain — `VACUUM INTO` on the
+    // file — so the refused season is backed up like every other one. Asserting the *files*, not
+    // just the 200: „the run reported success but skipped the season it could not open" is the
+    // shape that would still leave the customer without the backup they think they have.
+    const target = join(dataDir, 'sicherungen');
+    const run = await req('POST', '/backup', { dir: target });
+    check('…and a startup backup still runs', run.status === 200, `${run.status} ${JSON.stringify(run.body)}`);
+    check('…covering the refused season too', (run.body?.files ?? []).includes('auftakt.db'), JSON.stringify(run.body?.files));
+    check('…and every other season with it', (run.body?.files ?? []).includes(future.file), JSON.stringify(run.body?.files));
+
+    await stopServer();
+    setVersion('auftakt.db', APP); // leave the fixture openable for whatever is added after this
   }
 } catch (err) {
   check('run completed', false, String(err));

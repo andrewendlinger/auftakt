@@ -617,10 +617,15 @@ async function runImport(seasonId: number | undefined, win: BrowserWindow | null
     // file is brought forward by the migration chain when it is first opened, and parts of that
     // chain do not run backwards. Said only when the numbers actually differ — on the version
     // the file already has, there is nothing to warn about (WP-R5).
+    //
+    // What it does NOT claim is that an older Auftakt can no longer open the result. That is
+    // false for the only pair shipping today: a build from before the stamp has no check at all
+    // and opens a stamped file happily. The migration is the one-way step, and it is the one
+    // worth naming.
     detail:
       schema && schema.file < schema.app
         ? `Die Datei liegt in einem älteren Datenformat vor (Datenformat ${schema.file}, diese App: ${schema.app}). ` +
-          'Sie wird beim Öffnen aktualisiert und lässt sich danach nicht mehr mit einer älteren Auftakt-Version öffnen.'
+          'Sie wird beim Öffnen auf das aktuelle Format aktualisiert — dieser Schritt lässt sich nicht rückgängig machen.'
         : undefined,
   });
   if (confirm.response !== 1) return;
@@ -811,11 +816,22 @@ async function createWindow(): Promise<void> {
  * with no backup and nothing but a hint in a Settings tab to say so.
  */
 async function ensureBackupDir(): Promise<string> {
-  const status = (await (await fetch(`${ORIGIN}/api/backup/status`)).json()) as {
+  const res = await fetch(`${ORIGIN}/api/backup/status`);
+  const status = (await res.json().catch(() => null)) as {
     backupDir: string;
     hasData: boolean;
     prompted: boolean;
-  };
+    error?: string;
+  } | null;
+  // A failed status read must never read as „no folder configured" (WP-R5). An error body
+  // carries no `backupDir`, so the old shape fell through to `return ''` and `runStartupChores`
+  // skipped the backup — for every season, without throwing, so `reportBackupProblem` never
+  // fired and backups stopped with nothing said. The server no longer 500s this route for a
+  // season it cannot open; this is the second lock on the same door, for every other reason it
+  // might one day fail.
+  if (!res.ok || !status) {
+    throw new Error(status?.error ?? `Backup-Status nicht abrufbar (HTTP ${res.status}).`);
+  }
   if (status.backupDir) return status.backupDir;
   if (!status.hasData || status.prompted) return '';
   // Never open a folder picker with nothing behind it. The chores can now also be

@@ -1844,6 +1844,17 @@ boot warm catches, and `seasonStats` already reports `null` for a season it cann
 window pinned to that season shows the German sentence where its data would be, and the season
 switcher next to it still works — which is the only thing the user can usefully do about it.
 
+The sharpest edge of that rule is not on screen at all, and the review found it: **a refused
+season must not stop the backups.** Main reads `/api/backup/status` headerless, i.e. against the
+*default* season, and one caller up a failed read is indistinguishable from „no backup folder
+configured" — so a 500 there skipped the startup backup for *every* season, silently, because
+nothing threw and `reportBackupProblem` never fired. Exactly WP-39's „backups stopped without a
+word", reintroduced by a refusal meant to protect data. `hasData()` therefore answers `true` for
+a season it cannot open — an unreadable file is not evidence that there is nothing to protect,
+and it is the state in which a backup matters most — and `ensureBackupDir` turns any non-OK
+status into a reported problem rather than an empty folder path. Nothing else was in the way:
+`runBackup` snapshots each season file raw, so the refused season is backed up like the rest.
+
 **Not a version *negotiation*.** No compatibility range, no „read-only mode" for a newer file, no
 downgrade path. Auftakt is a single-user local app whose answer is „update Auftakt", and every
 alternative buys a permanent second code path for a case that resolves itself in one download.

@@ -165,9 +165,29 @@ function hasLegacyFlatBackups(backupDir: string): boolean {
   }
 }
 
-/** True once the request's season holds anything worth backing up. */
+/**
+ * True once the request's season holds anything worth backing up.
+ *
+ * **A season this build cannot open answers `true`, not `false`** (WP-R5). `getDb()` throws for
+ * a file a newer build has already migrated — and a throw here would 500 the whole status
+ * response, which the main process reads as „no backup folder configured" and answers by
+ * skipping the startup backup for *every* season, silently: `ensureBackupDir` finds no
+ * `backupDir` on the error body, returns '', and nothing reaches `reportBackupProblem`. One
+ * refused season would stop backups for the healthy ones — the WP-39 failure mode, and the
+ * opposite of the per-season refusal this package is built on.
+ *
+ * `true` is also the honest answer on its own terms: an existing file this cannot read is not
+ * evidence that there is nothing to protect. It is the state in which a backup matters most, and
+ * `runBackup` snapshots every season file raw (`VACUUM INTO`, no migration chain), so the backup
+ * itself works for exactly the seasons this cannot open.
+ */
 function hasData(): boolean {
-  const db = getDb();
+  let db;
+  try {
+    db = getDb();
+  } catch {
+    return true;
+  }
   for (const table of ['artists', 'projects', 'tasks']) {
     const row = db.prepare(`SELECT 1 FROM ${table} WHERE deleted_at IS NULL LIMIT 1`).get();
     if (row) return true;
