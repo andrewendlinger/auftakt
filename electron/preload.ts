@@ -26,10 +26,11 @@ contextBridge.exposeInMainWorld('auftakt', {
   // argument is the boot report (see client/index.html); main treats it as untrusted.
   bootSettled: (report?: unknown) => ipcRenderer.invoke('boot-settled', report),
   /**
-   * The one main→renderer direction, hence the one `ipcRenderer.on`: the backup folder is
-   * registry-wide, so a pick in any window (or from the menu, or from the first-launch
-   * prompt) has to reach all of them. `invoke` cannot express it — main is the one starting
-   * the conversation — and BroadcastChannel is renderer-only.
+   * One of two main→renderer directions, hence one of two `ipcRenderer.on`s (the other is
+   * `onUpdateProgress` below): the backup folder is registry-wide, so a pick in any window
+   * (or from the menu, or from the first-launch prompt) has to reach all of them. `invoke`
+   * cannot express it — main is the one starting the conversation — and BroadcastChannel is
+   * renderer-only.
    *
    * The listener is wrapped rather than passed through: `ipcRenderer.on` hands its callback
    * an `IpcRendererEvent` carrying `sender`, and contextIsolation exists precisely so the
@@ -40,6 +41,22 @@ contextBridge.exposeInMainWorld('auftakt', {
     const listener = () => cb();
     ipcRenderer.on('backup-config-changed', listener);
     return () => ipcRenderer.off('backup-config-changed', listener);
+  },
+  /**
+   * The download percentage of an in-flight `installUpdate()`, 0–100 (WP-60). Same wrapping
+   * rule as above — the `IpcRendererEvent` is dropped, only the number crosses — but the
+   * opposite of it in the two ways that matter: it is addressed to *this* window (main sends
+   * it to the sender of the `install-update` invoke, not to all windows) and it carries a
+   * *value*. It has to: the renderer has no way to ask electron-updater how far along a
+   * download is, so „refetch instead of being told" has nothing to refetch from.
+   *
+   * Unsubscribing matters here where it does not for the backup signal: the sole listener is
+   * a component effect in the Einstellungen card, not a document-lifetime one.
+   */
+  onUpdateProgress: (cb: (percent: number) => void) => {
+    const listener = (_event: unknown, percent: number) => cb(percent);
+    ipcRenderer.on('update-download-progress', listener);
+    return () => ipcRenderer.off('update-download-progress', listener);
   },
   // Static value, not IPC — the Settings card picks platform-specific install copy.
   platform: process.platform,

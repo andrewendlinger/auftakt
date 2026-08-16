@@ -431,8 +431,11 @@ async function reportBackupProblem(err: unknown): Promise<void> {
  * already have a non-destructive way to refresh — the coalesced blanket invalidate behind the
  * BroadcastChannel — so main only has to say "something changed" and let them run it.
  *
- * The one main-initiated event in the app, hence the only `webContents.send`: the other
- * direction is all `ipcRenderer.invoke`, because everything else starts in a renderer.
+ * One of the two main-initiated events in the app, hence one of the two `webContents.send`
+ * calls; the other is the update download's percentage (`UPDATE_PROGRESS_CHANNEL` in
+ * `updater.ts`), and the two differ in both halves: this one goes to *every* window and
+ * carries no payload, that one to the single window that asked and carries a number.
+ * Everything else is `ipcRenderer.invoke`, because everything else starts in a renderer.
  * BroadcastChannel cannot carry this — main is not a renderer and has no channel object.
  */
 function notifyBackupConfigChanged(): void {
@@ -1135,7 +1138,12 @@ ipcMain.handle('import-db', (e, seasonId: unknown) =>
 ipcMain.handle('choose-backup-dir', (e) => chooseBackupDir(BrowserWindow.fromWebContents(e.sender)));
 ipcMain.handle('get-version', () => app.getVersion());
 ipcMain.handle('check-updates', (_e, refresh: boolean) => checkForUpdates(refresh));
-ipcMain.handle('install-update', () => downloadAndInstallUpdate());
+// The sender window rides along so the download's progress has somewhere to go: its taskbar
+// button and its own update card (WP-60). The other windows are not in the downloading state
+// and would have nothing to draw with it.
+ipcMain.handle('install-update', (e) =>
+  downloadAndInstallUpdate(BrowserWindow.fromWebContents(e.sender)),
+);
 // The customer's route to their own boot log (WP-54). Main reads and summarizes; the
 // renderer receives finished text and never a path it could send back (X-02). Takes no
 // argument at all: everything it reads is derived from userData here.

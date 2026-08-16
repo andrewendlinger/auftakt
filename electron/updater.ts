@@ -1,5 +1,5 @@
-import { app, dialog } from 'electron';
-import { autoUpdater } from 'electron-updater';
+import { app, dialog, type BrowserWindow } from 'electron';
+import { autoUpdater, type ProgressInfo } from 'electron-updater';
 import { fetchLatestRelease, isNewer, RELEASES_URL, type UpdateStatus } from './updateCheck';
 
 /**
@@ -71,20 +71,97 @@ export function startSilentStartupCheck(): void {
 }
 
 /**
+ * The one Main→Renderer channel that carries a value (WP-60): the download percentage,
+ * 0–100. It goes to the *one* window that asked, not to all of them like
+ * `backup-config-changed` — the other windows' update cards are not in the downloading
+ * state and have nothing to draw. See `docs/ARCHITECTURE.md`, „Windows (plural)".
+ *
+ * Spelled out again in `electron/preload.ts` rather than imported, exactly as
+ * `backup-config-changed` is: preload is its own esbuild bundle and importing this module
+ * would drag `electron-updater` into it. Grep is the whole coupling — rename both.
+ */
+const UPDATE_PROGRESS_CHANNEL = 'update-download-progress';
+
+/**
+ * Where a download run's progress goes: the asking window's taskbar button and its update
+ * card. Both are best-effort — the window can be closed mid-download (the update keeps
+ * going, and autoInstallOnAppQuit still lands it), so every call re-checks.
+ */
+function progressReporter(win: BrowserWindow | null) {
+  const to = (fn: (w: BrowserWindow) => void) => {
+    if (win && !win.isDestroyed()) fn(win);
+  };
+  return {
+    /** Windows-only mode, and canInstall() has already established the platform. Until the
+     *  first `download-progress` the total is unknown, and a determinate bar sitting at 0 %
+     *  is exactly the „nothing is happening" the user reported. */
+    start: () => to((w) => w.setProgressBar(1, { mode: 'indeterminate' })),
+    percent: (pct: number) =>
+      to((w) => {
+        w.setProgressBar(Math.max(0, Math.min(1, pct / 100)));
+        w.webContents.send(UPDATE_PROGRESS_CHANNEL, pct);
+      }),
+    /** -1 removes the taskbar bar. The card needs no counterpart: the `install-update`
+     *  invoke resolving is what takes it out of the downloading state. */
+    clear: () => to((w) => w.setProgressBar(-1)),
+  };
+}
+
+/**
+ * `downloadUpdate()` on its own is not a complete await. electron-updater reports part of
+ * what can go wrong — a failed differential download, a rejected signature, a dead
+ * connection — through the `error` event, and the promise can stay pending behind it; there
+ * is no timeout anywhere, so the card sat on „Update wird heruntergeladen…" forever and the
+ * user had no way back (the button is gone in that state). Racing the promise against
+ * `error` gives that a failure arm, and `update-downloaded` is taken as the other settle so
+ * whichever arrives first wins.
+ *
+ * Every listener comes off again in the `finally`, because `autoUpdater` is a module
+ * singleton: a second run in the same session would otherwise stack a second set on the
+ * first and report each chunk twice.
+ */
+function downloadWithProgress(
+  updater: typeof autoUpdater,
+  onProgress: (pct: number) => void,
+): Promise<void> {
+  let cleanup = () => {};
+  return new Promise<void>((resolve, reject) => {
+    const progress = (info: ProgressInfo) => onProgress(info.percent);
+    const downloaded = () => resolve();
+    const failed = (err: Error) => reject(err);
+    cleanup = () => {
+      updater.off('download-progress', progress);
+      updater.off('update-downloaded', downloaded);
+      updater.off('error', failed);
+    };
+    updater.on('download-progress', progress);
+    updater.once('update-downloaded', downloaded);
+    updater.on('error', failed);
+    updater.downloadUpdate().then(() => resolve(), reject);
+  }).finally(() => cleanup());
+}
+
+/**
  * Windows only: download the update, then offer the restart. Declining is fine —
  * autoInstallOnAppQuit installs it on the next regular quit instead.
+ *
+ * `win` is the window whose button shows the taskbar progress and whose renderer draws the
+ * bar — main.ts derives it from the invoke's sender, so it is the window the user clicked in.
  */
-export async function downloadAndInstallUpdate(): Promise<void> {
+export async function downloadAndInstallUpdate(win: BrowserWindow | null): Promise<void> {
   if (!canInstall()) return;
+  const progress = progressReporter(win);
   // configuredAutoUpdater() inside the try as well: anything that throws before the
   // download must land in the dialog below rather than rejecting the IPC call, which
   // the renderer could only show as a stuck update card (PGS-16).
   let updater: typeof autoUpdater;
   try {
     updater = configuredAutoUpdater();
+    progress.start();
     await updater.checkForUpdates(); // downloadUpdate needs a fresh check result
-    await updater.downloadUpdate();
+    await downloadWithProgress(updater, progress.percent);
   } catch (err) {
+    progress.clear();
     await dialog.showMessageBox({
       type: 'error',
       message: `Update fehlgeschlagen: ${(err as Error).message}`,
@@ -92,13 +169,41 @@ export async function downloadAndInstallUpdate(): Promise<void> {
     });
     return;
   }
+  // The last `download-progress` need not be 100, so the card is told once more explicitly;
+  // the taskbar bar comes off, because nothing is downloading any more and what is left is a
+  // question for the user rather than work to watch.
+  progress.percent(100);
+  progress.clear();
+  /**
+   * The one gap no progress bar reaches. `quitAndInstall(true, true)` starts NSIS *silently*
+   * — from that call on there is no window, no taskbar item and no renderer left to report
+   * anything, and on the customer machines a virus scanner takes its time over the fresh
+   * .exe before Windows lets it run. The symptom is a blank desktop for a minute or more
+   * after clicking a button labelled „Jetzt neu starten", which reads as a crash.
+   *
+   * `isSilent = false` would let NSIS show its own progress window and was the obvious
+   * alternative; it was rejected because it buys a bar at the price of extra clicks in a
+   * dialog nobody wants to read (see docs/DECISIONS.md). So the silence stays and this is
+   * the place it gets announced: the steps by name, and the wait named before it happens —
+   * a wait somebody expects is not the same event as a wait that arrives unexplained.
+   */
   const confirm = await dialog.showMessageBox({
     type: 'info',
     buttons: ['Später', 'Jetzt neu starten'],
     defaultId: 1,
     cancelId: 0,
     message: 'Update heruntergeladen. Jetzt neu starten und installieren?',
-    detail: 'Bei „Später“ wird das Update beim nächsten Beenden der App installiert.',
+    detail:
+      'Nach „Jetzt neu starten“ passiert Folgendes:\n' +
+      '1. Auftakt schließt sich.\n' +
+      '2. Das Update installiert sich still im Hintergrund — ohne weiteres Fenster und ohne Rückfrage.\n' +
+      '3. Auftakt startet von selbst neu.\n\n' +
+      'Zwischen Schritt 2 und 3 kann es dauern: Virenscanner prüfen die neue Programmdatei zuerst, ' +
+      'das kostet auf manchen Rechnern eine Minute oder mehr. Solange ist auf dem Bildschirm nichts ' +
+      'zu sehen — das ist normal. Bitte einfach warten, nicht mehrfach klicken und den Rechner nicht ' +
+      'ausschalten.\n\n' +
+      'Bei „Später“ wird das Update beim nächsten Beenden der App installiert. Deine Daten bleiben ' +
+      'in beiden Fällen erhalten.',
   });
   if (confirm.response === 1) updater.quitAndInstall(true, true);
 }

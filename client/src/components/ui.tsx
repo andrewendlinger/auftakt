@@ -466,3 +466,39 @@ export function Spinner() {
     </div>
   );
 }
+
+/**
+ * The other „something is happening" primitive: a bar for work whose *end* is known, where
+ * `Spinner` stands for work whose end is not. It was already drawn twice inside
+ * `TaskStatChips` („Fortschritt") before the update download needed a third; lifting it here
+ * rather than copying it is what keeps one house bar instead of two that drift apart (WP-60).
+ *
+ * `pct` is 0–100 and clamped, because both callers compute it: „Fortschritt" divides by a
+ * total that can be 0, and electron-updater's `percent` is a float that has been seen to
+ * overshoot 100 on the last chunk. `null` is the honest third state — running, total not
+ * known yet — and draws an *empty* pulsing track rather than a full one: a filled bar with no
+ * number beside it reads as „fertig", which is the opposite of what it would mean.
+ *
+ * Inline width, not a Tailwind class: the value is continuous, so there is no finite set of
+ * classes to generate (the same reason `Pill` takes its colours as a style).
+ */
+export function ProgressBar({
+  pct,
+  className = '',
+}: {
+  pct: number | null;
+  /** Width/spacing from the caller — the bar itself has no opinion about how wide it is. */
+  className?: string;
+}) {
+  const known = pct !== null;
+  return (
+    <span
+      className={`inline-block h-1.5 overflow-hidden rounded-full bg-neutral-200 ${known ? '' : 'animate-pulse'} ${className}`}
+    >
+      <span
+        className="block h-full rounded-full bg-neutral-500"
+        style={{ width: known ? `${Math.max(0, Math.min(100, pct))}%` : 0 }}
+      />
+    </span>
+  );
+}
