@@ -10,6 +10,7 @@ import type { PluggableList, Processor } from 'unified';
 import type {} from 'remark-parse';
 import { fenceParagraphs } from './legacyCode';
 import { splitImageSrc } from './imageRef';
+import { TEXT_COLOR_CLASS } from './textColor';
 
 /**
  * The reader's half of the Markdown dialect, in one place.
@@ -38,10 +39,27 @@ import { splitImageSrc } from './imageRef';
  * of them (WP-49): the dialect has no code, and a `<code>` typed as raw HTML or carried in by an
  * import would be the one way left to reach the grey box. Unknown tags are unwrapped rather than
  * dropped, so the text inside survives; only `strip`ped tags (`script`) lose their content.
+ *
+ * **The font colour is the one attribute this schema adds (WP-62), and it is an enum.** `span` was
+ * already in GitHub's `tagNames` and had no attributes at all; it now admits a `className` that
+ * matches `TEXT_COLOR_CLASS` and nothing else — `hast-util-sanitize` takes a RegExp in a value
+ * allowlist, the form the schema already uses for `code: [['className', {}]]`. A class value that
+ * does not match is dropped and the `<span>` stays, so the text is never lost.
+ *
+ * `style` is deliberately **not** freed, here or anywhere. It is the shape
+ * `@tiptap/extension-color` would have stored, and it would put arbitrary CSS into text that is
+ * also imported — a Notion export arrives carrying `style="color:…"` and loses its colour right
+ * here, which is the accepted cost of the choice. `check-markdown.ts` asserts that no case renders
+ * a `style` attribute at all; render-equality cannot see that, since it compares two runs of the
+ * same renderer.
  */
 export const sanitizeSchema = {
   ...defaultSchema,
   tagNames: [...(defaultSchema.tagNames ?? []).filter((t) => t !== 'code' && t !== 'pre'), 'u'],
+  attributes: {
+    ...defaultSchema.attributes,
+    span: [['className', TEXT_COLOR_CLASS]],
+  },
 };
 
 /**

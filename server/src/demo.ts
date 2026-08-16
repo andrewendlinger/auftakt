@@ -106,6 +106,12 @@ const ARCHIVED = -(ARCHIVE_AFTER_DAYS + 15);
 // bold, legacy <u>, nested bullet+ordered lists (3-space indent, the unit the renderer nests),
 // a link, a GFM table, a blockquote and emoji. Its purpose is to eyeball the WYSIWYG editor
 // and its Markdown round-trip in `npm run demo`.
+//
+// Two runs are coloured (WP-62), because a colour is only worth looking at in a document: a bare
+// `<span class="tc-…">` in a list item, and the whole stack the toolbar can write —
+// `**<u><span …>…</span></u>**`, in exactly the nesting order the serializer produces. This is
+// also the description the project print sheet renders, i.e. the one place to check what paper
+// does with a font colour.
 const RICH_DESCRIPTION = `# Eröffnungskonzert
 
 Das **Eröffnungskonzert** eröffnet das Festival im großen Saal — der wichtigste Abend der ersten Woche 🎉.
@@ -116,11 +122,11 @@ Das **Eröffnungskonzert** eröffnet das Festival im großen Saal — der wichti
 - 19:00 — Einlass
    1. VIP-Gäste zuerst
    2. dann Abendkasse
-- 20:00 — Beginn
+- 20:00 — <span class="tc-gruen">Beginn, bestätigt</span>
 
 ## Technik
 
-Die Bühne braucht <u>zwingend</u> zwei Monitore. Kontakt über [die Technik-Seite](https://festival.example.com/technik).
+Die Bühne braucht <u>zwingend</u> zwei Monitore — **<u><span class="tc-rot">Rückmeldung bis Freitag</span></u>**. Kontakt über [die Technik-Seite](https://festival.example.com/technik).
 
 | Position | Person |
 | --- | --- |
@@ -489,12 +495,16 @@ const TASKS: DemoTask[] = [
   // (Fällig, „Abgabe"), checkbox („Bestätigt"), Markdown comment, timestamps. WP-58 mutes and
   // strikes each of them through a different mechanism, and no other done fixture has more than
   // a title to look at. Its past due date is deliberate and counts nowhere: `isOverdue` requires
-  // an *open* task. The comment carries the two Markdown nodes that set a colour of their own: a
-  // Zitat, which must take the row's grey, and a link, which deliberately keeps its sky palette.
-  // Kept under 140 characters so the cell does not clamp and both stay visible.
-  { id: 29, project_id: 7, title: 'Programmtext eingereicht', status: 'done', priority: 'hoch', due_date: days(-5), comment: 'Fassung 3 an den [Verlag](https://example.org/verlag).\n\n> Bildunterschriften noch kürzen.', erledigt_am: stamp(-6) },
+  // an *open* task. The comment carries the three things that set a colour of their own: a Zitat
+  // and a coloured run (WP-62), both of which must take the row's grey, and a link, which
+  // deliberately keeps its sky palette. Kept under 140 characters so the cell does not clamp and
+  // all of them stay visible.
+  { id: 29, project_id: 7, title: 'Programmtext eingereicht', status: 'done', priority: 'hoch', due_date: days(-5), comment: 'Fassung 3 an den [Verlag](https://example.org/verlag) — <span class="tc-rot">final</span>.\n\n> Bildunterschriften noch kürzen.', erledigt_am: stamp(-6) },
 
-  { id: 30, project_id: 7, title: 'Saalbestuhlung klären', status: 'active', due_date: days(18) },
+  // The open row directly under it, with the *same* colour class in its comment: „grey wins on a
+  // done row" is a comparison, and without a live red run on the same page there is nothing to
+  // compare it against — the rule could be broken by simply never painting the colour at all.
+  { id: 30, project_id: 7, title: 'Saalbestuhlung klären', status: 'active', due_date: days(18), comment: 'Reihe 1 bleibt frei — <span class="tc-rot">Absprache mit dem Haus</span>.' },
   { id: 31, project_id: 8, title: 'Teilnehmerliste finalisieren', status: 'active', priority: 'hoch', due_date: days(4) },
   { id: 32, project_id: 8, title: 'Räume für Meisterkurs buchen', status: 'active', due_date: days(8) },
   { id: 33, project_id: 8, parent_id: 32, title: 'Zweitraum als Fallback anfragen', status: 'new', priority: 'niedrig' },

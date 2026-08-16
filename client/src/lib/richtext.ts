@@ -7,7 +7,7 @@ import { Table, renderTableToMarkdown } from '@tiptap/extension-table';
 import { TableRow } from '@tiptap/extension-table-row';
 import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
-import { Extension, Node, mergeAttributes, type AnyExtension, type JSONContent } from '@tiptap/core';
+import { Extension, Mark, Node, mergeAttributes, type AnyExtension, type JSONContent } from '@tiptap/core';
 import { NodeSelection, Plugin } from '@tiptap/pm/state';
 import { Lexer, Marked, type TokensList } from 'marked';
 import { fenceParagraphs } from './legacyCode';
@@ -23,6 +23,7 @@ import {
   splitImageSrc,
   type ImageAlign,
 } from './imageRef';
+import { textColorClass, textColorFromClass } from './textColor';
 
 /**
  * Underline is serialized as raw `<u>…</u>`, not TipTap's default `++…++`.
@@ -35,6 +36,70 @@ import {
 const MdUnderline = Underline.extend({
   renderMarkdown(node, helpers) {
     return `<u>${helpers.renderChildren(node)}</u>`;
+  },
+});
+
+/**
+ * Schriftfarbe im Text (WP-62) — the same trick as `MdUnderline`, one step further.
+ *
+ * Markdown cannot spell a colour, so the mark serializes to a raw `<span class="tc-rot">…</span>`
+ * and the reader whitelists exactly that: `sanitizeSchema` (`lib/markdownPipeline.ts`) admits a
+ * `className` matching `TEXT_COLOR_CLASS` on a `span`, and `index.css` is what paints it. The
+ * spelling itself lives in `lib/textColor.ts`, which is the only thing the two halves share — and
+ * they must change together, like every other rule in this module.
+ *
+ * **A class, not a `style` attribute**, which is also why this is a mark of our own rather than
+ * `@tiptap/extension-text-style` + `@tiptap/extension-color`: those two store into `style`, and
+ * freeing `style` in the sanitize schema would put arbitrary CSS into stored text that is also
+ * *imported* (a Notion export carries `style="color:…"`, and loses it here, deliberately). The
+ * corpus in `scripts/check-markdown.ts` asserts that no case renders a `style` attribute at all.
+ *
+ * `parseHTML` matches `span[class]` and refuses everything whose class is not one of ours, so a
+ * pasted `<span class="ql-cursor">` is dropped exactly as it was before — `getAttrs` returning
+ * `false` rejects the rule, and nothing else claims a `span`. Note this is the paste gate as much
+ * as the parser (`MdImage` below documents why), and a colour class is all it can ever admit.
+ *
+ * The attribute round-trips *any* id the class shape accepts, not only the eight the picker
+ * offers: a note written today has to survive the palette being re-cut, and an id with no rule
+ * behind it renders in the default colour rather than disappearing from the text.
+ */
+const MdTextColor = Mark.create({
+  name: 'textColor',
+
+  addAttributes() {
+    return {
+      color: {
+        default: null,
+        // Structural, not `HTMLElement`: this module is typechecked without the DOM library
+        // through `check-markdown.ts` — the same reason `MdImage`'s `getAttrs` is (see below).
+        parseHTML: (el: { getAttribute(name: string): string | null }) =>
+          textColorFromClass(el.getAttribute('class')),
+        renderHTML: (attrs: { color?: string | null }) =>
+          typeof attrs.color === 'string' ? { class: textColorClass(attrs.color) } : {},
+      },
+    };
+  },
+
+  parseHTML() {
+    return [
+      {
+        tag: 'span[class]',
+        getAttrs: (el: { getAttribute(name: string): string | null }) =>
+          textColorFromClass(el.getAttribute('class')) !== null && null,
+      },
+    ];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ['span', mergeAttributes(HTMLAttributes), 0];
+  },
+
+  // The serializer hands a mark a synthetic node carrying its `attrs`, so the colour reaches the
+  // stored text from here — `renderChildren` is what the manager replaces with the marked run.
+  renderMarkdown(node, helpers) {
+    const color = typeof node.attrs?.color === 'string' ? node.attrs.color : null;
+    const children = helpers.renderChildren(node);
+    return color ? `<span class="${textColorClass(color)}">${children}</span>` : children;
   },
 });
 
@@ -94,6 +159,171 @@ markdownParser.use({
     codespan: () => undefined, // `inline`
   },
 });
+
+/**
+ * Inside `<u>` and `<span class="tc-…">`, the text is **Markdown** — because that is what the
+ * reader reads there (WP-62).
+ *
+ * The dialect spells two marks as raw HTML, and `MarkdownManager` reads raw inline HTML by handing
+ * it to `generateJSON`, i.e. as *HTML*: everything between the tags becomes literal text. remark
+ * does the opposite — an inline raw tag is a tag, and what stands between two of them is parsed as
+ * Markdown — so the two halves disagreed about every stored `<u>…**fett**…</u>`.
+ *
+ * That was survivable while such a note could only come from an import. WP-62 ships the gesture
+ * that produces one constantly: colouring a *whole* paragraph. The serializer opens a mark that
+ * outlives the marks inside it first (`getMarksToOpenForSerialization` — a mark that continues into
+ * the next text node cannot be inner), so „select all, then Rot" is stored as
+ * `<span class="tc-rot">aaa **bbb** ccc</span>`. That string is *correct*: the reader draws it
+ * exactly as the editor did. Opening the note again is where it broke — the editor read `**bbb**`
+ * as four literal asterisks, and the next save escaped them to `\*\*bbb\*\*`, at which point the
+ * bold was gone from the reader too. Links died the same way, and ordinary punctuation
+ * (`Preis_pro_Person`, `[ca. 5000]`) grew a backslash on every save.
+ *
+ * So the read side is brought into line with the reader, rather than the serializer being taught to
+ * split runs: the tokenizer carves the two tags out itself and lexes what is between them as
+ * inline Markdown. `MdRawMark` below then applies the mark to the parsed content. One tokenizer for
+ * both tags, because it is one rule — and it repairs `<u>` while it is there, which has had the
+ * identical flaw since WP-Q.
+ *
+ * What it deliberately does *not* claim: a `<span>` whose class is not a colour of ours (an import
+ * keeps whatever marked did with it), a `<u>` carrying attributes, and either tag nested in itself.
+ * The closing tag is the first **unescaped** one, so a `\</span>` the serializer wrote for a
+ * literal one in the text does not cut the run short — the same tag CommonMark leaves as text.
+ *
+ * **Character references are decoded first** (`decodeCharRefs`), because the path this replaces ran
+ * an HTML parser and that is what an HTML parser does. Skipping it turned a stored
+ * `<u>Fassung&nbsp;3</u>` — the shape every Notion export, CSV import and restored backup is full
+ * of, and `<u>` has been storable since WP-Q — into the literal text `Fassung&nbsp;3`, which the
+ * next save wrote back as `&amp;nbsp;`: from then on the *reader* was wrong too, and no further
+ * edit could recover it.
+ */
+const RAW_MARK_TOKEN = 'auftaktRawMark';
+const RAW_MARK_OPEN = /^<(u|span)((?:\s[^<>]*)?)>/i;
+const RAW_MARK_START = /<(?:u|span)[\s>]/i;
+const CLASS_ATTR = /\bclass\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
+
+/** `&nbsp;`, `&#160;`, `&auml;` — a whole reference, name or number. */
+const CHAR_REF = /&(#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]{1,31});/g;
+
+/**
+ * The four `MarkdownManager` decodes for itself, *after* lexing (`decodeHtmlEntities`).
+ *
+ * Left encoded here so each is decoded exactly once, by the same pass that handles them everywhere
+ * else in a note — and so that `&amp;nbsp;`, which means the literal text „&nbsp;", still means it.
+ */
+const MANAGER_DECODES = new Set(['amp', 'lt', 'gt', 'quot']);
+
+/** ASCII punctuation, i.e. everything a backslash may legally escape in CommonMark. */
+const ASCII_PUNCT = /^[!-/:-@[-`{-~]$/;
+
+/** Named references are resolved by the platform's own table; the answers never change. */
+const namedRefs = new Map<string, string | null>();
+
+/**
+ * Resolve one named reference the way an HTML parser would — with the HTML parser.
+ *
+ * There are 2,231 named references in HTML5 and no table of them in this dependency tree; the
+ * environments this module runs in (a browser, and jsdom under `check-markdown.ts`) all carry one
+ * already. Reached structurally rather than by naming `DOMParser`, because this file is typechecked
+ * without the DOM library — the same reason `MdImage`'s `getAttrs` takes a shape rather than an
+ * `HTMLElement`. A reference the table does not know comes back unchanged and is then left alone.
+ */
+function decodeNamedRef(ref: string): string | null {
+  const cached = namedRefs.get(ref);
+  if (cached !== undefined) return cached;
+  const Parser = (
+    globalThis as {
+      DOMParser?: new () => {
+        parseFromString(src: string, type: string): { documentElement?: { textContent?: string | null } | null };
+      };
+    }
+  ).DOMParser;
+  let decoded: string | null = null;
+  try {
+    const text = Parser ? new Parser().parseFromString(ref, 'text/html').documentElement?.textContent : null;
+    decoded = text && text !== ref && !text.includes('&') ? text : null;
+  } catch {
+    decoded = null;
+  }
+  namedRefs.set(ref, decoded);
+  return decoded;
+}
+
+/**
+ * What the HTML parser did to the content of a raw-HTML mark, so the tokenizer can do it too.
+ *
+ * Numbers are arithmetic, names go through the platform's table, and the four the manager decodes
+ * after lexing are deliberately skipped — see `MANAGER_DECODES`.
+ *
+ * A decoded character that happens to be Markdown syntax is escaped on the way in: `&ast;` was
+ * *text* to the HTML parser, and without the backslash the lexer that follows would read it as
+ * emphasis, which is the one way this pass could invent formatting that nobody wrote.
+ */
+function decodeCharRefs(src: string): string {
+  if (!src.includes('&')) return src;
+  return src.replace(CHAR_REF, (whole: string, body: string) => {
+    if (MANAGER_DECODES.has(body.toLowerCase())) return whole;
+    let char: string | null;
+    if (body.startsWith('#')) {
+      const code = /^#[xX]/.test(body) ? Number.parseInt(body.slice(2), 16) : Number(body.slice(1));
+      char = code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : null;
+    } else {
+      char = decodeNamedRef(whole);
+    }
+    if (char === null) return whole;
+    return ASCII_PUNCT.test(char) ? `\\${char}` : char;
+  });
+}
+
+/** The first closing tag that is not escaped, or `null`. */
+function rawMarkClose(src: string, tag: string): { index: number; length: number } | null {
+  const re = new RegExp(`</${tag}\\s*>`, 'gi');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src))) {
+    if (m.index === 0 || src[m.index - 1] !== '\\') return { index: m.index, length: m[0].length };
+  }
+  return null;
+}
+
+markdownParser.use({
+  extensions: [
+    {
+      name: RAW_MARK_TOKEN,
+      level: 'inline',
+      // Marked cuts the preceding text token here and tries the tokenizers again; declining below
+      // simply hands the tag back to marked's own `tag` rule.
+      start: (src: string) => {
+        const at = src.search(RAW_MARK_START);
+        return at < 0 ? undefined : at;
+      },
+      tokenizer(this: { lexer: { inlineTokens(src: string): unknown[] } }, src: string) {
+        const open = RAW_MARK_OPEN.exec(src);
+        if (!open) return undefined;
+        const tag = open[1]!.toLowerCase();
+        const attrs = open[2] ?? '';
+        const cls = CLASS_ATTR.exec(attrs);
+        const color = textColorFromClass(cls?.[1] ?? cls?.[2] ?? null);
+        // A `<span>` is ours only when it carries one of our colours; a `<u>` only when it is bare.
+        if (tag === 'span' ? color === null : attrs.trim() !== '') return undefined;
+        const rest = src.slice(open[0].length);
+        const close = rawMarkClose(rest, tag);
+        if (!close) return undefined;
+        const inner = rest.slice(0, close.index);
+        if (new RegExp(`<${tag}[\\s>]`, 'i').test(inner)) return undefined;
+        return {
+          type: RAW_MARK_TOKEN,
+          raw: src.slice(0, open[0].length + close.index + close.length),
+          tag,
+          color,
+          // Populated here rather than in the handler so that a token with no handler still
+          // degrades to its content: `parseFallbackToken` walks `tokens` for anything unknown.
+          tokens: this.lexer.inlineTokens(decodeCharRefs(inner)),
+        };
+      },
+    },
+  ],
+  // The extension's token shape is ours, not one of marked's own — `tag`/`color` ride along on it.
+} as unknown as Parameters<typeof markdownParser.use>[0]);
 
 /** A run of blank lines at the end of a token's `raw` — the vendor's own shape, matched here. */
 const TRAILING_BLANK_LINES = /\n[^\S\n]*(?:\n[^\S\n]*)+$/;
@@ -163,6 +393,26 @@ const LegacyFence = Extension.create({
       });
       return helpers.createNode('paragraph', {}, content);
     }),
+});
+
+/**
+ * The handler half of the tokenizer above: mark the parsed content (WP-62).
+ *
+ * `helpers.applyMark` is what `MdLinkedImage` uses for the same shape — a mark around content the
+ * handler parsed itself. Everything inside has already been through the inline lexer, so a bold run
+ * or a link inside a coloured span arrives as its own mark and the colour is simply added on top,
+ * which is exactly the tree the reader builds for the same string.
+ */
+const MdRawMark = Extension.create({
+  name: 'rawMark',
+  markdownTokenName: RAW_MARK_TOKEN,
+  parseMarkdown: (token, helpers) => {
+    const { tag, color } = token as unknown as { tag?: string; color?: string | null };
+    const content = helpers.parseInline(token.tokens ?? []);
+    return tag === 'span'
+      ? helpers.applyMark('textColor', content, { color })
+      : helpers.applyMark('underline', content);
+  },
 });
 
 /**
@@ -510,10 +760,12 @@ const MdLinkedImage = Extension.create({
  * is then three adjacent links rather than one, which renders identically and stores the
  * destination the old output simply dropped.
  *
- * `underline` is absent deliberately: it serializes as raw `<u>`, and marked does not parse
- * Markdown inside a raw tag, so the image would come back as literal `![…]` text. Nothing in the
- * app can author that combination — the toolbar cannot underline an atom — and writing it would be
- * the loss this function exists to prevent.
+ * `underline` and `textColor` are absent deliberately. Nothing in the app can author either on an
+ * atom — the toolbar cannot underline a picture, and a colour paints nothing on one — and neither
+ * could survive being written even now that `MdRawMark` reads Markdown inside those tags:
+ * `applyMarkToContent` puts marks on *text* nodes, so a raw tag wrapped around an image would come
+ * back marking nothing at all. That is the same gap `MdLinkedImage` exists to close for links, and
+ * this is the direction of it the serializer must not walk into.
  */
 function wrapImageMarks(md: string, marks: JSONContent['marks']): string {
   if (!marks?.length) return md;
@@ -548,6 +800,10 @@ function wrapImageMarks(md: string, marks: JSONContent['marks']): string {
  * - **No code at all** (WP-49) — `markdownParser` above, and `Markdown.tsx`'s micromark twin.
  *   `horizontalRule` stays enabled (StarterKit default) so any such content in existing notes
  *   round-trips even though the toolbar doesn't author it.
+ * - **Two constructs are spelled as raw HTML**, because Markdown has no syntax for either:
+ *   underlining (`<u>`, since WP-Q) and the font colour (`<span class="tc-…">`, WP-62). Both are
+ *   whitelisted on the reading side, and the colour class is the only *attribute* the sanitize
+ *   schema admits beyond GitHub's defaults.
  *
  * Dropping the code mark also empties the serializer's `codeTypes`, so *every* text node is now
  * backtick-escaped on the way out. That is what keeps the two parsers in step: a backtick the
@@ -582,6 +838,12 @@ export function markdownExtensions(
       },
     }),
     MdUnderline,
+    // After the marks above, so that the serializer — which opens marks by registration rank —
+    // puts the colour span *inside* `**` and `<u>` whenever it can. It cannot when the colour
+    // outlives them (a whole paragraph coloured at once), which is what `MdRawMark` below is for.
+    MdTextColor,
+    // The read half of both raw-HTML marks — see the tokenizer above.
+    MdRawMark,
     LegacyFence,
     MdDocument,
     MdParagraph,
