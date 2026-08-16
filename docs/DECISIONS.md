@@ -8,6 +8,72 @@ If you are about to re-raise one of these, the bar is new information, not a fre
 
 ---
 
+## Das Browser-Gate bringt seinen Browser selbst mit und steht neben `npm run check` (2026-08-17, WP-R6, #7)
+
+The client had no automated coverage that ever lays a page out. `check:unit` reaches pure
+modules, the three boot-the-server gates are server and persistence — and everything in between
+was a person, on two operating systems, remembering the traps in `docs/VERIFYING.md` before every
+release. „No test framework — REVERSED" above says why that stops being enough; this is the half
+of it that was still missing.
+
+**Why `playwright-core` and not `playwright`.** PR #56 declined a dependency for a concrete
+reason: `playwright`'s postinstall downloads the browsers, so adding it puts half a gigabyte in
+front of every `npm ci` — the `checks` job's, the `build` matrix's and anyone else's, none of
+which drive a browser. `playwright-core` is the same API with **no install script at all**; the
+browser is fetched explicitly, once, by the one job that needs it. Pinned exact (`1.62.1`, no
+caret) because a browser build is pinned with it: that version maps to chromium `1234`, which is
+what the machine this is developed on already has cached, so the new dependency downloads nothing
+locally and CI pays for it once per lockfile change.
+
+**The two runtimes are now separate questions, deliberately.** `~/.claude/tools/playwright`
+remains the local convention for throwaway driving scripts, guarded by a hook that denies fresh
+installs — it is a *machine* convention, and CI never had it. The committed gate resolves its
+runtime out of the repository instead, so nothing in a public repo points at a path outside it.
+The cost is that `scripts/check-browser.mjs` re-implements ~60 lines of that shared library
+(`launch`, `ready`, `open`, `windows`, the dialog scoping). Recorded here so the duplication is
+not later „fixed" by importing across the boundary: the repository may not depend on one
+developer's home directory, and that library may not be vendored without becoming a second thing
+to maintain.
+
+**It is not in `npm run check`, and that is not about runtime.** `check` has to stay runnable on
+any machine at any moment — no browser binary, no free port. The gate needs both: it drives Vite
+on **5317**, and 5317 cannot move, because `ALLOWED_ORIGINS` is derived from `CLIENT_DEV_PORT` and
+a client on any other port gets a bare 403 that reads exactly like a broken feature. So it refuses
+to start beside a running `npm run demo` rather than working around it — it rebuilds `.demo`, and
+a rebuild under a live server is the deleted-inode trap `VERIFYING.md` already records.
+
+**But it runs on every pull request**, unlike `check:package`, which is the other gate outside
+`check`. That one inspects a build and only a tag produces one. This one guards behaviour that
+changes on ordinary days, and a regression in the two-window matrix found at release time is the
+cadence problem the reversal was about. Its own job, parallel to `checks`, so it costs wall clock
+only when it fails.
+
+**Against the dev server, not a built bundle.** `VERIFYING.md`'s recipes are written for
+`npm run demo`; the boot overlay does not exist there at all (`'%PROD%' !== 'true'`), and
+`reducedMotion: 'reduce'` removes it in a build anyway. Driving a build would mean adding a
+`vite build` to a job that does not build, in exchange for the one surface this gate deliberately
+does not cover.
+
+**What the gate is, and what it is not.** Two halves: the two-window season matrix that WP-R2 only
+ever drove from a scratchpad since deleted (focus refetch, the broadcast and its negative control,
+the window-local switch, the 410 recovery, the export under a dead pin) and the core paths the
+manual Windows hour walks anyway (create and complete a task, hide and show a column, save the
+editor). It is **not** issue #7, which stays open: print sheets, drag reordering, the settings
+tabs and the narrow-window sweep are not in it.
+
+**Its proof is a fixed one.** Revert `client/src/main.tsx`'s focus listener to `handleFocus(true)`
+— the #54 latch — and case A must fail. It does: the first focus still refetches (12 requests) and
+the second refetches nothing, every other case staying green. That shape is the point. #54's
+failure mode is *silence*, so a case that watches the first focus passes against the defect, and
+a gate that cannot fail is worse than no gate.
+
+**The fixtures move, so the assertions are relative.** `server/src/demo.ts` builds its dates from
+the seed day on purpose. The gate rebuilds `.demo` at every run and asserts relatively throughout
+— never an absolute date, never a literal `sort_order`, never a hardcoded season id. Fixture
+seasons carry a run-unique label and are swept in `finally`, including leftovers of a killed run.
+
+---
+
 ## Der Changelog wird geschrieben, nicht generiert (2026-08-16)
 
 `generate_release_notes: true` in `.github/workflows/build.yml` has written every release body

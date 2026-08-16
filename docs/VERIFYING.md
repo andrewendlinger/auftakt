@@ -18,10 +18,17 @@ Then drive `http://localhost:5317/#/artist/1`, `#/project/1`, `#/archiv`, `#/ein
 Use headless Playwright or curl — **not** `npm run electron:dev`, which opens a real window on the
 user's desktop.
 
-Playwright is not a dependency of this repository (`docs/DECISIONS.md` records a committed suite
-as the eventual plan). Until that lands, keep **one** install outside the working tree and reuse
-it — one per session in a temp directory costs an npm tree every time, and a stray
-`PLAYWRIGHT_BROWSERS_PATH` re-downloads half a gigabyte of browsers that were already cached.
+The repository depends on `playwright-core` (exact `1.62.1`) for `npm run check:browser`, and on
+nothing else: that package downloads no browser, so the binary comes from wherever the machine
+already keeps one (`npx playwright-core install chromium` fetches it once). For ad-hoc driving,
+keep **one** install outside the working tree and reuse it — one per session in a temp directory
+costs an npm tree every time, and a stray `PLAYWRIGHT_BROWSERS_PATH` re-downloads half a gigabyte
+of browsers that were already cached.
+
+**The committed gate is `npm run check:browser`** — it rebuilds `.demo`, boots the stack on
+`:4325` + `:5317` and drives it, so it cannot run beside `npm run demo` and says so rather than
+guessing. Run it after a change to the two-window/season paths or to the task table, the column
+manager or the editor; it is not a substitute for the passes below.
 
 **The Übersicht is `#/dashboard`. `#/` is the season landing page** — a different screen with no
 task tiles and no „Nächste Termine". Asserting dashboard content against `#/` fails against
@@ -109,6 +116,15 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   before the server is imported.
 
 ## Playwright traps
+
+**Some of these are now committed, and this file is still where they are decided.**
+`npm run check:browser` (WP-R6) encodes the ones its cases need — two pages in one context, the
+sessionStorage pin plus a document reload, `data-app-ready` over `networkidle`, the out-of-band
+delete, the toast that lands one query late, the anchored composer placeholder, the two
+`[data-column-row]` lists, the real keystroke a note needs before it stores anything. A new trap
+belongs **here first** and in the gate second: the gate covers the flows it drives, this file
+covers the app. Nothing below is retired by it — everything the gate does not drive is still
+verified by hand, and the gate itself is written from this list.
 
 - **How a page was *reached* changes what a delete on it does.** „Daten konnten nicht aktualisiert
   werden. (not found)" after deleting an artist reproduces when the page was reached by a

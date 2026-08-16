@@ -141,8 +141,12 @@ Both run in CI on every push and pull request. `npm run check` runs five gates, 
 Four of the five are plain `.mjs` files that boot the real server and assert against it. They
 are the load-bearing gate and nothing replaces them.
 
-`npm run check:package` is a sixth gate, deliberately **not** part of `check`: it inspects what
-electron-builder actually packed, so it needs a build. CI runs it in the `build` job instead.
+Two more gates sit deliberately **outside** `check`, each because it needs something `check` may
+never require. `npm run check:package` inspects what electron-builder actually packed, so it needs
+a build, and CI runs it in the `build` job. `npm run check:browser` drives the real UI with
+Chromium — the two-window season matrix and the core task, column and editor paths — so it needs a
+browser binary and a free `:5317`, rebuilds `.demo` and refuses to start beside a running
+`npm run demo`. CI gives it its own job, on every pull request.
 
 [docs/VERIFYING.md](docs/VERIFYING.md) lists the traps that have produced a wrong result
 at least once. It is worth reading before writing any check that drives a browser: every
@@ -150,10 +154,12 @@ entry is an assertion that would otherwise have been wrong.
 
 ### CI
 
-`.github/workflows/build.yml` has three jobs:
+`.github/workflows/build.yml` has four jobs:
 
 - **`checks`** — on every push, pull request and tag: `npm run typecheck`, `npm run check` and
   `npm audit` on `ubuntu-latest`.
+- **`browser`** — beside `checks`, same trigger: installs Chromium (cached) and runs
+  `npm run check:browser` on `ubuntu-latest`.
 - **`build`** — only for a `v*` tag or a manual run (`workflow_dispatch`): the `.dmg` on
   `macos-latest` and the NSIS installer on `windows-latest`, plus `check:package`, a build
   provenance attestation and an SBOM per platform.
