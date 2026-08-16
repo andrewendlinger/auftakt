@@ -7,9 +7,6 @@ import {
   ipcMain,
   screen,
   shell,
-  type MessageBoxOptions,
-  type OpenDialogOptions,
-  type SaveDialogOptions,
 } from 'electron';
 import { enableCompileCache } from 'node:module';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -35,6 +32,7 @@ import {
   uniqueBundleName,
   type SystemFacts,
 } from './diagnostics';
+import { messageBox, openDialog, saveDialog } from './dialogs';
 import { checkForUpdates, downloadAndInstallUpdate, startSilentStartupCheck } from './updater';
 
 const isDev = !app.isPackaged;
@@ -343,36 +341,8 @@ async function saveBackupDir(dir: string): Promise<void> {
   await post('backup/dir', { dir });
 }
 
-/**
- * Every dialog hangs off the window that asked for it, when there still is one.
- *
- * Parenting is not decoration. macOS does not display an open-dialog's `title` at all, so an
- * unparented picker is a bare Finder window with nothing saying which app wants it or why; and
- * with several windows open, „„Festival 2026" wird zuerst gesichert und dann ersetzt" has to
- * belong to a window or it does not say whose season that is. On Windows an unparented dialog
- * is modal to nothing: it can be sent behind the windows, the user clicks the menu item again
- * thinking nothing happened, and a second file picker opens over a pending destructive confirm
- * (PR50-14). macOS hides that half — an unparented dialog is app-modal there.
- *
- * The `isDestroyed` check is per call, not once at entry: importDatabase awaits an HTTP check
- * and a confirmation between its dialogs, and parenting to a window closed in the meantime
- * throws.
- */
-function alive(win: BrowserWindow | null): win is BrowserWindow {
-  return win !== null && !win.isDestroyed();
-}
-
-function messageBox(win: BrowserWindow | null, opts: MessageBoxOptions) {
-  return alive(win) ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts);
-}
-
-function saveDialog(win: BrowserWindow | null, opts: SaveDialogOptions) {
-  return alive(win) ? dialog.showSaveDialog(win, opts) : dialog.showSaveDialog(opts);
-}
-
-function openDialog(win: BrowserWindow | null, opts: OpenDialogOptions) {
-  return alive(win) ? dialog.showOpenDialog(win, opts) : dialog.showOpenDialog(opts);
-}
+// The dialog helpers moved to `electron/dialogs.ts` when `updater.ts` needed them (WP-60):
+// main.ts imports updater.ts, so the rule about parenting could not be shared from here.
 
 /**
  * Pick a backup folder, rejecting one the startup backup could not use (ELP-03).

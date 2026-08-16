@@ -600,6 +600,19 @@ virus scanner takes a minute or more over the fresh `.exe`, with no window left 
 dialog, which names the three steps and the wait. `isSilent = false` would buy NSIS's own progress
 window at the price of extra clicks and was rejected.
 
+Two consequences of `autoUpdater` being a **process-wide singleton while windows are not**.
+First, both update dialogs are parented like every other dialog in the app — `alive`/`messageBox`/
+`saveDialog`/`openDialog` moved out of `main.ts` into **`electron/dialogs.ts`** for it, since
+`main.ts` imports `updater.ts` and could not share them the other way. Unparented, a Windows
+dialog is modal to nothing and can sit *behind* the window (PR50-14), which on this path means a
+card apparently frozen at 100 % with the explanation hidden on another z-order — the failure the
+package exists to remove. Second, `downloadInFlight` stops a *second* window touching the
+singleton mid-download: `checkForUpdates()` emits `error` on the same emitter the download's
+failure arm listens to (so window B's offline check would abort window A's download) and rewrites
+the `updateInfoAndProvider` that download reads. While one runs, a check answers from the cache —
+it could not be news anyway — and a second install offers a German „wird bereits heruntergeladen"
+instead of racing.
+
 `get-diagnostics` takes **no argument**: main derives `boot-log.jsonl`'s path from
 `app.getPath('userData')` and hands the renderer finished summary text plus a path it may only
 display. A path *from* the renderer would be a `shell.showItemInFolder` pointed anywhere on the

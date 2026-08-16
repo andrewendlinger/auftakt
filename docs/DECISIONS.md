@@ -2080,3 +2080,14 @@ Zwei Nebenentscheidungen, die daran hängen:
   dann für immer auf „Update wird heruntergeladen…" stehen, mit verschwundenem Knopf. Der Download
   läuft jetzt gegen `error` und `update-downloaded` als Rennen — ein Fehlschlag landet im selben
   deutschen Dialog wie eine fehlgeschlagene Prüfung.
+- **Während eines Downloads fasst kein zweites Fenster den Updater an** (Review zu PR #100).
+  `autoUpdater` ist prozessweit, Fenster sind es nicht: `checkForUpdates()` feuert `error` auf
+  demselben Emitter, an dem der laufende Download hängt — ein Klick auf „Nach Updates suchen" im
+  zweiten Fenster ohne Netz hätte den Download im ersten mit „Update fehlgeschlagen" abgebrochen,
+  obwohl er weiterläuft und beim Beenden installiert. Nach dem Event zu filtern geht nicht, beide
+  Pfade übergeben eine Meldung und nur der englische Wortlaut unterscheidet sie. Also antwortet
+  eine Prüfung währenddessen **aus dem Cache** — neu sein kann sie ohnehin nicht, die
+  heruntergeladene Version *ist* die neueste bekannte — und ein zweiter Installationsklick bekommt
+  „Das Update wird bereits heruntergeladen." Der bewusst offene Rest: hängt `downloadUpdate()`
+  wirklich für immer, bleibt die Sperre die Sitzung über stehen. Ein Timeout wäre eine Frist, die
+  niemand gemessen hat; sie steht stattdessen auf der Windows-Liste zur Beobachtung.

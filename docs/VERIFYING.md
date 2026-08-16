@@ -504,9 +504,12 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   return promises leaves the card frozen in its first frame — which is exactly the frame it used
   to have permanently, i.e. the defect WP-60 fixed looks identical to a stub that cannot drive it.
   `stubElectron` now keeps `installUpdate` pending and hands the subscriber back as
-  `window.__updateProgress(pct)`, with `window.__finishUpdate()` to resolve the invoke. Reaching
-  the card at all needs `platform: 'win32'` **and** a `checkForUpdates` answering
-  `{ updateAvailable: true, canInstall: true }`; on the stub's defaults („darwin", `null`) the
+  `window.__updateProgress(pct)`, with `window.__finishUpdate()` to resolve the invoke. Three
+  prerequisites, and each one fails silently on its own: the card is at
+  **`#/einstellungen/hilfe`**, never at `#/einstellungen` (which lands on „Aufgaben & Übersicht" —
+  the card is simply not in the DOM, so every selector matches nothing and reads as „the update
+  card is broken"); `platform` must be `'win32'`; and `checkForUpdates` must answer
+  `{ updateAvailable: true, canInstall: true }` — on the stub's defaults („darwin", `null`) the
   „Herunterladen & installieren" button does not exist and the click waits for ever. Everything
   past `quitAndInstall` — the restart dialog, `setProgressBar`, NSIS — has no browser equivalent
   and is Windows-manual by construction.
