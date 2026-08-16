@@ -1,6 +1,14 @@
 import { Router } from 'express';
 import type Database from 'better-sqlite3';
-import { ARCHIVE_AFTER_DAYS, PURGE_AFTER_DAYS, getBackupConfig, getDb, setActiveSeasonLabel } from '../db';
+import {
+  ARCHIVE_AFTER_DAYS,
+  PURGE_AFTER_DAYS,
+  getBackupConfig,
+  getDb,
+  setActiveSeasonLabel,
+  settingsRev,
+  writeSettings,
+} from '../db';
 
 /** Settings stored as JSON arrays; returned parsed, accepted as arrays. */
 const ARRAY_KEYS = new Set([
@@ -61,6 +69,11 @@ function getAllSettings(db: Database.Database): Record<string, unknown> {
   // so a leftover per-season `backup_dir` row from before the move cannot shadow the real value
   // and the PATCH cannot write it. Saving goes through POST /api/backup/dir.
   out.backup_dir = getBackupConfig().dir;
+  // The generation the values above were read at (WP-R5) — the settings twin of the landing's
+  // `rev`. Written last for the same reason as the two constants: a settings row literally named
+  // `rev` must not be able to shadow the number a conditional PATCH is compared against. Absent
+  // from WRITABLE_SETTINGS, so it can never be written as a value either.
+  out.rev = settingsRev(db);
   return out;
 }
 
@@ -70,9 +83,39 @@ settingsRouter.get('/', (_req, res) => {
   res.json(getAllSettings(getDb()));
 });
 
+/**
+ * Optimistic concurrency for the settings blob (WP-R5), the twin of `routes/landing.ts`.
+ *
+ * A settings array is replaced whole, so a client has to compute it from a read — and two windows
+ * on the same season computing from the *same* read each stored their own array, so one window's
+ * `dashboard_layout`, `labels` or renamed heading ceased to exist with nothing to say so (WP-53
+ * left this open deliberately, for want of a generation column). A body carrying `rev` says which
+ * generation it was computed from; if the stored settings have moved on, nothing is written and
+ * the current settings come back with the 409 so the caller can re-apply its intent without a
+ * second GET.
+ *
+ * **An omitted `rev` still writes unconditionally.** The conditional half is the *client's*
+ * contract, not this route's precondition: the check scripts, the seeders and the settings page's
+ * own single-field editors have no generation to name, and a scalar field written from one
+ * control is not the lost-update shape this guards.
+ *
+ * The compare and the write sit in one handler with no `await` between them, so nothing can
+ * interleave into the gap.
+ */
 settingsRouter.patch('/', (req, res) => {
   const db = getDb();
   const raw = (req.body ?? {}) as Record<string, unknown>;
+
+  if ('rev' in raw) {
+    if (typeof raw.rev !== 'number' || !Number.isInteger(raw.rev)) {
+      return res.status(400).json({ error: 'rev must be an integer' });
+    }
+    if (raw.rev !== settingsRev(db)) {
+      return res
+        .status(409)
+        .json({ error: 'Ein anderes Fenster hat inzwischen gespeichert.', settings: getAllSettings(db) });
+    }
+  }
 
   // Allowlist: keep only known keys, silently dropping the rest.
   const body: Record<string, unknown> = {};
@@ -90,16 +133,11 @@ settingsRouter.patch('/', (req, res) => {
     }
   }
 
-  const stmt = db.prepare(
-    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+  // One generation for the whole patch, however many keys it carries (db.ts, writeSettings).
+  writeSettings(
+    db,
+    Object.entries(body).map(([k, v]) => [k, Array.isArray(v) ? JSON.stringify(v) : v == null ? null : String(v)]),
   );
-  const tx = db.transaction(() => {
-    for (const [k, v] of Object.entries(body)) {
-      const val = Array.isArray(v) ? JSON.stringify(v) : v == null ? null : String(v);
-      stmt.run(k, val);
-    }
-  });
-  tx();
   // Keep the season switcher's label in sync when the Saison name is edited here.
   if (typeof body.saison === 'string') setActiveSeasonLabel(body.saison);
   res.json(getAllSettings(db));

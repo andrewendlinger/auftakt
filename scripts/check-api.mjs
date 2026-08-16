@@ -479,6 +479,73 @@ try {
     check('a notes write leaves the documents alone', notesOnly.documents.length === retried.documents.length, String(notesOnly.documents.length));
   }
 
+  // ------------------------------------------------------------ settings conflicts (WP-R5)
+  // The same lost update, one table over. WP-53 left it open for want of a generation column on
+  // the key/value `settings` table; WP-R5 adds it while the migration chain is open, so two
+  // windows can no longer replace each other's `dashboard_layout` or renamed headings unnoticed.
+  console.log('\n== a settings write built on a superseded read is refused (WP-R5)');
+  {
+    // The in-process path — the seeders, demo.ts and the Einstellungen page's single-field
+    // editors have no generation to name, and must not need one.
+    const unconditional = await ok('PATCH', '/settings', { labels: [{ key: 'aufgaben', label: 'Ohne rev' }] });
+    check('a patch without a rev still writes', unconditional.labels?.[0]?.label === 'Ohne rev', JSON.stringify(unconditional.labels));
+    check('the settings response carries a generation', Number.isInteger(unconditional.rev), String(unconditional.rev));
+    // `rev` is a precondition, never a value: a patch carrying only a matching one writes
+    // nothing at all — and in particular stores no settings row of that name, which would then
+    // shadow the real generation in the response.
+    const revOnly = await ok('PATCH', '/settings', { rev: unconditional.rev });
+    check('a rev is a precondition, not a stored setting', revOnly.rev === unconditional.rev, `${unconditional.rev} → ${revOnly.rev}`);
+
+    const bad = await req('PATCH', '/settings', { labels: [], rev: 'nonsense' });
+    check('a non-numeric rev is refused', bad.status === 400, String(bad.status));
+
+    const windowA = await ok('GET', '/settings');
+    const windowB = await ok('GET', '/settings');
+    check('both windows read the same generation', windowA.rev === windowB.rev, `${windowA.rev} / ${windowB.rev}`);
+
+    const afterB = await ok('PATCH', '/settings', {
+      labels: [...windowB.labels, { key: 'termine', label: 'Von B' }],
+      rev: windowB.rev,
+    });
+    check('the first writer wins normally', afterB.labels.some((l) => l.label === 'Von B'));
+    check('…and the write moved the generation', afterB.rev > windowB.rev, `${windowB.rev} → ${afterB.rev}`);
+
+    const refused = await req('PATCH', '/settings', {
+      labels: [...windowA.labels, { key: 'kontakte', label: 'Von A' }],
+      rev: windowA.rev,
+    });
+    check('a write from the superseded generation is refused', refused.status === 409, String(refused.status));
+    check('…and the 409 carries the settings it lost to, so the client need not re-GET', refused.body?.settings?.rev === afterB.rev, JSON.stringify(refused.body?.settings?.rev));
+
+    const afterRefusal = await ok('GET', '/settings');
+    check('…and nothing was written', afterRefusal.rev === afterB.rev, `${afterRefusal.rev} / ${afterB.rev}`);
+    check("…so the other window's heading is still there", afterRefusal.labels.some((l) => l.label === 'Von B'));
+    check('…and the refused one is not', !afterRefusal.labels.some((l) => l.label === 'Von A'));
+
+    // The retry a client runs on the 409: re-apply the *intent* to what came back with it.
+    const retried = await ok('PATCH', '/settings', {
+      labels: [...refused.body.settings.labels, { key: 'kontakte', label: 'Von A' }],
+      rev: refused.body.settings.rev,
+    });
+    check('a retry at the current generation is accepted', retried.rev === afterB.rev + 1, String(retried.rev));
+    check('…and both windows kept their heading', ['Von A', 'Von B'].every((l) => retried.labels.some((r) => r.label === l)), JSON.stringify(retried.labels));
+
+    // One generation for the whole blob, as on the landing: a stale write is refused even for a
+    // key nobody else touched. Deliberate — the client answers it with one extra round trip.
+    const staleOther = await req('PATCH', '/settings', { task_stats: [], rev: windowA.rev });
+    check('a stale write is refused even for a key nobody else touched', staleOther.status === 409, String(staleOther.status));
+
+    // A patch carrying several keys is ONE generation, not one per key — otherwise the counter
+    // would measure keys touched rather than the state of the settings.
+    const multi = await ok('PATCH', '/settings', { task_stats: [], link_categories: [], rev: retried.rev });
+    check('a multi-key patch bumps the generation once', multi.rev === retried.rev + 1, `${retried.rev} → ${multi.rev}`);
+
+    // An empty patch (everything dropped by the allowlist) writes nothing, so it must not move
+    // the generation and refuse another window's in-flight write over a change nobody made.
+    const noop = await ok('PATCH', '/settings', { luftschloss: 'x', rev: multi.rev });
+    check('a patch with nothing writable leaves the generation alone', noop.rev === multi.rev, `${multi.rev} → ${noop.rev}`);
+  }
+
   // ------------------------------------------------------------------ task tree (SRV-11)
   // The two-level rule is an API invariant, enforced only here — see migrateFlattenDeepSubtasks
   // in db.ts for the back door that raw SQL used to leave open.

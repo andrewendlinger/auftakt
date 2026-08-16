@@ -1694,6 +1694,10 @@ Giving them the same guarantee means a generation column on the key/value `setti
 response-shape change, in the same migration chain WP-R5 is about to rework. **Revisit** if a
 customer reports a lost setting, or once WP-R5 has landed and the chain is being touched anyway.
 
+*Nachgeholt in WP-R5 (2026-08-16) — the column is there and `update(fn)` uses it; `write` keeps
+the snapshot semantics described here, and the entry at the end of this file says which callers
+are on which and why.*
+
 **Der Broadcast ist die erste Verteidigungslinie und funktioniert** — which the verification found
 the hard way. Holding a window's `GET /api/landing` back to force a stale read produces no
 conflict at all: the other window's write broadcasts an invalidate, the held window's active query
@@ -1843,3 +1847,41 @@ switcher next to it still works — which is the only thing the user can usefull
 **Not a version *negotiation*.** No compatibility range, no „read-only mode" for a newer file, no
 downgrade path. Auftakt is a single-user local app whose answer is „update Auftakt", and every
 alternative buys a permanent second code path for a case that resolves itself in one download.
+
+### Die Generationsspalte auf `settings`: eine je Blob, und nur `update` benutzt sie
+
+WP-53 left this open deliberately and named the price: giving `useSettingsArray` the landing's
+guarantee needs a generation column, and the place to add one is the migration chain — which
+WP-R5 has open anyway. It is here now, on the same shape as `seasons.json`'s `rev`: the server
+answers `GET /api/settings` with the generation the values were read at, a PATCH carrying it back
+is refused with 409 (the current settings ride along, so the client needs no second GET), and a
+PATCH omitting it writes unconditionally, exactly as `patchLanding` does for the seeders.
+
+**Eine Generation für den ganzen Blob.** The column is per row — `MAX(rev)` is the table's
+generation, and every write stamps the rows it touches with `MAX + 1` — but the *comparison* is
+one number for the whole table, so a `labels` write is refused over a concurrent `task_stats`
+write that could never have collided with it. Deliberate, and the same trade the landing takes:
+the client answers a false conflict with one extra round trip against a local Express process, and
+per-key generations would be a second bookkeeping scheme for something nobody can perceive. Storing
+the counter per row rather than in a row of its own is what leaves the finer comparison available
+later without another migration.
+
+**Only `update(fn)` sends it, and only one caller is on `update` today.** The guarantee is not the
+column, it is that a refused write can be *re-applied*: `update` takes an intent over the stored
+array, so a 409 re-runs it against what actually landed. `write(next)` cannot do that — its next
+array was assembled by a controlled editor from the array *it* rendered — so sending a generation
+from there would turn a silent lost update into a refused save, which is worse, not better. The
+callers that are already intents move over; the ones that are not stay on `write` and stay
+last-writer-wins:
+
+| caller | array | write |
+|---|---|---|
+| `useRenameLabel` | `labels` | `update` — „this key, that text, the rest as it stands" |
+| `SectionArranger` (`Arranger`) | `dashboard_layout`, `*_layout*` | `write` — every mutation is computed from `full`, the *rendered* merge of the stored array with the section catalog, and `move`/drag measure their target against the on-screen order. Re-deriving that inside a retry would change what „move past the next visible section" means, and the removal undo hangs off the same call's boolean |
+| `TaskSortEditor` (`useTaskSort`) | `task_sort` | `write` — the editor is fully controlled and hands over a finished array in `onChange` |
+| `SettingsPage` scalars | `saison`, the two windows | unconditional `patchSettings` — one field, one control, no array to lose |
+
+The server half is complete either way, so moving a caller over later is a client-only change. The
+line to hold is the one above: **an intent may be retried, a snapshot may not**, and a caller that
+cannot express its change as a function of the stored array has not earned the guarantee by
+sending a `rev`.

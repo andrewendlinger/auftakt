@@ -820,18 +820,19 @@ function copyColumnConfig(
   return copyCustomColumns(target, customs);
 }
 
-/** Upsert, not insert: the target already holds ensureDefaultSettings()'s rows. */
+/**
+ * Upsert, not insert: the target already holds ensureDefaultSettings()'s rows. Through
+ * `writeSettings`, so the whole copy is one generation — the target is a season nobody has open
+ * yet, but keeping every settings write on the one path is what makes the counter's invariant
+ * hold by construction rather than by inspection (WP-R5).
+ */
 function copySettings(target: Database.Database, rows: Array<Record<string, unknown>>): void {
-  const stmt = target.prepare(
-    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+  writeSettings(
+    target,
+    rows
+      .filter((r) => !SETTINGS_NOT_COPIED.has(String(r.key)))
+      .map((r) => [String(r.key), (r.value ?? null) as string | null]),
   );
-  const tx = target.transaction(() => {
-    for (const r of rows) {
-      if (SETTINGS_NOT_COPIED.has(String(r.key))) continue;
-      stmt.run(String(r.key), (r.value ?? null) as string | null);
-    }
-  });
-  tx();
 }
 
 /**
@@ -1077,7 +1078,13 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
 const SCHEMA = /* sql */ `
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
-  value TEXT
+  value TEXT,
+  -- The generation the row was last written in (WP-R5). The table's generation is MAX(rev) —
+  -- one counter for the whole blob, deliberately, exactly as seasons.json carries one rev for
+  -- the whole landing content: the client reads every setting in one response and writes back
+  -- one array at a time, so a per-key comparison would refuse nothing this one refuses and cost
+  -- a second bookkeeping scheme. Per-row *storage* is what leaves that door open later.
+  rev   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS artists (
@@ -1478,6 +1485,7 @@ function initDb(db: Database.Database, isFresh: boolean): void {
   db.exec(SCHEMA);
   ensureDefaultSettings(db);
   dropUnusedSettings(db);
+  migrateSettingsRev(db);
   migrateStampsToLocal(db, isFresh);
   migrateColumns(db);
   ensureBuiltinColumns(db);
@@ -1831,6 +1839,16 @@ const DROPPED_SETTINGS = ['timezone'];
 function dropUnusedSettings(db: Database.Database): void {
   const stmt = db.prepare('DELETE FROM settings WHERE key = ?');
   for (const key of DROPPED_SETTINGS) stmt.run(key);
+}
+
+/**
+ * The settings table's generation column (WP-R5). Existing rows read 0, which is what a client
+ * that has never written also sends — nothing to migrate, in either direction: an older build
+ * ignores the column, and its writes leave it where it is, so the next new-build write simply
+ * takes the next generation.
+ */
+function migrateSettingsRev(db: Database.Database): void {
+  ensureColumn(db, 'settings', 'rev', 'rev INTEGER NOT NULL DEFAULT 0');
 }
 
 /** The timestamp columns the naive-local convention applies to (shared/time.ts). */
@@ -2494,10 +2512,43 @@ export function getSetting(db: Database.Database, key: string): string | null {
   return row ? row.value : null;
 }
 
+/**
+ * The generation of the settings table as a whole: the highest `rev` any row carries (WP-R5).
+ *
+ * `MAX`, not a counter row of its own, so the number can never disagree with the rows it
+ * describes — and so a future per-key comparison reads the same column rather than a second
+ * scheme. A table whose rows were all written before this existed answers 0, which is also what
+ * `GET /api/settings` then publishes and what a first conditional write has to match.
+ */
+export function settingsRev(db: Database.Database): number {
+  const row = db.prepare('SELECT COALESCE(MAX(rev), 0) AS rev FROM settings').get() as { rev: number };
+  return Number(row.rev);
+}
+
+/**
+ * Write settings rows as **one** generation and return it.
+ *
+ * The single write path, so „every write moves the generation" holds without exceptions — an
+ * in-process `setSetting` that left the counter alone would let a client's conditional write pass
+ * its check and overwrite a value that had changed under it. One transaction and one `rev` per
+ * call: a PATCH carrying three keys is one generation, not three, which is what makes the
+ * counter's meaning „the settings as they stand" rather than „how many keys were ever touched".
+ */
+export function writeSettings(db: Database.Database, entries: Array<[string, string | null]>): number {
+  const rev = settingsRev(db) + 1;
+  const stmt = db.prepare(
+    `INSERT INTO settings (key, value, rev) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, rev = excluded.rev`,
+  );
+  const tx = db.transaction(() => {
+    for (const [key, value] of entries) stmt.run(key, value, rev);
+  });
+  tx();
+  return rev;
+}
+
 export function setSetting(db: Database.Database, key: string, value: string): void {
-  db.prepare(
-    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-  ).run(key, value);
+  writeSettings(db, [[key, value]]);
 }
 
 /**
