@@ -50,6 +50,32 @@ import {
 const INLINE_INPUT =
   'rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm text-neutral-800 outline-none transition focus:border-neutral-500 focus:ring-2 focus:ring-neutral-900/5';
 
+/**
+ * What a done row adds to each of its cells (WP-58). Both halves have to be set *per cell*,
+ * which is why this is a class pair and not two properties on the `<tr>`:
+ *
+ * - the row's own `text-neutral-400` is pure inheritance, so every cell that carries a `text-*`
+ *   of its own — the comment, the timestamps, a custom text value — simply outranked it and
+ *   stayed black on an otherwise greyed row;
+ * - `line-through` on the `<tr>` reaches none of them: text-decoration does not propagate into
+ *   atomic inline boxes, and nearly every leaf here is a `<button>` or an `inline-flex`. That is
+ *   why the strike has always sat on the title button rather than on the row.
+ *
+ * `DONE_PILL` is the third case: `PillSelect` and the checkbox colour themselves from an inline
+ * `style` / a UA accent, which no class can outrank, so there the colour is taken out with a
+ * filter — and nothing is struck, because a line across a 20 px pill reads as damage.
+ */
+const DONE_MUTED = 'text-neutral-400';
+const DONE_STRUCK = `${DONE_MUTED} line-through`;
+const DONE_PILL = 'opacity-60 grayscale';
+
+/**
+ * The done classes for one cell. `filled` is false for a cell showing nothing but its „—"
+ * placeholder, which must not be struck: a line through an em dash reads as a second dash.
+ */
+const doneCell = (done: boolean, filled: boolean) =>
+  !done ? '' : filled ? DONE_STRUCK : DONE_MUTED;
+
 export interface TaskTableParent {
   artist_id?: number;
   project_id?: number;
@@ -777,12 +803,16 @@ function DataCell({ row, columnId }: TaskCellProps) {
   const api = useTaskTableApi();
   const col = api.colById.get(columnId);
   if (!col) return null;
+  // The one place „is this row done" is derived, and it is derived from *context* — never from
+  // the column model, whose memo has to stay `[visibleCols]`-shallow or every cell in the table
+  // remounts on every render (TTU-12/TTU-38; see `TaskTableApi`). A cell already has its row.
+  const done = row.original.status === api.doneValue;
   const inner = (
     <ColumnCell
       task={row.original}
       col={col}
       isChild={row.depth > 0}
-      doneValue={api.doneValue}
+      done={done}
       statusOptions={api.statusOptions}
       priorityOptions={api.priorityOptions}
       commit={api.commit}
@@ -871,7 +901,7 @@ function ColumnCell({
   task,
   col,
   isChild,
-  doneValue,
+  done,
   statusOptions,
   priorityOptions,
   commit,
@@ -881,7 +911,8 @@ function ColumnCell({
   col: CustomColumn;
   /** Subtask row — the one nesting cue that survives any column ordering. */
   isChild: boolean;
-  doneValue: string;
+  /** The row is erledigt: every cell greys out, and the ones holding text are struck (WP-58). */
+  done: boolean;
   statusOptions: CustomColumnOption[];
   priorityOptions: CustomColumnOption[];
   commit: (task: Task, patch: Partial<Task>, label: string) => Promise<void>;
@@ -894,6 +925,7 @@ function ColumnCell({
           <PillSelect
             value={task.status}
             options={statusOptions}
+            muted={done}
             onChange={(v) => commit(task, { status: v }, 'Statusänderung')}
           />
         );
@@ -902,7 +934,7 @@ function ColumnCell({
           <TitleCell
             task={task}
             isChild={isChild}
-            doneValue={doneValue}
+            done={done}
             onCommit={(v) => commit(task, { title: v }, 'Titeländerung')}
           />
         );
@@ -912,20 +944,35 @@ function ColumnCell({
             value={task.priority}
             options={priorityOptions}
             placeholder="Priorität"
+            muted={done}
             onChange={(v) => commit(task, { priority: v }, 'Prioritätsänderung')}
           />
         );
       case 'due':
-        return <DueCell task={task} onCommit={(v) => commit(task, { due_date: v }, 'Datumsänderung')} />;
+        return (
+          <DueCell
+            task={task}
+            done={done}
+            onCommit={(v) => commit(task, { due_date: v }, 'Datumsänderung')}
+          />
+        );
       case 'comment':
-        return <CommentCell task={task} onCommit={(v) => commit(task, { comment: v }, 'Kommentaränderung')} />;
+        return (
+          <CommentCell
+            task={task}
+            done={done}
+            onCommit={(v) => commit(task, { comment: v }, 'Kommentaränderung')}
+          />
+        );
       case 'created':
-        return <TimestampCell value={task.created_at} />;
+        return <TimestampCell value={task.created_at} done={done} />;
       case 'updated':
-        return <TimestampCell value={task.updated_at} />;
+        return <TimestampCell value={task.updated_at} done={done} />;
     }
   }
-  return <CustomCell task={task} column={col} onCommit={(v) => commitCustom(task, col.id, v)} />;
+  return (
+    <CustomCell task={task} column={col} done={done} onCommit={(v) => commitCustom(task, col.id, v)} />
+  );
 }
 
 /* ---------- editable cells ---------- */
@@ -933,12 +980,12 @@ function ColumnCell({
 function TitleCell({
   task,
   isChild,
-  doneValue,
+  done,
   onCommit,
 }: {
   task: Task;
   isChild: boolean;
-  doneValue: string;
+  done: boolean;
   onCommit: (v: string) => void | Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
@@ -959,11 +1006,7 @@ function TitleCell({
   return (
     <button
       className={`min-w-48 max-w-md text-left ${
-        task.status === doneValue
-          ? 'line-through'
-          : isChild
-            ? 'text-neutral-600'
-            : 'font-medium text-neutral-800'
+        done ? DONE_STRUCK : isChild ? 'text-neutral-600' : 'font-medium text-neutral-800'
       }`}
       onClick={() => setEditing(true)}
     >
@@ -973,15 +1016,24 @@ function TitleCell({
 }
 
 /** Read-only cell for the built-in "Erstellt am" / "Zuletzt bearbeitet" timestamp columns. */
-function TimestampCell({ value }: { value: string | null }) {
+function TimestampCell({ value, done }: { value: string | null; done: boolean }) {
+  if (!value) return <span className="text-sm text-neutral-300">—</span>;
   return (
-    <span className="whitespace-nowrap text-sm text-neutral-500">
-      {value ? formatDate(value) : <span className="text-neutral-300">—</span>}
+    <span className={`whitespace-nowrap text-sm ${done ? DONE_STRUCK : 'text-neutral-500'}`}>
+      {formatDate(value)}
     </span>
   );
 }
 
-function DueCell({ task, onCommit }: { task: Task; onCommit: (v: string | null) => void | Promise<void> }) {
+function DueCell({
+  task,
+  done,
+  onCommit,
+}: {
+  task: Task;
+  done: boolean;
+  onCommit: (v: string | null) => void | Promise<void>;
+}) {
   const [editing, setEditing] = useState(false);
   if (editing) {
     // `empty: 'clear'` — an emptied Fällig field is „kein Datum", not a no-op. Enter and Escape
@@ -999,13 +1051,24 @@ function DueCell({ task, onCommit }: { task: Task; onCommit: (v: string | null) 
     );
   }
   return (
-    <button className="whitespace-nowrap text-sm" onClick={() => setEditing(true)}>
+    <button
+      className={`whitespace-nowrap text-sm ${doneCell(done, !!task.due_date)}`}
+      onClick={() => setEditing(true)}
+    >
       {task.due_date ? formatDate(task.due_date) : <span className="text-neutral-300">—</span>}
     </button>
   );
 }
 
-function CommentCell({ task, onCommit }: { task: Task; onCommit: (v: string | null) => void }) {
+function CommentCell({
+  task,
+  done,
+  onCommit,
+}: {
+  task: Task;
+  done: boolean;
+  onCommit: (v: string | null) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [value, setValue] = useState(task.comment ?? '');
@@ -1051,8 +1114,13 @@ function CommentCell({ task, onCommit }: { task: Task; onCommit: (v: string | nu
   const long = task.comment.length > 140;
   return (
     <div className="max-w-md min-w-64">
+      {/* The strike goes on the wrapper, not on the rendered nodes: text-decoration *does*
+          propagate into in-flow block descendants, which is what Markdown produces (p, li,
+          blockquote), so one class covers a whole comment however it is formatted. */}
       <div
-        className={`cursor-text text-sm text-neutral-600 ${!expanded && long ? 'max-h-12 overflow-hidden' : ''}`}
+        className={`cursor-text text-sm ${done ? DONE_STRUCK : 'text-neutral-600'} ${
+          !expanded && long ? 'max-h-12 overflow-hidden' : ''
+        }`}
         onDoubleClick={() => setEditing(true)}
       >
         <Markdown>{task.comment}</Markdown>
@@ -1074,10 +1142,12 @@ function CommentCell({ task, onCommit }: { task: Task; onCommit: (v: string | nu
 function CustomCell({
   task,
   column,
+  done,
   onCommit,
 }: {
   task: Task;
   column: CustomColumn;
+  done: boolean;
   /** Returns its promise so `InlineInput` can report a rejected write instead of dropping it. */
   onCommit: (v: unknown) => void | Promise<void>;
 }) {
@@ -1086,7 +1156,9 @@ function CustomCell({
     return (
       <input
         type="checkbox"
-        className="h-4 w-4 cursor-pointer"
+        // The tick is the UA's accent colour, so it takes the pill's treatment rather than the
+        // text one — there is no text here to grey or to strike.
+        className={`h-4 w-4 cursor-pointer ${done ? DONE_PILL : ''}`}
         checked={raw === 'true'}
         onChange={(e) => onCommit(e.target.checked)}
       />
@@ -1098,21 +1170,24 @@ function CustomCell({
         value={raw}
         options={parseColumnOptions(column.options)}
         allowEmpty
+        muted={done}
         onChange={(v) => onCommit(v)}
       />
     );
   }
   if (column.type === 'date') {
-    return <EditableDateCell value={raw} onCommit={(v) => onCommit(v)} />;
+    return <EditableDateCell value={raw} done={done} onCommit={(v) => onCommit(v)} />;
   }
-  return <EditableTextCell value={raw} onCommit={(v) => onCommit(v)} />;
+  return <EditableTextCell value={raw} done={done} onCommit={(v) => onCommit(v)} />;
 }
 
 function EditableTextCell({
   value,
+  done,
   onCommit,
 }: {
   value: string;
+  done: boolean;
   onCommit: (v: string) => void | Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
@@ -1131,7 +1206,10 @@ function EditableTextCell({
   }
   return (
     <button
-      className="min-w-20 text-left text-sm text-neutral-700 hover:text-neutral-900"
+      // `doneCell` is empty on an open row, which is where the cell's own colour belongs.
+      className={`min-w-20 text-left text-sm ${
+        doneCell(done, !!value) || 'text-neutral-700 hover:text-neutral-900'
+      }`}
       onClick={() => setEditing(true)}
     >
       {value || <span className="text-neutral-300">—</span>}
@@ -1141,9 +1219,11 @@ function EditableTextCell({
 
 function EditableDateCell({
   value,
+  done,
   onCommit,
 }: {
   value: string;
+  done: boolean;
   onCommit: (v: string) => void | Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
@@ -1163,7 +1243,10 @@ function EditableDateCell({
     );
   }
   return (
-    <button className="whitespace-nowrap text-sm" onClick={() => setEditing(true)}>
+    <button
+      className={`whitespace-nowrap text-sm ${doneCell(done, !!value)}`}
+      onClick={() => setEditing(true)}
+    >
       {value ? formatDate(value) : <span className="text-neutral-300">—</span>}
     </button>
   );

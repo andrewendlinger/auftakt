@@ -27,6 +27,7 @@ export function PillSelect({
   allowEmpty = false,
   placeholder = '—',
   disabled = false,
+  muted = false,
 }: {
   value: string;
   options: CustomColumnOption[];
@@ -34,6 +35,13 @@ export function PillSelect({
   allowEmpty?: boolean;
   placeholder?: string;
   disabled?: boolean;
+  /**
+   * Grey the trigger out — a done task's row (WP-58). The pill's colour comes from the inline
+   * `style` below, which no Tailwind text class can outrank, so the only thing that reaches it
+   * is a filter. It stays on the trigger and never on the menu: the options are the palette the
+   * user is choosing from, and greying those would be a lie about what they will get.
+   */
+  muted?: boolean;
 }) {
   const {
     open,
@@ -89,7 +97,9 @@ export function PillSelect({
             openPopover();
           }
         }}
-        className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold transition hover:brightness-95 disabled:cursor-default"
+        className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold transition hover:brightness-95 disabled:cursor-default ${
+          muted ? 'opacity-60 grayscale' : ''
+        }`}
         style={
           current
             ? { background: current.color, color: contrastText(current.color) }

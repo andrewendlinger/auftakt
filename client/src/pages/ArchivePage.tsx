@@ -144,8 +144,14 @@ export function ArchivePage() {
               </thead>
               <tbody>
                 {filtered.map((t) => (
-                  <tr key={t.id} className="border-b border-neutral-50 align-top text-neutral-500">
-                    <td className="px-3 py-2 font-medium text-neutral-700 line-through">{t.title}</td>
+                  // Every row here is erledigt, so the whole row carries the treatment the task
+                  // table gives a done row (WP-58) — including „Erledigt am" and the comment,
+                  // which used to stay black beside a struck-through title. The Zuordnung cell is
+                  // deliberately left alone: an artist link and a project badge are where the row
+                  // came from and how to get back to it, the same reason the task table does not
+                  // grey out its trash can and colour swatch.
+                  <tr key={t.id} className="border-b border-neutral-50 align-top text-neutral-400">
+                    <td className="px-3 py-2 font-medium line-through">{t.title}</td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-1.5 whitespace-nowrap">
                         {t.resolved_artist_id && (
@@ -164,8 +170,12 @@ export function ArchivePage() {
                         )}
                       </div>
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2">{t.erledigt_am ? formatDate(t.erledigt_am) : ''}</td>
-                    <td className="max-w-md px-3 py-2"><Markdown>{t.comment}</Markdown></td>
+                    <td className="whitespace-nowrap px-3 py-2 line-through">
+                      {t.erledigt_am ? formatDate(t.erledigt_am) : ''}
+                    </td>
+                    {/* The strike propagates into the Markdown's block children (p, li,
+                        blockquote) — it is only atomic inline boxes it cannot enter. */}
+                    <td className="max-w-md px-3 py-2 line-through"><Markdown>{t.comment}</Markdown></td>
                   </tr>
                 ))}
               </tbody>
