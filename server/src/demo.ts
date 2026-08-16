@@ -35,6 +35,22 @@ const here = dirname(fileURLToPath(import.meta.url));
 const DEMO_DIR = resolve(here, '../../.demo');
 process.env.AUFTAKT_DATA_DIR = DEMO_DIR;
 
+/**
+ * `AUFTAKT_DEMO_FRESH=1 npm run demo` builds the same fixtures **without** the two settings a
+ * real first-time user has not written yet — `dashboard_layout` and `artist_layout_saved` (#70).
+ * Seeding them is right for what the demo is mostly for, but it means no rebuild ever shows the
+ * state everyone actually starts in: the season sections hidden behind „+ Bereich", and
+ * „Gespeichertes Layout anwenden" disabled for want of a saved layout.
+ *
+ * A flag rather than a second script, because the dataset is the same either way — only those two
+ * rows differ. Everything else stays put deliberately: the per-entity `layout`s already show both
+ * states side by side (artist 1 is `NULL`, artist 2 arranged), and so does column visibility
+ * (`priority`/`created` stay hidden while `due` is woken up below).
+ *
+ * Any non-empty value except `0` counts, so `=true` does not silently build the normal demo.
+ */
+const FRESH = !!process.env.AUFTAKT_DEMO_FRESH && process.env.AUFTAKT_DEMO_FRESH !== '0';
+
 const {
   getDb,
   setSetting,
@@ -766,42 +782,45 @@ function main(): void {
   setSetting(db, 'saison', SEASON_LABEL);
   setActiveSeasonLabel(SEASON_LABEL);
   setSetting(db, 'link_categories', JSON.stringify(LINK_CATEGORIES));
-  // A saved artist layout, so „Gespeichertes Layout anwenden" has something to apply on a fresh
-  // demo instead of sitting disabled. Deliberately *not* the same as any page's own arrangement,
-  // and deliberately not written to `artist_layout` — the point of WP-31 is that the saved layout
-  // and the standard for new pages are two separate stores.
-  setSetting(
-    db,
-    'artist_layout_saved',
-    JSON.stringify([
-      { key: 'termine', width: 'half' },
-      { key: 'kontakte', width: 'half' },
-      { key: 'projekte', width: 'full' },
-      { key: 'aufgaben', width: 'full' },
-    ]),
-  );
-  // The Übersicht's layout, opting the three season sections in — they ship `defaultHidden`, so
-  // without this row the fixtures above would sit invisibly behind „+ Bereich". Order matches
-  // the spec order a fresh dashboard produces (widgets cs1/cs2 auto-append last), with `termine`
-  // right after the read-only roll-up so the two hint-line states sit together, and the
-  // kontakte/links pair half-width — the arrangement the picker's re-add cannot produce on its
-  // own, only the width toggle can.
-  setSetting(
-    db,
-    'dashboard_layout',
-    JSON.stringify([
-      { key: 'artists', width: 'full' },
-      { key: 'events', width: 'full' },
-      { key: 'termine', width: 'full' },
-      { key: 'kontakte', width: 'half' },
-      { key: 'links', width: 'half' },
-      { key: 'stats', width: 'full' },
-      { key: 'tasks', width: 'full' },
-      { key: 'aufmerksamkeit', width: 'full' },
-      { key: 'cs1', width: 'full' },
-      { key: 'cs2', width: 'full' },
-    ]),
-  );
+  // The two opt-ins a real first run has not made yet — skipped under AUFTAKT_DEMO_FRESH, see FRESH.
+  if (!FRESH) {
+    // A saved artist layout, so „Gespeichertes Layout anwenden" has something to apply on a fresh
+    // demo instead of sitting disabled. Deliberately *not* the same as any page's own arrangement,
+    // and deliberately not written to `artist_layout` — the point of WP-31 is that the saved layout
+    // and the standard for new pages are two separate stores.
+    setSetting(
+      db,
+      'artist_layout_saved',
+      JSON.stringify([
+        { key: 'termine', width: 'half' },
+        { key: 'kontakte', width: 'half' },
+        { key: 'projekte', width: 'full' },
+        { key: 'aufgaben', width: 'full' },
+      ]),
+    );
+    // The Übersicht's layout, opting the three season sections in — they ship `defaultHidden`, so
+    // without this row the fixtures above would sit invisibly behind „+ Bereich". Order matches
+    // the spec order a fresh dashboard produces (widgets cs1/cs2 auto-append last), with `termine`
+    // right after the read-only roll-up so the two hint-line states sit together, and the
+    // kontakte/links pair half-width — the arrangement the picker's re-add cannot produce on its
+    // own, only the width toggle can.
+    setSetting(
+      db,
+      'dashboard_layout',
+      JSON.stringify([
+        { key: 'artists', width: 'full' },
+        { key: 'events', width: 'full' },
+        { key: 'termine', width: 'full' },
+        { key: 'kontakte', width: 'half' },
+        { key: 'links', width: 'half' },
+        { key: 'stats', width: 'full' },
+        { key: 'tasks', width: 'full' },
+        { key: 'aufmerksamkeit', width: 'full' },
+        { key: 'cs1', width: 'full' },
+        { key: 'cs2', width: 'full' },
+      ]),
+    );
+  }
 
   // Two extra seasons so the Saison-Übersicht (landing page) has every card branch on
   // screen: a populated inactive one (exercises the real copy path; no tasks → 0 offene
@@ -860,6 +879,11 @@ function main(): void {
     console.log(`  ${t.padEnd(15)} ${n}`);
   }
   console.log(`\n  Saison          ${getSetting(db, 'saison')}`);
+  // Which of the two datasets this was is otherwise invisible until someone opens the Übersicht
+  // and wonders where the season sections went.
+  if (FRESH) {
+    console.log('  Erstlauf-Modus  ohne dashboard_layout und artist_layout_saved (AUFTAKT_DEMO_FRESH)');
+  }
 }
 
 main();

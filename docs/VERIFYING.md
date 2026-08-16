@@ -689,7 +689,11 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   `defaultHidden`: not in `[data-section]`, only in the „+ Bereich" picker. To drive the
   picker-restore path on the demo, blank the layout first
   (`PATCH /api/settings {"dashboard_layout": []}` — a real JSON array; a string is a 400,
-  „muss eine Liste sein") and reload; the three then start hidden like everywhere else. „Saison-Termine" (`termine`, editable) and
+  „muss eine Liste sein") and reload; the three then start hidden like everywhere else. **Or seed
+  that state instead of patching it: `AUFTAKT_DEMO_FRESH=1 npm run demo`** builds the same
+  fixtures without `dashboard_layout` *and* without `artist_layout_saved` (#70) — the seeder
+  prints „Erstlauf-Modus" when it took that branch, and no other row differs.
+  „Saison-Termine" (`termine`, editable) and
   „Nächste Termine" (`events`, read-only roll-up) are different sections — asserting a created
   event into the roll-up or a roll-up row into the editable list fails against working code.
 - **A season contact's GlobalSearch hit navigates to `#/dashboard`** („Greta Simoneit" on the
@@ -697,8 +701,9 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   no parent to land on).
 - **A layout assertion reads `[data-section]`/`[data-width]`, not the headings** — the arranger
   stamps both on every rendered section, and in arrange mode the in-card heading is hidden anyway.
-- **The demo seeds `artist_layout_saved` but leaves `artist_layout` unset**, so „Gespeichertes
-  Layout anwenden" is live from the first run while „Auf Standard zurücksetzen" starts disabled.
+- **The demo seeds `artist_layout_saved` but leaves `artist_layout` unset** (both unset under
+  `AUFTAKT_DEMO_FRESH`), so „Gespeichertes Layout anwenden" is live from the first run while
+  „Auf Standard zurücksetzen" starts disabled.
   The two are separate stores — asserting one after writing the other is how you prove the split.
 - **The layout menu is a portal at `[role="menu"]`, not a child of the toolbar.** Its rows are
   `[role="menuitem"]`; the heading and status line are its first two `div`s. It closes on Escape
