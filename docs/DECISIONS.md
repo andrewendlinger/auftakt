@@ -1808,3 +1808,38 @@ against the next log:
   not enough to take it.
 - **How far into its swing the gesture starts.** `warm` + `warm2` + `lead` is that number, and it
   is what decides `.boot-show`.
+
+---
+
+## Die Schema-Version weigert sich nur abwärts, und die Generation zählt pro Blob (2026-08-16, WP-R5, #8)
+
+`initDb` is a detect-and-repair chain with no memory: every step asks the data whether it has run
+and does nothing when it has. That is what makes it safe to run on every open — and it is also why
+a file a *newer* build had already migrated opened in an older one without a word. Nothing in the
+file said which build last touched it, several steps are lossy in the direction they run
+(`migrateFlattenDeepSubtasks` reparents a third level onto the root, `migrateProjectsMergeNotes`
+folds a column into another), and the queries above them then read a shape they were not written
+for. Multi-window seasons raised the stakes rather than creating the hole: season files of
+different ages now sit side by side, and the import path accepts any `.db` the user picks.
+
+**`PRAGMA user_version`, not a settings row.** The marker has to be readable *before* the chain
+runs and on a file this build may refuse to touch at all; a row in `settings` would mean opening
+the database as an Auftakt database first, which is the thing in question. `user_version` is also
+preserved by `VACUUM INTO`, so exports, backups and pre-import snapshots carry the stamp without a
+single line about it — verified, not assumed, since the whole import story rests on it.
+
+**The refusal is one-sided, and that is the part a later tidy-up will get wrong.** `>` and never
+`>=` or `!==`: an unstamped file reads 0, which is every database in existence at the moment this
+ships, and the build that introduces the stamp must open all of them. The stamp is written at the
+*end* of the chain for the same reason — writing it first would promise a repair that a throw
+halfway down never delivered.
+
+**Refusing is per season, not per app.** With several seasons open at once, one file from a newer
+build must not keep the app from starting: `getDb()` closes the handle it opened and throws, the
+boot warm catches, and `seasonStats` already reports `null` for a season it cannot read. So the
+window pinned to that season shows the German sentence where its data would be, and the season
+switcher next to it still works — which is the only thing the user can usefully do about it.
+
+**Not a version *negotiation*.** No compatibility range, no „read-only mode" for a newer file, no
+downgrade path. Auftakt is a single-user local app whose answer is „update Auftakt", and every
+alternative buys a permanent second code path for a case that resolves itself in one download.

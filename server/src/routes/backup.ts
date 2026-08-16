@@ -5,7 +5,9 @@ import {
   BACKUP_KEEP,
   BACKUP_POINTS_DIR,
   PRE_IMPORT_DIR,
+  SCHEMA_VERSION,
   backupStamp,
+  fileSchemaVersion,
   getBackupConfig,
   getDb,
   importIntoCurrentSeason,
@@ -232,12 +234,23 @@ backupRouter.post('/export', (req, res) => {
   }
 });
 
-/** Validate a candidate without touching anything — lets the UI warn before confirming. */
+/**
+ * Validate a candidate without touching anything — lets the UI warn before confirming.
+ *
+ * `schema` rides along so the Electron dialog can name both generations (WP-R5): the file's and
+ * this build's. On a refusal the message already spells them out, but the accepted case matters
+ * too — importing an older file *migrates* it, and some of that chain is deliberately lossy, so
+ * the confirmation is the last moment at which saying so is any use.
+ */
 backupRouter.post('/import/check', (req, res) => {
   const path = String((req.body as { path?: unknown })?.path ?? '').trim();
   if (!path) return res.status(400).json({ error: 'Keine Datei angegeben.' });
   const problem = validateImportCandidate(path);
-  res.json({ ok: !problem, error: problem ?? undefined });
+  res.json({
+    ok: !problem,
+    error: problem ?? undefined,
+    schema: { file: fileSchemaVersion(path), app: SCHEMA_VERSION },
+  });
 });
 
 backupRouter.post('/import', (req, res) => {

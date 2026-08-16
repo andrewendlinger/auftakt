@@ -138,6 +138,25 @@ case: converting twice shifts every stamp twice. `getDb()` decides whether the f
 A marker also has a cost worth weighing: it disables the migration permanently after the first
 run. That is wrong for anything repairing a back door a later import can re-open.
 
+**The chain stamps `PRAGMA user_version` at its end, and the refusal it enables is one-sided**
+(WP-R5, #8). `SCHEMA_VERSION` is a plain counter — not the app version — bumped only when a
+migration changes the stored shape in a way an older build would misread; `initDb` writes it after
+every step returned, so the stamp always means „this file has been through the whole chain of
+build N". Before the first step, `assertSchemaSupported` throws for a file whose stamp *exceeds*
+this build's, and for nothing else: the chain repairs forward, several of its steps are lossy
+(`migrateFlattenDeepSubtasks` reparents, `migrateProjectsMergeNotes` folds a column away), and an
+older or unstamped file is exactly what it exists for. `>` and never `>=` or `!==` — the build that
+introduced the stamp would otherwise refuse every database in existence.
+
+The same test is spelled in three places because there are three doors into a season file, and
+none of them runs the others: `initDb` (every open), `validateImportCandidate` (before the import
+snapshots, copies or renames anything — so the refusal never arrives after the old database is
+gone) and `copySeasonData`, which opens the *source* raw and copies a fixed column list per table.
+The refusal is per season, never per app: `getDb()` closes the handle and throws, the boot warm in
+`index.ts` catches so one newer season cannot keep the process from starting, and `seasonStats`
+already degrades that season's card to `null` — so a window pinned to a file it cannot open can
+still list the seasons and switch away.
+
 ## Backups and import — never copy a live DB with the filesystem
 
 **`copyFileSync` on an open SQLite file is a data-loss bug, not a shortcut.** Under WAL, committed
@@ -148,6 +167,11 @@ uses `VACUUM INTO` to write a consistent image of db + WAL.
 For the same reason these operations live **server-side** (`server/src/routes/backup.ts`) — it owns
 the connections and is the only side that can checkpoint. Electron supplies paths from dialogs and
 nothing else; `electron/backup.ts` is just an HTTP call.
+
+Validation covers the candidate's **schema version** as well as its tables (WP-R5): a file a newer
+build has already migrated is refused before anything is replaced, and `POST /backup/import/check`
+answers with `schema: { file, app }` so the Electron confirmation can name both generations — an
+accepted older file *is* migrated on its first open, which does not run backwards.
 
 `importIntoCurrentSeason()` is order-sensitive and the order is the fix: validate the candidate →
 snapshot the current DB → `closeSeason()` → copy → unlink `-wal`/`-shm`. Closing before the copy
