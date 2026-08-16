@@ -36,6 +36,7 @@ import { ExcelButton } from '../components/ExcelButton';
 import {
   useAllTasks,
   useEventTypeOptions,
+  useEntityColumns,
   useScopedColumns,
   useUndoablePatch,
 } from '../hooks';
@@ -87,6 +88,8 @@ export function ArtistPage() {
   });
   // This artist's own arrangement, falling back to the `artist_layout` template (WP-25).
   const layout = useEntityLayout('artist', artist);
+  // …and this page's own task-column visibility, falling back to `custom_columns.enabled` (WP-59).
+  const entityColumns = useEntityColumns('artist', artist);
   const removeCustomSection = useRemoveCustomSection(customSections, layout);
   const nonEmptyCustom = useNonEmptyCustomSections(customSections);
 
@@ -231,7 +234,12 @@ export function ArtistPage() {
           >
             <EditableLabel k="artist.aufgaben" />
           </SectionTitle>
-          <TaskTable tasks={generalTasks} customColumns={columns} parent={{ artist_id: artistId }} />
+          <TaskTable
+            tasks={generalTasks}
+            customColumns={columns}
+            columnOverrides={entityColumns.overrides}
+            parent={{ artist_id: artistId }}
+          />
         </>
       ),
     },
@@ -322,6 +330,7 @@ export function ArtistPage() {
         <CustomColumnManager
           columns={columns}
           owner={{ scope: 'artist', id: artistId }}
+          entityColumns={entityColumns}
           onClose={() => setManagingColumns(false)}
         />
       )}

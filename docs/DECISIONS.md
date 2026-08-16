@@ -8,6 +8,90 @@ If you are about to re-raise one of these, the bar is new information, not a fre
 
 ---
 
+## Sichtbarkeit wird lokal, alles andere an der Spalte bleibt global (2026-08-16, WP-59)
+
+The customer reported the split as the defect: „zurzeit lassen sich Aufgabenspalten teilweise in
+Einstellungen, teilweise in der App selbst bearbeiten (quasi global vs. local). Das ist aber nicht
+sehr intuitiv. Alle Spalten sollten ‚local' bearbeitbar sein — z. B. ein Projekt sollte ‚Fällig'
+haben können und ein anderes nicht." Until now `enabled` was a property of the *column*, so the
+entity page could only render the globals as read-only pills under „Globale Spalten (in
+Einstellungen verwalten)" — the inconsistency, literally on screen.
+
+**„Alle Spalten lokal bearbeitbar" is answered as visibility, not as everything.** What a page
+shows is now the pair (column, page): `artists.task_columns` / `projects.task_columns` hold that
+page's departures from `custom_columns.enabled`. Name, options, order and scope stay season-wide,
+and each for its own reason. A **name** per page would make one column read „Fällig" here and
+„Deadline" there while `task_sort` and the .xlsx name a third thing. **Order** per page would
+replace TTU-21's reasoning outright: `compareColumns` sorts scope-first *because* each scope group
+renumbers from 0, so a per-page ordinal needs a different total order, on every consumer, for a
+gesture nobody asked for. And the **scope** is what WP-51 built. Visibility is the whole of what
+the raw note actually names, and it is the only one of the four whose per-page answer costs
+nothing anywhere else.
+
+**Form A, because the pattern already existed.** `artists.layout` (WP-25/WP-31) is the same „per
+entity, with a season-wide template" shape: `NULL` follows the template, the migration is a plain
+`ensureColumn` with no table rebuild, and `useEntityLayout` was the finished hook to copy. The
+alternative — a join table of (column, entity, visible) — buys a query per page for a value that is
+never listed, aggregated or filtered on, and would have needed a cascade edge, a Papierkorb
+sublabel and a season-copy group of its own.
+
+**The map is sparse, and an override that agrees with the default is deleted.** A dense map („these
+are my columns") freezes the page: a column created in Einstellungen afterwards would never reach
+any page that had ever been configured — the same failure a stored `layout` avoids by treating an
+*absent* key as „this build added a section", not as „hidden". And pruning is what makes toggling a
+column back the way back: without it a page that had been set and unset keeps a `task_columns` of
+its own, looks untouched, and quietly stops following Einstellungen. `withColumnVisible` returns
+`null` for an emptied map, which is the same „give the state back, not the picture" that WP-45's
+removal undo answers with `resetToDefault()`.
+
+**Status and Titel stay unhideable, everywhere.** `deletable === 0` already said so;
+`doneValueOf`/`useDoneValue` drive graying, sinking, the statistics and archiving off the Status
+column, and a page with no title cell has no way to edit a task at all.
+
+**The .xlsx now filters the custom block and still not the fixed one.** The export filtered
+*nothing* before — a column hidden in Einstellungen landed in the sheet anyway, which
+`PrintProject` already did not do — and once visibility became per page, exporting a column the
+project deliberately hides is the reported inconsistency one layer down. So the sheet follows the
+page it was exported from (`project_id`, or `resolved_artist_id` for an artist sheet, PGS-31).
+The fixed block — Aufgabe · Künstler · Projekt · Priorität · Status · Fällig · Erledigt am ·
+Kommentar — is deliberately **not** filtered, exactly as on the print sheet: it is the sheet's
+identity, two projects' exports have to stay comparable column for column, and „Erledigt am" has
+no column row to be hidden by in the first place. The consequence, stated so it is not reported as
+a bug later: a project that hides the built-in **Fällig** still has a Fällig column in its .xlsx
+and on its Ein-Pager. Filtering that one is not merely more work, it has no correct answer on the
+sheets that span pages — an artist export covers that artist's projects, each with an override of
+its own, so a built-in dropped by the artist page's map would take the column away from rows whose
+project shows it. „This project has these columns" lives in the custom block, and that is the half
+that moves. The rule is asserted in `check:api` by reading the workbook back, in both directions.
+
+**A season copy carries the override for free, with one benign exposure.** `task_columns` rides
+`COPY_COLS` with its entity. Its keys are `colId`s, so built-ins survive the copy's match-by-`key`
+step; a *custom* column whose id collides in the target is remapped, and the stale
+`custom:<old id>` key is then simply never consulted — the column falls back to the season default
+rather than pointing at the wrong one, because `custom:<id>` can only ever resolve to a custom
+column and the collision is always against a built-in's id. Same exposure `task_sort` has carried
+since it started naming customs, and the same shrug.
+
+**`SCHEMA_VERSION` is not bumped for it.** The stamp refuses a file a *newer* build has migrated,
+and an older build opening one of these reads every column it knows and ignores this one: the page
+shows the season default, which is what it showed before. Nothing is misread. Only a season copy
+taken by that older build would drop the overrides — exactly what would have happened to `layout`
+before WP-25, and not a corruption.
+
+**This extends WP-51, it does not reverse it.** „No inheritance" there was about *scoped* columns
+raining down onto sub-pages — an artist's column appearing on that artist's projects, which would
+have made `compareColumns` order three groups and the export join through `projects.artist_id`.
+Nothing of that changes: an artist column still appears on exactly one page. What travels here is
+the opposite direction, global → page, and only as a boolean per page.
+
+**And no, a column still cannot change its scope.** The question gets more natural once pages can
+show and hide freely, so it is worth saying why the answer did not move: a move needs a warning
+(values appear and disappear elsewhere), a re-stamped `sort_order` in the target group, and a
+decision about the pages that had an override for it. WP-59 also removes most of the pressure —
+the common „I made it in the wrong place" is a global column that should only show up on one page,
+and that is now two clicks rather than a move. Delete and re-create remains the answer; the values
+are keyed by column id, so nothing a move would have preserved is lost.
+
 ## Only the first window's bounds are remembered (2026-08-14, WP-55)
 
 Lowering the minimum window size so two windows fit side by side is worth nothing if the next
@@ -1434,7 +1518,9 @@ The rule is spelled twice because it has two audiences: the migration, for the a
 straight into a target that *does* carry the CHECK — aborting the copy between groups, with no outer
 transaction to undo the ones already written and a half-populated season left behind.
 
-**No UI to change a column's scope.** A column created in the wrong place is deleted and created
+**No UI to change a column's scope.** (Still true after WP-59, which is where the follow-up is
+answered: per-page *visibility* is not a scope change, and it removes most of the reason to want
+one.) A column created in the wrong place is deleted and created
 again. Its values live in `custom_values` keyed by column id, so nothing is lost that moving it
 would have preserved, and a move needs its own warning (values appear and disappear elsewhere) plus
 a re-stamped `sort_order` in the target group. Named here because #58 lists it as a gap: it is a

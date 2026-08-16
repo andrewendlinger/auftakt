@@ -11,10 +11,15 @@ import { Btn, IconButton, ReorderArrows } from './ui';
  * enforces it (`lib/taskSort.ts`) — both live there so the label and the behaviour cannot drift,
  * which they did: a rule for a *deleted* column read as perfectly normal here while sorting
  * nothing, and a hidden one was marked „(ausgeblendet)" while still ordering the table (WP-32).
+ *
+ * `hidden` is worded for what WP-59 made true: this list resolves against the **season default**,
+ * and a page that shows the column anyway *is* ordered by the rule. „sortiert nicht" was the whole
+ * truth while `enabled` was the only answer; it is a half-truth now, and the honest form is also
+ * the one that tells the user where to look. `gone` is unchanged — a deleted column exists nowhere.
  */
 const INERT: Record<SortRuleState, string> = {
   active: '',
-  hidden: '(ausgeblendet – sortiert nicht)',
+  hidden: '(ausgeblendet – sortiert nur auf Seiten, die sie zeigen)',
   gone: '(entfernt – sortiert nicht)',
 };
 

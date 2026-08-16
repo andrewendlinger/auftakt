@@ -8,17 +8,23 @@ import {
   type ComponentType,
 } from 'react';
 import { api } from '../api/client';
-import type { CustomColumn, CustomColumnOption, Task, TaskSortRule, TaskUpdate } from '../api/types';
-import { compareColumns, customValueOf, doneValueOf, parseColumnOptions } from '../api/types';
+import type {
+  ColumnOverrides,
+  CustomColumn,
+  CustomColumnOption,
+  Task,
+  TaskSortRule,
+  TaskUpdate,
+} from '../api/types';
+import { customValueOf, doneValueOf, parseColumnOptions } from '../api/types';
 import { formatDate } from '../lib/dates';
 import { withAlpha } from '../lib/colors';
+import { colId, customColId, visibleColumns } from '../lib/taskColumns';
 import {
   MANUAL_SORT_ID,
   SORTABLE_TASK_COLUMNS,
   activeSortRules,
-  colId,
   sortRuleState,
-  customColId,
 } from '../lib/taskSort';
 import { arrayMoveTo } from '../lib/arrays';
 import { useDragReorder } from '../lib/dragReorder';
@@ -270,11 +276,17 @@ function sortTasks(
 export function TaskTable({
   tasks,
   customColumns,
+  columnOverrides,
   parent,
 }: {
   tasks: Task[];
-  /** The full, ordered set of columns (built-in + custom). Disabled ones are hidden. */
+  /** The full, ordered set of columns (built-in + custom). Hidden ones are filtered out below. */
   customColumns: CustomColumn[];
+  /**
+   * This page's departures from the season default (WP-59). Absent on the Übersicht, which *is*
+   * the global scope and therefore has no page to depart from.
+   */
+  columnOverrides?: ColumnOverrides;
   parent?: TaskTableParent;
 }) {
   const invalidate = useInvalidateAll();
@@ -295,10 +307,14 @@ export function TaskTable({
   // read `sort !== null` and refused every drop — with the header whose third click clears the
   // override (TTU-18) no longer rendered, leaving no way out but a navigation. So an override
   // whose column went away *is* no override, for the ordering and for dragging alike.
-  const override = sort && sortRuleState(sort.id, customColumns) === 'active' ? sort : null;
+  //
+  // „Visible" is per page since WP-59, so the overrides travel into both filters: the same rule
+  // orders one project's table and not the next one's, which is WP-32's rule staying exactly as
+  // it was while the question it asks becomes a per-page question.
+  const override = sort && sortRuleState(sort.id, customColumns, columnOverrides) === 'active' ? sort : null;
   const activeRules = useMemo(
-    () => (override ? [override] : activeSortRules(sortRules, customColumns)),
-    [override, sortRules, customColumns],
+    () => (override ? [override] : activeSortRules(sortRules, customColumns, columnOverrides)),
+    [override, sortRules, customColumns, columnOverrides],
   );
   // Subtask UI state: collapsed parents, the parent currently getting a new subtask,
   // and the parent awaiting a delete-with-children confirmation.
@@ -499,8 +515,8 @@ export function TaskTable({
   );
 
   const visibleCols = useMemo(
-    () => [...customColumns].filter((c) => c.enabled !== 0).sort(compareColumns),
-    [customColumns],
+    () => visibleColumns(customColumns, columnOverrides),
+    [customColumns, columnOverrides],
   );
 
   const colById = useMemo(

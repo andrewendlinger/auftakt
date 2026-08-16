@@ -1,4 +1,5 @@
-import type { CustomColumn, TaskSortRule } from '../api/types';
+import type { ColumnOverrides, CustomColumn, TaskSortRule } from '../api/types';
+import { colId, columnVisible, customColId } from './taskColumns';
 
 /**
  * Rule id for the manual drag order. Excluded when deciding whether two rows are of equal rank
@@ -27,35 +28,13 @@ export const SORTABLE_TASK_COLUMNS: { id: string; label: string }[] = [
   { id: MANUAL_SORT_ID, label: 'Manuelle Reihenfolge' },
 ];
 
-/**
- * Stable column id: built-ins use their `key`, custom columns `custom:<id>`.
- *
- * The delimiter is the point. With customs encoded as `c<id>` the two namespaces overlapped —
- * `BUILTIN_COLUMNS` holds `comment` and `created` — so the built-in Kommentar key decoded as
- * "custom column number `omment`": `Number('omment')` is NaN, `customValueOf` returns '', and
- * that level of the sort hierarchy silently compared every task equal. Only `comment`'s absence
- * from SORTABLE_TASK_COLUMNS kept it unreachable, and a hand-edited or imported `task_sort` does
- * not respect that list (TTU-31). `:` cannot appear in a built-in key.
- */
-const CUSTOM_PREFIX = 'custom:';
-
-export function colId(col: CustomColumn): string {
-  return col.kind === 'builtin' && col.key ? col.key : `${CUSTOM_PREFIX}${col.id}`;
-}
-
-/** The inverse of `colId` — the custom column's id, or null for a built-in key. */
-export function customColId(id: string): number | null {
-  if (!id.startsWith(CUSTOM_PREFIX)) return null;
-  const n = Number(id.slice(CUSTOM_PREFIX.length));
-  return Number.isInteger(n) ? n : null;
-}
-
 /** Whether a rule is in effect, and if not, why the user cannot see it working. */
 export type SortRuleState = 'active' | 'hidden' | 'gone';
 
 /**
  * **A column you cannot see does not order the table.** A rule is in effect only while its column
- * is visible; hiding the column (`enabled: 0`) or removing it makes the rule inert.
+ * is visible — hidden (by the season default `enabled: 0` or by this page's own override, WP-59)
+ * or removed makes the rule inert.
  *
  * Every season written before WP-32 stores `[status, priority, due]` while both of those columns
  * are `enabled: 0` — the order followed two columns that render nowhere, which is the defect this
@@ -70,19 +49,33 @@ export type SortRuleState = 'active' | 'hidden' | 'gone';
  * columns, a project table against global + project-scoped ones, so a project-scoped custom rule
  * reads as `'gone'` in Settings and `'active'` on that project's page. That is intended — each
  * asks about the table it is looking at.
+ *
+ * Since WP-59 the caller's `overrides` are the second half of that scope: „visible" is a property
+ * of the *pair* (column, page), so the same rule can be active on one project and inert on the
+ * next. Nothing about the rule changes — it is still filtered and never rewritten, so showing the
+ * column on a page wakes it up there — but the question is now per page rather than per season,
+ * which is why the caller passes what it renders (`columnVisible` is the single decider).
  */
-export function sortRuleState(id: string, columns: CustomColumn[]): SortRuleState {
+export function sortRuleState(
+  id: string,
+  columns: CustomColumn[],
+  overrides: ColumnOverrides = {},
+): SortRuleState {
   if (id === MANUAL_SORT_ID) return 'active';
   // One lookup for both halves: `colId` yields the built-in key or `custom:<id>`, so an unknown
   // id — a deleted built-in, an imported rule for a column that never arrived — finds nothing.
   const col = columns.find((c) => colId(c) === id);
   if (!col) return 'gone';
-  return col.enabled === 0 ? 'hidden' : 'active';
+  return columnVisible(col, overrides) ? 'active' : 'hidden';
 }
 
 /** The rules that actually order the table, in their configured order. Never mutates its input. */
-export function activeSortRules(rules: TaskSortRule[], columns: CustomColumn[]): TaskSortRule[] {
-  return rules.filter((r) => sortRuleState(r.id, columns) === 'active');
+export function activeSortRules(
+  rules: TaskSortRule[],
+  columns: CustomColumn[],
+  overrides: ColumnOverrides = {},
+): TaskSortRule[] {
+  return rules.filter((r) => sortRuleState(r.id, columns, overrides) === 'active');
 }
 
 /**
@@ -98,6 +91,11 @@ export function activeSortRules(rules: TaskSortRule[], columns: CustomColumn[]):
  * while the query is in flight and permanently if it fails, and reporting `'gone'` for every rule
  * told the user their whole hierarchy had been removed — a claim that was false, alarming and
  * unactionable. With nothing to resolve against, say nothing.
+ *
+ * Its one caller is `TaskSortEditor`, which sits in Einstellungen and passes no overrides on
+ * purpose: a `task_sort` rule is season-wide, so the state it reports is the state under the
+ * **season default**. Since WP-59 a page may show a column the default hides, which is why
+ * `'hidden'` is worded as „sorts only where the column is shown" rather than „sorts nothing".
  */
 export function describeSortColumn(
   id: string,
