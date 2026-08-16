@@ -542,6 +542,11 @@ const serialized: Array<[string, JSONContent, string]> = [
     { type: 'doc', content: [bulletList('eins', 'zwei'), emptyPara] },
     '- eins\n- zwei',
   ],
+  [
+    'die ganze Schluss-Serie leerer Absätze wird nicht gespeichert, nicht nur der letzte',
+    { type: 'doc', content: [bulletList('eins', 'zwei'), emptyPara, emptyPara] },
+    '- eins\n- zwei',
+  ],
   ['eine leere Notiz bleibt leer', { type: 'doc', content: [emptyPara] }, ''],
 ];
 
