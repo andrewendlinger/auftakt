@@ -8,6 +8,107 @@ If you are about to re-raise one of these, the bar is new information, not a fre
 
 ---
 
+## Der Changelog wird geschrieben, nicht generiert (2026-08-16)
+
+`generate_release_notes: true` in `.github/workflows/build.yml` has written every release body
+since `v0.6.1`. What it produces is a list of PR titles: Dependabot bumps inline with features,
+and the `Release X.Y.Z` bump PR describing itself. `v0.9.2`'s entire body is two lines, one of
+them that bump PR. `v0.5.0` and `v0.6.0` read completely differently — German, benefit-first,
+bold lead-ins — because a person wrote them. Nothing changed in 0.6.1 except that nobody did.
+
+**So it becomes a step rather than a habit**, in the release skill (2 and 6) and in a `changelog`
+skill that holds the editorial rules. The rules are worth separating from the pipeline: they are
+long, they are about writing rather than about `gh`, and „was hat sich geändert" is a question
+worth answering outside a release too.
+
+**Committed as `CHANGELOG.md`, German, and filtered hard.** The reader runs a festival office;
+they know Künstler, Saison and Papierkorb, and they must never be asked to care what a work
+package or a lockfile is. Every commit lands in one of three buckets — a bullet, one collective
+`Außerdem` line, or silence — and most of any range is silence. Capped at five bullets, because
+a patch release honestly described is short and that is information too.
+
+**`generate_release_notes` stays on.** Now that the body is overwritten before publishing, the
+generated text costs nothing and is the one mechanical check that no PR was overlooked: read it
+as a checklist, then replace it. Switching it off would trade a free completeness guard for
+tidiness in a workflow that is otherwise not worth touching.
+
+**The entry ships in the commit the tag names.** The packaged app carries the file it was built
+from, so an entry written after tagging is invisible to exactly the users running that version.
+That constraint exists for a surface that does not exist yet — the what's-new popup on the first
+cold launch after an update (`WP-63`) — and it is cheap to honour now and impossible to honour
+retroactively. It is also why `## X.Y.Z` is a bare version number: that heading is the anchor the
+popup will split the file on.
+
+**Download instructions stay out of the file.** The `xattr` and SmartScreen paragraphs belong to
+the release page, which additionally answers „wie installiere ich das". `CHANGELOG.md` answers
+only „was hat sich geändert", which is what keeps it short enough to show in a dialog.
+
+---
+
+## Schriftfarbe ist eine geschlossene Palette als Klasse, kein `style` (2026-08-16, WP-62)
+
+The report was one sentence — „der user moechte text gerne farbig machen" — and the scope was cut
+before any code was written (2026-08-15): **font colour only**, no highlighter. One mark, one
+toolbar button, the smallest thing that answers it. A background would need its own contrast rules,
+its own print behaviour (Chromium prints foreground colour by default and backgrounds not at all)
+and a second axis in the same menu; nothing in the report asks for it.
+
+**Markdown has no colour, and Markdown is what is stored.** The precedent is underlining: it
+serializes to a raw `<u>` and the reader whitelists the tag. So the colour serializes to
+`<span class="tc-rot">…</span>`, and the sanitize schema — GitHub's default, minus `code`/`pre`
+(WP-49), plus `u` — gains exactly one attribute: a `className` on `span` matching
+`TEXT_COLOR_CLASS`. `hast-util-sanitize` takes a RegExp in a value allowlist, the form the schema
+already used for `code: [['className', {}]]`.
+
+**`style` was the obvious alternative and is deliberately refused.** It is what
+`@tiptap/extension-text-style` + `@tiptap/extension-color` store — two dependencies that would have
+had to be bent anyway — and freeing it in the schema means arbitrary CSS in stored text. That text
+is not only ours: it arrives from a CSV import, from a restored backup and from a Notion export, so
+the schema is a boundary against files nobody in this repository wrote. A `tc-` class cannot be a
+CSS surface: the worst an unknown one can do is render in the default colour, because the only
+thing that paints is a rule in our own stylesheet. `check-markdown.ts` gained a fifth suite-wide
+assertion for it — no case may render a `style` attribute — because render-equality compares two
+runs of the same renderer and would not notice either half of that regression.
+
+**Two consequences, stated so they are not reported as bugs later.** A Notion export carrying
+`style="color:…"` loses its colour at the sanitizer — the text survives, the colour does not, and
+re-colouring it is two clicks. And the **.xlsx export writes flat text** (`server/src/routes/export.ts`),
+so a colour is absent from the sheet exactly as bold and italic already are; the export is a data
+handover, not a rendering of the note.
+
+**The palette is not `ColorSwatchPicker`'s.** Those sixteen colour a *dot* beside a list entry,
+where lightness is decoration; as text on white its yellow reads at 1.9:1 and cannot be read at
+all. Eight darker tones instead, every one ≥ 4.5:1 against white, pinned by `textColor.test.ts` —
+which also pins the split that keeps them honest: the ids live in `lib/textColor.ts`, the hex
+values *only* in `index.css`, and the picker paints its own swatches with the rule it is about to
+apply, so no colour is written down twice. What is borrowed from that component is the mechanism
+(`useAnchoredPopover`, `rovingItem`/`useRovingFocus`), not the list.
+
+**No „eigene Farbe".** It follows from the closed palette rather than being a separate judgement: a
+free colour can only be spelled as a `style`. It also removes the reason the swatch picker holds a
+draft until it closes (RTE-08, the native colour wheel firing per frame) — nothing in this menu
+fires more than once.
+
+**A done task's grey outranks the colour, and that ordering is the reason WP-58 came first.** A
+colour class inside a finished task's comment would otherwise sit red on a row that is grey and
+struck — „erledigt, aber immer noch dringend" — which is the same failure `.prose-md blockquote`
+produced one package earlier and is fixed in the same place: `.prose-md--done` hands the colour
+back to the row. That it *can* be handed back is the point of a class; against `PillSelect`'s
+inline `style` no Tailwind class wins, which is why that one needs a filter instead.
+
+**The colour is always the innermost mark.** marked does not parse Markdown inside a raw tag, so
+`<span class="tc-rot">**fett**</span>` would read back as two literal asterisks — the serializer
+therefore writes `**<u><span class="tc-rot">…</span></u>**`, by mark registration order rather than
+by a special case. The same trap has been true of `<u>` since WP-Q; the corpus pins both.
+
+**⌘⇧F opens the picker, and `GlobalSearch` stopped swallowing it.** Every toolbar button carries
+`tabIndex={-1}` (WP-43), which is only defensible because each has another keyboard route, and a
+popover has no natural one. ⌘F/⌘K reach the search field from anywhere — deliberately including
+from inside a text field — and that listener matched „f" with any modifier combination, so ⌘⇧F
+opened the picker *and* pulled focus out of the note, committing it mid-edit. It now ignores a key
+whose `defaultPrevented` says a layer below already answered it, which is the rule `Modal`'s Escape
+has always followed.
+
 ## Sichtbarkeit wird lokal, alles andere an der Spalte bleibt global (2026-08-16, WP-59)
 
 The customer reported the split as the defect: „zurzeit lassen sich Aufgabenspalten teilweise in

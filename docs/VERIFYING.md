@@ -466,6 +466,12 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   scroll outside its menu, and the scroll `click()` performs for itself arrives *after* the
   popover opened — the menu blinks shut and the run reads „`PillSelect` does not open at all",
   with `aria-expanded="false"` to back it up. `await trigger.scrollIntoViewIfNeeded()` first.
+- **…and never screenshot an open popover with `fullPage: true`.** Same rule, one step further:
+  `shot()` in `lib/drive.mjs` stitches a full-page picture by *scrolling*, which closes the popover
+  before the shutter — so the file shows the page without its menu and every locator after it times
+  out against working code („the picker does not open"). Take the viewport shot instead
+  (`page.screenshot({ path })`, no `fullPage`), or screenshot after the pick. Cost half an hour on
+  WP-62.
 - **„Spalten verwalten" has two lists on an entity page since WP-59, and `[data-column-row]`
   matches both.** The upper one is „Globale Spalten" — one row per global column, with the 👁/🚫
   toggle *only* (no ▲▼, no ✎, no 🗑, and none at all on the locked Status/Aufgabe rows), writing
@@ -659,6 +665,15 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   the open control. **Priorität still ships hidden**, so anything about that column has to enable
   it first (`PATCH /api/custom-columns/<id> {"enabled":1}`) and `reload()`. In „Archiv", task 25
   („Technikrider geprüft") is the one archived row carrying a comment.
+- **The coloured-text pair is tasks 29 and 30 on `#/project/7`** (WP-62): both comments carry a
+  `<span class="tc-rot">` run, task 29 done and task 30 open. The done one has to take the row's
+  grey and the open one has to stay red, and the *pair* is the assertion — on the done row alone,
+  „grey wins" also passes on a build that never paints the colour at all. The demo's
+  document-sized colour is project 1's description (a `tc-gruen` list item, and a
+  `**<u><span class="tc-rot">…</span></u>**` run in the „Technik" paragraph, i.e. the nesting order
+  the serializer produces); that description is also what the project print sheet renders, so it is
+  the fixture for „what does paper do with it". A short, plain note to colour and un-colour without
+  disturbing anything is project 2's description („Vormittagsformat für zwei Schulklassen.").
 - **Exactly one demo column is scoped to a page: „Freigabe" on artist 1** (Nordlicht Quartett,
   WP-51), with values on that artist's own tasks 16 and 51. It is the fixture for „a scope's
   columns stay on its own page" — it must be absent from every project page, from the Übersicht
@@ -761,9 +776,34 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   Use `{ exact: true }`. Every toolbar button carries `title` *and* `aria-label`, so accessible
   names there are substrings of one another far more often than the markup suggests.
 - **The rich-text toolbar is not the same on every field.** `RichTextEditor`'s `compact` trims it
-  to B/I/U, bullet, link and emoji — headings, ordered list, quote and the table button are
-  simply absent. Only the contact-row note and the task-comment cell are compact; asserting on
-  „Tabelle einfügen" anywhere else is fine, asserting on it there will always fail.
+  to B/I/U, Schriftfarbe, bullet, link and emoji — headings, ordered list, quote and the table
+  button are simply absent. Only the contact-row note and the task-comment cell are compact;
+  asserting on „Tabelle einfügen" anywhere else is fine, asserting on it there will always fail.
+- **„Schriftfarbe" is the one popover that is *not* portalled** (WP-62). It lives inside the
+  editor's own root, because the editor commits and unmounts the note when focus or a click lands
+  outside it (RTE-02) — so `document.body`'s end is the one place its menu must not be. Handles:
+  the trigger is `[title^="Schriftfarbe"]` — anchor it that way, the tooltip carries the platform's
+  own spelling of the shortcut („⌘⇧F" on macOS, „Strg+Umschalt+F" on Windows) — the menu is
+  `[role="dialog"][aria-label="Schriftfarbe"]`, its eight swatches are `[data-roving]` buttons
+  whose accessible name is the German colour („Rot", „Blau", …) and whose face is a letter A, and
+  „Standard" removes the colour. There is **no backdrop**, deliberately: a click outside closes the
+  menu *and* does what it was aimed at, so a script must not wait for a `.fixed.inset-0` to appear
+  or expect one to swallow its next click.
+- **⌘⇧F is the keyboard route into it**, and it is the only way in without a mouse: every toolbar
+  button is `tabIndex={-1}` (WP-43). Focus lands on the *current* colour, the arrows walk the grid
+  (`useRovingFocus`), Enter applies, Escape closes. `GlobalSearch`'s ⌘F listener now ignores a key
+  the editor already handled (`defaultPrevented`) — before that, ⌘⇧F opened the picker *and* moved
+  focus to the search field, which reads as „the shortcut does nothing" because the note commits
+  and the whole toolbar unmounts underneath it.
+- **TipTap's `focus()` lands a frame later, so „focus came back to the text" is an eventually-true
+  assertion.** Read straight after the menu closes, `document.activeElement` is still the trigger
+  button and the check fails against working code. `waitForFunction(() =>
+  document.querySelector('.rte-content').contains(document.activeElement))`.
+- **A colour class computes to a plain `rgb(...)`, the greyed-out version does not.** The palette
+  is hand-written hex in `index.css` (`.tc-rot` → `rgb(185, 28, 28)`), while the grey it has to
+  yield to on a done row is Tailwind's `text-neutral-400`, i.e. `oklch(0.708 0 none)`. So assert
+  the colour against the literal rgb, and assert the *graying* as the comparison the entry above
+  prescribes — the span's `color` must equal the cell's.
 - **The table controls („Zeile +", „Spalte +", „Tabelle löschen") render *below* the editor** and
   only while the caret is inside a table. A script that clicks the table button and then looks
   for them above the text finds nothing.

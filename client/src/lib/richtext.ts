@@ -7,7 +7,7 @@ import { Table, renderTableToMarkdown } from '@tiptap/extension-table';
 import { TableRow } from '@tiptap/extension-table-row';
 import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
-import { Extension, Node, mergeAttributes, type AnyExtension, type JSONContent } from '@tiptap/core';
+import { Extension, Mark, Node, mergeAttributes, type AnyExtension, type JSONContent } from '@tiptap/core';
 import { NodeSelection, Plugin } from '@tiptap/pm/state';
 import { Lexer, Marked, type TokensList } from 'marked';
 import { fenceParagraphs } from './legacyCode';
@@ -23,6 +23,7 @@ import {
   splitImageSrc,
   type ImageAlign,
 } from './imageRef';
+import { textColorClass, textColorFromClass } from './textColor';
 
 /**
  * Underline is serialized as raw `<u>…</u>`, not TipTap's default `++…++`.
@@ -35,6 +36,70 @@ import {
 const MdUnderline = Underline.extend({
   renderMarkdown(node, helpers) {
     return `<u>${helpers.renderChildren(node)}</u>`;
+  },
+});
+
+/**
+ * Schriftfarbe im Text (WP-62) — the same trick as `MdUnderline`, one step further.
+ *
+ * Markdown cannot spell a colour, so the mark serializes to a raw `<span class="tc-rot">…</span>`
+ * and the reader whitelists exactly that: `sanitizeSchema` (`lib/markdownPipeline.ts`) admits a
+ * `className` matching `TEXT_COLOR_CLASS` on a `span`, and `index.css` is what paints it. The
+ * spelling itself lives in `lib/textColor.ts`, which is the only thing the two halves share — and
+ * they must change together, like every other rule in this module.
+ *
+ * **A class, not a `style` attribute**, which is also why this is a mark of our own rather than
+ * `@tiptap/extension-text-style` + `@tiptap/extension-color`: those two store into `style`, and
+ * freeing `style` in the sanitize schema would put arbitrary CSS into stored text that is also
+ * *imported* (a Notion export carries `style="color:…"`, and loses it here, deliberately). The
+ * corpus in `scripts/check-markdown.ts` asserts that no case renders a `style` attribute at all.
+ *
+ * `parseHTML` matches `span[class]` and refuses everything whose class is not one of ours, so a
+ * pasted `<span class="ql-cursor">` is dropped exactly as it was before — `getAttrs` returning
+ * `false` rejects the rule, and nothing else claims a `span`. Note this is the paste gate as much
+ * as the parser (`MdImage` below documents why), and a colour class is all it can ever admit.
+ *
+ * The attribute round-trips *any* id the class shape accepts, not only the eight the picker
+ * offers: a note written today has to survive the palette being re-cut, and an id with no rule
+ * behind it renders in the default colour rather than disappearing from the text.
+ */
+const MdTextColor = Mark.create({
+  name: 'textColor',
+
+  addAttributes() {
+    return {
+      color: {
+        default: null,
+        // Structural, not `HTMLElement`: this module is typechecked without the DOM library
+        // through `check-markdown.ts` — the same reason `MdImage`'s `getAttrs` is (see below).
+        parseHTML: (el: { getAttribute(name: string): string | null }) =>
+          textColorFromClass(el.getAttribute('class')),
+        renderHTML: (attrs: { color?: string | null }) =>
+          typeof attrs.color === 'string' ? { class: textColorClass(attrs.color) } : {},
+      },
+    };
+  },
+
+  parseHTML() {
+    return [
+      {
+        tag: 'span[class]',
+        getAttrs: (el: { getAttribute(name: string): string | null }) =>
+          textColorFromClass(el.getAttribute('class')) !== null && null,
+      },
+    ];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ['span', mergeAttributes(HTMLAttributes), 0];
+  },
+
+  // The serializer hands a mark a synthetic node carrying its `attrs`, so the colour reaches the
+  // stored text from here — `renderChildren` is what the manager replaces with the marked run.
+  renderMarkdown(node, helpers) {
+    const color = typeof node.attrs?.color === 'string' ? node.attrs.color : null;
+    const children = helpers.renderChildren(node);
+    return color ? `<span class="${textColorClass(color)}">${children}</span>` : children;
   },
 });
 
@@ -510,10 +575,11 @@ const MdLinkedImage = Extension.create({
  * is then three adjacent links rather than one, which renders identically and stores the
  * destination the old output simply dropped.
  *
- * `underline` is absent deliberately: it serializes as raw `<u>`, and marked does not parse
- * Markdown inside a raw tag, so the image would come back as literal `![…]` text. Nothing in the
- * app can author that combination — the toolbar cannot underline an atom — and writing it would be
- * the loss this function exists to prevent.
+ * `underline` and `textColor` are absent deliberately: both serialize as raw HTML, and marked does
+ * not parse Markdown inside a raw tag, so the image would come back as literal `![…]` text.
+ * Nothing in the app can author those combinations — the toolbar cannot underline an atom, and a
+ * colour on a picture paints nothing — and writing them would be the loss this function exists to
+ * prevent.
  */
 function wrapImageMarks(md: string, marks: JSONContent['marks']): string {
   if (!marks?.length) return md;
@@ -548,6 +614,10 @@ function wrapImageMarks(md: string, marks: JSONContent['marks']): string {
  * - **No code at all** (WP-49) — `markdownParser` above, and `Markdown.tsx`'s micromark twin.
  *   `horizontalRule` stays enabled (StarterKit default) so any such content in existing notes
  *   round-trips even though the toolbar doesn't author it.
+ * - **Two constructs are spelled as raw HTML**, because Markdown has no syntax for either:
+ *   underlining (`<u>`, since WP-Q) and the font colour (`<span class="tc-…">`, WP-62). Both are
+ *   whitelisted on the reading side, and the colour class is the only *attribute* the sanitize
+ *   schema admits beyond GitHub's defaults.
  *
  * Dropping the code mark also empties the serializer's `codeTypes`, so *every* text node is now
  * backtick-escaped on the way out. That is what keeps the two parsers in step: a backtick the
@@ -582,6 +652,11 @@ export function markdownExtensions(
       },
     }),
     MdUnderline,
+    // After the marks above, and that order is load-bearing: the serializer opens marks by
+    // registration rank, so the colour span lands *inside* `**` and `<u>` rather than around
+    // them. Around them it would be wrong in both directions — marked does not parse Markdown
+    // inside a raw tag, so `<span …>**fett**</span>` reads back as two literal asterisks.
+    MdTextColor,
     LegacyFence,
     MdDocument,
     MdParagraph,

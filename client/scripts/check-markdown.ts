@@ -9,10 +9,13 @@
  *   1. render-equality  — HTML(input) === HTML(editor round-trip of input)
  *   2. idempotence      — a second round-trip equals the first (stable output)
  *   3. no code          — neither side renders a `<pre>` or a `<code>` (WP-49)
+ *   4. no `style`       — neither side renders a `style` attribute (WP-62)
  *
- * The third is not implied by the first: render-equality compares two runs of the *same*
- * renderer, so a construct both sides agree to draw as code passes it happily. „Auftakt-Text
- * kennt keinen Code" is a claim about the output itself, and this is where it is checked.
+ * Neither of the last two is implied by the first: render-equality compares two runs of the *same*
+ * renderer, so a construct both sides agree to draw as code — or to paint with inline CSS — passes
+ * it happily. „Auftakt-Text kennt keinen Code" and „die Schriftfarbe ist eine Klasse aus einer
+ * geschlossenen Palette, kein `style`" are claims about the output itself, and this is where they
+ * are checked.
  *
  * The editor half runs headless via jsdom using the exact `markdownExtensions()` the app
  * ships; the render half rebuilds `Markdown.tsx`'s remark/rehype pipeline in Node. Run with
@@ -105,6 +108,18 @@ const CONTROL_CHARS = /[\x00-\x08\x0b-\x1f]/;
 /** WP-49: nothing the app stores may render as code, whatever it looked like when it arrived. */
 const CODE_TAGS = /<(pre|code)[\s>]/;
 
+/**
+ * WP-62: nothing the app stores may render inline CSS, whatever it looked like when it arrived.
+ *
+ * The font colour is a class from a closed palette (`lib/textColor.ts`), and `style` is out of the
+ * sanitize schema on purpose — an import (a Notion export, a restored backup, a CSV) is the one
+ * source that carries `style="color:…"`, and it loses it here. This is the assertion that keeps
+ * that true: the obvious way to add a colour is `@tiptap/extension-color`, which stores into a
+ * `style` attribute, and freeing that in the schema would be one line in `markdownPipeline.ts`.
+ * Render-equality would not notice either half.
+ */
+const STYLE_ATTR = /<[a-z][^>]*\sstyle\s*=/i;
+
 /** The indent unit Tab writes (RichTextEditor). Plain spaces cannot survive a paragraph. */
 const NBSP = '\u00a0';
 
@@ -152,6 +167,35 @@ const corpus: Record<string, string> = {
   // spelling on that save, which is why it must render the same before and after.
   blankLinesLegacy: 'davor\n\n\n\ndanach',
   blankLinesLegacyAfterList: '- eins\n- zwei\n\n\n\n&nbsp;\n\nDanach.',
+  // WP-62. Markdown has no colour, so the mark is stored as a raw `<span class="tc-…">` — the
+  // second construct in the dialect spelled that way, after `<u>`, and the reason the sanitize
+  // schema now admits one attribute value shape on a `span`. The colour is the *innermost* mark
+  // in every combination below, which is not a preference: marked does not parse Markdown inside
+  // a raw tag, so `<span …>**fett**</span>` would come back as two literal asterisks — exactly
+  // the trap `mixedMarks` above pins for `<u>`. The serializer puts it there by itself (mark
+  // registration order in `richtext.ts`); these cases are what proves it stays there.
+  colorWord: 'Ein <span class="tc-rot">roter</span> Hinweis.',
+  colorPhrase: 'Ein <span class="tc-blau">ganzer blauer Satzteil</span> mitten im Text.',
+  colorTwoRuns: 'Erst <span class="tc-rot">rot</span>, dann <span class="tc-gruen">grün</span>.',
+  colorWholeParagraph: '<span class="tc-violett">Der ganze Absatz ist gefärbt.</span>',
+  colorInBold: '**fett und <span class="tc-blau">blau</span>** zusammen.',
+  colorInItalic: '*<span class="tc-tuerkis">kursiv und türkis</span>*',
+  colorUnderlined: 'Ein <u><span class="tc-gruen">grün unterstrichenes</span></u> Wort.',
+  // What the toolbar itself writes when all three are on: `**`, then `<u>`, then the colour.
+  colorBoldUnderlined: 'Ein **<u><span class="tc-rot">wichtiges</span></u>** Wort.',
+  colorInHeading: '# <span class="tc-rot">Rote Überschrift</span>',
+  colorInList: '- <span class="tc-violett">eins</span>\n- zwei\n- <span class="tc-orange">drei</span>',
+  colorInTable: '| Rolle | Person |\n| --- | --- |\n| <span class="tc-rot">Licht</span> | Anna |',
+  colorInQuote: '> <span class="tc-rot">Achtung</span> — nur mit Helm.',
+  colorInLink: 'Siehe [<span class="tc-blau">die Seite</span>](https://example.com).',
+  // A colour the palette no longer offers must still round-trip: the class shape is what both
+  // halves agree on, not the eight ids `TEXT_COLORS` happens to list today. It renders in the
+  // default colour (no rule matches it) rather than losing the text around it.
+  colorUnknownId: 'Ein <span class="tc-unbekannt">Ton aus einer anderen Palette</span>.',
+  // The import shape, and the whole of the `style` decision in one line: a foreign `style` is
+  // dropped by the sanitizer *and* by the editor, so the two halves agree on the class alone.
+  colorImportWithStyle:
+    'Aus dem Export: <span class="tc-rot" style="color:#ff0000">Fassung 3</span> fehlt noch.',
   heading: '# Titel\n\n## Abschnitt\n\n### Unterpunkt',
   quote: '> ein Zitat\n> über zwei Zeilen',
   table: '| Instrument | Anzahl |\n| --- | --- |\n| Geige | 4 |\n| Cello | 2 |',
@@ -340,27 +384,30 @@ let failures = 0;
 const assertMarkdown = (name: string, md: string, source: 'md' | 'json') => {
   const out1 = roundtrip(md);
   const out2 = roundtrip(out1);
-  const renderEqual = render(md) === render(out1);
+  // Rendered once each and read by four of the assertions below — the HTML is what three of them
+  // are *about*, and re-deriving it per assertion says the same thing five times.
+  const inHtml = render(md);
+  const outHtml = render(out1);
+  const renderEqual = inHtml === outHtml;
   const idempotent = out1 === out2;
   const clean = !CONTROL_CHARS.test(md) && !CONTROL_CHARS.test(out1);
-  const codeFree = !CODE_TAGS.test(render(md)) && !CODE_TAGS.test(render(out1));
+  const codeFree = !CODE_TAGS.test(inHtml) && !CODE_TAGS.test(outHtml);
+  const styleFree = !STYLE_ATTR.test(inHtml) && !STYLE_ATTR.test(outHtml);
   // Both directions: the stored text must parse into a legal document, and so must what the
   // editor writes back — an invalid doc that serializes cleanly is exactly the failure this
-  // catches, and it is invisible to the three assertions above.
+  // catches, and it is invisible to the four assertions above.
   const illegal = docIsLegal(md) ?? docIsLegal(out1);
-  if (renderEqual && idempotent && clean && codeFree && !illegal) {
+  if (renderEqual && idempotent && clean && codeFree && styleFree && !illegal) {
     console.log(`  ok   ${name}`);
     return;
   }
   failures++;
   console.log(
-    `  FAIL ${name}${renderEqual ? '' : '  [render differs]'}${idempotent ? '' : '  [not idempotent]'}${clean ? '' : '  [control chars]'}${codeFree ? '' : '  [renders code]'}${illegal ? `  [${illegal}]` : ''}`,
+    `  FAIL ${name}${renderEqual ? '' : '  [render differs]'}${idempotent ? '' : '  [not idempotent]'}${clean ? '' : '  [control chars]'}${codeFree ? '' : '  [renders code]'}${styleFree ? '' : '  [renders style]'}${illegal ? `  [${illegal}]` : ''}`,
   );
   if (!renderEqual) {
     console.log(`       ${source === 'json' ? 'json md' : 'in  md '}: ${JSON.stringify(md)}`);
     console.log(`       out md : ${JSON.stringify(out1)}`);
-    console.log(`       in  html: ${render(md)}`);
-    console.log(`       out html: ${render(out1)}`);
   }
   if (!idempotent) {
     console.log(`       pass1  : ${JSON.stringify(out1)}`);
@@ -369,9 +416,9 @@ const assertMarkdown = (name: string, md: string, source: 'md' | 'json') => {
   if (!clean) {
     console.log(`       md     : ${JSON.stringify(md)}`);
   }
-  if (!codeFree) {
-    console.log(`       in  html: ${render(md)}`);
-    console.log(`       out html: ${render(out1)}`);
+  if (!renderEqual || !codeFree || !styleFree) {
+    console.log(`       in  html: ${inHtml}`);
+    console.log(`       out html: ${outHtml}`);
   }
 };
 
@@ -476,6 +523,48 @@ if (misaligned.includes('?a=')) {
 }
 
 /**
+ * Fremdes HTML bringt Farbe als `style` mit — und verliert genau sie, in beiden Hälften (WP-62).
+ *
+ * This is the stated cost of storing the colour as a class: a Notion export, a CSV import or a
+ * restored backup carries `style="color:…"`, and neither half of the dialect will keep it. What
+ * both halves *do* keep is the text, which is the part that matters — the reader unwraps the tag
+ * it cannot use rather than stripping it, and the editor drops the mark rather than the run.
+ *
+ * The corpus above cannot say this, because these shapes do not round-trip: the reader keeps a
+ * class-less `<span>` where the editor has no node for one, so the two disagree about an element
+ * that draws nothing. That difference is invisible on screen and older than this package; what is
+ * asserted here is the part that would be a *defect* — a `style` reaching the DOM, or being
+ * written back into stored text.
+ *
+ * A parse rule is also a paste rule (the clipboard block above), so the same holds for text copied
+ * out of a web page or a Word document: it arrives as prose, in the note's own colours.
+ */
+const imported: Array<[string, string]> = [
+  ['ein Notion-Absatz mit color', 'Ein <span style="color:#ff0000">roter</span> Absatz.'],
+  ['eine fremde Klasse', 'Ein <span class="notion-red">roter</span> Absatz.'],
+  ['ein <font> aus einer Alt-Datei', 'Ein <font color="red">roter</font> Absatz.'],
+  ['ein style am Block selbst', '<p style="color:#ff0000">Ein roter Absatz.</p>'],
+  ['style neben unserer Klasse', 'Ein <span class="tc-rot" style="color:#0f0">roter</span> Absatz.'],
+];
+
+for (const [name, html] of imported) {
+  const rendered = render(html);
+  const stored = roundtrip(html);
+  const styleFree = !STYLE_ATTR.test(rendered) && !stored.includes('style=');
+  const kept = rendered.includes('roter') && stored.includes('roter');
+  if (styleFree && kept) {
+    console.log(`  ok   import: ${name} — Farbe weg, Text da`);
+  } else {
+    failures++;
+    console.log(
+      `  FAIL import: ${name}${styleFree ? '' : '  [style überlebt]'}${kept ? '' : '  [Text verloren]'}`,
+    );
+    console.log(`       html   : ${rendered}`);
+    console.log(`       out md : ${JSON.stringify(stored)}`);
+  }
+}
+
+/**
  * The editor must *understand* the width spelling, not merely carry it.
  *
  * String equality cannot see the difference: an editor that kept `?w=384` verbatim in the node's
@@ -570,6 +659,7 @@ if (failures) {
   process.exit(1);
 }
 console.log(
-  `\nmarkdown round-trip: all ${total} cases render-equal, idempotent, control-char free and code free` +
-    `, and all ${clipboard.length + 6 + serialized.length} clipboard, node and serialize assertions hold`,
+  `\nmarkdown round-trip: all ${total} cases render-equal, idempotent, control-char free, code free` +
+    ` and style free, and all ${clipboard.length + imported.length + 6 + serialized.length}` +
+    ` clipboard, import, node and serialize assertions hold`,
 );

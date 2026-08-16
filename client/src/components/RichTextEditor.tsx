@@ -18,8 +18,11 @@ import { useErrorToast } from '../hooks';
 import { withSeasonPin, type ImageAlign } from '../lib/imageRef';
 import { INDENT_UNIT, outdentWidth } from '../lib/indent';
 import { resizeTextImage } from '../lib/image';
+import { useAnchoredPopover } from '../lib/popover';
 import { markdownExtensions } from '../lib/richtext';
+import { rovingItem, useRovingFocus } from '../lib/rovingFocus';
 import { getWindowSeason } from '../lib/season';
+import { TEXT_COLORS, textColorClass } from '../lib/textColor';
 import { isParsableUrl, normalizeUrl } from '../lib/url';
 import { EXTERNAL_LINK_CLASS } from './ui';
 import { ImageIcon, IndentIcon, LinkIcon, ListIcon, OutdentIcon, QuoteIcon, SmileIcon, TableIcon, TrashIcon } from './icons';
@@ -183,6 +186,47 @@ const Indent = Extension.create({
   },
 });
 
+/** The event ⌘⇧F fires on the editor's own DOM node; `TextColorPicker` is what listens. */
+const TEXT_COLOR_EVENT = 'auftakt:schriftfarbe';
+
+/**
+ * How the shortcut is spelled in the button's tooltip — the app's first user-visible key hint, and
+ * the customer runs Windows as well as macOS. The bridge is the honest source in the packaged app;
+ * the browser dev server has none, so the user agent stands in. (Everything else the app writes
+ * with a ⌘ is a source comment.)
+ */
+const TEXT_COLOR_HINT =
+  (window.auftakt?.platform ?? (navigator.userAgent.includes('Mac') ? 'darwin' : '')) === 'darwin'
+    ? '⌘⇧F'
+    : 'Strg+Umschalt+F';
+
+/**
+ * ⌘⇧F opens the colour picker — the keyboard route the toolbar button cannot be (WP-62).
+ *
+ * Every `Btn` carries `tabIndex={-1}` (WP-43), which is only defensible because each of them has
+ * another way in: ⌘B/⌘I/⌘U are the editor's own, „Einrücken"/„Ausrücken" are Tab/Shift-Tab. A
+ * popover has no such natural key, so it gets one here, and the picker takes focus into its grid
+ * when it is opened this way — arrows to choose, Enter to apply, Escape back to the text.
+ *
+ * A DOM event rather than a callback, because the extension list is frozen at construction
+ * (`useEditor` defaults its deps to `[]`, RTE-19) while the picker is ordinary React state one
+ * component away. `view.dom` is the node both sides already hold.
+ *
+ * The key itself: free in TipTap (⌘⇧S is strike, ⌘⇧7/8 the lists, ⌘⇧B the quote), free in
+ * Chromium, and the app defines exactly one accelerator of its own (⌘N, `electron/menu.ts`).
+ */
+const TextColorShortcut = Extension.create({
+  name: 'rteTextColor',
+  addKeyboardShortcuts() {
+    return {
+      'Mod-Shift-f': () => {
+        this.editor.view.dom.dispatchEvent(new CustomEvent(TEXT_COLOR_EVENT));
+        return true;
+      },
+    };
+  },
+});
+
 export function RichTextEditor({
   value,
   onChange,
@@ -317,6 +361,7 @@ export function RichTextEditor({
       Placeholder.configure({ placeholder: () => placeholderRef.current ?? '' }),
       LinkHoverTitle,
       Indent,
+      TextColorShortcut,
     ],
     content: value,
     contentType: 'markdown',
@@ -596,6 +641,8 @@ function Toolbar({
       h3: editor.isActive('heading', { level: 3 }),
       quote: editor.isActive('blockquote'),
       link: editor.isActive('link'),
+      // The id, not a boolean: the trigger shows the colour the caret is in, and the menu marks it.
+      textColor: (editor.getAttributes('textColor').color as string | undefined) ?? null,
     }),
   });
 
@@ -680,6 +727,9 @@ function Toolbar({
         <Btn title="Unterstrichen" on={active?.underline} onClick={() => chain().toggleUnderline().run()}>
           <span className="underline">U</span>
         </Btn>
+        {/* Beside B/I/U and not behind the `compact` gate: a colour is inline formatting like
+            those three, not a document-sized construct like a table or an image. */}
+        <TextColorPicker editor={editor} color={active?.textColor ?? null} />
         <Sep />
         <Btn title="Aufzählung" on={active?.bullet} onClick={() => chain().toggleBulletList().run()}>
           <ListIcon className="h-4 w-4" />
@@ -791,6 +841,150 @@ function Toolbar({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * „Schriftfarbe" — a closed palette, applied as a mark (WP-62).
+ *
+ * The mechanism is `ColorSwatchPicker`'s (an anchored popover, a roving grid, the current value
+ * holding the tab stop); the colours are not — see `lib/textColor.ts` for why those sixteen dots
+ * are unreadable as text. Each swatch is an „A" painted by the very class it is about to write, so
+ * the picker shows what it will do and no hex is repeated outside `index.css`. There is no „eigene
+ * Farbe": a free colour could only be spelled as a `style` attribute, which is exactly what the
+ * dialect refuses to store — which also means there is no draft to hold back here (RTE-08 is about
+ * the native colour wheel firing per frame; nothing in this menu fires more than once).
+ *
+ * **Positioned `fixed`, but *not* portalled**, unlike every other popover in the app. The editor
+ * treats focus or a click landing outside `rootRef` as „the user left" and commits the note
+ * (RTE-02), so a menu under `document.body` would save and unmount the editor the moment it took
+ * focus — the reason the link bar and the emoji picker are inside the root too. Fixed positioning
+ * is what keeps the clipping fix (RTE-13): no ancestor here establishes a containing block, so the
+ * menu is measured against the viewport and a dialog's scrolling body cannot cut it off.
+ *
+ * There is no backdrop either, and that is deliberate: the click that dismisses the menu should
+ * also do what it was aimed at — put the caret somewhere, or leave the field and save the note.
+ */
+function TextColorPicker({ editor, color }: { editor: Editor; color: string | null }) {
+  const { open, pos, anchorRef, menuRef, openPopover, closePopover, toggle } = useAnchoredPopover<
+    HTMLButtonElement,
+    HTMLDivElement
+  >();
+  const roving = useRovingFocus();
+  /** True while the menu was opened from the keyboard, i.e. while it owns focus and must give it back. */
+  const holdsFocus = useRef(false);
+
+  useEffect(() => {
+    const dom = editor.view.dom;
+    const openFromKeyboard = () => {
+      holdsFocus.current = true;
+      openPopover();
+    };
+    dom.addEventListener(TEXT_COLOR_EVENT, openFromKeyboard);
+    return () => dom.removeEventListener(TEXT_COLOR_EVENT, openFromKeyboard);
+  }, [editor, openPopover]);
+
+  // Click-away. Capture phase so it runs before whatever the click lands on, and it does not
+  // preventDefault — see the note on the missing backdrop above.
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: Event) => {
+      const target = e.target as Node | null;
+      if (menuRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
+      closePopover();
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => document.removeEventListener('pointerdown', onPointerDown, true);
+  }, [open, closePopover, menuRef, anchorRef]);
+
+  /**
+   * Focus in on the keyboard path, and back out again — the mouse path never moves it at all
+   * (`Btn` cancels `mousedown`, so the caret stays put and the selection with it).
+   *
+   * The way back matters: `useAnchoredPopover`'s Escape puts focus on the trigger, which is
+   * `tabIndex={-1}` toolbar chrome, so from there the next keystroke would go nowhere. Focus the
+   * user has since moved somewhere real is never stolen — the rule `ColorSwatchPicker` and
+   * `Modal` both follow.
+   */
+  useLayoutEffect(() => {
+    if (!holdsFocus.current) return;
+    if (open) {
+      const items = Array.from(roving.ref.current?.querySelectorAll<HTMLElement>('[data-roving]') ?? []);
+      (items.find((el) => el.dataset.color === color) ?? items[0])?.focus();
+      return;
+    }
+    holdsFocus.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body || active === anchorRef.current) editor.commands.focus();
+    // Keyed on `open` alone: `color` changes as the caret moves through the text, and re-running
+    // this would pull focus off whatever the user is doing.
+  }, [open]);
+
+  const pick = (id: string | null) => {
+    holdsFocus.current = false;
+    closePopover();
+    const chain = editor.chain().focus();
+    (id ? chain.setMark('textColor', { color: id }) : chain.unsetMark('textColor')).run();
+  };
+  // The tab stop sits on the current colour, so arrowing starts where the value already is.
+  const stop = TEXT_COLORS.find((c) => c.id === color)?.id ?? TEXT_COLORS[0]?.id;
+
+  return (
+    <>
+      <Btn
+        ref={anchorRef}
+        title={`Schriftfarbe (${TEXT_COLOR_HINT})`}
+        on={open}
+        onClick={toggle}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+      >
+        {/* While the menu is open the button itself is dark, so the glyph drops the colour class
+            and rides on `currentColor` — a #1d4ed8 „A" on #262626 is not a preview of anything. */}
+        <span className={`flex flex-col items-center leading-none ${!open && color ? textColorClass(color) : ''}`}>
+          <span className="text-[13px] font-semibold">A</span>
+          <span aria-hidden className="mt-[2px] h-[3px] w-4 rounded-sm bg-current" />
+        </span>
+      </Btn>
+      {open && pos && (
+        <div
+          ref={menuRef}
+          role="dialog"
+          aria-label="Schriftfarbe"
+          className="fixed z-50 overflow-y-auto rounded-xl bg-white p-2 text-neutral-600 shadow-lg ring-1 ring-black/10"
+          style={{ left: pos.left, top: pos.top, maxHeight: pos.maxHeight }}
+        >
+          <div ref={roving.ref} onKeyDown={roving.onKeyDown} className="grid grid-cols-4 gap-0.5">
+            {TEXT_COLORS.map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                title={label}
+                aria-label={label}
+                aria-pressed={color === id}
+                data-color={id}
+                {...rovingItem(id === stop)}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => pick(id)}
+                className={`flex h-7 w-7 items-center justify-center rounded-lg text-sm font-semibold transition hover:bg-neutral-100 ${
+                  color === id ? 'ring-1 ring-neutral-400' : ''
+                } ${textColorClass(id)}`}
+              >
+                A
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => pick(null)}
+            className="mt-1 w-full rounded-lg px-2 py-1 text-xs transition hover:bg-neutral-100"
+          >
+            Standard
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -909,6 +1103,8 @@ function Btn({
   onClick,
   children,
   disabled,
+  ref,
+  ...aria
 }: {
   title: string;
   on?: boolean;
@@ -916,9 +1112,15 @@ function Btn({
   children: React.ReactNode;
   /** Only „Bild einfügen" uses this today, while its upload is in flight. */
   disabled?: boolean;
+  /** Only „Schriftfarbe" uses this: its popover is positioned against this button's rect. */
+  ref?: React.Ref<HTMLButtonElement>;
+  'aria-haspopup'?: 'dialog';
+  'aria-expanded'?: boolean;
 }) {
   return (
     <button
+      {...aria}
+      ref={ref}
       type="button"
       title={title}
       aria-label={title}

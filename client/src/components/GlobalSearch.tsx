@@ -101,9 +101,18 @@ export function GlobalSearch() {
    * is mounted exactly once, in the app header. Unlike ⌘Z it fires inside text fields — moving
    * to search is precisely what a user in the middle of typing means by it — but never over an
    * open dialog, whose focus it would strand behind the backdrop.
+   *
+   * A key a *layer below* already answered is left alone, the rule `Modal`'s Escape follows.
+   * This listener is on `window`, so it sees a keystroke after the element under the caret has
+   * had it — and it matched on „f" alone, Shift or no Shift, which is how ⌘⇧F („Schriftfarbe",
+   * WP-62) both opened the colour picker *and* moved focus to the search field, taking the note's
+   * commit-on-blur with it. ProseMirror marks a key its keymap handled, so `defaultPrevented` is
+   * exactly „the editor meant this one"; plain ⌘F inside a note is not handled there and still
+   * reaches the field, which is the whole point of the shortcut.
    */
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
       if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
       const k = e.key.toLowerCase();
       if ((k !== 'f' && k !== 'k') || anyModalOpen()) return;

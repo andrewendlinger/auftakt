@@ -141,16 +141,63 @@ body {
   margin: 1em 0;
 }
 
-/* Done variant (WP-58). A finished task's comment is greyed by the cell around it, and the whole
-   point of that grey is that it *inherits* — which `blockquote` above breaks, being the one node
-   in this block that paints text at all. A Zitat inside a done comment therefore sat at #6b7280
-   while every other cell in the row was neutral-400: struck, but visibly darker.
+/* Schriftfarbe im Text (WP-62). Eight tones, all ≥ 4.5:1 against white — the palette a user picks
+   from, and the *only* place the colours are written down. `lib/textColor.ts` carries the ids and
+   the labels, the mark stores `<span class="tc-rot">`, the sanitize schema admits exactly that
+   class shape, and the toolbar's swatches paint themselves with these very rules
+   (`background: currentColor`) so no hex is ever repeated in TypeScript. `textColor.test.ts`
+   fails if an id here and an id there ever drift apart.
+
+   Deliberately *not* scoped to `.prose-md`: the same class colours the reading view, the editor
+   and the swatch in the picker, which is what makes the picker show what it will do. An id with
+   no rule — a note written before the palette was re-cut — simply renders in the text colour,
+   which is why the schema's allowlist is a class *shape* rather than these eight names. */
+.tc-rot {
+  color: #b91c1c;
+}
+.tc-orange {
+  color: #c2410c;
+}
+.tc-bernstein {
+  color: #a16207;
+}
+.tc-gruen {
+  color: #15803d;
+}
+.tc-tuerkis {
+  color: #0f766e;
+}
+.tc-blau {
+  color: #1d4ed8;
+}
+.tc-violett {
+  color: #6d28d9;
+}
+.tc-pink {
+  color: #be185d;
+}
+
+/* Done variant (WP-58, extended by WP-62). A finished task's comment is greyed by the cell around
+   it, and the whole point of that grey is that it *inherits* — which `blockquote` above breaks,
+   being the one node in this block that paints text at all. A Zitat inside a done comment
+   therefore sat at #6b7280 while every other cell in the row was neutral-400: struck, but visibly
+   darker.
+
+   A coloured run is the same failure, one package later: `.tc-rot` paints text too, so a red word
+   in a done task's comment would stay red on a row that is otherwise grey — „erledigt, aber immer
+   noch dringend". It is handed back here rather than being made a weaker colour, because the row's
+   grey is the statement and the colour is the thing being retracted. The attribute selector
+   catches every palette entry including ones added later, and its two halves are the usual
+   class-token match (first token, or preceded by a space).
 
    A modifier rather than a utility on the wrapper, for the same reason `--roomy` is one: the
    rule it has to beat has identical specificity and Tailwind's utilities are imported *above*
    this block, so an `[&_blockquote]:text-inherit` loses on order and silently does nothing. Here
-   the override sits after the rule it overrides, which is the whole mechanism. */
-.prose-md--done blockquote {
+   the override sits after the rules it overrides — and outranks them anyway, two selectors to
+   one, which is what makes the colour classes safe to keep unscoped. */
+.prose-md--done blockquote,
+.prose-md--done [class^='tc-'],
+.prose-md--done [class*=' tc-'] {
   color: inherit;
 }
 
