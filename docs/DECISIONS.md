@@ -35,9 +35,13 @@ runs of the same renderer and would not notice either half of that regression.
 
 **Two consequences, stated so they are not reported as bugs later.** A Notion export carrying
 `style="color:…"` loses its colour at the sanitizer — the text survives, the colour does not, and
-re-colouring it is two clicks. And the **.xlsx export writes flat text** (`server/src/routes/export.ts`),
-so a colour is absent from the sheet exactly as bold and italic already are; the export is a data
-handover, not a rendering of the note.
+re-colouring it is two clicks. And the **.xlsx export writes the stored Markdown verbatim**
+(`server/src/routes/export.ts`, the `comment` column), so the colour does not quietly vanish there
+— the tag itself lands in the cell, `<span class="tc-rot">final</span>` around one word. That is
+what `**fett**` and `[Text](https://…)` have always done in that sheet; a colour is simply the
+longest of them. Not changed here: the export is a data handover rather than a rendering, and
+teaching it to strip Markdown is a decision about every column that carries prose — starting with
+what „strip" should mean for a link.
 
 **The palette is not `ColorSwatchPicker`'s.** Those sixteen colour a *dot* beside a list entry,
 where lightness is decoration; as text on white its yellow reads at 1.9:1 and cannot be read at
@@ -59,10 +63,28 @@ produced one package earlier and is fixed in the same place: `.prose-md--done` h
 back to the row. That it *can* be handed back is the point of a class; against `PillSelect`'s
 inline `style` no Tailwind class wins, which is why that one needs a filter instead.
 
-**The colour is always the innermost mark.** marked does not parse Markdown inside a raw tag, so
-`<span class="tc-rot">**fett**</span>` would read back as two literal asterisks — the serializer
-therefore writes `**<u><span class="tc-rot">…</span></u>**`, by mark registration order rather than
-by a special case. The same trap has been true of `<u>` since WP-Q; the corpus pins both.
+**Inside a raw-HTML mark, the content is Markdown — because that is what the reader reads there.**
+The colour is the innermost mark whenever it *can* be: mark registration order puts it inside `**`
+and `<u>`, so „ein Wort einfärben" stores `**<u><span class="tc-rot">…</span></u>**`. But it cannot
+always be, and the gesture that proves it is the most natural one in the feature — select the whole
+paragraph, then pick a colour. A mark that outlives the marks inside it has to open outside them
+(`getMarksToOpenForSerialization`), so that is stored as
+`<span class="tc-rot">aaa **bbb** ccc</span>`: Markdown inside a raw tag.
+
+That string is *correct* — remark parses inline HTML as a tag and its content as Markdown, so the
+reader draws exactly what the editor did. The editor was the half that disagreed: `MarkdownManager`
+hands raw inline HTML to `generateJSON`, i.e. reads the content as HTML, so `**bbb**` came back as
+four literal asterisks and the next save escaped them to `\*\*bbb\*\*`. One save and the bold was
+decoration; two and the reader showed the backslashes. Links went the same way, and ordinary
+punctuation (`Preis_pro_Person`, `[ca. 5000]`) grew a backslash per save, without limit.
+
+**So the read side follows the reader**, rather than the serializer being taught to split runs
+around their children: a tokenizer on this module's own `Marked` instance claims `<u>…</u>` and
+`<span class="tc-…">…</span>` and lexes what is between the tags as inline Markdown (`MdRawMark`,
+`lib/richtext.ts`). It is one rule for both tags because it is one question, and it repairs `<u>`,
+which has had the identical flaw since WP-Q and no gesture common enough to expose it. Eight corpus
+entries hold it; seven of them fail on the unfixed code, and idempotence is the assertion that
+bites, because the *first* save was always right.
 
 **⌘⇧F opens the picker, and `GlobalSearch` stopped swallowing it.** Every toolbar button carries
 `tabIndex={-1}` (WP-43), which is only defensible because each has another keyboard route, and a
@@ -71,6 +93,14 @@ from inside a text field — and that listener matched „f" with any modifier c
 opened the picker *and* pulled focus out of the note, committing it mid-edit. It now ignores a key
 whose `defaultPrevented` says a layer below already answered it, which is the rule `Modal`'s Escape
 has always followed.
+
+**…and the shortcut toggles, from both sides of the focus boundary.** `defaultPrevented` only
+speaks for keys ProseMirror actually saw, and the second press of ⌘⇧F is not one of them: by then
+the menu owns focus, the keymap is out of reach, nothing marks the key, and the global listener
+took it — the same commit-and-unmount the paragraph above is about, reached by pressing the
+shortcut twice. So the menu answers for itself and stops the key dead, while the editor-side
+handler closes an open picker instead of re-opening it. A shortcut that opens something has to
+close it too; anything else is a trap for the hand that pressed it once too often.
 
 ## Sichtbarkeit wird lokal, alles andere an der Spalte bleibt global (2026-08-16, WP-59)
 
