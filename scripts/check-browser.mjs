@@ -81,33 +81,55 @@ async function send(method, path, body) {
 }
 
 /**
- * Refuse to run while anything holds either port.
+ * Is anything listening there? Asked per address, because that is where the trap is.
  *
- * Not politeness: the stack below rebuilds `.demo` from nothing, so starting beside a running
- * `npm run demo` would leave that session's server answering from a deleted inode — the trap
- * `docs/VERIFYING.md` records as costing a full verification run.
+ * Express binds `127.0.0.1` explicitly, but **Vite binds `[::1]` and only that** — it passes the
+ * bare hostname `localhost` to `listen`, and on macOS Node resolves that to `::1` first. A probe
+ * on `127.0.0.1:5317` therefore binds happily *while a dev server is running on the same port*
+ * and reports it free, which is the one answer this guard must never give. `EADDRNOTAVAIL` means
+ * the family is not configured (a runner without IPv6) — that is a free port, not a busy one.
+ */
+async function busy(port, host) {
+  const probe = createServer();
+  try {
+    await /** @type {Promise<void>} */ (
+      new Promise((res, rej) => {
+        probe.once('error', rej);
+        probe.listen(port, host, () => res());
+      })
+    );
+  } catch (err) {
+    if (err?.code === 'EADDRINUSE') return true;
+    if (err?.code === 'EADDRNOTAVAIL' || err?.code === 'EAFNOSUPPORT') return false;
+    throw err;
+  }
+  await new Promise((res) => probe.close(res));
+  return false;
+}
+
+/**
+ * Refuse to run while anything holds either port — **before the stack is spawned**, because
+ * spawning it is already the destructive act: `demo.mjs`'s first move is `demo:seed`, which
+ * `rmSync`s `.demo`. A guard that runs afterwards only races the rebuild it exists to prevent.
+ *
+ * Not politeness: this rebuilds `.demo` from nothing, so starting beside a running `npm run demo`
+ * would leave that session's server answering from a deleted inode — the trap `docs/VERIFYING.md`
+ * records as costing a full verification run. And the second stack would not even be the one under
+ * test: Vite's port is `strictPort`, so it exits rather than sliding to 5318 where every write
+ * would 403 on the origin check.
  */
 async function requireFreePorts() {
   for (const port of [PORT, 5317]) {
-    const probe = createServer();
-    try {
-      await /** @type {Promise<void>} */ (
-        new Promise((res, rej) => {
-          probe.once('error', rej);
-          probe.listen(port, '127.0.0.1', () => res());
-        })
-      );
-    } catch (err) {
-      if (err?.code !== 'EADDRINUSE') throw err;
+    for (const host of ['127.0.0.1', '::1']) {
+      if (!(await busy(port, host))) continue;
       console.error(
-        `FAIL  Port ${port} ist belegt — vermutlich ein laufendes \`npm run demo\` oder ein\n` +
-          `      übrig gebliebener Server. Dieser Lauf würde dessen Datenbank neu aufbauen.\n` +
+        `FAIL  Port ${port} ist belegt (${host}) — vermutlich ein laufendes \`npm run demo\` oder\n` +
+          `      ein übrig gebliebener Server. Dieser Lauf würde dessen Datenbank neu aufbauen.\n` +
           `      Beenden mit:  lsof -ti tcp:4325 -ti tcp:5317 | xargs kill\n` +
           `      (das -i muss wiederholt werden — macOS' lsof liest das zweite tcp: sonst als Datei)`,
       );
       process.exit(1);
     }
-    await new Promise((res) => probe.close(res));
   }
 }
 
@@ -118,24 +140,28 @@ async function requireFreePorts() {
  * `/api` to it (client/vite.config.ts) — and `server/src/demo.ts` pins `AUFTAKT_DATA_DIR` to
  * `<repo>/.demo` itself and refuses an inherited one, so this cannot touch `.data/`.
  */
-const stack = spawn(process.execPath, [join(root, 'scripts', 'demo.mjs')], {
-  cwd: root,
-  env: { ...process.env, AUFTAKT_PORT: String(PORT) },
-  stdio: ['ignore', 'pipe', 'pipe'],
-  detached: process.platform !== 'win32',
-});
-
+/** @type {import('node:child_process').ChildProcess | null} */
+let stack = null;
 /** Last ~8 KB of the stack's output, dumped when it fails to come up or a case explodes. */
 let stackLog = '';
-for (const s of [stack.stdout, stack.stderr]) {
-  s.setEncoding('utf8');
-  s.on('data', (chunk) => {
-    stackLog = (stackLog + chunk).slice(-8000);
+
+function startStack() {
+  stack = spawn(process.execPath, [join(root, 'scripts', 'demo.mjs')], {
+    cwd: root,
+    env: { ...process.env, AUFTAKT_PORT: String(PORT) },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
   });
+  for (const s of [stack.stdout, stack.stderr]) {
+    s.setEncoding('utf8');
+    s.on('data', (chunk) => {
+      stackLog = (stackLog + chunk).slice(-8000);
+    });
+  }
 }
 
 function killStack() {
-  if (!stack.pid) return;
+  if (!stack?.pid) return;
   try {
     if (process.platform === 'win32') {
       spawnSync('taskkill', ['/pid', String(stack.pid), '/t', '/f'], { stdio: 'ignore' });
@@ -157,7 +183,7 @@ process.on('exit', cleanup);
 
 async function shutdown(code) {
   killStack();
-  await Promise.race([once(stack, 'exit'), new Promise((r) => setTimeout(r, 3000))]);
+  if (stack) await Promise.race([once(stack, 'exit'), new Promise((r) => setTimeout(r, 3000))]);
   cleanup();
   process.exit(code);
 }
@@ -170,11 +196,20 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
   });
 }
 
-/** Both halves have to answer: the API on :4325 and Vite on :5317. */
+/**
+ * Both halves have to answer: the API on :4325 and Vite on :5317.
+ *
+ * A dead stack ends the wait immediately rather than at the deadline — `demo.mjs` exits within a
+ * second when the seed fails, and two minutes of polling a process that is gone reports „kam nicht
+ * hoch" for what is really a seeding error sitting in `stackLog`.
+ */
 async function waitForStack() {
   const deadline = Date.now() + 120_000;
   let apiUp = false;
   while (Date.now() < deadline) {
+    if (stack?.exitCode != null) {
+      throw new Error(`Stack ist beendet (Code ${stack.exitCode})\n${stackLog}`);
+    }
     try {
       if (!apiUp) apiUp = (await fetch(`${API}/health`)).ok;
       if (apiUp && (await fetch(UI)).ok) return;
@@ -266,6 +301,7 @@ const STALE_MS = 5_000;
 // ---------------------------------------------------------------------------- the run
 
 await requireFreePorts();
+startStack();
 await waitForStack();
 const registry = await assertDemo();
 const HOME = registry.activeId; // the demo's own default season; every case returns to it
