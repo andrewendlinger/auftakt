@@ -445,6 +445,13 @@ export function useRetention(): { archiveAfterDays: number; purgeAfterDays: numb
  *
  * `parse` must be module-level (it is a dep), and must read defensively: any settings value can
  * be a hand-edited or legacy shape, and a throw here blanks the page (PGS-15).
+ *
+ * **Two writes, and which one a caller takes is the whole cross-window story** (WP-R5).
+ * `update(fn)` computes from what the server holds and sends the generation it read, so a
+ * concurrent write is merged instead of destroyed; `write(next)` posts a snapshot
+ * unconditionally, last writer wins. Take `update` whenever the change is a function of the
+ * stored array — which is what makes it retryable — and `write` only where the next array is
+ * assembled somewhere this hook cannot re-run (a controlled editor's `onChange`).
  */
 export function useSettingsArray<K extends SettingsArrayKey>(
   key: K,
@@ -456,6 +463,15 @@ export function useSettingsArray<K extends SettingsArrayKey>(
   /** Re-read `['settings']` from the server first, so `current()` reads neither an eviction nor
    *  another window's leftovers. */
   refresh: () => Promise<void>;
+  /**
+   * Compute the next array from the one the **server** holds, and refuse to overwrite a newer
+   * generation — `useLanding().update` for settings (WP-R5). Reach for this wherever the change
+   * is expressible as a function of the stored array; `write` is for the editors that hand over
+   * an array assembled somewhere else. `null` means „nothing to write" and skips the request.
+   */
+  update: (
+    fn: (cur: SettingsArrayValue<K>) => SettingsArrayValue<K> | null,
+  ) => Promise<boolean>;
   write: (next: SettingsArrayValue<K>) => Promise<boolean>;
 } {
   const qc = useQueryClient();
@@ -477,13 +493,13 @@ export function useSettingsArray<K extends SettingsArrayKey>(
   // then reads the miss as an empty array. A closure that outlives its page — the section
   // removal undo, pressed from the keyboard elsewhere in the app — awaits this first.
   //
-  // **This shrinks the two-window race, it does not close it** (WP-53). `write` still posts a
-  // whole array computed by its caller, so two windows on the same season can still each replace
-  // the other's `dashboard_layout` or `labels`; the read is now merely honest about where it came
-  // from. That is a deliberate stop, not an oversight: these are user *configuration* arrays —
-  // a lost edit is on screen and one gesture away from being redone. `useLanding` carries the
-  // real fix because its arrays are customer content with no Papierkorb behind them, and the
-  // per-key `settings` table would need a generation column of its own to get the same guarantee.
+  // **This shrinks the two-window race; `update` is what closes it** (WP-53 → WP-R5). The
+  // `settings` table carries a generation since WP-R5, so a write that names it is refused
+  // rather than allowed to replace a newer array — but only `update` names it. `write` still
+  // posts a whole array computed by its caller, so two windows can still each replace the
+  // other's `dashboard_layout`; that stays the deliberate stop it was, because an array
+  // assembled in an editor is not an intent a retry could re-apply, and a lost configuration
+  // edit is on screen and one gesture from being redone.
   const refresh = useCallback(async () => {
     await refetchNow(qc, ['settings'], api.getSettings);
   }, [qc]);
@@ -512,7 +528,52 @@ export function useSettingsArray<K extends SettingsArrayKey>(
     },
     [qc, key, guard, invalidate],
   );
-  return { value, current, refresh, write };
+  const update = useCallback(
+    (fn: (cur: SettingsArrayValue<K>) => SettingsArrayValue<K> | null) =>
+      trackPending(
+        pendingKey(['settings']),
+        (async () => {
+          const ok = await guard('Einstellung konnte nicht gespeichert werden.', () =>
+            retryOnConflict(async (conflict) => {
+              // The 409 carries the settings the write lost to, so a retry costs no extra GET.
+              // `fetchQuery`, not `refetchNow`: this call *is* the pending write on
+              // `['settings']`, and waiting for itself to settle would never return.
+              const cur =
+                conflictSettings(conflict) ??
+                (await qc.fetchQuery<Settings>({
+                  queryKey: ['settings'],
+                  queryFn: api.getSettings,
+                  staleTime: 0,
+                }));
+              const next = fn(parse(cur[key]));
+              // A mutation that turns out to be a no-op writes nothing rather than storing the
+              // array as itself: that would bump the generation for no reason and could refuse
+              // another window's in-flight write over a change nobody made.
+              if (next === null) return;
+              const patch = { [key]: next } as Pick<WritableSettings, K>;
+              // Published before awaiting for the same reason `write` does it (SHL-10) — though
+              // here it is cosmetic, since every write reads for itself.
+              qc.setQueryData<Settings>(['settings'], (old) => (old ? { ...old, ...patch } : old));
+              qc.setQueryData<Settings>(['settings'], await api.patchSettings(patch, cur.rev));
+            }),
+          );
+          // Also on the failure path: the optimistic value must not outlive a refused write.
+          await invalidate();
+          return ok;
+        })(),
+      ),
+    [qc, key, parse, guard, invalidate],
+  );
+  return { value, current, refresh, update, write };
+}
+
+/**
+ * The settings a refused write lost to, off the 409 the server answered with. `undefined` for
+ * anything else, including a 409 without a body — the caller then falls back to a plain read, so
+ * a server that stops sending it costs a round trip rather than correctness.
+ */
+function conflictSettings(err: unknown): Settings | undefined {
+  return (err as { body?: { settings?: Settings } } | undefined)?.body?.settings;
 }
 
 /**
@@ -706,16 +767,23 @@ export function useLabel(): (key: LabelKey) => string {
 /**
  * Renames a heading. Passing an empty string — or the default text — drops the override row
  * instead of storing a redundant one, which is what makes clearing the field a reset.
+ *
+ * On `update`, not `write` (WP-R5): renaming one heading is an intent over the stored array —
+ * „this key, that text, everything else as it stands" — so it can be re-applied to what another
+ * window wrote instead of replacing it. It is also the array most likely to be edited from two
+ * windows at once, since every page shows renameable headings.
  */
 export function useRenameLabel(): (key: LabelKey, label: string) => Promise<void> {
-  const { value, write } = useSettingsArray('labels', parseLabelOverrides);
+  const { update } = useSettingsArray('labels', parseLabelOverrides);
   return useCallback(
     async (key: LabelKey, label: string) => {
       const trimmed = label.trim();
-      const rest = value.filter((r) => r.key !== key);
-      await write(!trimmed || trimmed === LABEL_DEFAULTS[key] ? rest : [...rest, { key, label: trimmed }]);
+      await update((cur) => {
+        const rest = cur.filter((r) => r.key !== key);
+        return !trimmed || trimmed === LABEL_DEFAULTS[key] ? rest : [...rest, { key, label: trimmed }];
+      });
     },
-    [value, write],
+    [update],
   );
 }
 

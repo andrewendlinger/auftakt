@@ -568,6 +568,15 @@ export interface Settings extends WritableSettings {
    */
   readonly archive_after_days?: number;
   readonly purge_after_days?: number;
+  /**
+   * The generation these values were read at — one counter for the whole blob, the `settings`
+   * twin of `LandingContent.rev` (WP-R5). A PATCH that carries it back is refused with 409 when
+   * another window has written in between; a PATCH that omits it writes unconditionally, which
+   * is what every single-field editor on the Einstellungen page does. Never writable, and
+   * optional so a response from an older server still type-checks (it reads as „no generation",
+   * i.e. an unconditional write).
+   */
+  readonly rev?: number;
 }
 
 /**

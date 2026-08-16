@@ -15,7 +15,7 @@
  * second boot's health check from the first run's process.
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -477,6 +477,73 @@ try {
     // …while the per-key merge itself is unchanged: writing one key leaves the others alone.
     const notesOnly = await ok('PATCH', '/landing', { notes: 'Notiz', rev: retried.rev });
     check('a notes write leaves the documents alone', notesOnly.documents.length === retried.documents.length, String(notesOnly.documents.length));
+  }
+
+  // ------------------------------------------------------------ settings conflicts (WP-R5)
+  // The same lost update, one table over. WP-53 left it open for want of a generation column on
+  // the key/value `settings` table; WP-R5 adds it while the migration chain is open, so two
+  // windows can no longer replace each other's `dashboard_layout` or renamed headings unnoticed.
+  console.log('\n== a settings write built on a superseded read is refused (WP-R5)');
+  {
+    // The in-process path — the seeders, demo.ts and the Einstellungen page's single-field
+    // editors have no generation to name, and must not need one.
+    const unconditional = await ok('PATCH', '/settings', { labels: [{ key: 'aufgaben', label: 'Ohne rev' }] });
+    check('a patch without a rev still writes', unconditional.labels?.[0]?.label === 'Ohne rev', JSON.stringify(unconditional.labels));
+    check('the settings response carries a generation', Number.isInteger(unconditional.rev), String(unconditional.rev));
+    // `rev` is a precondition, never a value: a patch carrying only a matching one writes
+    // nothing at all — and in particular stores no settings row of that name, which would then
+    // shadow the real generation in the response.
+    const revOnly = await ok('PATCH', '/settings', { rev: unconditional.rev });
+    check('a rev is a precondition, not a stored setting', revOnly.rev === unconditional.rev, `${unconditional.rev} → ${revOnly.rev}`);
+
+    const bad = await req('PATCH', '/settings', { labels: [], rev: 'nonsense' });
+    check('a non-numeric rev is refused', bad.status === 400, String(bad.status));
+
+    const windowA = await ok('GET', '/settings');
+    const windowB = await ok('GET', '/settings');
+    check('both windows read the same generation', windowA.rev === windowB.rev, `${windowA.rev} / ${windowB.rev}`);
+
+    const afterB = await ok('PATCH', '/settings', {
+      labels: [...windowB.labels, { key: 'termine', label: 'Von B' }],
+      rev: windowB.rev,
+    });
+    check('the first writer wins normally', afterB.labels.some((l) => l.label === 'Von B'));
+    check('…and the write moved the generation', afterB.rev > windowB.rev, `${windowB.rev} → ${afterB.rev}`);
+
+    const refused = await req('PATCH', '/settings', {
+      labels: [...windowA.labels, { key: 'kontakte', label: 'Von A' }],
+      rev: windowA.rev,
+    });
+    check('a write from the superseded generation is refused', refused.status === 409, String(refused.status));
+    check('…and the 409 carries the settings it lost to, so the client need not re-GET', refused.body?.settings?.rev === afterB.rev, JSON.stringify(refused.body?.settings?.rev));
+
+    const afterRefusal = await ok('GET', '/settings');
+    check('…and nothing was written', afterRefusal.rev === afterB.rev, `${afterRefusal.rev} / ${afterB.rev}`);
+    check("…so the other window's heading is still there", afterRefusal.labels.some((l) => l.label === 'Von B'));
+    check('…and the refused one is not', !afterRefusal.labels.some((l) => l.label === 'Von A'));
+
+    // The retry a client runs on the 409: re-apply the *intent* to what came back with it.
+    const retried = await ok('PATCH', '/settings', {
+      labels: [...refused.body.settings.labels, { key: 'kontakte', label: 'Von A' }],
+      rev: refused.body.settings.rev,
+    });
+    check('a retry at the current generation is accepted', retried.rev === afterB.rev + 1, String(retried.rev));
+    check('…and both windows kept their heading', ['Von A', 'Von B'].every((l) => retried.labels.some((r) => r.label === l)), JSON.stringify(retried.labels));
+
+    // One generation for the whole blob, as on the landing: a stale write is refused even for a
+    // key nobody else touched. Deliberate — the client answers it with one extra round trip.
+    const staleOther = await req('PATCH', '/settings', { task_stats: [], rev: windowA.rev });
+    check('a stale write is refused even for a key nobody else touched', staleOther.status === 409, String(staleOther.status));
+
+    // A patch carrying several keys is ONE generation, not one per key — otherwise the counter
+    // would measure keys touched rather than the state of the settings.
+    const multi = await ok('PATCH', '/settings', { task_stats: [], link_categories: [], rev: retried.rev });
+    check('a multi-key patch bumps the generation once', multi.rev === retried.rev + 1, `${retried.rev} → ${multi.rev}`);
+
+    // An empty patch (everything dropped by the allowlist) writes nothing, so it must not move
+    // the generation and refuse another window's in-flight write over a change nobody made.
+    const noop = await ok('PATCH', '/settings', { luftschloss: 'x', rev: multi.rev });
+    check('a patch with nothing writable leaves the generation alone', noop.rev === multi.rev, `${multi.rev} → ${noop.rev}`);
   }
 
   // ------------------------------------------------------------------ task tree (SRV-11)
@@ -1697,6 +1764,160 @@ try {
     });
     check('eine Saison ohne Bildertabelle lässt sich kopieren', fromLegacy.status === 201, `${fromLegacy.status} ${JSON.stringify(fromLegacy.body)}`);
     await stopServer();
+  }
+
+  // ------------------------------------------------------------- Schema-Version (WP-R5, #8)
+  //
+  // The migration chain repairs forward and only forward, and several of its steps are lossy
+  // (the subtask flatten reparents, the notes merge folds a column away). Without a stamp, a
+  // file a newer build had already migrated opened in an older one without a word — the
+  // multi-window rebuild made that ordinary rather than exotic, since seasons of different ages
+  // sit side by side and the import path takes any .db the user picks.
+  //
+  // **The refusal is one-sided**, and that is the half most easily broken by a later tidy-up:
+  // an older or unstamped file is exactly what the chain exists for and must keep opening.
+  console.log('\n== die Schema-Version stempelt vorwärts und weigert sich rückwärts (WP-R5)');
+  {
+    // Opened read-write, not read-only: a read-only handle cannot create the WAL shared-memory
+    // file when none is there, which is the same reason seasonStats and copySeasonData open
+    // inactive seasons read-write. Nothing here writes.
+    const versionOf = (file) => {
+      const db = new Database(seasonFile(file));
+      const v = db.pragma('user_version', { simple: true });
+      db.close();
+      return v;
+    };
+    const setVersion = (file, v) => {
+      const db = new Database(seasonFile(file));
+      db.pragma(`user_version = ${v}`);
+      db.close();
+    };
+
+    await startServer();
+    // The app's own generation, read off a file this build just wrote — rather than from a
+    // constant this script would have to keep in step with db.ts by hand.
+    const future = await ok('POST', '/seasons', { label: 'Aus der Zukunft' });
+    await stopServer();
+    const APP = versionOf(future.file);
+    check('a season this build creates carries a version stamp', APP >= 1, String(APP));
+
+    // 1. The older file — which is what *every* database written before this looks like.
+    setVersion('auftakt.db', 0);
+    await startServer();
+    const migrated = await req('GET', '/artists');
+    check('an unstamped database still opens', migrated.status === 200 && migrated.body.length > 0, `${migrated.status}, ${migrated.body?.length} rows`);
+    await stopServer();
+    check('…and the chain stamps it on the way through', versionOf('auftakt.db') === APP, String(versionOf('auftakt.db')));
+
+    // 2. The file from a newer build.
+    setVersion(future.file, APP + 1);
+    await startServer();
+    const refused = await req('GET', '/artists', undefined, { 'x-auftakt-season': String(future.id) });
+    check('a season from a newer build is refused', refused.status >= 400, String(refused.status));
+    check('…with a message naming both versions', new RegExp(`Datenformat ${APP + 1}, diese App: ${APP}`).test(refused.body?.error ?? ''), String(refused.body?.error));
+
+    // The refusal belongs to that season, not to the app: with several seasons open at once, one
+    // file from a newer build must not take the others down with it — nor the server, which is
+    // why the boot warm is guarded (server/src/index.ts).
+    const neighbour = await req('GET', '/artists');
+    check('…and every other season keeps working', neighbour.status === 200, String(neighbour.status));
+
+    // Refusing means refusing to touch it, too: a migration chain that ran halfway and then threw
+    // would be the very damage the stamp exists to prevent.
+    check('…and the refused file was not rewritten', versionOf(future.file) === APP + 1, String(versionOf(future.file)));
+
+    // The window pinned to that season has to be able to leave it, so the two reads it needs for
+    // that must not go down with the season's own data: the registry list, and the Kennzahlen,
+    // which open every season file and degrade per season rather than failing the response.
+    const pinned = { 'x-auftakt-season': String(future.id) };
+    const list = await req('GET', '/seasons', undefined, pinned);
+    check('…the season switcher still lists every season', list.status === 200 && list.body?.seasons?.length > 1, `${list.status}, ${list.body?.seasons?.length} seasons`);
+    const stats = await req('GET', '/seasons/stats', undefined, pinned);
+    check('…and the Kennzahlen degrade to null for it instead of failing', stats.status === 200 && stats.body?.[future.id] === null, `${stats.status} ${JSON.stringify(stats.body?.[future.id])}`);
+
+    // The other door into a season file: the copy reads a fixed column list per table, so a
+    // newer source would come over shorn of whatever that build added — silently.
+    const copyAttempt = await req('POST', '/seasons', {
+      label: 'Kopie aus der Zukunft',
+      copyFrom: future.id,
+      includeArtists: true,
+    });
+    check('a copy from a newer season is refused too', /Datenformat/.test(copyAttempt.body?.copyError ?? ''), String(copyAttempt.body?.copyError));
+
+    // 3. The import — the path that replaces a real database with a user-picked file, so the
+    // check has to happen *before* anything is snapshotted, copied or renamed.
+    const candidate = join(dataDir, 'zukunft.db');
+    await ok('POST', '/backup/export', { path: candidate }); // VACUUM INTO: one consistent file
+    {
+      const db = new Database(candidate);
+      db.pragma(`user_version = ${APP + 1}`);
+      db.close();
+    }
+    const marker = await ok('POST', '/artists', { name: 'Vor dem Import' });
+
+    const checked = await ok('POST', '/backup/import/check', { path: candidate });
+    check('the import check refuses a newer file', checked.ok === false, JSON.stringify(checked));
+    check('…naming both versions', new RegExp(`Datenformat ${APP + 1}, diese App: ${APP}`).test(checked.error ?? ''), String(checked.error));
+    check('…and hands the dialog both numbers', checked.schema?.file === APP + 1 && checked.schema?.app === APP, JSON.stringify(checked.schema));
+
+    const imported = await req('POST', '/backup/import', { path: candidate });
+    check('the import itself is refused', imported.status === 400, String(imported.status));
+    check('…with the same message', /Datenformat/.test(imported.body?.error ?? ''), String(imported.body?.error));
+
+    // …and nothing was replaced. Three separate ways of saying it, because the failure this
+    // guards against is „refused *after* the old database was already gone".
+    //
+    // The pre-import assertion is the one that would actually catch it — the rows survive and no
+    // temp file is left behind however far into `importIntoCurrentSeason` the check sits, but
+    // the snapshot is written the moment it sits below `snapshotDb()`. `includes`, not
+    // `startsWith`: with no backup folder configured the snapshot lands *beside* the live file
+    // as `auftakt.db.pre-import-<stamp>.bak` (preImportBackupPath), so a prefix test could never
+    // fire and the assertion passed against a snapshot sitting right there.
+    const alive = await req('GET', `/artists/${marker.id}`);
+    check('the live database is untouched: its rows are still there', alive.status === 200, String(alive.status));
+    check('…no pre-import snapshot was written', !readdirSync(dataDir).some((f) => f.includes('pre-import')), readdirSync(dataDir).join(', '));
+    check('…and no staged copy was left behind', !existsSync(seasonFile('auftakt.db.import-tmp')));
+
+    // One-sided here as well: the candidate whose generation is *older* is precisely what the
+    // import is usually for — a backup from before the upgrade.
+    const older = join(dataDir, 'vergangenheit.db');
+    await ok('POST', '/backup/export', { path: older });
+    {
+      const db = new Database(older);
+      db.pragma('user_version = 0');
+      db.close();
+    }
+    const oldCheck = await ok('POST', '/backup/import/check', { path: older });
+    check('an older, unstamped file is still importable', oldCheck.ok === true, JSON.stringify(oldCheck));
+    check('…and the dialog can name its generation', oldCheck.schema?.file === 0 && oldCheck.schema?.app === APP, JSON.stringify(oldCheck.schema));
+
+    // 4. The refusal must not disable the backups — and the *default* season is the case that
+    // gets this wrong, because the main process reads `/backup/status` headerless. A 500 there
+    // is indistinguishable from „no folder configured" one caller up (`ensureBackupDir` finds no
+    // backupDir on the error body and returns ''), so `runStartupChores` would skip the startup
+    // backup for **every** season, without throwing and therefore without reporting: backups
+    // stop for the healthy seasons because a season nobody has open is from a newer build. That
+    // is the WP-39 failure mode, and it is the last thing this package should reintroduce.
+    await stopServer();
+    setVersion('auftakt.db', APP + 1);
+    await startServer();
+
+    const status = await req('GET', '/backup/status');
+    check('a refused default season still answers /backup/status', status.status === 200, `${status.status} ${JSON.stringify(status.body)}`);
+    check('…and reports data worth protecting rather than none', status.body?.hasData === true, JSON.stringify(status.body));
+
+    // The backup itself never opens a season through the migration chain — `VACUUM INTO` on the
+    // file — so the refused season is backed up like every other one. Asserting the *files*, not
+    // just the 200: „the run reported success but skipped the season it could not open" is the
+    // shape that would still leave the customer without the backup they think they have.
+    const target = join(dataDir, 'sicherungen');
+    const run = await req('POST', '/backup', { dir: target });
+    check('…and a startup backup still runs', run.status === 200, `${run.status} ${JSON.stringify(run.body)}`);
+    check('…covering the refused season too', (run.body?.files ?? []).includes('auftakt.db'), JSON.stringify(run.body?.files));
+    check('…and every other season with it', (run.body?.files ?? []).includes(future.file), JSON.stringify(run.body?.files));
+
+    await stopServer();
+    setVersion('auftakt.db', APP); // leave the fixture openable for whatever is added after this
   }
 } catch (err) {
   check('run completed', false, String(err));

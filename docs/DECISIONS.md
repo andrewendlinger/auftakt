@@ -1694,6 +1694,10 @@ Giving them the same guarantee means a generation column on the key/value `setti
 response-shape change, in the same migration chain WP-R5 is about to rework. **Revisit** if a
 customer reports a lost setting, or once WP-R5 has landed and the chain is being touched anyway.
 
+*Nachgeholt in WP-R5 (2026-08-16) — the column is there and `update(fn)` uses it; `write` keeps
+the snapshot semantics described here, and the entry at the end of this file says which callers
+are on which and why.*
+
 **Der Broadcast ist die erste Verteidigungslinie und funktioniert** — which the verification found
 the hard way. Holding a window's `GET /api/landing` back to force a stale read produces no
 conflict at all: the other window's write broadcasts an invalidate, the held window's active query
@@ -1808,3 +1812,87 @@ against the next log:
   not enough to take it.
 - **How far into its swing the gesture starts.** `warm` + `warm2` + `lead` is that number, and it
   is what decides `.boot-show`.
+
+---
+
+## Die Schema-Version weigert sich nur abwärts, und die Generation zählt pro Blob (2026-08-16, WP-R5, #8)
+
+`initDb` is a detect-and-repair chain with no memory: every step asks the data whether it has run
+and does nothing when it has. That is what makes it safe to run on every open — and it is also why
+a file a *newer* build had already migrated opened in an older one without a word. Nothing in the
+file said which build last touched it, several steps are lossy in the direction they run
+(`migrateFlattenDeepSubtasks` reparents a third level onto the root, `migrateProjectsMergeNotes`
+folds a column into another), and the queries above them then read a shape they were not written
+for. Multi-window seasons raised the stakes rather than creating the hole: season files of
+different ages now sit side by side, and the import path accepts any `.db` the user picks.
+
+**`PRAGMA user_version`, not a settings row.** The marker has to be readable *before* the chain
+runs and on a file this build may refuse to touch at all; a row in `settings` would mean opening
+the database as an Auftakt database first, which is the thing in question. `user_version` is also
+preserved by `VACUUM INTO`, so exports, backups and pre-import snapshots carry the stamp without a
+single line about it — verified, not assumed, since the whole import story rests on it.
+
+**The refusal is one-sided, and that is the part a later tidy-up will get wrong.** `>` and never
+`>=` or `!==`: an unstamped file reads 0, which is every database in existence at the moment this
+ships, and the build that introduces the stamp must open all of them. The stamp is written at the
+*end* of the chain for the same reason — writing it first would promise a repair that a throw
+halfway down never delivered.
+
+**Refusing is per season, not per app.** With several seasons open at once, one file from a newer
+build must not keep the app from starting: `getDb()` closes the handle it opened and throws, the
+boot warm catches, and `seasonStats` already reports `null` for a season it cannot read. So the
+window pinned to that season shows the German sentence where its data would be, and the season
+switcher next to it still works — which is the only thing the user can usefully do about it.
+
+The sharpest edge of that rule is not on screen at all, and the review found it: **a refused
+season must not stop the backups.** Main reads `/api/backup/status` headerless, i.e. against the
+*default* season, and one caller up a failed read is indistinguishable from „no backup folder
+configured" — so a 500 there skipped the startup backup for *every* season, silently, because
+nothing threw and `reportBackupProblem` never fired. Exactly WP-39's „backups stopped without a
+word", reintroduced by a refusal meant to protect data. `hasData()` therefore answers `true` for
+a season it cannot open — an unreadable file is not evidence that there is nothing to protect,
+and it is the state in which a backup matters most — and `ensureBackupDir` turns any non-OK
+status into a reported problem rather than an empty folder path. Nothing else was in the way:
+`runBackup` snapshots each season file raw, so the refused season is backed up like the rest.
+
+**Not a version *negotiation*.** No compatibility range, no „read-only mode" for a newer file, no
+downgrade path. Auftakt is a single-user local app whose answer is „update Auftakt", and every
+alternative buys a permanent second code path for a case that resolves itself in one download.
+
+### Die Generationsspalte auf `settings`: eine je Blob, und nur `update` benutzt sie
+
+WP-53 left this open deliberately and named the price: giving `useSettingsArray` the landing's
+guarantee needs a generation column, and the place to add one is the migration chain — which
+WP-R5 has open anyway. It is here now, on the same shape as `seasons.json`'s `rev`: the server
+answers `GET /api/settings` with the generation the values were read at, a PATCH carrying it back
+is refused with 409 (the current settings ride along, so the client needs no second GET), and a
+PATCH omitting it writes unconditionally, exactly as `patchLanding` does for the seeders.
+
+**Eine Generation für den ganzen Blob.** The column is per row — `MAX(rev)` is the table's
+generation, and every write stamps the rows it touches with `MAX + 1` — but the *comparison* is
+one number for the whole table, so a `labels` write is refused over a concurrent `task_stats`
+write that could never have collided with it. Deliberate, and the same trade the landing takes:
+the client answers a false conflict with one extra round trip against a local Express process, and
+per-key generations would be a second bookkeeping scheme for something nobody can perceive. Storing
+the counter per row rather than in a row of its own is what leaves the finer comparison available
+later without another migration.
+
+**Only `update(fn)` sends it, and only one caller is on `update` today.** The guarantee is not the
+column, it is that a refused write can be *re-applied*: `update` takes an intent over the stored
+array, so a 409 re-runs it against what actually landed. `write(next)` cannot do that — its next
+array was assembled by a controlled editor from the array *it* rendered — so sending a generation
+from there would turn a silent lost update into a refused save, which is worse, not better. The
+callers that are already intents move over; the ones that are not stay on `write` and stay
+last-writer-wins:
+
+| caller | array | write |
+|---|---|---|
+| `useRenameLabel` | `labels` | `update` — „this key, that text, the rest as it stands" |
+| `SectionArranger` (`Arranger`) | `dashboard_layout`, `*_layout*` | `write` — every mutation is computed from `full`, the *rendered* merge of the stored array with the section catalog, and `move`/drag measure their target against the on-screen order. Re-deriving that inside a retry would change what „move past the next visible section" means, and the removal undo hangs off the same call's boolean |
+| `TaskSortEditor` (`useTaskSort`) | `task_sort` | `write` — the editor is fully controlled and hands over a finished array in `onChange` |
+| `SettingsPage` scalars | `saison`, the two windows | unconditional `patchSettings` — one field, one control, no array to lose |
+
+The server half is complete either way, so moving a caller over later is a client-only change. The
+line to hold is the one above: **an intent may be retried, a snapshot may not**, and a caller that
+cannot express its change as a function of the stored array has not earned the guarantee by
+sending a `rev`.

@@ -189,7 +189,14 @@ export const api = {
   exportTasks: (params?: Record<string, unknown>) =>
     download(`/export/tasks.xlsx${qs(params)}`, 'auftakt-aufgaben.xlsx'),
   getSettings: () => http<Settings>('GET', '/settings'),
-  patchSettings: (patch: Partial<WritableSettings>) => http<Settings>('PATCH', '/settings', patch),
+  /**
+   * `rev` names the generation the patch was computed from, exactly as on `landing.patch`: the
+   * server answers 409 (carrying the current settings) rather than overwriting a newer one.
+   * Omitted where there is no generation to name or none is wanted — the Einstellungen page's
+   * single-field editors write unconditionally, `useSettingsArray().update()` conditionally.
+   */
+  patchSettings: (patch: Partial<WritableSettings>, rev?: number) =>
+    http<Settings>('PATCH', '/settings', rev === undefined ? patch : { ...patch, rev }),
 
   /**
    * `dependents` is spread on rather than added to `resource()`: only these two tables have a

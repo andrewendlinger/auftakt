@@ -39,9 +39,21 @@ const PORT = Number(process.env.AUFTAKT_PORT ?? 4317);
 // open-time sweep's cost lands on the first request a window sends to a freshly pinned
 // season, which already pays the full migration chain on that same pool miss. Never
 // fatal: a purge blocked by a lingering FK reference must not keep the app from starting.
-const db = getDb();
+//
+// The open itself is guarded too, and that is WP-R5: a season file a *newer* build has already
+// migrated is refused by `initDb`, and the refusal has to stay a property of that season rather
+// than of the app. Thrown from here it would take the whole process down before a window
+// exists — with several seasons side by side, one of them from a newer build, the user would
+// have no way to reach the others, and nothing on screen would say why. The request path answers
+// with the same German sentence for that one season instead.
+let db: ReturnType<typeof getDb> | null = null;
 try {
-  purgeExpired(db);
+  db = getDb();
+} catch (err) {
+  console.error('Default-Saison konnte nicht geöffnet werden (Server startet trotzdem):', err);
+}
+try {
+  if (db) purgeExpired(db);
 } catch (err) {
   console.error('purgeExpired failed (continuing without purge):', err);
 }

@@ -138,6 +138,30 @@ case: converting twice shifts every stamp twice. `getDb()` decides whether the f
 A marker also has a cost worth weighing: it disables the migration permanently after the first
 run. That is wrong for anything repairing a back door a later import can re-open.
 
+**The chain stamps `PRAGMA user_version` at its end, and the refusal it enables is one-sided**
+(WP-R5, #8). `SCHEMA_VERSION` is a plain counter — not the app version — bumped only when a
+migration changes the stored shape in a way an older build would misread; `initDb` writes it after
+every step returned, so the stamp always means „this file has been through the whole chain of
+build N". Before the first step, `assertSchemaSupported` throws for a file whose stamp *exceeds*
+this build's, and for nothing else: the chain repairs forward, several of its steps are lossy
+(`migrateFlattenDeepSubtasks` reparents, `migrateProjectsMergeNotes` folds a column away), and an
+older or unstamped file is exactly what it exists for. `>` and never `>=` or `!==` — the build that
+introduced the stamp would otherwise refuse every database in existence.
+
+The same test is spelled in three places because there are three doors into a season file, and
+none of them runs the others: `initDb` (every open), `validateImportCandidate` (before the import
+snapshots, copies or renames anything — so the refusal never arrives after the old database is
+gone) and `copySeasonData`, which opens the *source* raw and copies a fixed column list per table.
+The refusal is per season, never per app: `getDb()` closes the handle and throws, the boot warm in
+`index.ts` catches so one newer season cannot keep the process from starting, and `seasonStats`
+already degrades that season's card to `null` — so a window pinned to a file it cannot open can
+still list the seasons and switch away. **`GET /api/backup/status` belongs to that list**: main
+reads it headerless (i.e. against the *default* season) and treats a failure as „no folder
+configured", so a 500 there would skip the startup backup for every season without throwing —
+`hasData()` therefore answers `true` for a season it cannot open rather than propagating the
+throw, and `ensureBackupDir` turns a non-OK response into a reported problem. Backups themselves
+never run the chain (`VACUUM INTO` on the file), so a refused season is still backed up.
+
 ## Backups and import — never copy a live DB with the filesystem
 
 **`copyFileSync` on an open SQLite file is a data-loss bug, not a shortcut.** Under WAL, committed
@@ -148,6 +172,11 @@ uses `VACUUM INTO` to write a consistent image of db + WAL.
 For the same reason these operations live **server-side** (`server/src/routes/backup.ts`) — it owns
 the connections and is the only side that can checkpoint. Electron supplies paths from dialogs and
 nothing else; `electron/backup.ts` is just an HTTP call.
+
+Validation covers the candidate's **schema version** as well as its tables (WP-R5): a file a newer
+build has already migrated is refused before anything is replaced, and `POST /backup/import/check`
+answers with `schema: { file, app }` so the Electron confirmation can name both generations — an
+accepted older file *is* migrated on its first open, which does not run backwards.
 
 `importIntoCurrentSeason()` is order-sensitive and the order is the fix: validate the candidate →
 snapshot the current DB → `closeSeason()` → copy → unlink `-wal`/`-shm`. Closing before the copy
@@ -446,7 +475,7 @@ Which module owns which invariant. Reach for these rather than rebuilding the be
 | `useAllTasks()` (hooks.ts) | the one `['tasks','scope-all']` query — live **and** archived. Anything that must not stop at the archive edge takes this: the subtask tree (a subtree op derived from a `scope:'live'` list strands a child past `ARCHIVE_AFTER_DAYS`) and „Fortschritt" (`done`/`total`/`pct` were wrong on the live list; „offen" was not). A new *editable* table stays on the page's live list. |
 | `useGlobalColumns()` (hooks.ts) | the single `['customColumns','global']` reader. `useDoneValue()` sits on it, and so does `TaskSortEditor` — a `task_sort` rule is a season-wide setting, so only global columns can carry one. |
 | `useScopedColumns(owner, enabled)` (hooks.ts) | one entity page's column set: the globals plus that page's own, already merged. Both entity pages take it rather than writing the query out, because three things have to agree at once — the scope sent, the parent id sent with it (a scoped list without one is a 400) and the globals leading the merged list. |
-| `useSettingsArray(key, parse)` (hooks.ts) | immediate-save array settings. Publishes into the `['settings']` cache **before** awaiting, so a second edit inside the round trip composes. `current()` reads the array as it is *now* — use it in any closure that runs later (an undo six seconds on). `parse` must be module-level (it is a memo dep) and must read defensively; a throw there blanks the page. **`write` still posts a snapshot, so two windows on one season can still replace each other's array** — a deliberate stop, not an oversight (WP-53): these are configuration arrays, a lost edit is on screen and one gesture from being redone, and the per-key `settings` table would need a generation column of its own to get `useLanding`'s guarantee. |
+| `useSettingsArray(key, parse)` (hooks.ts) | immediate-save array settings. Publishes into the `['settings']` cache **before** awaiting, so a second edit inside the round trip composes. `current()` reads the array as it is *now* — use it in any closure that runs later (an undo six seconds on). `parse` must be module-level (it is a memo dep) and must read defensively; a throw there blanks the page. **Two writes, and the choice is the cross-window story** (WP-R5): `update(fn)` is `useLanding`'s contract on this table — re-reads, applies `fn`, sends the generation it read, retries the *intent* on a 409 — while `write(next)` posts a snapshot unconditionally and stays last-writer-wins. Take `update` wherever the change is a function of the stored array; `write` only where the next array is assembled somewhere this hook cannot re-run (a controlled editor's `onChange`), which is why the arranger and `TaskSortEditor` are still on it. |
 | `useLanding()` (hooks.ts) | the same contract for every `seasons.json` write, plus the one that has no Papierkorb behind it. **`update(fn)` takes a function and is the only way to write**: it re-reads the blob, applies `fn`, and sends the generation it read; the server refuses a superseded one (409) and the whole thing re-runs against what is actually stored, so a concurrent write is merged rather than destroyed and an exhausted budget is *reported* rather than lost (`lib/conflict.ts`). An array argument would defeat that — a retry can only re-apply an intent. `fn` returning `null` writes nothing (a refused drag). Two further differences from `useSettingsArray`: it **throws** rather than guarding (callers already own a catch → German toast), and the pre-await publish is skipped when the patch adds an id-less row — that publish is now cosmetic, since every write reads for itself. |
 | `refetchNow(qc, key, fn)` (hooks.ts) | the one honest refresh. `ensureQueryData` hands back the cache whenever an entry exists, which says nothing about what another window wrote; this passes `staleTime: 0` and always asks. Reach for it wherever a store is read and then written back — all three `LayoutStore.refresh` implementations do. |
 | `useRetention()` (hooks.ts) | „wie lange bleibt das". **No German string may state a retention threshold again.** Both constants ride on the settings response. |

@@ -820,18 +820,19 @@ function copyColumnConfig(
   return copyCustomColumns(target, customs);
 }
 
-/** Upsert, not insert: the target already holds ensureDefaultSettings()'s rows. */
+/**
+ * Upsert, not insert: the target already holds ensureDefaultSettings()'s rows. Through
+ * `writeSettings`, so the whole copy is one generation — the target is a season nobody has open
+ * yet, but keeping every settings write on the one path is what makes the counter's invariant
+ * hold by construction rather than by inspection (WP-R5).
+ */
 function copySettings(target: Database.Database, rows: Array<Record<string, unknown>>): void {
-  const stmt = target.prepare(
-    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+  writeSettings(
+    target,
+    rows
+      .filter((r) => !SETTINGS_NOT_COPIED.has(String(r.key)))
+      .map((r) => [String(r.key), (r.value ?? null) as string | null]),
   );
-  const tx = target.transaction(() => {
-    for (const r of rows) {
-      if (SETTINGS_NOT_COPIED.has(String(r.key))) continue;
-      stmt.run(String(r.key), (r.value ?? null) as string | null);
-    }
-  });
-  tx();
 }
 
 /**
@@ -866,6 +867,17 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
   // Open read-write (we only SELECT): a read-only handle can't create the WAL
   // shared-memory file for an inactive season, which would fail the copy.
   const source = new Database(join(dataDir(), src.file));
+  // The same refusal as `initDb`, spelled the second time because this is the other door into a
+  // season file: the copy reads a *fixed* column list per table, so a source from a newer build
+  // would come over shorn of whatever that build added — quietly, into a season the user then
+  // works in. Migrations never run here (source seasons are opened raw), so nothing else in this
+  // function would notice (WP-R5, the WP-51 „spelled twice" pattern).
+  try {
+    assertSchemaSupported(source, `Die Saison „${src.label}“`);
+  } catch (err) {
+    source.close();
+    throw err;
+  }
   // The target open needs its own guard: the try/finally that closes both starts below, so a
   // throw here (a freshly created season file momentarily unavailable) would leave the source
   // handle open forever — on Windows that keeps the source season's .db locked, and a later
@@ -1066,7 +1078,13 @@ export function copySeasonData(targetId: number, sourceId: number, opts: SeasonC
 const SCHEMA = /* sql */ `
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
-  value TEXT
+  value TEXT,
+  -- The generation the row was last written in (WP-R5). The table's generation is MAX(rev) —
+  -- one counter for the whole blob, deliberately, exactly as seasons.json carries one rev for
+  -- the whole landing content: the client reads every setting in one response and writes back
+  -- one array at a time, so a per-key comparison would refuse nothing this one refuses and cost
+  -- a second bookkeeping scheme. Per-row *storage* is what leaves that door open later.
+  rev   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS artists (
@@ -1394,6 +1412,53 @@ const pool = new Map<number, Database.Database>();
 const skipPurgeOnOpen = new Set<number>();
 
 /**
+ * The schema generation this build writes, stamped into `PRAGMA user_version` at the end of the
+ * migration chain (WP-R5, issue #8).
+ *
+ * **Not the app version** — a plain counter, bumped only when a migration changes the stored
+ * shape in a way an older build would misread or silently discard. Databases written before this
+ * existed carry 0, which is why the comparison is one-sided (see `assertSchemaSupported`).
+ */
+export const SCHEMA_VERSION = 1;
+
+/** The generation stamped into a database file; 0 for anything written before WP-R5. */
+export function readSchemaVersion(db: Database.Database): number {
+  return Number(db.pragma('user_version', { simple: true })) || 0;
+}
+
+/**
+ * Both versions in one German clause, so no message can name only half the comparison — which is
+ * the half the user needs to know what to do about it.
+ */
+function versionClause(found: number): string {
+  return `Datenformat ${found}, diese App: ${SCHEMA_VERSION}`;
+}
+
+/**
+ * Refuse a file a *newer* build has already migrated — and only that.
+ *
+ * `initDb` is an idempotent detect-and-repair chain, so an older file simply runs through it and
+ * comes out current. There is no such repair in the other direction: some migrations are
+ * deliberately lossy (`migrateFlattenDeepSubtasks` reparents, `migrateProjectsMergeNotes` folds a
+ * column away), and a newer build's shape read by this one's queries is a silent misread rather
+ * than an error. The multi-window rebuild raised the stakes — several season files of different
+ * ages side by side, plus an import path that accepts any `.db` the user picks.
+ *
+ * **The refusal is one-sided by construction**: `>` and nothing else. An unstamped or older file
+ * must keep opening, or every existing installation would be refused by the build that introduces
+ * the stamp.
+ */
+function assertSchemaSupported(db: Database.Database, what: string): void {
+  const found = readSchemaVersion(db);
+  if (found > SCHEMA_VERSION) {
+    throw new Error(
+      `${what} wurde mit einer neueren Version von Auftakt gespeichert (${versionClause(found)}). ` +
+        'Bitte aktualisiere Auftakt.',
+    );
+  }
+}
+
+/**
  * Bring a just-opened season file up to date: pragmas, schema, defaults, built-in columns and
  * every migration. **The single initialisation path** — `getDb()` and `createSeason()` both go
  * through here.
@@ -1411,11 +1476,16 @@ const skipPurgeOnOpen = new Set<number>();
  * which nothing can tell a brand-new database from one whose stamps still need converting.
  */
 function initDb(db: Database.Database, isFresh: boolean): void {
+  // First, before a single statement of the chain runs: everything below repairs *forward*, and
+  // a file from a newer build must be left exactly as it was found. The caller closes the handle
+  // on the throw (getDb), so nothing is left holding the file either.
+  assertSchemaSupported(db, 'Diese Saison-Datenbank');
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA);
   ensureDefaultSettings(db);
   dropUnusedSettings(db);
+  migrateSettingsRev(db);
   migrateStampsToLocal(db, isFresh);
   migrateColumns(db);
   ensureBuiltinColumns(db);
@@ -1440,6 +1510,11 @@ function initDb(db: Database.Database, isFresh: boolean): void {
   migrateEventsAllowSeason(db);
   migrateLinksAllowSeason(db);
   migrateColumnsArtistScope(db);
+  // Last, and only after every step above returned: the stamp says „this file has been through
+  // the whole chain of build N", so writing it earlier would promise a repair that a throw
+  // halfway down never delivered. Written only when it moves — a pragma write is a transaction,
+  // and every open of every season would otherwise pay one for nothing.
+  if (readSchemaVersion(db) !== SCHEMA_VERSION) db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
 
 export function getDb(): Database.Database {
@@ -1461,7 +1536,16 @@ export function getDb(): Database.Database {
   mkdirSync(dirname(path), { recursive: true });
   const isFresh = !existsSync(path);
   const db = new Database(path);
-  initDb(db, isFresh);
+  try {
+    initDb(db, isFresh);
+  } catch (err) {
+    // The pool never took this handle, so nothing else will ever close it. A season file from a
+    // newer build throws here on *every* request that touches it, so leaking one handle per
+    // attempt would run the process out of descriptors and — on Windows — keep the file locked
+    // against the delete, rename and backup paths that need it closed (DBW-07's family).
+    db.close();
+    throw err;
+  }
   pool.set(season.id, db);
   // First request-context open of this season in this process: sweep expired soft-deleted
   // rows. Boot only covers the registry default, so without this a season worked in from a
@@ -1583,12 +1667,44 @@ export function validateImportCandidate(path: string): string | null {
     );
     const missing = REQUIRED_TABLES.filter((t) => !tables.has(t));
     if (missing.length) return `Die gewählte Datei ist keine Auftakt-Datenbank (fehlend: ${missing.join(', ')}).`;
+    // The last check, and the one that has to happen *here* rather than at the next open: the
+    // import replaces the season file, so a candidate this build cannot open would be discovered
+    // only after the old database was already gone. `importIntoCurrentSeason` calls this before
+    // it snapshots or copies anything, and `/backup/import/check` calls it before the Electron
+    // dialog even offers to replace anything (WP-R5). One-sided like every other version test:
+    // an older or unstamped file is exactly what the migration chain is for.
+    const version = readSchemaVersion(db);
+    if (version > SCHEMA_VERSION) {
+      return (
+        `Die gewählte Datei stammt aus einer neueren Version von Auftakt (${versionClause(version)}) ` +
+        'und kann nicht importiert werden. Bitte aktualisiere Auftakt.'
+      );
+    }
     return null;
   } catch (err) {
     // better-sqlite3 opens lazily, so a file that is not SQLite at all fails here.
     return `Die gewählte Datei ist keine gültige Auftakt-Datenbank (${(err as Error).message}).`;
   } finally {
     db.close();
+  }
+}
+
+/**
+ * The generation stamped into a file on disk, best-effort — 0 for anything unreadable, since a
+ * file this cannot open is a file `validateImportCandidate` has already refused for a better
+ * reason. Only the import dialog uses it, to name both versions before it offers to replace
+ * anything (WP-R5).
+ */
+export function fileSchemaVersion(path: string): number {
+  try {
+    const db = new Database(path, { readonly: true });
+    try {
+      return readSchemaVersion(db);
+    } finally {
+      db.close();
+    }
+  } catch {
+    return 0;
   }
 }
 
@@ -1720,9 +1836,32 @@ export function backupStamp(at: Date = new Date()): string {
  */
 const DROPPED_SETTINGS = ['timezone'];
 
+/**
+ * **The one place that can lower `MAX(rev)`, and must not** (WP-R5). The settings table's
+ * generation is `MAX(rev)` over its rows, so deleting the row that happens to carry the highest
+ * one would hand the *next* write a generation already handed out — and a client still holding it
+ * would then pass the conflict check and overwrite what it should have been refused.
+ *
+ * It cannot happen today: `timezone` was written by a build that predates the column, so its row
+ * carries 0, and nothing writes it any more. **A key added to `DROPPED_SETTINGS` must be one no
+ * build ever wrote through `writeSettings`** — i.e. a dead key from before this column, not a
+ * setting the app has been saving. If a live key ever has to go, the delete has to carry the
+ * generation forward with it — `writeSettings(db, [])` will not, since it writes no row — or the
+ * counter has to move out of `MAX` first.
+ */
 function dropUnusedSettings(db: Database.Database): void {
   const stmt = db.prepare('DELETE FROM settings WHERE key = ?');
   for (const key of DROPPED_SETTINGS) stmt.run(key);
+}
+
+/**
+ * The settings table's generation column (WP-R5). Existing rows read 0, which is what a client
+ * that has never written also sends — nothing to migrate, in either direction: an older build
+ * ignores the column, and its writes leave it where it is, so the next new-build write simply
+ * takes the next generation.
+ */
+function migrateSettingsRev(db: Database.Database): void {
+  ensureColumn(db, 'settings', 'rev', 'rev INTEGER NOT NULL DEFAULT 0');
 }
 
 /** The timestamp columns the naive-local convention applies to (shared/time.ts). */
@@ -2386,10 +2525,43 @@ export function getSetting(db: Database.Database, key: string): string | null {
   return row ? row.value : null;
 }
 
+/**
+ * The generation of the settings table as a whole: the highest `rev` any row carries (WP-R5).
+ *
+ * `MAX`, not a counter row of its own, so the number can never disagree with the rows it
+ * describes — and so a future per-key comparison reads the same column rather than a second
+ * scheme. A table whose rows were all written before this existed answers 0, which is also what
+ * `GET /api/settings` then publishes and what a first conditional write has to match.
+ */
+export function settingsRev(db: Database.Database): number {
+  const row = db.prepare('SELECT COALESCE(MAX(rev), 0) AS rev FROM settings').get() as { rev: number };
+  return Number(row.rev);
+}
+
+/**
+ * Write settings rows as **one** generation and return it.
+ *
+ * The single write path, so „every write moves the generation" holds without exceptions — an
+ * in-process `setSetting` that left the counter alone would let a client's conditional write pass
+ * its check and overwrite a value that had changed under it. One transaction and one `rev` per
+ * call: a PATCH carrying three keys is one generation, not three, which is what makes the
+ * counter's meaning „the settings as they stand" rather than „how many keys were ever touched".
+ */
+export function writeSettings(db: Database.Database, entries: Array<[string, string | null]>): number {
+  const rev = settingsRev(db) + 1;
+  const stmt = db.prepare(
+    `INSERT INTO settings (key, value, rev) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, rev = excluded.rev`,
+  );
+  const tx = db.transaction(() => {
+    for (const [key, value] of entries) stmt.run(key, value, rev);
+  });
+  tx();
+  return rev;
+}
+
 export function setSetting(db: Database.Database, key: string, value: string): void {
-  db.prepare(
-    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-  ).run(key, value);
+  writeSettings(db, [[key, value]]);
 }
 
 /**
