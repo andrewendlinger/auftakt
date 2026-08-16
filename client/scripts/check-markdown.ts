@@ -179,6 +179,30 @@ const corpus: Record<string, string> = {
   colorTwoRuns: 'Erst <span class="tc-rot">rot</span>, dann <span class="tc-gruen">grün</span>.',
   colorWholeParagraph: '<span class="tc-violett">Der ganze Absatz ist gefärbt.</span>',
   colorInBold: '**fett und <span class="tc-blau">blau</span>** zusammen.',
+  // …and the other direction, which is the gesture the toolbar makes easy: select the whole
+  // paragraph, then pick a colour. The serializer has to open the colour *outside* the bold here —
+  // a mark that outlives the marks inside it cannot be inner — so the stored string carries
+  // Markdown inside a raw tag, and the read side has to agree with the reader about what that
+  // means. It used not to: the editor read `**bbb**` as four literal asterisks and escaped them on
+  // the next save, which destroyed the bold for good (and the same for a link, an `<u>`, and every
+  // `_`, `[` or `*` in ordinary prose). `MdRawMark` in `richtext.ts` is the repair, and these are
+  // what hold it: idempotence is the assertion that bites, since the *first* save was always right.
+  colorSpansBold: '<span class="tc-rot">aaa **bbb** ccc</span>',
+  colorSpansLink: '<span class="tc-blau">Siehe [den Verlag](https://example.org/x) — final.</span>',
+  colorSpansUnderline: '<span class="tc-gruen">Der Aufbau ist <u>zwingend</u> um 14:00.</span>',
+  colorSpansMarksInList: '- <span class="tc-rot">**Achtung:** [Rider](https://example.com) lesen</span>\n- zwei',
+  // Punctuation, which is where this got expensive: the serializer escapes `_`, `[` and `*` inside
+  // the run, and reading those back as literal characters added a backslash to every one of them on
+  // every save — five after the first, fifteen after the second, and the reader showed the
+  // backslashes from the second on. Both spellings are here: what the app stores after one save,
+  // and what an import brings in unescaped (which must be repaired to the first, not damaged).
+  colorPunctuation: '<span class="tc-rot">Preis\\_pro\\_Person und \\[ca. 5000\\] und 5 \\* 3</span>',
+  colorPunctuationLegacy: '<span class="tc-rot">Preis_pro_Person und [ca. 5000] und 5 * 3</span>',
+  // The same flaw `<u>` has carried since WP-Q, fixed by the same tokenizer. Nothing in the app
+  // could author it before — the toolbar cannot underline across a bold run without colouring — but
+  // an import can, and „alles unterstreichen" is one keystroke away.
+  underlineSpansBold: '<u>aaa **bbb** ccc</u>',
+  underlineSpansLink: '<u>Siehe [den Verlag](https://example.org/x) — final.</u>',
   colorInItalic: '*<span class="tc-tuerkis">kursiv und türkis</span>*',
   colorUnderlined: 'Ein <u><span class="tc-gruen">grün unterstrichenes</span></u> Wort.',
   // What the toolbar itself writes when all three are on: `**`, then `<u>`, then the colour.

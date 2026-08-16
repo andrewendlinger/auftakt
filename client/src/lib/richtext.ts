@@ -160,6 +160,91 @@ markdownParser.use({
   },
 });
 
+/**
+ * Inside `<u>` and `<span class="tc-…">`, the text is **Markdown** — because that is what the
+ * reader reads there (WP-62).
+ *
+ * The dialect spells two marks as raw HTML, and `MarkdownManager` reads raw inline HTML by handing
+ * it to `generateJSON`, i.e. as *HTML*: everything between the tags becomes literal text. remark
+ * does the opposite — an inline raw tag is a tag, and what stands between two of them is parsed as
+ * Markdown — so the two halves disagreed about every stored `<u>…**fett**…</u>`.
+ *
+ * That was survivable while such a note could only come from an import. WP-62 ships the gesture
+ * that produces one constantly: colouring a *whole* paragraph. The serializer opens a mark that
+ * outlives the marks inside it first (`getMarksToOpenForSerialization` — a mark that continues into
+ * the next text node cannot be inner), so „select all, then Rot" is stored as
+ * `<span class="tc-rot">aaa **bbb** ccc</span>`. That string is *correct*: the reader draws it
+ * exactly as the editor did. Opening the note again is where it broke — the editor read `**bbb**`
+ * as four literal asterisks, and the next save escaped them to `\*\*bbb\*\*`, at which point the
+ * bold was gone from the reader too. Links died the same way, and ordinary punctuation
+ * (`Preis_pro_Person`, `[ca. 5000]`) grew a backslash on every save.
+ *
+ * So the read side is brought into line with the reader, rather than the serializer being taught to
+ * split runs: the tokenizer carves the two tags out itself and lexes what is between them as
+ * inline Markdown. `MdRawMark` below then applies the mark to the parsed content. One tokenizer for
+ * both tags, because it is one rule — and it repairs `<u>` while it is there, which has had the
+ * identical flaw since WP-Q.
+ *
+ * What it deliberately does *not* claim: a `<span>` whose class is not a colour of ours (an import
+ * keeps whatever marked did with it), a `<u>` carrying attributes, and either tag nested in itself.
+ * The closing tag is the first **unescaped** one, so a `\</span>` the serializer wrote for a
+ * literal one in the text does not cut the run short — the same tag CommonMark leaves as text.
+ */
+const RAW_MARK_TOKEN = 'auftaktRawMark';
+const RAW_MARK_OPEN = /^<(u|span)((?:\s[^<>]*)?)>/i;
+const RAW_MARK_START = /<(?:u|span)[\s>]/i;
+const CLASS_ATTR = /\bclass\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
+
+/** The first closing tag that is not escaped, or `null`. */
+function rawMarkClose(src: string, tag: string): { index: number; length: number } | null {
+  const re = new RegExp(`</${tag}\\s*>`, 'gi');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src))) {
+    if (m.index === 0 || src[m.index - 1] !== '\\') return { index: m.index, length: m[0].length };
+  }
+  return null;
+}
+
+markdownParser.use({
+  extensions: [
+    {
+      name: RAW_MARK_TOKEN,
+      level: 'inline',
+      // Marked cuts the preceding text token here and tries the tokenizers again; declining below
+      // simply hands the tag back to marked's own `tag` rule.
+      start: (src: string) => {
+        const at = src.search(RAW_MARK_START);
+        return at < 0 ? undefined : at;
+      },
+      tokenizer(this: { lexer: { inlineTokens(src: string): unknown[] } }, src: string) {
+        const open = RAW_MARK_OPEN.exec(src);
+        if (!open) return undefined;
+        const tag = open[1]!.toLowerCase();
+        const attrs = open[2] ?? '';
+        const cls = CLASS_ATTR.exec(attrs);
+        const color = textColorFromClass(cls?.[1] ?? cls?.[2] ?? null);
+        // A `<span>` is ours only when it carries one of our colours; a `<u>` only when it is bare.
+        if (tag === 'span' ? color === null : attrs.trim() !== '') return undefined;
+        const rest = src.slice(open[0].length);
+        const close = rawMarkClose(rest, tag);
+        if (!close) return undefined;
+        const inner = rest.slice(0, close.index);
+        if (new RegExp(`<${tag}[\\s>]`, 'i').test(inner)) return undefined;
+        return {
+          type: RAW_MARK_TOKEN,
+          raw: src.slice(0, open[0].length + close.index + close.length),
+          tag,
+          color,
+          // Populated here rather than in the handler so that a token with no handler still
+          // degrades to its content: `parseFallbackToken` walks `tokens` for anything unknown.
+          tokens: this.lexer.inlineTokens(inner),
+        };
+      },
+    },
+  ],
+  // The extension's token shape is ours, not one of marked's own — `tag`/`color` ride along on it.
+} as unknown as Parameters<typeof markdownParser.use>[0]);
+
 /** A run of blank lines at the end of a token's `raw` — the vendor's own shape, matched here. */
 const TRAILING_BLANK_LINES = /\n[^\S\n]*(?:\n[^\S\n]*)+$/;
 
@@ -228,6 +313,26 @@ const LegacyFence = Extension.create({
       });
       return helpers.createNode('paragraph', {}, content);
     }),
+});
+
+/**
+ * The handler half of the tokenizer above: mark the parsed content (WP-62).
+ *
+ * `helpers.applyMark` is what `MdLinkedImage` uses for the same shape — a mark around content the
+ * handler parsed itself. Everything inside has already been through the inline lexer, so a bold run
+ * or a link inside a coloured span arrives as its own mark and the colour is simply added on top,
+ * which is exactly the tree the reader builds for the same string.
+ */
+const MdRawMark = Extension.create({
+  name: 'rawMark',
+  markdownTokenName: RAW_MARK_TOKEN,
+  parseMarkdown: (token, helpers) => {
+    const { tag, color } = token as unknown as { tag?: string; color?: string | null };
+    const content = helpers.parseInline(token.tokens ?? []);
+    return tag === 'span'
+      ? helpers.applyMark('textColor', content, { color })
+      : helpers.applyMark('underline', content);
+  },
 });
 
 /**
@@ -575,11 +680,12 @@ const MdLinkedImage = Extension.create({
  * is then three adjacent links rather than one, which renders identically and stores the
  * destination the old output simply dropped.
  *
- * `underline` and `textColor` are absent deliberately: both serialize as raw HTML, and marked does
- * not parse Markdown inside a raw tag, so the image would come back as literal `![…]` text.
- * Nothing in the app can author those combinations — the toolbar cannot underline an atom, and a
- * colour on a picture paints nothing — and writing them would be the loss this function exists to
- * prevent.
+ * `underline` and `textColor` are absent deliberately. Nothing in the app can author either on an
+ * atom — the toolbar cannot underline a picture, and a colour paints nothing on one — and neither
+ * could survive being written even now that `MdRawMark` reads Markdown inside those tags:
+ * `applyMarkToContent` puts marks on *text* nodes, so a raw tag wrapped around an image would come
+ * back marking nothing at all. That is the same gap `MdLinkedImage` exists to close for links, and
+ * this is the direction of it the serializer must not walk into.
  */
 function wrapImageMarks(md: string, marks: JSONContent['marks']): string {
   if (!marks?.length) return md;
@@ -652,11 +758,12 @@ export function markdownExtensions(
       },
     }),
     MdUnderline,
-    // After the marks above, and that order is load-bearing: the serializer opens marks by
-    // registration rank, so the colour span lands *inside* `**` and `<u>` rather than around
-    // them. Around them it would be wrong in both directions — marked does not parse Markdown
-    // inside a raw tag, so `<span …>**fett**</span>` reads back as two literal asterisks.
+    // After the marks above, so that the serializer — which opens marks by registration rank —
+    // puts the colour span *inside* `**` and `<u>` whenever it can. It cannot when the colour
+    // outlives them (a whole paragraph coloured at once), which is what `MdRawMark` below is for.
     MdTextColor,
+    // The read half of both raw-HTML marks — see the tokenizer above.
+    MdRawMark,
     LegacyFence,
     MdDocument,
     MdParagraph,
