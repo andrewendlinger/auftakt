@@ -10,7 +10,7 @@ import {
 import { useEditor, EditorContent, useEditorState, type Editor } from '@tiptap/react';
 import { Extension } from '@tiptap/core';
 import { Placeholder } from '@tiptap/extensions';
-import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state';
 import type { Node as PMNode } from '@tiptap/pm/model';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { api } from '../api/client';
@@ -45,6 +45,27 @@ const DEFAULT_CONTENT =
   'w-full min-h-20 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-800 outline-none transition focus:border-neutral-500 focus:ring-2 focus:ring-neutral-900/5';
 
 const linkTitleKey = new PluginKey<DecorationSet>('rteLinkTitle');
+
+/** Where a click landed inside a box, in CSS px from its top-left border-box corner (WP-56). */
+export type CaretPoint = { x: number; y: number };
+
+/**
+ * Read the click that is about to open an editor, so the caret can land where it pointed (WP-56).
+ *
+ * Relative to the reader's own border box rather than in viewport coordinates, because the editor
+ * does not mount where the reader stood: its toolbar pushes the first line ~32 px down. Both
+ * surfaces put their text at the same offset *inside* their box — that is what the matching border
+ * and padding on the reading view are for — so the box corner is the one landmark they share, and
+ * `RichTextEditor` translates the point back from the corner it mounts at.
+ */
+export function caretPointIn(
+  el: HTMLElement | null,
+  e: { clientX: number; clientY: number },
+): CaretPoint | null {
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
 
 /**
  * Hover a link while editing and see where it actually goes (WP-29d).
@@ -173,6 +194,7 @@ export function RichTextEditor({
   placeholder,
   compact = false,
   images = false,
+  caretAt,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -212,6 +234,16 @@ export function RichTextEditor({
    * holds one still round-trips safely in an editor that offers no button.
    */
   images?: boolean;
+  /**
+   * Where the click that opened this editor landed, from `caretPointIn` (WP-56). Only meaningful
+   * together with `autoFocus`, and only for a caller that mounts the editor *in place of* a
+   * reading view: it is read once, at construction, because it describes that one gesture.
+   *
+   * Left out (or `null`) the editor autofocuses to the end of the text as it always did — which is
+   * right for „+ Kommentar", „bearbeiten" and every dialog field, where there was no click on the
+   * text to honour.
+   */
+  caretAt?: CaretPoint | null;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -239,6 +271,10 @@ export function RichTextEditor({
   // (RTE-19). `setOptions` is no help here: it never rebuilds the extension manager.
   const placeholderRef = useRef(placeholder);
   placeholderRef.current = placeholder;
+  // The click that opened the editor, frozen at construction like everything else `useEditor`
+  // reads: it describes this mount, and a later render must not move a caret the user has since
+  // put somewhere else.
+  const openedAt = useRef(caretAt ?? null);
   // One commit per departure, whichever path notices it first (see the effect below).
   const blurFired = useRef(false);
   /**
@@ -284,7 +320,11 @@ export function RichTextEditor({
     ],
     content: value,
     contentType: 'markdown',
-    autofocus: autoFocus ? 'end' : false,
+    // „End of the text" only when nothing better is known. With a click to honour we do the
+    // focusing ourselves (see the effect below) — TipTap's own autofocus runs from a
+    // `setTimeout(0)` in `Editor.mount`, i.e. *after* every effect, and would drag the caret
+    // back to the end of the note a tick after it landed where the user clicked (WP-56).
+    autofocus: autoFocus && !openedAt.current ? 'end' : false,
     editorProps: {
       attributes: { class: `prose-md ${compact ? '' : 'prose-md--roomy '}rte-content ${className}` },
       // ProseMirror-level: the caller peeks first; if it preventDefaults (Esc) we tell
@@ -317,6 +357,36 @@ export function RichTextEditor({
       fireBlur();
     },
   });
+
+  /**
+   * Put the caret where the user clicked (WP-56).
+   *
+   * There was no click-to-position mapping at all: every in-place editor autofocused to the end of
+   * the text, so clicking into the second paragraph of a note opened it with the caret in the last
+   * line. `posAtCoords` is the mapping, and it works in viewport coordinates — which is why the
+   * *geometry* has to be aligned first and the point arrives box-relative (see `caretPointIn`).
+   * Same border, same padding, same width on both surfaces means the text wraps identically, so
+   * one translation from the reader's corner to the editor's is the whole correction.
+   *
+   * A layout effect, so the caret is right in the first painted frame; `TextSelection.near`
+   * because a click can resolve to a position between blocks (under a table, beside an image),
+   * and a null hit — a click below the last line — falls back to the end, i.e. to the behaviour
+   * every editor had before.
+   */
+  useLayoutEffect(() => {
+    const at = openedAt.current;
+    // `caretAt` is only meaningful together with `autoFocus` (see the prop's doc): without the
+    // guard, a future caller passing a click point alone would get an editor that steals focus
+    // on mount — the opposite of what omitting `autoFocus` asks for.
+    if (!editor || !at || !autoFocus) return;
+    const { view } = editor;
+    const box = view.dom.getBoundingClientRect();
+    const hit = view.posAtCoords({ left: box.left + at.x, top: box.top + at.y });
+    const end = view.state.doc.content.size;
+    const pos = hit ? Math.min(Math.max(hit.pos, 0), end) : end;
+    view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(pos))));
+    view.focus();
+  }, [editor]);
 
   /**
    * Commit-on-blur fallback for the case ProseMirror cannot see.
