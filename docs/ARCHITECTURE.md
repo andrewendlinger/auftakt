@@ -511,6 +511,7 @@ Which module owns which invariant. Reach for these rather than rebuilding the be
 | `InlineInput` + `useCommitOnUnmount` (hooks.ts) | click-to-edit that commits on blur. React delegates focus events at the root, so a detached node never reaches `onBlur`. `useCommitOnUnmount`'s `active` argument is load-bearing: a constant `true` makes StrictMode's mount-time cleanup fire the commit while the editor is still open. Pick an `EmptyPolicy` (`ignore`/`clear`/`raw`) explicitly. **Every** inline editor in the task table goes through it, dates included (`type="date"`), which is what makes „a half-typed picker commits nothing" one rule rather than five: `validity.badInput`, not the empty string, is what says the draft is incomplete (WP-43). |
 | `normalizeUrl` (`lib/url.ts`) | URL shaping at the **storage and render** boundaries, never inside `openExternal` — `normalizeUrl('/foo')` yields `https:///foo`, which the allowlist would then accept. `openExternal`'s protocol allowlist stays the one place that decides what may open. |
 | `ExternalLink` / `EXTERNAL_LINK_CLASS` (ui.tsx) | the anchor contract; `linkify`, `MdLink` and `MdLinkText` all render through it. |
+| `Spinner` / `ProgressBar` (ui.tsx) | the two „etwas läuft" primitives, split by whether the end is known. `ProgressBar` clamps `pct` itself (both callers compute it — a „Fortschritt" over 0 tasks, an electron-updater `percent` that overshoots on the last chunk) and takes `null` as a third state: running, total unknown, drawn as an *empty* pulsing track. A filled bar with no number beside it reads as „fertig". It was a private copy inside `TaskStatChips` until the update download wanted a third one (WP-60). |
 | `parentJoins(alias)` / `parentLive(alias)` (`server/src/lib/queries.ts`) | the soft-deleted-parent filter shared by `listTasks`, `listEvents` and global search. Any new query over a table hanging off a project/artist wants both, or it returns rows no list view shows. A single-FK child takes `crudRouter`'s `parent` option instead; a count that is *not* a row list (`seasonStats`) spells the same `EXISTS` out by hand. |
 | `Settings` vs `WritableSettings` (`api/types.ts`) | the read-only seam. A server constant spliced into the response and *not* added to `WritableSettings` is unwritable by construction — that is how `archive_after_days`/`purge_after_days` reach the client. |
 | `PrintContacts` / `PrintEvents` / `Empty` / `PrintHeader` / `Section` (PrintSheet.tsx) | the print primitives. A new contact column or changed date fallback belongs there, not in a sheet. **`print-color-adjust: exact` is scoped to `.print-page`**, not to the print block — a new printable surface outside the two sheets does not inherit it and will print `contrastText` foregrounds onto dropped backgrounds. |
@@ -569,10 +570,50 @@ and backed up, and one machine's monitor layout has no business travelling insid
 
 **Main never reloads a window to refresh it.** The one thing main knows and the renderers do not
 — the registry-wide backup folder changed, from any window's picker, the Datei menu or the
-first-launch prompt — travels as `backup-config-changed`, the app's only `webContents.send` and
-only `ipcRenderer.on` (`electron/preload.ts` → `onBackupConfigChanged`). WP-54's diagnostics pair
-(`get-diagnostics`, `save-diagnostics`) is `invoke`/`handle` like everything else, so that remains
-true. `get-diagnostics` takes **no argument**: main derives `boot-log.jsonl`'s path from
+first-launch prompt — travels as `backup-config-changed` (`electron/preload.ts` →
+`onBackupConfigChanged`). WP-54's diagnostics pair (`get-diagnostics`, `save-diagnostics`) is
+`invoke`/`handle` like everything else, because everything else starts in a renderer. A reload
+would be the one path in the app that destroys another window's unsaved editor drafts, which have
+no `beforeunload` behind them (PR50-05).
+
+**There are exactly two `webContents.send` channels, and they are opposites in both halves.**
+`backup-config-changed` goes to **every** window and carries **nothing** — a pure signal, like the
+broadcast messages, answered with the same coalesced blanket invalidate; a renderer refetches
+rather than being told a value, which is what keeps main out of the business of knowing what the
+UI shows. `update-download-progress` (WP-60) goes to the **one** window that started the download
+— main derives it from the `install-update` invoke's `event.sender`, and the other windows' update
+cards are not in that state — and it carries **a value**, the percentage. That is the whole reason
+it exists: electron-updater's progress lives in the main process and nowhere else, so „refetch
+instead" has nothing to refetch from. A third channel should have to argue against both of those
+sentences before it is added; the payload one is the load-bearing half. The channel name is
+spelt out twice (`electron/updater.ts`, `electron/preload.ts`) because preload is its own esbuild
+bundle and must not import `electron-updater` — grep is the coupling, as it is for
+`backup-config-changed` and for `auftakt-season`.
+
+The rest of the update path is deliberately *not* on that channel. The download's own failures
+settle the `install-update` promise instead: `downloadUpdate()` alone leaves some of them pending
+(electron-updater reports them through `error`), so the download is raced against `error` and
+`update-downloaded`, and a failure reaches the user as the same German dialog a failed check
+already used. And the gap after `quitAndInstall(true, true)` — NSIS running silently while a
+virus scanner takes a minute or more over the fresh `.exe`, with no window left anywhere — is
+**not reachable by any progress bar at all**. It is answered before it starts, in the restart
+dialog, which names the three steps and the wait. `isSilent = false` would buy NSIS's own progress
+window at the price of extra clicks and was rejected.
+
+Two consequences of `autoUpdater` being a **process-wide singleton while windows are not**.
+First, both update dialogs are parented like every other dialog in the app — `alive`/`messageBox`/
+`saveDialog`/`openDialog` moved out of `main.ts` into **`electron/dialogs.ts`** for it, since
+`main.ts` imports `updater.ts` and could not share them the other way. Unparented, a Windows
+dialog is modal to nothing and can sit *behind* the window (PR50-14), which on this path means a
+card apparently frozen at 100 % with the explanation hidden on another z-order — the failure the
+package exists to remove. Second, `downloadInFlight` stops a *second* window touching the
+singleton mid-download: `checkForUpdates()` emits `error` on the same emitter the download's
+failure arm listens to (so window B's offline check would abort window A's download) and rewrites
+the `updateInfoAndProvider` that download reads. While one runs, a check answers from the cache —
+it could not be news anyway — and a second install offers a German „wird bereits heruntergeladen"
+instead of racing.
+
+`get-diagnostics` takes **no argument**: main derives `boot-log.jsonl`'s path from
 `app.getPath('userData')` and hands the renderer finished summary text plus a path it may only
 display. A path *from* the renderer would be a `shell.showItemInFolder` pointed anywhere on the
 machine — the same hole the scheme allowlist closes for `openExternal` (X-02).
@@ -587,10 +628,7 @@ an alphabet in which no separator, no `..` and no drive letter can be spelt. The
 lying on the desktop, returning the name it actually wrote so the mail can carry that one. So the
 rule above is narrowed rather than dropped. That
 validator is deliberately **not** imported from the client module that generates refs — main
-checking with the renderer's own checker is not checking. Renderers answer the broadcast with
-the same coalesced blanket invalidate the BroadcastChannel listener runs. A reload would be the
-one path in the app that destroys another window's unsaved editor drafts, which have no
-`beforeunload` behind them (PR50-05).
+checking with the renderer's own checker is not checking.
 
 The startup chores are memoized, so N
 `boot-settled` calls are one run; `window-all-closed` only fires when the last window closes, so

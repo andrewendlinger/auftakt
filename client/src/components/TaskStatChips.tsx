@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { Task } from '../api/types';
 import { computeStats, type TaskMetric, type TaskStats } from '../lib/taskStats';
 import { useDoneValue, useTaskStatsConfig } from '../hooks';
+import { ProgressBar } from './ui';
 
 /**
  * Renders the configured task metrics for a set of tasks. `variant="chips"` is the compact,
@@ -119,12 +120,4 @@ function Pill({ tone, children }: { tone: 'neutral' | 'amber' | 'muted'; childre
     muted: 'bg-neutral-100 text-neutral-400',
   }[tone];
   return <span className={`rounded-full px-2 py-0.5 font-medium ${cls}`}>{children}</span>;
-}
-
-function ProgressBar({ pct, className = '' }: { pct: number; className?: string }) {
-  return (
-    <span className={`inline-block h-1.5 overflow-hidden rounded-full bg-neutral-200 ${className}`}>
-      <span className="block h-full rounded-full bg-neutral-500" style={{ width: `${pct}%` }} />
-    </span>
-  );
 }

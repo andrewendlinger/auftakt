@@ -499,6 +499,20 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   `window.__external.push(url)` — then read it back with `new URL(...)` and `searchParams`, which
   is also the only honest check of the encoding. Asserting on the dialog after „E-Mail öffnen"
   asserts on nothing; it has already closed itself.
+- **The update card's progress bar cannot be reached by a stub that only answers questions.**
+  The percentage is *pushed* from main over `onUpdateProgress`, so a bridge stub whose members all
+  return promises leaves the card frozen in its first frame — which is exactly the frame it used
+  to have permanently, i.e. the defect WP-60 fixed looks identical to a stub that cannot drive it.
+  `stubElectron` now keeps `installUpdate` pending and hands the subscriber back as
+  `window.__updateProgress(pct)`, with `window.__finishUpdate()` to resolve the invoke. Three
+  prerequisites, and each one fails silently on its own: the card is at
+  **`#/einstellungen/hilfe`**, never at `#/einstellungen` (which lands on „Aufgaben & Übersicht" —
+  the card is simply not in the DOM, so every selector matches nothing and reads as „the update
+  card is broken"); `platform` must be `'win32'`; and `checkForUpdates` must answer
+  `{ updateAvailable: true, canInstall: true }` — on the stub's defaults („darwin", `null`) the
+  „Herunterladen & installieren" button does not exist and the click waits for ever. Everything
+  past `quitAndInstall` — the restart dialog, `setProgressBar`, NSIS — has no browser equivalent
+  and is Windows-manual by construction.
 - **Sending takes two clicks, and the first one opens a dialog rather than closing one.** „Weiter"
   in the form only opens the steps dialog („So geht es weiter"); „E-Mail öffnen" inside it is what
   writes the bundle and hands over the `mailto:`. So `dialogs(page)` counts **2** in between —

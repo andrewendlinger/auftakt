@@ -2,7 +2,15 @@ import { useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { api } from '../api/client';
 import type { CustomColumnOption, ReassignField, Season, WritableSettings } from '../api/types';
-import { Card, SectionTitle, Spinner, Btn, IconButton, ErrorState } from '../components/ui';
+import {
+  Card,
+  SectionTitle,
+  Spinner,
+  Btn,
+  IconButton,
+  ErrorState,
+  ProgressBar,
+} from '../components/ui';
 import { Label, TextInput, Modal, onEnterKey } from '../components/fields';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { CustomColumnManager } from '../components/CustomColumnManager';
@@ -542,6 +550,9 @@ type UpdateView =
 function UpdateCard() {
   const [version, setVersion] = useState('');
   const [view, setView] = useState<UpdateView>({ kind: 'idle' });
+  /** 0–100 from main, or null before the first `download-progress` — the size is not known
+   *  until the response headers are in, and that is a real state, not a zero (WP-60). */
+  const [percent, setPercent] = useState<number | null>(null);
   const isMac = window.auftakt?.platform === 'darwin';
   const toast = useToast();
 
@@ -556,6 +567,18 @@ function UpdateCard() {
       .catch(() => {});
   }, []);
 
+  // Subscribed on mount rather than around the install call: main starts sending as soon as
+  // the download does, and a listener attached inside `install` would race the first chunks.
+  // The unsubscribe is the reason the bridge returns one — this card unmounts, main.tsx's
+  // backup listener never does. Clamped here, at the boundary, and not only inside
+  // `ProgressBar`: electron-updater's `percent` has been seen to overshoot on the last chunk,
+  // and a clamp that only reaches the bar leaves the label next to it reading „103 %".
+  useEffect(
+    () =>
+      window.auftakt?.onUpdateProgress?.((p) => setPercent(Math.max(0, Math.min(100, p)))),
+    [],
+  );
+
   const check = async () => {
     setView({ kind: 'checking' });
     try {
@@ -568,6 +591,7 @@ function UpdateCard() {
   };
 
   const install = async (status: UpdateStatus) => {
+    setPercent(null); // a second attempt must not open on the first one's last percentage
     setView({ kind: 'downloading', status });
     try {
       // Resolves after the native dialog (restart now / later / error) — either way
@@ -614,8 +638,26 @@ function UpdateCard() {
             im Browser öffnen.
           </p>
         )}
+        {/* The whole feedback for the download used to be the first line of this block, on its
+            own and unmoving: main awaited `downloadUpdate()` without subscribing a single
+            electron-updater event, so there was nothing to say. What the user reported is the
+            same thing twice — no progress here, and no warning about the silent NSIS run and
+            the virus scan after it. The bar answers the first; the second is answered where it
+            actually happens, in the restart dialog (electron/updater.ts), because once
+            `quitAndInstall` runs this renderer no longer exists (WP-60). */}
         {view.kind === 'downloading' && (
-          <p className="text-xs text-neutral-500">Update wird heruntergeladen…</p>
+          <div className="space-y-2 rounded-lg bg-neutral-50 p-3">
+            <div className="flex items-baseline justify-between gap-3 text-xs text-neutral-500">
+              <span>Update wird heruntergeladen…</span>
+              {percent !== null && (
+                <span className="tabular-nums text-neutral-600">{Math.round(percent)} %</span>
+              )}
+            </div>
+            <ProgressBar pct={percent} className="w-full" />
+            <p className="text-xs text-neutral-400">
+              Danach fragt Auftakt, ob es zum Installieren neu starten soll.
+            </p>
+          </div>
         )}
 
         {view.kind === 'available' && (

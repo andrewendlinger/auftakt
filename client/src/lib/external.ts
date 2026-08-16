@@ -49,6 +49,15 @@ declare global {
       checkForUpdates?: (refresh: boolean) => Promise<UpdateStatus | null>;
       installUpdate?: () => Promise<void>;
       /**
+       * Main→renderer #2, and the only one that carries a value: the percentage (0–100) of
+       * the `installUpdate()` this window started. Addressed to this window alone, so a
+       * second window's card stays quiet. Returns its own unsubscribe, which matters here —
+       * the sole listener is a component effect in `UpdateCard`, not a document-lifetime
+       * one like `onBackupConfigChanged`'s. Not a signal to refetch from, because there is
+       * nothing to refetch: electron-updater's progress exists only in main (WP-60).
+       */
+      onUpdateProgress?: (cb: (percent: number) => void) => () => void;
+      /**
        * "The boot screen is gone." Called from the overlay's single exit path in
        * `client/index.html`, not from React — React never learns the overlay existed.
        * Releases the startup chores the main process is holding back (see main.ts).

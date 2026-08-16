@@ -2041,3 +2041,53 @@ the empty paragraph is a direct child of both, and `<p>&nbsp;</p>` and ProseMirr
 sequences, identical margins per block and identical blank-line heights on both surfaces; the only
 difference is the +4 px a `<ul>` has in the editor, which is TipTap's `li > p` wrapper and predates
 this package. No CSS change was needed, and the measurement is the reason none was made.
+
+---
+
+## Das Update bleibt stumm — der Hinweis kommt davor, nicht der Installer (2026-08-16, WP-60)
+
+Report: „bei einem automatischen update in windows gibt es keine progress bar oder nichts was den
+user vorbereitet was passiert. da auf den laptops oft ein antivirus programm ist, was die .exe und
+das programm erst scanned, kann es manchmal recht lange dauern bevor sich irgendetwas oeffnet."
+
+Das sind zwei Beschwerden, und nur die erste ist eine Fortschrittsanzeige. `updater.ts` hat
+`downloadUpdate()` ohne ein einziges abonniertes Event abgewartet — `download-progress`,
+`update-downloaded` und `error` lagen alle brach —, also gab es buchstäblich nichts zu zeigen. Das
+ist der Teil, den ein Balken löst: `download-progress` in die Karte, derselbe Wert an
+`setProgressBar()` in die Taskleiste.
+
+Die zweite Beschwerde ist **von keinem Balken erreichbar**, und das ist die eigentliche
+Entscheidung. `quitAndInstall(true, true)` startet NSIS stumm; ab diesem Aufruf gibt es kein
+Fenster, kein Taskleisten-Symbol und keinen Renderer mehr, während der Virenscanner die frische
+`.exe` prüft. Die naheliegende Antwort wäre `isSilent = false` — dann zeigt NSIS sein eigenes
+Fortschrittsfenster. Sie ist **abgelehnt**: sie erkauft den Balken mit zusätzlichen Klicks in einem
+Installer-Dialog, den niemand lesen will, und mit einem zweiten, fremd aussehenden Fenster auf
+genau den Geräten, deren Benutzer ohnehin schon unsicher sind, was gerade passiert. Erreichbar ist
+nur der Moment **davor** — der Neustart-Dialog, den es schon gab. Er nennt jetzt die drei Schritte
+und sagt, dass der Scan eine Minute oder mehr dazulegen kann. Eine erwartete Wartezeit ist nicht
+dasselbe Ereignis wie eine unerklärte: dieselbe Minute, ein anderer Vorfall.
+
+Zwei Nebenentscheidungen, die daran hängen:
+
+- **Der Kanal geht an *ein* Fenster, nicht an alle.** `update-download-progress` ist der zweite
+  `webContents.send` der App überhaupt und der erste, der einen *Wert* trägt — beides Abweichungen
+  von `backup-config-changed`, das an alle geht und ein reines Signal ist. Beide sind hier richtig:
+  den Fortschritt kennt nur der Main-Prozess (es gibt nichts zum Nachladen), und in der
+  Download-Ansicht steht nur das Fenster, in dem geklickt wurde. `docs/ARCHITECTURE.md` führt die
+  beiden Kanäle jetzt als Paar.
+- **`error` wird abonniert, `downloadUpdate()` allein reicht nicht.** electron-updater meldet einen
+  Teil der Fehler nur über das Event und lässt das Promise hängen; ohne Timeout blieb die Karte
+  dann für immer auf „Update wird heruntergeladen…" stehen, mit verschwundenem Knopf. Der Download
+  läuft jetzt gegen `error` und `update-downloaded` als Rennen — ein Fehlschlag landet im selben
+  deutschen Dialog wie eine fehlgeschlagene Prüfung.
+- **Während eines Downloads fasst kein zweites Fenster den Updater an** (Review zu PR #100).
+  `autoUpdater` ist prozessweit, Fenster sind es nicht: `checkForUpdates()` feuert `error` auf
+  demselben Emitter, an dem der laufende Download hängt — ein Klick auf „Nach Updates suchen" im
+  zweiten Fenster ohne Netz hätte den Download im ersten mit „Update fehlgeschlagen" abgebrochen,
+  obwohl er weiterläuft und beim Beenden installiert. Nach dem Event zu filtern geht nicht, beide
+  Pfade übergeben eine Meldung und nur der englische Wortlaut unterscheidet sie. Also antwortet
+  eine Prüfung währenddessen **aus dem Cache** — neu sein kann sie ohnehin nicht, die
+  heruntergeladene Version *ist* die neueste bekannte — und ein zweiter Installationsklick bekommt
+  „Das Update wird bereits heruntergeladen." Der bewusst offene Rest: hängt `downloadUpdate()`
+  wirklich für immer, bleibt die Sperre die Sitzung über stehen. Ein Timeout wäre eine Frist, die
+  niemand gemessen hat; sie steht stattdessen auf der Windows-Liste zur Beobachtung.
