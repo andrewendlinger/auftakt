@@ -413,6 +413,19 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   native setter.
 - **A status change re-sorts the task table**, so `.first()` addresses a different row afterwards.
   Assert the write, not the label.
+- **`text-decoration-line` does not show up on the descendants it paints.** It is not an
+  inherited property — the decoration propagates *visually* into in-flow block boxes while the
+  computed value on every one of them stays `none`. So a done task's struck comment reads
+  `line-through` on the wrapper and `none` on the `<p>` the Markdown renderer emits, and a check
+  written on the `<p>` fails against working code (WP-58). Assert on the element that carries the
+  class, and — since the propagation is what the fix relies on — assert the *precondition*
+  separately: `display: block`, `float: none`, `position: static` on the descendant. An
+  `inline-block` there would silently stop the strike, which is also why the strike sits on the
+  title button rather than on the `<tr>`.
+- **Tailwind v4 serialises `text-neutral-400` as `oklch(0.708 0 none)`**, not `rgb(163,163,163)`,
+  so a hardcoded rgb comparison never matches. For „this cell no longer overrides the row's grey"
+  the honest assertion is the comparison itself: read `getComputedStyle` on the `<tr>` and
+  require the cell's `color` to equal it.
 - **`input[placeholder*="Aufgabe"]` matches the global search box, not the task composer** — the
   search placeholder is „Suchen … (Künstler, Projekte, Aufgaben, Termine, Kontakte)" and it comes
   first in the DOM, so `.first()` types into the header and the table never changes. Anchor it:
@@ -628,6 +641,13 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   orders anything. Task 5 („Bühnenplan an Technik schicken") carries a Fällig date, an Abgabe date
   and a comment — the one row that exercises every editable cell — and task 2 has neither date,
   which is the empty cell a half-typed-date repro needs.
+- **The done row with every cell filled is task 29 („Programmtext eingereicht") on `#/project/7`**
+  (WP-58) — status and Priorität pills, a Fällig date, a Markdown comment, both timestamps, the
+  „Bereich" pill, the „Bestätigt" checkbox and the „Abgabe" date. Its sibling task 28 is the done
+  row with *empty* date cells, i.e. the „—" placeholders that must stay unstruck, and task 30 is
+  the open control. **Priorität still ships hidden**, so anything about that column has to enable
+  it first (`PATCH /api/custom-columns/<id> {"enabled":1}`) and `reload()`. In „Archiv", task 25
+  („Technikrider geprüft") is the one archived row carrying a comment.
 - **Exactly one demo column is scoped to a page: „Freigabe" on artist 1** (Nordlicht Quartett,
   WP-51), with values on that artist's own tasks 16 and 51. It is the fixture for „a scope's
   columns stay on its own page" — it must be absent from every project page, from the Übersicht

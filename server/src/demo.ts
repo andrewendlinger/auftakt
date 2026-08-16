@@ -446,13 +446,24 @@ const TASKS: DemoTask[] = [
 
   // Archived: done longer ago than ARCHIVE_AFTER_DAYS, so they leave the live views.
   { id: 24, project_id: 1, title: 'Probenraum gebucht', status: 'done', erledigt_am: stamp(ARCHIVED) },
-  { id: 25, project_id: 3, title: 'Technikrider geprüft', status: 'done', erledigt_am: stamp(ARCHIVED - 7) },
+  // The one archived row with a comment: „Archiv" renders that column too, and WP-58 mutes and
+  // strikes it there as well, so without a filled cell the page cannot be eyeballed. The Zitat
+  // is the part that needs a fixture: `.prose-md blockquote` paints its own colour and outranked
+  // the row's grey until the done comment handed it back.
+  { id: 25, project_id: 3, title: 'Technikrider geprüft', status: 'done', erledigt_am: stamp(ARCHIVED - 7), comment: 'Abnahme mit der **Haustechnik** — Anmerkungen eingearbeitet.\n\n> Nachtrag: zweiter Monitorweg fehlt noch.' },
   { id: 26, artist_id: 3, title: 'Vorvertrag unterschrieben', status: 'done', erledigt_am: stamp(ARCHIVED - 3) },
   { id: 27, title: 'Save-the-Date verschickt', status: 'done', erledigt_am: stamp(ARCHIVED - 16) },
 
   // Recently done: struck through but still in the live list.
   { id: 28, project_id: 7, title: 'Flügel stimmen lassen', status: 'done', erledigt_am: stamp(-1) },
-  { id: 29, project_id: 7, title: 'Programmtext eingereicht', status: 'done', erledigt_am: stamp(-6) },
+  // The done row that fills *every* kind of cell — pill (Status, Priorität, „Bereich"), date
+  // (Fällig, „Abgabe"), checkbox („Bestätigt"), Markdown comment, timestamps. WP-58 mutes and
+  // strikes each of them through a different mechanism, and no other done fixture has more than
+  // a title to look at. Its past due date is deliberate and counts nowhere: `isOverdue` requires
+  // an *open* task. The comment carries the two Markdown nodes that set a colour of their own: a
+  // Zitat, which must take the row's grey, and a link, which deliberately keeps its sky palette.
+  // Kept under 140 characters so the cell does not clamp and both stay visible.
+  { id: 29, project_id: 7, title: 'Programmtext eingereicht', status: 'done', priority: 'hoch', due_date: days(-5), comment: 'Fassung 3 an den [Verlag](https://example.org/verlag).\n\n> Bildunterschriften noch kürzen.', erledigt_am: stamp(-6) },
 
   { id: 30, project_id: 7, title: 'Saalbestuhlung klären', status: 'active', due_date: days(18) },
   { id: 31, project_id: 8, title: 'Teilnehmerliste finalisieren', status: 'active', priority: 'hoch', due_date: days(4) },
@@ -622,6 +633,8 @@ const CUSTOM_VALUES: Record<
   13: { Bereich: 'technik', Bestätigt: false },
   20: { Bereich: 'kommunikation', Bestätigt: true },
   21: { Bereich: 'kommunikation', Bestätigt: false },
+  // The done row of project 7 — see its fixture note above; these fill its custom cells.
+  29: { Bereich: 'kommunikation', Bestätigt: true, Abgabe: days(-6) },
   31: { Bestätigt: true },
   36: { Bereich: 'technik', Bestätigt: false },
   // Artist 1's own tasks, the only rows where the artist-scoped „Freigabe" column is visible.
