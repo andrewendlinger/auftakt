@@ -8,6 +8,43 @@ If you are about to re-raise one of these, the bar is new information, not a fre
 
 ---
 
+## Der Changelog wird geschrieben, nicht generiert (2026-08-16)
+
+`generate_release_notes: true` in `.github/workflows/build.yml` has written every release body
+since `v0.6.1`. What it produces is a list of PR titles: Dependabot bumps inline with features,
+and the `Release X.Y.Z` bump PR describing itself. `v0.9.2`'s entire body is two lines, one of
+them that bump PR. `v0.5.0` and `v0.6.0` read completely differently — German, benefit-first,
+bold lead-ins — because a person wrote them. Nothing changed in 0.6.1 except that nobody did.
+
+**So it becomes a step rather than a habit**, in the release skill (2 and 6) and in a `changelog`
+skill that holds the editorial rules. The rules are worth separating from the pipeline: they are
+long, they are about writing rather than about `gh`, and „was hat sich geändert" is a question
+worth answering outside a release too.
+
+**Committed as `CHANGELOG.md`, German, and filtered hard.** The reader runs a festival office;
+they know Künstler, Saison and Papierkorb, and they must never be asked to care what a work
+package or a lockfile is. Every commit lands in one of three buckets — a bullet, one collective
+`Außerdem` line, or silence — and most of any range is silence. Capped at five bullets, because
+a patch release honestly described is short and that is information too.
+
+**`generate_release_notes` stays on.** Now that the body is overwritten before publishing, the
+generated text costs nothing and is the one mechanical check that no PR was overlooked: read it
+as a checklist, then replace it. Switching it off would trade a free completeness guard for
+tidiness in a workflow that is otherwise not worth touching.
+
+**The entry ships in the commit the tag names.** The packaged app carries the file it was built
+from, so an entry written after tagging is invisible to exactly the users running that version.
+That constraint exists for a surface that does not exist yet — the what's-new popup on the first
+cold launch after an update (`WP-63`) — and it is cheap to honour now and impossible to honour
+retroactively. It is also why `## X.Y.Z` is a bare version number: that heading is the anchor the
+popup will split the file on.
+
+**Download instructions stay out of the file.** The `xattr` and SmartScreen paragraphs belong to
+the release page, which additionally answers „wie installiere ich das". `CHANGELOG.md` answers
+only „was hat sich geändert", which is what keeps it short enough to show in a dialog.
+
+---
+
 ## Schriftfarbe ist eine geschlossene Palette als Klasse, kein `style` (2026-08-16, WP-62)
 
 The report was one sentence — „der user moechte text gerne farbig machen" — and the scope was cut
