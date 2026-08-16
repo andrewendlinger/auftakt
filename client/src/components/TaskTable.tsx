@@ -25,7 +25,7 @@ import { useDragReorder } from '../lib/dragReorder';
 import { descendantsOf } from '../lib/taskTree';
 import { buildTaskRows, groupRows, type TaskRow } from '../lib/taskRows';
 import { Markdown } from './Markdown';
-import { RichTextEditor } from './RichTextEditor';
+import { caretPointIn, RichTextEditor, type CaretPoint } from './RichTextEditor';
 import { ColorSwatchPicker } from './ColorSwatchPicker';
 import { CHILD_BAND, TREE, TreeGutterCell, spineColorFor } from './TaskTreeGutter';
 import { MoveIcon, PlusIcon, TrashIcon } from './icons';
@@ -1085,19 +1085,32 @@ function CommentCell({
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [value, setValue] = useState(task.comment ?? '');
+  const boxRef = useRef<HTMLDivElement>(null);
+  // The double click that opened the editor, resolved into a caret once it has mounted (WP-56).
+  const [clickedAt, setClickedAt] = useState<CaretPoint | null>(null);
   const next = () => (value.trim() === '' ? null : value);
   useCommitOnUnmount(editing, () => {
     if (next() !== (task.comment ?? null)) onCommit(next());
   });
+  // The point travels with the *way in*: „bearbeiten" and „+ Kommentar" point at no text, and
+  // must clear whatever the last double click left behind or the caret would honour that one.
+  const edit = (at: CaretPoint | null) => {
+    setClickedAt(at);
+    setEditing(true);
+  };
 
   if (editing) {
     return (
       <RichTextEditor
         autoFocus
+        caretAt={clickedAt}
         compact
         value={value}
         onChange={setValue}
-        className={`min-h-24 w-full min-w-64 ${INLINE_INPUT}`}
+        // `max-w-md` and the padding are the reading view's, not decoration: the caret is resolved
+        // from the click after this mounts, so a different width would wrap the text elsewhere and
+        // a different padding would move it (WP-56).
+        className={`min-h-24 w-full max-w-md min-w-64 ${INLINE_INPUT}`}
         onBlur={() => {
           setEditing(false);
           if (next() !== (task.comment ?? null)) onCommit(next());
@@ -1119,7 +1132,7 @@ function CommentCell({
   }
   if (!task.comment) {
     return (
-      <button className="text-xs text-neutral-300 hover:text-neutral-500" onClick={() => setEditing(true)}>
+      <button className="text-xs text-neutral-300 hover:text-neutral-500" onClick={() => edit(null)}>
         + Kommentar
       </button>
     );
@@ -1133,10 +1146,13 @@ function CommentCell({
           travels the other way, by inheritance — which `prose-md--done` is here to keep intact
           past the one rule that would break it. */}
       <div
-        className={`cursor-text text-sm ${done ? DONE_STRUCK : 'text-neutral-600'} ${
-          !expanded && long ? 'max-h-12 overflow-hidden' : ''
+        ref={boxRef}
+        // Same box as the editor above — see the note on its className. The clamp grows with the
+        // padding it now has (12 → 14, i.e. 48 → 56 px) so the preview still shows two lines.
+        className={`cursor-text rounded-lg border border-transparent px-2 py-1 text-sm ${done ? DONE_STRUCK : 'text-neutral-600'} ${
+          !expanded && long ? 'max-h-14 overflow-hidden' : ''
         }`}
-        onDoubleClick={() => setEditing(true)}
+        onDoubleClick={(e) => edit(caretPointIn(boxRef.current, e))}
       >
         <Markdown className={done ? 'prose-md--done' : ''}>{task.comment}</Markdown>
       </div>
@@ -1146,7 +1162,7 @@ function CommentCell({
             {expanded ? 'weniger' : 'mehr'}
           </button>
         )}
-        <button className="hover:text-neutral-600" onClick={() => setEditing(true)}>
+        <button className="hover:text-neutral-600" onClick={() => edit(null)}>
           bearbeiten
         </button>
       </div>

@@ -742,6 +742,41 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 - **The table controls („Zeile +", „Spalte +", „Tabelle löschen") render *below* the editor** and
   only while the caret is inside a table. A script that clicks the table button and then looks
   for them above the text finds nothing.
+- **Where the caret landed is `document.querySelector('.rte-content').editor.state.selection`.**
+  ProseMirror stamps the TipTap instance onto the view's own DOM node, so that one expression is
+  the whole handle — no bridge, no typing a marker character and reading it back. What makes it an
+  assertion is comparing it against the *document* position of the word that was clicked
+  (`doc.descendants`, `node.text.indexOf(…)`); a bare offset says nothing, and „the editor opened"
+  says less. Since WP-56 a click into the middle of an eight-letter word resolves to word + 5;
+  before it, to the end of the note, which on the demo fixture was 268 characters away.
+- **Click a word by measuring it with a `Range`, not with `boundingBox()`.** The box of `.prose-md`
+  is the whole note, so its centre is a different paragraph on every fixture. Walk the text nodes,
+  `setStart`/`setEnd` around the word, and click that rect's centre — the same recipe measures
+  where the word *renders*, which is the other half of a caret check.
+- **The geometry that has to match is box-relative, and the toolbar's ~32 px is not a bug.** The
+  reading view carries the editor's border and padding since WP-56 (`InlineNotes`' `BOX`), so a
+  word sits at the same offset *inside* each surface's box — `.cursor-text` while reading,
+  `.rte-content` while editing — and the boxes keep the same width, which is what makes both wrap
+  at the same word. The whole field still moves down by the toolbar's height when it mounts, by
+  design. So assert `word.x - box.x` and `word.y - box.y` on both sides; asserting the same
+  viewport `y` before and after fails against working code.
+- **`white-space: pre-wrap` can never be shared with the reading view**, however much the two
+  surfaces are meant to render alike. `.rte-content` needs it (ProseMirror otherwise collapses a
+  space run as you type it), but react-markdown's DOM keeps the Markdown source's *own* newlines as
+  text nodes beside the `<br>` remark-breaks inserts for them, and puts `\n` between the block
+  children of a `<li>` or a `<blockquote>`. Measured on a fixture: giving `.prose-md p` the rule
+  takes a note from 274 px to 334 px (every soft break renders twice), and adding `li` takes each
+  item from 20 px to 70 px. Only whitespace collapsing hides all of that.
+- **TipTap's autofocus runs *after* every effect.** `Editor.mount` calls `commands.focus(autofocus)`
+  from a `setTimeout(0)`, so a selection dispatched from `useLayoutEffect` — or from anything else
+  in the mounting commit — is silently moved to the end of the note a tick later, and the editor
+  looks like it ignores `posAtCoords`. `RichTextEditor` turns the autofocus *off* when it has a
+  click to honour rather than racing it (WP-56); `onCreate` would be the other ordering-safe door.
+- **The task table's Kommentar cell is ~2500 px down `#/project/1`.** `wordBox`-style coordinates
+  read before scrolling are outside the viewport, so `mouse.dblclick` lands on nothing and the run
+  reads „the comment editor never opens". `scrollIntoView({ block: 'center' })` first, then
+  measure. The demo's one comment worth clicking into is task 5's („… — Monitorwege."), and
+  `document.querySelector('table')` is the Besetzung grid, not the task table.
 - **A key pressed right after a click acts on the *previous* caret.** ProseMirror syncs the DOM
   selection into its own state through `DOMObserver`, which flushes on a ~20 ms timer, so
   `click(); press('Tab')` runs the keymap against the selection the editor had *before* the
