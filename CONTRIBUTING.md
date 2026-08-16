@@ -159,7 +159,7 @@ entry is an assertion that would otherwise have been wrong.
 - **`checks`** — on every push, pull request and tag: `npm run typecheck`, `npm run check` and
   `npm audit` on `ubuntu-latest`.
 - **`browser`** — beside `checks`, same trigger: installs Chromium (cached) and runs
-  `npm run check:browser` on `ubuntu-latest`.
+  `npm run check:browser` on `ubuntu-latest`. Required to merge into `main`, as `checks` is.
 - **`build`** — only for a `v*` tag or a manual run (`workflow_dispatch`): the `.dmg` on
   `macos-latest` and the NSIS installer on `windows-latest`, plus `check:package`, a build
   provenance attestation and an SBOM per platform.
