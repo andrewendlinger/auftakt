@@ -375,7 +375,10 @@ export function RichTextEditor({
    */
   useLayoutEffect(() => {
     const at = openedAt.current;
-    if (!editor || !at) return;
+    // `caretAt` is only meaningful together with `autoFocus` (see the prop's doc): without the
+    // guard, a future caller passing a click point alone would get an editor that steals focus
+    // on mount — the opposite of what omitting `autoFocus` asks for.
+    if (!editor || !at || !autoFocus) return;
     const { view } = editor;
     const box = view.dom.getBoundingClientRect();
     const hit = view.posAtCoords({ left: box.left + at.x, top: box.top + at.y });
