@@ -1,5 +1,6 @@
 import StarterKit from '@tiptap/starter-kit';
 import { Underline } from '@tiptap/extension-underline';
+import { Document } from '@tiptap/extension-document';
 import { Paragraph } from '@tiptap/extension-paragraph';
 import { Markdown, type MarkdownExtensionOptions } from '@tiptap/markdown';
 import { Table, renderTableToMarkdown } from '@tiptap/extension-table';
@@ -8,7 +9,7 @@ import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
 import { Extension, Node, mergeAttributes, type AnyExtension, type JSONContent } from '@tiptap/core';
 import { NodeSelection, Plugin } from '@tiptap/pm/state';
-import { Marked } from 'marked';
+import { Lexer, Marked, type TokensList } from 'marked';
 import { fenceParagraphs } from './legacyCode';
 import {
   canonicalImageSrc,
@@ -93,6 +94,47 @@ markdownParser.use({
     codespan: () => undefined, // `inline`
   },
 });
+
+/** A run of blank lines at the end of a token's `raw` — the vendor's own shape, matched here. */
+const TRAILING_BLANK_LINES = /\n[^\S\n]*(?:\n[^\S\n]*)+$/;
+
+/**
+ * The read half of WP-57: a blank line is a block separator and nothing more.
+ *
+ * `MarkdownManager` invents `separatorCount - 1` empty paragraphs out of every run of blank lines
+ * it finds between two blocks — the mirror image of the marker the serializer used to swallow, and
+ * lossy in the same way. It means the editor drew a gap in `a\n\n\n\nb` that the reader does not
+ * (CommonMark collapses blank lines; only `&nbsp;` makes an empty paragraph), and with the
+ * serializer now writing a marker for every empty paragraph, that invented gap would be *stored*
+ * on the first save. Every note the old serializer wrote a `\n\n\n\n` run into — which is what it
+ * wrote for two typed blank lines — would silently gain a blank line on being opened.
+ *
+ * So the marker becomes the only spelling in both directions: one `&nbsp;` paragraph ⇔ one empty
+ * paragraph, and a run of blank lines means exactly what it means to the reader. There is no
+ * option for that on the extension and the method is private, so the cut is made one level down,
+ * where the token stream is still ours: the manager builds its lexer as
+ * `new markedInstance.Lexer(markedInstance.defaults)`, so replacing `Lexer` on the instance this
+ * module already owns replaces the lexer the manager uses. `raw` is all the manager reads a run of
+ * blank lines out of — `countParagraphSeparators` on a `space` token, and `extractAbsorbedBlankLines`
+ * on the trailing newlines a list token swallows — so collapsing a run to a single separator there
+ * is the whole change. Only the top-level `lex()` is touched; `blockTokens`/`inlineTokens`, which
+ * custom tokenizers reach through, keep marked's own behaviour.
+ */
+class DialectLexer extends Lexer<string, string> {
+  lex(src: string): TokensList {
+    const tokens = super.lex(src);
+    for (const token of tokens) {
+      token.raw =
+        token.type === 'space' ? '\n' : (token.raw ?? '').replace(TRAILING_BLANK_LINES, '\n');
+    }
+    return tokens;
+  }
+}
+// The field is typed as the *generic* `typeof _Lexer`, which quantifies over marked's parser and
+// renderer output types, so no concrete subclass — which has to fix them — is assignable to it.
+// What the manager does with the class is `new Lexer(defaults)` plus `lex`, `blockTokens` and
+// `inlineTokens`, and those this subclass inherits unchanged.
+markdownParser.Lexer = DialectLexer as unknown as typeof markdownParser.Lexer;
 
 /**
  * A stored ``` fence becomes a paragraph: the markers go, the text stays.
@@ -315,6 +357,11 @@ const MdImage = Node.create<{ resolveSrc: (src: string) => string }>({
     ),
 });
 
+const EMPTY_PARAGRAPH_MARKDOWN = '&nbsp;';
+
+const isEmptyParagraph = (node: JSONContent) =>
+  node.type === 'paragraph' && !(Array.isArray(node.content) ? node.content : []).length;
+
 /**
  * A paragraph holding nothing but an image stays a paragraph (WP-37).
  *
@@ -340,6 +387,29 @@ const MdImage = Node.create<{ resolveSrc: (src: string) => string }>({
  * Only the lone-image case is intercepted; `null` sends every other paragraph on to the
  * extension's own handler, which keeps its `&nbsp;` empty-paragraph rule (`nbspIndent`, WP-49)
  * exactly as it was.
+ *
+ * ---
+ *
+ * **Every empty paragraph is written as `&nbsp;` (WP-57)** — the extension writes the marker only
+ * from the *second* consecutive empty paragraph on (`previousNodeIsEmptyParagraph`), and returns
+ * `""` for the first. Since blocks are joined with a blank line, an unmarked empty paragraph is
+ * indistinguishable from the paragraph break that was already there, so it simply evaporated:
+ *
+ *     im Editor                 gespeichert (alt)             was der Reader zeichnete
+ *     Liste + 1 Leerzeile       `- a\n- b\n\n`                Liste, keine Leerzeile
+ *     Liste + 2 Leerzeilen      `- a\n- b\n\n\n\n&nbsp;`      Liste + eine Leerzeile
+ *     Liste, Leerzeile, Liste   `- a\n- b\n\n\n\n- c\n- d`    *eine* Liste aus vier Punkten
+ *
+ * The last row is the worst of the three and the reason this is a serializer fix rather than a
+ * CSS one: a run of blank lines does not interrupt a list in either parser, so the two lists were
+ * merged in storage — the user's structure was gone, not merely drawn wrong. A marker paragraph
+ * sits at column 0 and *does* end a list, in marked and in micromark alike, so writing it for
+ * every empty paragraph repairs the spacing and the structure in one move.
+ *
+ * The marker is what the reader has always drawn as `<p> </p>` and what the extension's own
+ * `parseMarkdown` reads back as an empty paragraph, so this only makes the write side spell what
+ * both halves already understood. `MarkdownManager.serialize` strips a document that is *nothing
+ * but* markers back to `""`, so an empty note still stores an empty string.
  */
 const MdParagraph = Paragraph.extend({
   parseMarkdown: (token, helpers) => {
@@ -353,6 +423,45 @@ const MdParagraph = Paragraph.extend({
     // `&nbsp;` empty-paragraph rule the legacy fences depend on (WP-49), which is exactly why it
     // has to keep running.
     return Paragraph.config.parseMarkdown!(token, helpers);
+  },
+  renderMarkdown: (node, helpers, ctx) => {
+    // Top level only. Inside a table cell an empty paragraph is an *empty cell*, and writing the
+    // marker there put a visible `&nbsp;` in it — and then escaped it to `&amp;nbsp;` on the next
+    // save, since a cell's text is serialized verbatim. Same for a list item or a blockquote:
+    // „eine Leerzeile" is a statement about the blocks of the note, nothing else.
+    if (node && ctx.parentType === 'doc' && isEmptyParagraph(node)) return EMPTY_PARAGRAPH_MARKDOWN;
+    // A paragraph with content is the extension's own `renderChildren`, reached the same way as
+    // the parser above — `ctx` carries the neighbouring nodes the indentation logic reads.
+    return Paragraph.config.renderMarkdown!(node, helpers, ctx);
+  },
+});
+
+/**
+ * The empty paragraph at the *end* of the document is the editor's, not the note's (WP-57).
+ *
+ * `TrailingNode` (StarterKit) appends one whenever the last block is not a paragraph, so that a
+ * note ending in a list or a table still has somewhere to click and type. It is an affordance of
+ * the editing surface, and it is there whether or not anyone typed it — so once `MdParagraph`
+ * above started writing `&nbsp;` for every empty paragraph, *every* note ending in a list, a
+ * heading or a table grew a trailing blank line the first time it was opened and saved. That is
+ * the „die Notiz formt sich beim Speichern um" failure this area keeps running into, and at the
+ * end of a note the blank line it adds is invisible anyway: there is nothing under it to push
+ * down, only the card that gets taller.
+ *
+ * So the whole trailing run is dropped, not just the last one — trimming one per save would let a
+ * note with two of them shrink on every open, which is the same instability spread over time.
+ * Everything else is the extension's own handler: children joined by a blank line.
+ *
+ * A document made of nothing but empty paragraphs trims to `""`, which is what
+ * `MarkdownManager.serialize` already produced for an empty note (`isEmptyOutput` strips the
+ * markers), so „leer" still stores the empty string.
+ */
+const MdDocument = Document.extend({
+  renderMarkdown: (node, helpers) => {
+    const content = Array.isArray(node.content) ? node.content : [];
+    let end = content.length;
+    while (end > 0 && isEmptyParagraph(content[end - 1]!)) end--;
+    return helpers.renderChildren(content.slice(0, end), '\n\n');
   },
 });
 
@@ -456,6 +565,7 @@ export function markdownExtensions(
   return [
     StarterKit.configure({
       underline: false, // replaced by MdUnderline so it serializes to <u>
+      document: false, // replaced by MdDocument so the trailing empty paragraph isn't stored
       paragraph: false, // replaced by MdParagraph so a lone image keeps its paragraph
       code: false, // WP-49 — see markdownParser; the tokenizers go with them
       codeBlock: false,
@@ -473,6 +583,7 @@ export function markdownExtensions(
     }),
     MdUnderline,
     LegacyFence,
+    MdDocument,
     MdParagraph,
     MdLinkedImage,
     MdImage.configure({ resolveSrc: opts.resolveSrc ?? ((src: string) => src) }),

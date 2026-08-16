@@ -116,9 +116,16 @@ body {
 
 /* Roomy variant for the large notes fields and their reading view (WP-29a). At 0.35em two
    paragraphs sit a quarter of a line apart, so one Enter doesn't read as a break and users
-   press it a second time — which doesn't even persist, since the empty paragraph collapses
-   back on the next round-trip. Adjacent margins collapse, so 1em *is* the whole gap: 14px
-   against a 20px line, a clear break without turning a note into a poster.
+   press it a second time — which used not even to persist, since the serializer swallowed the
+   first empty paragraph of any run (WP-57 fixed that; the second Enter is now stored as a
+   `&nbsp;` paragraph and lands on this rule). Adjacent margins collapse, so 1em *is* the whole
+   gap: 14px against a 20px line, a clear break without turning a note into a poster.
+
+   That makes this rule the one both surfaces have to agree on, and they do: the reading view's
+   `<p>&nbsp;</p>` and ProseMirror's `<p><br></p>` are each one line box, both are direct
+   children of an element carrying `.prose-md--roomy`, and driving the demo measures the same
+   20px height and the same 14px margins on either side. Anything added here that treats an
+   empty paragraph specially has to be true of both shapes.
 
    Last in the block on purpose — every rule above has the same specificity, so this one only
    wins by order.
