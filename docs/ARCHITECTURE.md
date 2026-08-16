@@ -339,9 +339,25 @@ and the pairing is a schema CHECK as well as a route guard, because writing one 
 other puts a row where no list looks (every list binds the scope and the parent id together). The
 Übersicht is the global scope: the „Festival" todos are the season's own list, so it needs no
 fourth value. Built-ins are all `global`, which is why `useGlobalColumns()` answers anything keyed
-off one. Columns are managed in three places — Einstellungen for the globals, „⚙ Spalten" on an
-artist or project page for that page's own, which shows the globals read-only. Ordering is
+off one. Columns are managed in two places — Einstellungen for the globals, „⚙ Spalten" on an
+artist or project page for that page's own. Ordering is
 `compareColumns` (`client/src/api/types.ts`): globals first, then the page's own group.
+
+**Visibility is the one property of the *pair* (column, page)** (WP-59). `custom_columns.enabled`
+is the **season default**; `artists.task_columns` / `projects.task_columns` hold that page's
+departures from it as a sparse `{"<colId>": boolean}` JSON map, with `NULL` — and any column the
+map does not name — meaning „follow the default". Same shape as `layout` one level up, same
+migration (a plain `ensureColumn`, no rebuild), same sentinel, and the same reason it is sparse: a
+column added in Einstellungen afterwards still reaches a page that has been configured. The keys
+are `colId` (`custom:<id>`, or a built-in's `key`), so a built-in survives a season copy, which
+matches built-ins by `key`. `lib/taskColumns.ts` is the single decider — `columnVisible`,
+`visibleColumns`, `withColumnVisible` (which prunes an override that agrees with the default, and
+an emptied map back to `NULL`) — and every reader goes through it: the task table, the sort rules,
+the print sheet, and the `.xlsx` export, which restates only the `custom:<id>` half server-side.
+The rest stays season-wide on purpose: **order, name, options and scope are not per page.**
+`compareColumns` renumbers each scope group from 0 (TTU-21), which a per-page order would have to
+replace, and Status/Titel (`deletable === 0`) stay unhideable everywhere because `doneValueOf`
+drives graying, sinking, the stats and archiving.
 
 A scope's ripples are wider than the column list suggests, and each one is silent when missed: the
 season copy carries a scoped column only if its parent arrived (`copySeasonData`), the .xlsx export
@@ -370,13 +386,15 @@ in Settings or switch off. Readers that are *not* the task table — Archiv, the
 print sheets — pass `order=due` (`orderParam`, `TASK_ORDER_DUE`), because a per-list ordinal is
 meaningless to a reader that spans several lists.
 
-**A rule whose column is hidden (`enabled: 0`) or gone does not order the table.** `activeSortRules`
+**A rule whose column is hidden or gone does not order the table.** `activeSortRules`
 (`client/src/lib/taskSort.ts`) is the one filter, used by `TaskTable` and by `TaskSortEditor`'s
-label so behaviour and „(ausgeblendet – sortiert nicht)" cannot drift. `manual` is exempt — it is
+label so behaviour and the „(ausgeblendet …)" suffix cannot drift. `manual` is exempt — it is
 `sort_order`, not a column. The stored rule is filtered, never rewritten, so showing the column
 wakes it up again; that is what makes `DEFAULT_TASK_SORT`'s change from `[status, priority, due]` to
 `[status]` need **no migration** — an older season stores the long list and behaves identically,
-because Priorität and Fällig ship hidden (WP-32).
+because Priorität and Fällig ship hidden (WP-32). Since WP-59 „hidden" is per page, so the same
+season-wide rule orders one project's table and not the next one's; `TaskSortEditor` resolves
+against the season default and says so („sortiert nur auf Seiten, die sie zeigen").
 
 A created task is stamped `sort_order = MIN(scope) − 1` in the tasks `transform`, so it leads its
 list instead of tying at the column default and losing the `id` tiebreak. The scope is the
@@ -474,7 +492,8 @@ Which module owns which invariant. Reach for these rather than rebuilding the be
 |---|---|
 | `useAllTasks()` (hooks.ts) | the one `['tasks','scope-all']` query — live **and** archived. Anything that must not stop at the archive edge takes this: the subtask tree (a subtree op derived from a `scope:'live'` list strands a child past `ARCHIVE_AFTER_DAYS`) and „Fortschritt" (`done`/`total`/`pct` were wrong on the live list; „offen" was not). A new *editable* table stays on the page's live list. |
 | `useGlobalColumns()` (hooks.ts) | the single `['customColumns','global']` reader. `useDoneValue()` sits on it, and so does `TaskSortEditor` — a `task_sort` rule is a season-wide setting, so only global columns can carry one. |
-| `useScopedColumns(owner, enabled)` (hooks.ts) | one entity page's column set: the globals plus that page's own, already merged. Both entity pages take it rather than writing the query out, because three things have to agree at once — the scope sent, the parent id sent with it (a scoped list without one is a 400) and the globals leading the merged list. |
+| `useScopedColumns(owner, enabled)` (hooks.ts) | one entity page's column set: the globals plus that page's own, already merged. Both entity pages take it rather than writing the query out, because three things have to agree at once — the scope sent, the parent id sent with it (a scoped list without one is a 400) and the globals leading the merged list. **Unfiltered** — the manager has to list a hidden column to offer it back, so visibility is applied where the table is drawn, never here. |
+| `useEntityColumns(kind, row)` (hooks.ts) | that page's *visibility* half (WP-59): the parsed `task_columns` map, `setVisible(col, visible)` and `reset()`. Publishes into the `[kind, id]` cache before awaiting and latches the last intent in a ref, because the natural gesture is toggling three columns in a row and every write persists the whole map — a second toggle computed from the pre-first-toggle value undoes it (SHL-10), and so does a refetch from write *n* landing while *n+1* is out. |
 | `useSettingsArray(key, parse)` (hooks.ts) | immediate-save array settings. Publishes into the `['settings']` cache **before** awaiting, so a second edit inside the round trip composes. `current()` reads the array as it is *now* — use it in any closure that runs later (an undo six seconds on). `parse` must be module-level (it is a memo dep) and must read defensively; a throw there blanks the page. **Two writes, and the choice is the cross-window story** (WP-R5): `update(fn)` is `useLanding`'s contract on this table — re-reads, applies `fn`, sends the generation it read, retries the *intent* on a 409 — while `write(next)` posts a snapshot unconditionally and stays last-writer-wins. Take `update` wherever the change is a function of the stored array; `write` only where the next array is assembled somewhere this hook cannot re-run (a controlled editor's `onChange`), which is why the arranger and `TaskSortEditor` are still on it. |
 | `useLanding()` (hooks.ts) | the same contract for every `seasons.json` write, plus the one that has no Papierkorb behind it. **`update(fn)` takes a function and is the only way to write**: it re-reads the blob, applies `fn`, and sends the generation it read; the server refuses a superseded one (409) and the whole thing re-runs against what is actually stored, so a concurrent write is merged rather than destroyed and an exhausted budget is *reported* rather than lost (`lib/conflict.ts`). An array argument would defeat that — a retry can only re-apply an intent. `fn` returning `null` writes nothing (a refused drag). Two further differences from `useSettingsArray`: it **throws** rather than guarding (callers already own a catch → German toast), and the pre-await publish is skipped when the patch adds an id-less row — that publish is now cosmetic, since every write reads for itself. |
 | `refetchNow(qc, key, fn)` (hooks.ts) | the one honest refresh. `ensureQueryData` hands back the cache whenever an entry exists, which says nothing about what another window wrote; this passes `staleTime: 0` and always asks. Reach for it wherever a store is read and then written back — all three `LayoutStore.refresh` implementations do. |

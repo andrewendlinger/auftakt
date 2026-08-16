@@ -23,6 +23,36 @@ interface Col {
   name: string;
   type: string;
   options: string | null;
+  enabled: number;
+}
+
+/**
+ * One page's task-column overrides (WP-59), read off `artists.task_columns` /
+ * `projects.task_columns`. Keyed by the client's `colId` spelling — `custom:<id>` for a custom
+ * column — which is restated here rather than shared, the way `TASK_ORDER` and
+ * `SERVER_DEFAULT_RULES` are: `shared/` is dependency-free by design and the REST boundary is the
+ * boundary. Only custom columns are consulted below, so only that half of the spelling is needed.
+ *
+ * Defensive like its client twin (`parseColumnOverrides`): a hand-edited or foreign value reads as
+ * „no override", so the sheet falls back to the season default rather than failing the download.
+ */
+function columnOverrides(table: 'artists' | 'projects', id: number | undefined): Record<string, boolean> {
+  if (id === undefined) return {};
+  const row = getDb()
+    .prepare(`SELECT task_columns FROM ${table} WHERE id = ?`)
+    .get(id) as { task_columns: string | null } | undefined;
+  if (!row?.task_columns) return {};
+  try {
+    const parsed: unknown = JSON.parse(row.task_columns);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, boolean> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === 'boolean') out[k] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 /**
@@ -57,15 +87,33 @@ exportRouter.get('/tasks.xlsx', async (req, res) => {
   // several projects, and one project's columns are meaningless on another's rows.
   const scoped = (sql: string, ...params: number[]): Col[] =>
     db
-      .prepare(`SELECT id, name, type, options FROM custom_columns
+      .prepare(`SELECT id, name, type, options, enabled FROM custom_columns
                  WHERE deleted_at IS NULL AND kind = 'custom' AND ${sql} ORDER BY sort_order`)
       .all(...params) as Col[];
   const owningArtist = artistId ?? resolvedArtistId;
+  /*
+   * The sheet shows what the page shows (WP-59). It filtered nothing at all before — a column
+   * hidden in Einstellungen still landed in the .xlsx, which `PrintProject` already did not do,
+   * and once visibility became per page that gap would have exported a column the project
+   * deliberately hides. The overrides come from the same entity the column set is assembled for:
+   * a project sheet is a project page, an artist sheet (`resolved_artist_id`, PGS-31) an artist
+   * page. A sheet naming neither is the Übersicht, i.e. the global scope, and has no page to
+   * depart from.
+   *
+   * **The fixed block above is not filtered**, exactly as on the print sheet: Aufgabe … Kommentar
+   * are the sheet's identity, and two projects' exports have to stay comparable column for
+   * column. Per-page visibility governs the custom block, which is where „this project has these
+   * columns" actually lives.
+   */
+  const overrides = projectId
+    ? columnOverrides('projects', projectId)
+    : columnOverrides('artists', owningArtist);
+  const visible = (c: Col): boolean => overrides[`custom:${c.id}`] ?? c.enabled !== 0;
   const customCols = [
     ...scoped("scope = 'global'"),
     ...(owningArtist ? scoped("scope = 'artist' AND artist_id = ?", owningArtist) : []),
     ...(projectId ? scoped("scope = 'project' AND project_id = ?", projectId) : []),
-  ];
+  ].filter(visible);
 
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Auftakt';

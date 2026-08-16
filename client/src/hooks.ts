@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import { api } from './api/client';
 import type {
+  Artist,
+  ColumnOverrides,
   CustomColumn,
   CustomColumnOption,
   ID,
@@ -11,6 +13,7 @@ import type {
   LandingDocInput,
   LandingPatch,
   OptionUsage,
+  Project,
   Settings,
   SettingsArrayKey,
   SettingsArrayValue,
@@ -27,6 +30,7 @@ import { DEFAULT_EVENT_WINDOW_DAYS } from './lib/eventGroups';
 import { LABEL_DEFAULTS, isLabelKey, type LabelKey } from './lib/labels';
 import { getWindowSeason } from './lib/season';
 import { normalizeEventTypeOptions, normalizeSelectOptions } from './lib/selectOptions';
+import { parseColumnOverrides, withColumnVisible } from './lib/taskColumns';
 import {
   ALL_METRICS,
   DEFAULT_ATTENTION_DAYS,
@@ -300,6 +304,91 @@ export function useScopedColumns(owner: ColumnOwner, enabled = true): CustomColu
     enabled,
   });
   return useMemo(() => [...globals, ...scoped], [globals, scoped]);
+}
+
+/** One page's task-column visibility, plus the two ways to change it (WP-59). */
+export interface EntityColumnsStore {
+  /** This page's departures from the season default; `{}` means it follows it outright. */
+  overrides: ColumnOverrides;
+  /** Whether anything is stored — what „Auf Saison-Vorgabe zurücksetzen" is offered for. */
+  hasOwn: boolean;
+  /** Show or hide one column **on this page**. Returns whether the write landed. */
+  setVisible: (col: CustomColumn, visible: boolean) => Promise<boolean>;
+  /** Back to `NULL` — the page follows the season default again. */
+  reset: () => Promise<boolean>;
+}
+
+/**
+ * One artist's or one project's own task-column visibility (WP-59), the same „per entity, with a
+ * season-wide template" shape `useEntityLayout` has for sections: `NULL` means „never configured"
+ * and reads as `custom_columns.enabled`, so a database from before the column renders exactly as
+ * it did. What is stored is a *sparse* map, so a column added in Einstellungen afterwards still
+ * reaches a page that has been configured — see `ColumnOverrides` for why that is the safe default.
+ *
+ * The `[kind, id]` cache is published **before** the request is awaited, for the reason
+ * `useEntityLayout` and `useSettingsArray` do it: the natural way to use this dialog is to toggle
+ * three columns in a row, and each write persists the whole map, so a second toggle computed from
+ * the pre-first-toggle value would silently undo it (SHL-10).
+ *
+ * `pending` closes the other half of the same race, which the layout store answers with
+ * `trackPending`: `invalidate()` refetches this entity, and a refetch issued after write *n* can
+ * land while write *n+1* is still out — republishing the older map over the newer one. The next
+ * toggle would then be computed from it. Holding the last intent in a ref until the write it
+ * belongs to has settled makes the composition true for the whole burst, not just within one
+ * round trip.
+ */
+export function useEntityColumns(
+  kind: 'artist' | 'project',
+  row: Artist | Project | undefined,
+): EntityColumnsStore {
+  const qc = useQueryClient();
+  const guard = useGuardedAction();
+  const invalidate = useInvalidateAll();
+  const id = row?.id;
+  const raw = row?.task_columns;
+  const overrides = useMemo(() => parseColumnOverrides(raw), [raw]);
+  const pending = useRef<ColumnOverrides | null>(null);
+
+  const patch = useCallback(
+    async (next: ColumnOverrides | null, fallback: string) => {
+      if (id == null) return false;
+      pending.current = next ?? {};
+      const mine = pending.current;
+      qc.setQueryData([kind, id], (old: unknown) =>
+        old && typeof old === 'object'
+          ? { ...(old as object), task_columns: next && JSON.stringify(next) }
+          : old,
+      );
+      const res = kind === 'artist' ? api.artists : api.projects;
+      const okay = await guard(fallback, () => res.update(id, { task_columns: next }));
+      await invalidate();
+      // Only the last write clears the latch; an earlier one settling must not hand the next
+      // toggle back to whatever the refetch above published.
+      if (pending.current === mine) pending.current = null;
+      return okay;
+    },
+    [qc, kind, id, guard, invalidate],
+  );
+
+  const setVisible = useCallback(
+    (col: CustomColumn, visible: boolean) =>
+      patch(
+        withColumnVisible(pending.current ?? overrides, col, visible),
+        'Die Spalte konnte nicht geändert werden.',
+      ),
+    [patch, overrides],
+  );
+  const reset = useCallback(
+    () => patch(null, 'Die Spalten konnten nicht zurückgesetzt werden.'),
+    [patch],
+  );
+
+  return {
+    overrides,
+    hasOwn: Object.keys(overrides).length > 0,
+    setVisible,
+    reset,
+  };
 }
 
 /**

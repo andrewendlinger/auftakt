@@ -25,6 +25,12 @@ export interface Artist extends SoftDeletable {
    * through `parseEntityLayout` (SectionArranger.tsx), never `JSON.parse` at a call site.
    */
   layout: string | null;
+  /**
+   * Which task columns this page shows (WP-59) as JSON text — a sparse `{"<colId>": boolean}` map
+   * over `custom_columns.enabled`. `null`, and any column the map does not name, means „follows
+   * the season default". Read it through `parseColumnOverrides` (lib/taskColumns.ts).
+   */
+  task_columns: string | null;
 }
 
 export interface ArtistCard extends Artist {
@@ -41,6 +47,8 @@ export interface Project extends SoftDeletable {
   color: string | null;
   /** This page's own section arrangement — see `Artist.layout`; the template is `project_layout`. */
   layout: string | null;
+  /** This page's own task-column visibility — see `Artist.task_columns` (WP-59). */
+  task_columns: string | null;
 }
 
 export type ContactParent = { artist_id: ID | null; project_id: ID | null };
@@ -152,9 +160,22 @@ export interface CustomColumn extends SoftDeletable {
   /** Built-in columns bind to a real task field via this key; custom columns have key = null. */
   key: string | null;
   kind: CustomColumnKind;
-  enabled: number; // 0/1 — hidden columns are kept but not shown
+  enabled: number; // 0/1 — the SEASON default: hidden columns are kept but not shown
   deletable: number; // 0/1 — Status & Aufgabe can't be removed
 }
+
+/**
+ * One page's departures from that season default (WP-59), keyed by `colId` — a built-in's `key`
+ * or `custom:<id>`, the same spelling `task_sort` uses, so a built-in survives a season copy
+ * (which matches built-ins by `key`) the way a rule does.
+ *
+ * **Sparse on purpose.** A column the map does not name follows `enabled`, so a column added in
+ * Einstellungen after a page was configured still reaches that page — the same reasoning that
+ * makes a key absent from a stored `layout` mean „this build added a section" rather than
+ * „hidden". The whole map absent (`task_columns: null`) is the page following the season default
+ * outright, and `withColumnVisible` (lib/taskColumns.ts) prunes back to it.
+ */
+export type ColumnOverrides = Record<string, boolean>;
 
 export interface LinkItem extends SoftDeletable {
   artist_id: ID | null;
@@ -214,14 +235,19 @@ export interface CustomSection extends SoftDeletable {
  */
 type LayoutPatch = { layout?: string | LayoutEntry[] | null };
 
+/** The same widening for the per-page column visibility (WP-59); `null` = follow the default. */
+type TaskColumnsPatch = { task_columns?: string | ColumnOverrides | null };
+
 export type ArtistUpdate = Partial<Pick<Artist, 'name' | 'color' | 'notes' | 'image' | 'sort_order'>> &
-  LayoutPatch;
+  LayoutPatch &
+  TaskColumnsPatch;
 export type ArtistCreate = ArtistUpdate & Pick<Artist, 'name'>;
 
 export type ProjectUpdate = Partial<
   Pick<Project, 'artist_id' | 'code' | 'name' | 'status' | 'description' | 'color' | 'sort_order'>
 > &
-  LayoutPatch;
+  LayoutPatch &
+  TaskColumnsPatch;
 export type ProjectCreate = ProjectUpdate & Pick<Project, 'artist_id' | 'code' | 'name'>;
 
 export type ContactUpdate = Partial<

@@ -2,7 +2,8 @@ import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { CustomColumn, Task } from '../api/types';
-import { compareColumns, customValueOf, parseColumnOptions } from '../api/types';
+import { customValueOf, parseColumnOptions } from '../api/types';
+import { parseColumnOverrides, visibleColumns } from '../lib/taskColumns';
 import { Spinner, ErrorState, LoadError } from '../components/ui';
 import { isValidId } from '../lib/routeParams';
 import { Markdown } from '../components/Markdown';
@@ -83,8 +84,13 @@ export function PrintProject() {
   const openTasks = tasks.filter((t) => t.status !== doneValue);
   const groups = groupByStatus(openTasks, columns);
   // Same order as the live table — sorting by sort_order alone put a project column ahead of a
-  // global one whenever the project group had been reordered (TTU-21).
-  const customCols = columns.filter((c) => c.kind === 'custom' && c.enabled).sort(compareColumns);
+  // global one whenever the project group had been reordered (TTU-21) — and the same visibility:
+  // since WP-59 that is the pair (column, page), so a global column this project hides is absent
+  // from its sheet too. The built-in block below stays fixed on both surfaces.
+  const customCols = visibleColumns(
+    columns.filter((c) => c.kind === 'custom'),
+    parseColumnOverrides(project.task_columns),
+  );
 
   return (
     <PrintPage>

@@ -32,6 +32,7 @@ import {
 import {
   useAllTasks,
   useEventTypeOptions,
+  useEntityColumns,
   useScopedColumns,
   useUndoablePatch,
 } from '../hooks';
@@ -83,6 +84,8 @@ export function ProjectPage() {
   });
   // This project's own arrangement, falling back to the `project_layout` template (WP-25).
   const layout = useEntityLayout('project', project);
+  // …and this page's own task-column visibility, falling back to `custom_columns.enabled` (WP-59).
+  const entityColumns = useEntityColumns('project', project);
   const removeCustomSection = useRemoveCustomSection(customSections, layout);
   const nonEmptyCustom = useNonEmptyCustomSections(customSections);
 
@@ -190,7 +193,12 @@ export function ProjectPage() {
           >
             <EditableLabel k="project.aufgaben" />
           </SectionTitle>
-          <TaskTable tasks={tasks} customColumns={columns} parent={{ project_id: projectId }} />
+          <TaskTable
+            tasks={tasks}
+            customColumns={columns}
+            columnOverrides={entityColumns.overrides}
+            parent={{ project_id: projectId }}
+          />
         </>
       ),
     },
@@ -280,6 +288,7 @@ export function ProjectPage() {
         <CustomColumnManager
           columns={columns}
           owner={{ scope: 'project', id: projectId }}
+          entityColumns={entityColumns}
           onClose={() => setManagingColumns(false)}
         />
       )}

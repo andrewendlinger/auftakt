@@ -661,8 +661,8 @@ export function setActiveSeasonLabel(label: string): void {
 
 /** Columns copied between season DBs (ids preserved so FKs & custom_values stay linked). */
 const COPY_COLS: Record<string, string[]> = {
-  artists: ['id', 'name', 'color', 'notes', 'image', 'layout', 'sort_order'],
-  projects: ['id', 'artist_id', 'code', 'name', 'status', 'description', 'color', 'layout', 'sort_order'],
+  artists: ['id', 'name', 'color', 'notes', 'image', 'layout', 'task_columns', 'sort_order'],
+  projects: ['id', 'artist_id', 'code', 'name', 'status', 'description', 'color', 'layout', 'task_columns', 'sort_order'],
   contacts: ['id', 'artist_id', 'project_id', 'role', 'name', 'email', 'phone', 'notes', 'color', 'sort_order'],
   events: ['id', 'artist_id', 'project_id', 'type', 'title', 'start_at', 'end_at', 'all_day', 'location', 'notes', 'sort_order'],
   tasks: ['id', 'artist_id', 'project_id', 'title', 'status', 'priority', 'due_date', 'comment', 'color', 'custom_values', 'erledigt_am', 'parent_id', 'sort_order'],
@@ -1094,6 +1094,10 @@ CREATE TABLE IF NOT EXISTS artists (
   notes      TEXT,
   image      TEXT,
   layout     TEXT,
+  -- Which task columns this page shows (WP-59), as a sparse {"<colId>": true|false} JSON map
+  -- over custom_columns.enabled. NULL — and an entry that is simply absent — means "follow the
+  -- season default", exactly as a NULL layout means "follow the artist_layout setting".
+  task_columns TEXT,
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
@@ -1109,6 +1113,8 @@ CREATE TABLE IF NOT EXISTS projects (
   description TEXT,
   color       TEXT,
   layout      TEXT,
+  -- See artists.task_columns (WP-59): this project page's own task-column visibility.
+  task_columns TEXT,
   sort_order  INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
   updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
@@ -1502,6 +1508,7 @@ function initDb(db: Database.Database, isFresh: boolean): void {
   // After the rebuild, not before — see migrateLinksNotes.
   migrateLinksNotes(db);
   migrateEntityLayout(db);
+  migrateEntityTaskColumns(db);
   // The table rebuilds run last on purpose: each copies its table's *current* full column set,
   // which is only complete once every column-adding migration above has run — even on a legacy
   // database jumping many versions in one open. Any future ensureColumn on
@@ -1952,6 +1959,27 @@ function migrateArtistImage(db: Database.Database): void {
 function migrateEntityLayout(db: Database.Database): void {
   ensureColumn(db, 'artists', 'layout', 'layout TEXT');
   ensureColumn(db, 'projects', 'layout', 'layout TEXT');
+}
+
+/**
+ * Add the per-entity task-column visibility (WP-59) to older databases. Idempotent, and the same
+ * shape as `migrateEntityLayout` above for the same reason: `NULL` is the „follows the season
+ * default" sentinel, so an upgraded database shows exactly the columns `custom_columns.enabled`
+ * said it should before this column existed. No data migration, no cut-off date.
+ *
+ * `SCHEMA_VERSION` is deliberately **not** bumped for it. The stamp exists to refuse a file a
+ * newer build has already migrated, and an older build opening this one reads every column it
+ * knows and simply ignores this one — a page then shows the season default, which is what it
+ * showed before. Nothing is misread and nothing is lost; a season *copy* taken by that older
+ * build drops the overrides, exactly as it would have dropped `layout` before WP-25.
+ *
+ * Registered after `migrateProjectsMergeNotes`, which rebuilds `projects` from its own column
+ * list: an `ensureColumn` running before that rebuild would be undone by it on a database
+ * jumping both versions in one open (the order-dependence `migrateLinksNotes` documents).
+ */
+function migrateEntityTaskColumns(db: Database.Database): void {
+  ensureColumn(db, 'artists', 'task_columns', 'task_columns TEXT');
+  ensureColumn(db, 'projects', 'task_columns', 'task_columns TEXT');
 }
 
 /** Add the per-item color column to tasks/contacts/links in older databases. */

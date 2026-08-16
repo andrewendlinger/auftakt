@@ -466,11 +466,22 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   scroll outside its menu, and the scroll `click()` performs for itself arrives *after* the
   popover opened — the menu blinks shut and the run reads „`PillSelect` does not open at all",
   with `aria-expanded="false"` to back it up. `await trigger.scrollIntoViewIfNeeded()` first.
-- **„Spalten verwalten" lists only the page's *own* scope.** On a project page that is the
-  project-scoped columns, and the demo has none — `[data-column-row]` matches nothing there and
-  every row selector waits out its timeout. Open it from `#/einstellungen/aufgaben` („Verwalten")
-  for the globals, or from `#/artist/1`, the one demo page with a scoped column of its own
-  („Freigabe", WP-51). Every other artist page manages an empty group.
+- **„Spalten verwalten" has two lists on an entity page since WP-59, and `[data-column-row]`
+  matches both.** The upper one is „Globale Spalten" — one row per global column, with the 👁/🚫
+  toggle *only* (no ▲▼, no ✎, no 🗑, and none at all on the locked Status/Aufgabe rows), writing
+  this page's `task_columns`. The lower one is the page's own scope, which is where renaming,
+  reordering and deleting still live. So a bare `[data-column-row]` on `#/project/1` no longer
+  matches nothing (it used to, which was the old trap here), it matches the seven globals — scope
+  to the list: `ul:has-text("Globale Spalten")` reads badly, so take
+  `page.locator('ul').nth(0|1)` inside the dialog, or filter the rows by name. „Auf Saison-Vorgabe
+  zurücksetzen" only renders while `task_columns` is non-NULL, so a script that waits for it on an
+  untouched page hangs. The demo still has exactly one page-scoped column („Freigabe" on
+  `#/artist/1`, WP-51); every other artist page's *lower* list is empty.
+- **Toggling a global column there writes the entity, not the column.** Assert on
+  `GET /api/projects/<id>` → `task_columns` (a JSON *string*, keyed by `colId` — `due`,
+  `custom:9`), never on `/api/custom-columns`, whose `enabled` is deliberately untouched. Toggling
+  a column back to the season default **deletes** its entry, and emptying the map stores `NULL` —
+  so „the override is gone" and „the page never had one" are the same stored state by design.
 - **An artist page holds several tables** — every project card is one — so `table thead th` reads
   the project grid, not the task table. Pick the table whose header row carries „Aufgabe".
 - **Column headers are uppercased in CSS**, so `innerText` says `FREIGABE` where the DOM says
@@ -652,6 +663,15 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   WP-51), with values on that artist's own tasks 16 and 51. It is the fixture for „a scope's
   columns stay on its own page" — it must be absent from every project page, from the Übersicht
   and from every other artist.
+- **Two demo pages depart from the season's column set, one per direction (WP-59).**
+  `#/project/4` („AB2 · Radio-Session") stores `{"due":false}` and is the only project **without**
+  Fällig — every other project has it, which is the customer's own example and the pair to compare;
+  `#/artist/4` („Jonas Wehrmann") stores `{"priority":true}` and is the one page that **shows**
+  Priorität, which ships hidden everywhere else. Both shift the `td` indices on *those two pages
+  only* (project 4 loses one column, artist 4 gains one), so the documented „Fällig is td 3,
+  Abgabe 8" holds everywhere else and nowhere there. Everything else is `NULL` and follows the
+  default — assert a „follows the season default" case against project 1 or artist 1, never
+  against these two.
 - **A newly created task carries a *negative* `sort_order`** — the transform stamps it one below
   its list's minimum so it lands on top. Assert relative order, never a literal ordinal, and expect
   the newest row first in any list nothing has been dragged in.

@@ -15,6 +15,7 @@ import type {
 import { parseColumnOptions } from '../api/types';
 import { arrayMove } from '../lib/arrays';
 import { dayCount } from '../lib/dates';
+import { colId, columnVisible } from '../lib/taskColumns';
 import { OPTION_PALETTE } from '../lib/selectOptions';
 import { rovingItem, useRovingFocus } from '../lib/rovingFocus';
 import {
@@ -32,6 +33,7 @@ import {
   useUndoableDelete,
   resourceUndo,
   type ColumnOwner,
+  type EntityColumnsStore,
 } from '../hooks';
 
 /**
@@ -138,10 +140,16 @@ const OWNER_LABEL: Record<ColumnOwner['scope'], string> = {
 export function CustomColumnManager({
   columns,
   owner,
+  entityColumns,
   onClose,
 }: {
   columns: CustomColumn[];
   owner?: ColumnOwner;
+  /**
+   * This page's own visibility store (WP-59). Present exactly when `owner` is: the Einstellungen
+   * arm manages the season default itself and has no page to depart from.
+   */
+  entityColumns?: EntityColumnsStore;
   onClose: () => void;
 }) {
   const invalidate = useInvalidateAll();
@@ -158,7 +166,9 @@ export function CustomColumnManager({
   const listRef = useRef<HTMLUListElement>(null);
   const restoreFocus = useRef<{ id: ID; dir: -1 | 1 } | null>(null);
 
-  // On an entity page, global columns are shown read-only; only that page's own are managed here.
+  // On an entity page only that page's own columns are *configured* here — renamed, reordered,
+  // deleted. The globals below are shown too, and since WP-59 they can be shown or hidden for
+  // this page; everything else about them still belongs to Einstellungen.
   const managed = useMemo(
     () =>
       [...columns]
@@ -166,10 +176,11 @@ export function CustomColumnManager({
         .sort((a, b) => a.sort_order - b.sort_order || a.id - b.id),
     [columns, owner],
   );
-  const readOnly = useMemo(
+  const globals = useMemo(
     () => (owner ? [...columns].filter((c) => c.scope === 'global').sort((a, b) => a.sort_order - b.sort_order) : []),
     [columns, owner],
   );
+  const overrides = entityColumns?.overrides ?? {};
 
   // One transactional renumber rather than two sequential swaps: if the second PATCH failed,
   // both rows kept the same sort_order and the `a.id` tiebreak above silently froze the ▲/▼
@@ -231,6 +242,18 @@ export function CustomColumnManager({
     setConfirming({ kind: 'hide', col, used: 0 });
   };
 
+  /**
+   * The same toggle for a global column **on this page** (WP-59) — one entry in this entity's
+   * `task_columns` map rather than a write to the column itself.
+   *
+   * No confirmation, unlike `toggleEnabled` above, and the difference is what is at stake: that
+   * one hides a column everywhere in the season, this one changes what one page shows and is
+   * undone by clicking it again. A dialog in front of a view toggle would be noise.
+   */
+  const toggleHere = (col: CustomColumn) => {
+    void entityColumns?.setVisible(col, !columnVisible(col, overrides));
+  };
+
   const remove = (col: CustomColumn) => {
     // Counted across ALL tasks with no project filter, because that is exactly the set the
     // delete destroys. The old count filtered a project column's tasks by `project_id`, but
@@ -252,21 +275,42 @@ export function CustomColumnManager({
   return (
     <Modal title="Spalten verwalten" onClose={onClose} wide dirty={formDirty}>
       <div className="space-y-5">
-        {readOnly.length > 0 && (
+        {globals.length > 0 && (
           <div>
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
-              Globale Spalten (in Einstellungen verwalten)
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {readOnly.map((c) => (
-                <span
-                  key={c.id}
-                  className={`rounded-full bg-neutral-100 px-2.5 py-1 text-xs ${c.enabled ? 'text-neutral-600' : 'text-neutral-300 line-through'}`}
+            <div className="mb-2 flex items-baseline justify-between gap-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                Globale Spalten
+              </div>
+              {/* The way back to „diese Seite folgt der Saison-Vorgabe" in one click — the whole
+                  map, not one entry, so it reads as the state it restores rather than as an undo.
+                  Offered only while there is something to reset (`task_columns` is not NULL). */}
+              {entityColumns?.hasOwn && (
+                <button
+                  className="rounded-lg px-2 py-0.5 text-xs text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-700"
+                  onClick={() => void entityColumns.reset()}
                 >
-                  {c.name}
-                </span>
-              ))}
+                  Auf Saison-Vorgabe zurücksetzen
+                </button>
+              )}
             </div>
+            <p className="mb-3 text-xs text-neutral-400">
+              Hier nur ein- und ausblenden — für diese Seite. Umbenennen, sortieren und die
+              Vorgabe für alle Seiten bleiben in Einstellungen.
+            </p>
+            <ul className="divide-y divide-neutral-100 overflow-hidden rounded-xl ring-1 ring-neutral-100">
+              {globals.map((c) => (
+                <ColumnRow
+                  key={c.id}
+                  col={c}
+                  visible={columnVisible(c, overrides)}
+                  // „abweichend" rather than a second button: the toggle is already the way back,
+                  // and this is the one thing the row cannot show by itself — that what is on
+                  // screen is this page's decision and not the season's.
+                  overridden={overrides[colId(c)] !== undefined}
+                  onToggle={() => toggleHere(c)}
+                />
+              ))}
+            </ul>
           </div>
         )}
 
@@ -275,8 +319,9 @@ export function CustomColumnManager({
             {owner ? OWNER_LABEL[owner.scope] : 'Spalten'}
           </div>
           <p className="mb-3 text-xs text-neutral-400">
-            Reihenfolge mit ↑ ↓ ändern. „Status“ und „Aufgabe“ sind fest; andere Spalten lassen sich
-            aus- und einblenden, umbenennen und (eigene) löschen.
+            {owner
+              ? 'Diese Spalten gibt es nur auf dieser Seite. Reihenfolge mit ↑ ↓ ändern; aus- und einblenden, umbenennen und löschen ebenfalls hier.'
+              : 'Reihenfolge mit ↑ ↓ ändern. „Status“ und „Aufgabe“ sind fest; andere Spalten lassen sich aus- und einblenden, umbenennen und (eigene) löschen. Einzelne Seiten können davon abweichen.'}
           </p>
           {managed.length === 0 ? (
             <div className="text-sm text-neutral-400">Noch keine Spalten.</div>
@@ -286,6 +331,7 @@ export function CustomColumnManager({
                 <ColumnRow
                   key={c.id}
                   col={c}
+                  visible={columnVisible(c, overrides)}
                   first={i === 0}
                   last={i === managed.length - 1}
                   onUp={() => move(c, -1)}
@@ -362,8 +408,18 @@ export function CustomColumnManager({
   );
 }
 
+/**
+ * One row of either list. The four callbacks are optional and their absence *is* the read-only
+ * arm: on an entity page a global column may be shown or hidden for that page and nothing else,
+ * so it arrives with `onToggle` alone and renders no arrows, no ✎ and no 🗑 (WP-59).
+ *
+ * `visible` is the effective state — the season default or this page's departure from it — and is
+ * therefore passed rather than read off `col.enabled`, which is only half the answer now.
+ */
 function ColumnRow({
   col,
+  visible,
+  overridden,
   first,
   last,
   onUp,
@@ -373,13 +429,16 @@ function ColumnRow({
   onRemove,
 }: {
   col: CustomColumn;
-  first: boolean;
-  last: boolean;
-  onUp: () => void;
-  onDown: () => void;
+  visible: boolean;
+  /** This page departs from the season default for this column — shown as a badge. */
+  overridden?: boolean;
+  first?: boolean;
+  last?: boolean;
+  onUp?: () => void;
+  onDown?: () => void;
   onToggle: () => void;
-  onEdit: () => void;
-  onRemove: () => void;
+  onEdit?: () => void;
+  onRemove?: () => void;
 }) {
   const isBuiltin = col.kind === 'builtin';
   const locked = isBuiltin && col.deletable === 0; // Status & Aufgabe
@@ -389,9 +448,11 @@ function ColumnRow({
       data-column-row
       className={`flex items-center gap-2 px-2 py-1.5 text-sm transition ${
         isBuiltin ? 'bg-sky-50/70 hover:bg-sky-100/60' : 'hover:bg-neutral-50'
-      } ${col.enabled ? '' : 'opacity-50'}`}
+      } ${visible ? '' : 'opacity-50'}`}
     >
-      <ReorderArrows first={first} last={last} onUp={onUp} onDown={onDown} />
+      {onUp && onDown && (
+        <ReorderArrows first={first ?? false} last={last ?? false} onUp={onUp} onDown={onDown} />
+      )}
       <div className="min-w-0 flex-1">
         <span className="font-medium text-neutral-800">
           {col.icon && <span className="mr-1">{col.icon}</span>}
@@ -418,26 +479,36 @@ function ColumnRow({
             🔒
           </span>
         )}
+        {overridden && (
+          <span
+            className="ml-2 rounded bg-neutral-100 px-1.5 py-0.5 align-middle text-[10px] font-semibold uppercase tracking-wide text-neutral-500"
+            title="Weicht auf dieser Seite von der Saison-Vorgabe ab"
+          >
+            abweichend
+          </span>
+        )}
       </div>
       {!locked && (
         <button
           className="rounded-lg px-2 py-1 text-xs text-neutral-500 transition hover:bg-neutral-200"
           onClick={onToggle}
-          title={col.enabled ? 'Ausblenden' : 'Einblenden'}
+          title={visible ? 'Ausblenden' : 'Einblenden'}
         >
-          {col.enabled ? '👁 sichtbar' : '🚫 aus'}
+          {visible ? '👁 sichtbar' : '🚫 aus'}
         </button>
       )}
-      <IconButton size="sm" onClick={onEdit} title="Bearbeiten">
-        <PencilIcon className="h-3.5 w-3.5" />
-      </IconButton>
-      {col.kind === 'custom' ? (
+      {onEdit && (
+        <IconButton size="sm" onClick={onEdit} title="Bearbeiten">
+          <PencilIcon className="h-3.5 w-3.5" />
+        </IconButton>
+      )}
+      {onRemove && col.kind === 'custom' ? (
         <IconButton variant="danger" size="sm" onClick={onRemove} title="Löschen">
           <TrashIcon className="h-4 w-4" />
         </IconButton>
-      ) : (
+      ) : onEdit ? (
         <span className="w-7" />
-      )}
+      ) : null}
     </li>
   );
 }

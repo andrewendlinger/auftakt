@@ -24,12 +24,18 @@ import { HttpError, numParam as num, orderParam, scopeParam } from '../lib/query
  * always persists the complete array. `jsonColumns` stringifies it, and `applyJson` leaves `null`
  * alone — which is what makes „auf Vorlage zurücksetzen" a plain `PATCH {layout: null}`, since
  * NULL is the sentinel for „never arranged, follow the artist_layout/project_layout setting".
+ *
+ * `task_columns` (WP-59) is the same shape one level down: a `{"<colId>": true|false}` map over
+ * `custom_columns.enabled`, whole-value replacement, and `PATCH {task_columns: null}` is „this page
+ * follows the season default again". Both columns need naming **twice** — in `writable` and in
+ * `jsonColumns` — and missing either is silent: an unlisted column is dropped without a word
+ * (CCL-24), and a listed one that is not stringified reaches SQLite as an object and throws.
  */
 export const artistsRouter = crudRouter({
   table: 'artists',
-  writable: ['name', 'color', 'notes', 'image', 'layout', 'sort_order'],
+  writable: ['name', 'color', 'notes', 'image', 'layout', 'task_columns', 'sort_order'],
   required: ['name'],
-  jsonColumns: ['layout'],
+  jsonColumns: ['layout', 'task_columns'],
   order: 'sort_order ASC, name ASC',
 });
 
@@ -40,9 +46,9 @@ export const artistsRouter = crudRouter({
 // leaves writable.
 export const projectsRouter = crudRouter({
   table: 'projects',
-  writable: ['artist_id', 'code', 'name', 'status', 'description', 'color', 'layout', 'sort_order'],
+  writable: ['artist_id', 'code', 'name', 'status', 'description', 'color', 'layout', 'task_columns', 'sort_order'],
   required: ['artist_id', 'code', 'name'],
-  jsonColumns: ['layout'],
+  jsonColumns: ['layout', 'task_columns'],
   filters: ['artist_id'],
   parent: { table: 'artists', column: 'artist_id' },
   order: 'sort_order ASC, id ASC',

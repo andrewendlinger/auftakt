@@ -313,11 +313,24 @@ const PROJECT_3_LAYOUT = JSON.stringify([
   { key: 'kontakte', width: 'half' },
 ]);
 
+/**
+ * Per-page task columns (WP-59), the customer's own example: „ein Projekt sollte ‚Fällig' haben
+ * können und ein anderes nicht". Project 4 hides the global Fällig column, artist 4 shows the
+ * global Priorität column that ships hidden — one fixture per direction, because the departure is
+ * a departure *from the season default* and hiding alone would never exercise the other arm.
+ *
+ * Everything else stays `NULL` and follows the default, so the two states sit side by side the way
+ * `ARTIST_2_LAYOUT` puts the two layout states side by side. Keyed by `colId`: a built-in by its
+ * `key`, a custom column as `custom:<id>`.
+ */
+const PROJECT_4_COLUMNS = JSON.stringify({ due: false });
+const ARTIST_4_COLUMNS = JSON.stringify({ priority: true });
+
 const ARTISTS = [
   { id: 1, name: 'Nordlicht Quartett', color: '#3b82f6', notes: RICH_ARTIST_NOTES },
   { id: 2, name: 'Ana Belém Trio', color: '#ec4899', notes: 'Anreise aus Lissabon — Visa früh klären.', layout: ARTIST_2_LAYOUT },
   { id: 3, name: 'Kollektiv Halbton', color: '#10b981', notes: null },
-  { id: 4, name: 'Jonas Wehrmann', color: '#f59e0b', notes: 'Solopianist, spielt auch den Meisterkurs.' },
+  { id: 4, name: 'Jonas Wehrmann', color: '#f59e0b', notes: 'Solopianist, spielt auch den Meisterkurs.', task_columns: ARTIST_4_COLUMNS },
 ];
 
 const PROJECTS = [
@@ -326,7 +339,7 @@ const PROJECTS = [
   // "explicitly set" and "inherits a shade" states of the colour field are both eyeballable.
   { id: 2, artist_id: 1, code: 'NQ2', name: 'Schulworkshop', status: 'Not Started', description: 'Vormittagsformat für zwei Schulklassen.', color: '#8b5cf6' },
   { id: 3, artist_id: 2, code: 'AB1', name: 'Hauptkonzert', status: 'In Progress', description: null, layout: PROJECT_3_LAYOUT },
-  { id: 4, artist_id: 2, code: 'AB2', name: 'Radio-Session', status: 'In Progress', description: 'Mitschnitt für den Kultursender.' },
+  { id: 4, artist_id: 2, code: 'AB2', name: 'Radio-Session', status: 'In Progress', description: 'Mitschnitt für den Kultursender.', task_columns: PROJECT_4_COLUMNS },
   { id: 5, artist_id: 3, code: 'KH1', name: 'Klanginstallation', status: 'In Progress', description: BLANK_LINE_NOTES },
   { id: 6, artist_id: 3, code: 'KH2', name: 'Late-Night-Set', status: 'Not Started', description: LEGACY_CODE_NOTES },
   { id: 7, artist_id: 4, code: 'JW1', name: 'Solo-Rezital', status: 'Done', description: 'Programm steht, Werbung läuft.' },
@@ -651,8 +664,8 @@ function main(): void {
   const db = getDb();
 
   const insArtist = db.prepare(
-    `INSERT INTO artists (id, name, color, notes, layout, sort_order)
-     VALUES (@id, @name, @color, @notes, @layout, @sort_order)`,
+    `INSERT INTO artists (id, name, color, notes, layout, task_columns, sort_order)
+     VALUES (@id, @name, @color, @notes, @layout, @task_columns, @sort_order)`,
   );
   // The demo hall plan. `ON CONFLICT DO NOTHING` mirrors the real upload path, so re-seeding is
   // idempotent for the same reason a second paste of the same picture is.
@@ -663,8 +676,8 @@ function main(): void {
   ).run(SAALPLAN_TOKEN, SAALPLAN_BYTES, SAALPLAN_BYTES.length);
 
   const insProject = db.prepare(
-    `INSERT INTO projects (id, artist_id, code, name, status, description, color, layout, deleted_at, sort_order)
-     VALUES (@id, @artist_id, @code, @name, @status, @description, @color, @layout, @deleted_at, @sort_order)`,
+    `INSERT INTO projects (id, artist_id, code, name, status, description, color, layout, task_columns, deleted_at, sort_order)
+     VALUES (@id, @artist_id, @code, @name, @status, @description, @color, @layout, @task_columns, @deleted_at, @sort_order)`,
   );
   const insContact = db.prepare(
     `INSERT INTO contacts (id, artist_id, project_id, role, name, email, phone, notes, color, deleted_at, sort_order)
@@ -694,9 +707,9 @@ function main(): void {
   );
 
   const tx = db.transaction(() => {
-    ARTISTS.forEach((a, i) => insArtist.run({ layout: null, ...a, sort_order: i }));
+    ARTISTS.forEach((a, i) => insArtist.run({ layout: null, task_columns: null, ...a, sort_order: i }));
     PROJECTS.forEach((p, i) =>
-      insProject.run({ color: null, layout: null, deleted_at: null, ...p, sort_order: i }),
+      insProject.run({ color: null, layout: null, task_columns: null, deleted_at: null, ...p, sort_order: i }),
     );
     CONTACTS.forEach((c, i) => insContact.run({ notes: null, color: null, deleted_at: null, ...c, sort_order: i }));
     EVENTS.forEach((e, i) => insEvent.run({ notes: null, deleted_at: null, ...e, sort_order: i }));

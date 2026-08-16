@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { CustomColumn, TaskSortRule } from '../api/types';
+import { colId, customColId } from './taskColumns';
 import {
   MANUAL_SORT_ID,
   activeSortRules,
-  colId,
-  customColId,
   describeSortColumn,
   sortRuleState,
 } from './taskSort';
@@ -16,8 +15,9 @@ import {
  * so if `activeSortRules` ever stops dropping a hidden column, an invisible column silently
  * decides where a new task lands again, which is the complaint WP-32 came from.
  *
- * `colId`/`customColId` are here too because the id encoding is what TTU-31 broke and nothing
- * else covers it: the built-in `comment` key once decoded as custom column `Number('omment')`.
+ * `colId`/`customColId` are exercised here too — they moved to `lib/taskColumns.ts` with WP-59,
+ * but the id encoding is what TTU-31 broke and this is where the rules that read it live: the
+ * built-in `comment` key once decoded as custom column `Number('omment')`.
  */
 
 // Only the fields the module reads; a real CustomColumn carries a dozen more.
@@ -82,6 +82,18 @@ describe('sortRuleState', () => {
     expect(sortRuleState('custom:7', [custom(7)])).toBe('active');
     expect(sortRuleState('custom:7', [custom(7, 'Bezahlt', 0)])).toBe('hidden');
     expect(sortRuleState('custom:7', [custom(8)])).toBe('gone');
+  });
+
+  // WP-59: „visible" is the pair (column, page), so the same season-wide rule is in effect on one
+  // page and inert on the next. Both directions matter — a page may show what the season hides
+  // *and* hide what it shows — and the stored rule is untouched either way.
+  it('follows this page’s override in both directions', () => {
+    expect(sortRuleState('priority', FACTORY_COLUMNS, { priority: true })).toBe('active');
+    expect(sortRuleState('status', FACTORY_COLUMNS, { status: false })).toBe('hidden');
+  });
+
+  it('ignores an override naming a column that is not on this page', () => {
+    expect(sortRuleState('due', [builtin('status')], { due: true })).toBe('gone');
   });
 });
 

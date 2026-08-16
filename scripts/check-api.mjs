@@ -210,6 +210,40 @@ try {
     }
   }
 
+  // ------------------------------------------------ per-entity task columns (WP-59)
+  // The same shape one level down: which task columns a page shows is now a property of the pair
+  // (column, page), stored as `task_columns` — on both allowlists and in `jsonColumns`, because
+  // missing either is silent (CCL-24). `null` is the "follows the season default" sentinel, and it
+  // has to survive as SQL NULL or "auf Saison-Vorgabe zurücksetzen" would store an empty map that
+  // reads the same on screen and then stops following Einstellungen.
+  console.log('\n== an entity carries its own task columns (WP-59)');
+  {
+    const map = { due: false, 'custom:99': true };
+    const owner = await ok('POST', '/artists', { name: 'Spaltenwahl' });
+    for (const [path, create] of [
+      ['/artists', { name: 'Spaltenwahl Künstler' }],
+      ['/projects', { name: 'Spaltenwahl Projekt', code: 'S9', artist_id: owner.id }],
+    ]) {
+      const row = await ok('POST', path, create);
+      check(`a fresh ${path} row follows the season default`, row.task_columns === null, String(row.task_columns));
+
+      const set = await ok('PATCH', `${path}/${row.id}`, { task_columns: map });
+      check(`${path}: an override map is stored as JSON text`, set.task_columns === JSON.stringify(map), String(set.task_columns));
+
+      const read = await ok('GET', `${path}/${row.id}`);
+      check(`${path}: the map reads back unparsed`, read.task_columns === JSON.stringify(map), String(read.task_columns));
+
+      // The season default itself is untouched by a page's departure from it: `enabled` is what a
+      // page with no override falls back to, so a write that reached the column instead of the
+      // entity would move every other page too.
+      const due = (await ok('GET', '/custom-columns?scope=global')).find((c) => c.key === 'due');
+      check(`${path}: the column's own enabled is untouched`, due.enabled === 0, String(due.enabled));
+
+      const cleared = await ok('PATCH', `${path}/${row.id}`, { task_columns: null });
+      check(`${path}: null clears it back to the season default`, cleared.task_columns === null, String(cleared.task_columns));
+    }
+  }
+
   // ------------------------------------------------------------------ colour validation (CCL-12)
   // Keyed off `writable.includes('color')` in the factory, so this covers every table at once.
   console.log('\n== colours are validated on write (CCL-12)');
@@ -974,6 +1008,33 @@ try {
     check('the project sheet carries the project column', projectSheet.includes('Projektspalte'), projectSheet.join(', '));
     check('…and not the artist’s', !projectSheet.includes('Freigabe'), projectSheet.join(', '));
 
+    // …and the sheet shows what the *page* shows (WP-59). It filtered nothing before — a column
+    // hidden in Einstellungen still landed in the .xlsx — and once visibility became per page,
+    // exporting a column the project deliberately hides is the reported inconsistency one layer
+    // down. Both directions, because the map is a departure from the season default in either.
+    const dormant = await ok('POST', '/custom-columns', { name: 'Saisonweit', type: 'text', scope: 'global', enabled: 0 });
+    check('a globally hidden column stays out of the sheet', !(await headersOf(`?project_id=${project.id}`)).includes('Saisonweit'));
+
+    await ok('PATCH', `/projects/${project.id}`, {
+      task_columns: { [`custom:${dormant.id}`]: true, 'custom:0': false },
+    });
+    const shown = await headersOf(`?project_id=${project.id}`);
+    check('…until the page shows it', shown.includes('Saisonweit'), shown.join(', '));
+    check('…and the fixed block is unaffected either way', shown.includes('Fällig') && shown.includes('Kommentar'), shown.join(', '));
+
+    await ok('PATCH', `/artists/${artist.id}`, { task_columns: { [`custom:${mine.id}`]: false } });
+    const hiddenHere = await headersOf(`?resolved_artist_id=${artist.id}`);
+    check('a column the page hides is dropped from its sheet', !hiddenHere.includes('Freigabe'), hiddenHere.join(', '));
+    // The override belongs to one entity, so the other page's sheet is untouched by it.
+    check('…and only from that page’s', (await headersOf(`?project_id=${project.id}`)).includes('Saisonweit'));
+
+    // Back to the season default, so the copy sections below start from the shared fixture.
+    await ok('PATCH', `/artists/${artist.id}`, { task_columns: null });
+    await ok('PATCH', `/projects/${project.id}`, { task_columns: null });
+    await ok('DELETE', `/custom-columns/${dormant.id}`);
+    const restored = await headersOf(`?resolved_artist_id=${artist.id}`);
+    check('clearing the map puts the column back', restored.includes('Freigabe'), restored.join(', '));
+
     // The cascade hangs off the FK, so an artist's columns are part of what deleting it costs —
     // its project's columns included, since the walk steps through the project.
     const deps = await ok('GET', `/artists/${artist.id}/dependents`);
@@ -1004,6 +1065,13 @@ try {
     // which is exactly why it is easy to forget there (WP-25).
     await ok('PATCH', `/artists/${artist.id}`, { layout: [{ key: 'kontakte', width: 'half' }] });
     await ok('PATCH', `/projects/${project.id}`, { layout: [{ key: 'termine', width: 'half' }] });
+
+    // …and the same for the page's task columns (WP-59). It rides `COPY_COLS` like `layout` does,
+    // which is exactly why it is worth asserting: both are columns of these two tables that hold
+    // no user *content*, so a copy that forgets one is invisible until somebody notices their
+    // columns are back.
+    await ok('PATCH', `/artists/${artist.id}`, { task_columns: { priority: true } });
+    await ok('PATCH', `/projects/${project.id}`, { task_columns: { due: false } });
 
     // A scoped column travels with the parent whose page it appears on (WP-51) — and only if
     // that parent actually arrived, the DBW-06 rule this whole section is about. The first copy
@@ -1219,8 +1287,9 @@ try {
     const titles = db.prepare('SELECT title FROM events ORDER BY id').all().map((e) => e.title);
     check('the artist-owned event came over', titles.includes('Termin am Künstler'), titles.join(', '));
     check('the project-owned event stayed behind (DBW-06)', !titles.includes('Termin am Projekt'), titles.join(', '));
-    const artistLayout = db.prepare("SELECT layout FROM artists WHERE name = 'Kopie'").get()?.layout;
-    check('the artist layout travelled with the copy (WP-25)', artistLayout === '[{"key":"kontakte","width":"half"}]', String(artistLayout));
+    const copied = db.prepare("SELECT layout, task_columns FROM artists WHERE name = 'Kopie'").get();
+    check('the artist layout travelled with the copy (WP-25)', copied?.layout === '[{"key":"kontakte","width":"half"}]', String(copied?.layout));
+    check('the artist task columns travelled with it (WP-59)', copied?.task_columns === '{"priority":true}', String(copied?.task_columns));
 
     // The scoped columns split along the same line as their parents (WP-51): artists came,
     // projects did not.
@@ -1238,8 +1307,9 @@ try {
   // -------------------------------------------------- the project layout, in the second copy
   {
     const db = new Database(projectCopyTarget, { readonly: true });
-    const layout = db.prepare("SELECT layout FROM projects WHERE name = 'Projekt'").get()?.layout;
-    check('the project layout travelled with the copy (WP-25)', layout === '[{"key":"termine","width":"half"}]', String(layout));
+    const copied = db.prepare("SELECT layout, task_columns FROM projects WHERE name = 'Projekt'").get();
+    check('the project layout travelled with the copy (WP-25)', copied?.layout === '[{"key":"termine","width":"half"}]', String(copied?.layout));
+    check('the project task columns travelled with it (WP-59)', copied?.task_columns === '{"due":false}', String(copied?.task_columns));
     const projectCol = db.prepare("SELECT * FROM custom_columns WHERE name = 'Kopie-Projektspalte'").get();
     check(
       'the project column came once its project did (WP-51)',
