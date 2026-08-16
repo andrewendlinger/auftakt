@@ -1,6 +1,7 @@
 import {
   lazy,
   Suspense,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -188,6 +189,10 @@ const Indent = Extension.create({
 
 /** The event ⌘⇧F fires on the editor's own DOM node; `TextColorPicker` is what listens. */
 const TEXT_COLOR_EVENT = 'auftakt:schriftfarbe';
+
+/** The same chord as the keymap's `Mod-Shift-f`, for the one place React has to recognise it. */
+const isTextColorShortcut = (e: ReactKeyboardEvent) =>
+  (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f';
 
 /**
  * How the shortcut is spelled in the button's tooltip — the app's first user-visible key hint, and
@@ -874,15 +879,37 @@ function TextColorPicker({ editor, color }: { editor: Editor; color: string | nu
   /** True while the menu was opened from the keyboard, i.e. while it owns focus and must give it back. */
   const holdsFocus = useRef(false);
 
+  /** Close and put the caret back — every exit that is not a pick goes through here. */
+  const dismiss = useCallback(() => {
+    holdsFocus.current = false;
+    closePopover();
+    editor.commands.focus();
+  }, [closePopover, editor]);
+
+  /**
+   * The shortcut **toggles**, from either side of the focus boundary.
+   *
+   * Two listeners, because the key arrives in two different places. While the caret is in the text
+   * it reaches TipTap's keymap, which fires `TEXT_COLOR_EVENT` here. Once the menu owns focus the
+   * keymap never sees it at all — and then nothing marked the key handled, so `GlobalSearch`'s
+   * window listener took it: the search field stole focus from outside `rootRef`, which commits the
+   * note and unmounts the editor, picker and all. That is the exact failure the shortcut exists to
+   * avoid, reached by pressing it twice. The menu therefore answers for itself and stops the key
+   * dead (`stopPropagation`, plus `preventDefault` for the `defaultPrevented` check one layer up).
+   */
   useEffect(() => {
     const dom = editor.view.dom;
-    const openFromKeyboard = () => {
+    const onShortcut = () => {
+      if (open) {
+        dismiss();
+        return;
+      }
       holdsFocus.current = true;
       openPopover();
     };
-    dom.addEventListener(TEXT_COLOR_EVENT, openFromKeyboard);
-    return () => dom.removeEventListener(TEXT_COLOR_EVENT, openFromKeyboard);
-  }, [editor, openPopover]);
+    dom.addEventListener(TEXT_COLOR_EVENT, onShortcut);
+    return () => dom.removeEventListener(TEXT_COLOR_EVENT, onShortcut);
+  }, [editor, open, openPopover, dismiss]);
 
   // Click-away. Capture phase so it runs before whatever the click lands on, and it does not
   // preventDefault — see the note on the missing backdrop above.
@@ -951,6 +978,14 @@ function TextColorPicker({ editor, color }: { editor: Editor; color: string | nu
           ref={menuRef}
           role="dialog"
           aria-label="Schriftfarbe"
+          // The other half of the toggle — see the effect above. React listens at the root, i.e.
+          // below `window`, so stopping it here is what keeps it away from the global ⌘F.
+          onKeyDown={(e) => {
+            if (!isTextColorShortcut(e)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            dismiss();
+          }}
           className="fixed z-50 overflow-y-auto rounded-xl bg-white p-2 text-neutral-600 shadow-lg ring-1 ring-black/10"
           style={{ left: pos.left, top: pos.top, maxHeight: pos.maxHeight }}
         >

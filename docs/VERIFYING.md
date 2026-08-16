@@ -791,10 +791,13 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
   or expect one to swallow its next click.
 - **⌘⇧F is the keyboard route into it**, and it is the only way in without a mouse: every toolbar
   button is `tabIndex={-1}` (WP-43). Focus lands on the *current* colour, the arrows walk the grid
-  (`useRovingFocus`), Enter applies, Escape closes. `GlobalSearch`'s ⌘F listener now ignores a key
-  the editor already handled (`defaultPrevented`) — before that, ⌘⇧F opened the picker *and* moved
-  focus to the search field, which reads as „the shortcut does nothing" because the note commits
-  and the whole toolbar unmounts underneath it.
+  (`useRovingFocus`), Enter applies, Escape closes — and **a second ⌘⇧F closes it too**, from
+  either side of the focus boundary, so a script may press it twice and must not expect a second
+  menu. `GlobalSearch`'s ⌘F listener now ignores a key the editor already handled
+  (`defaultPrevented`), and the menu stops the chord itself while it owns focus — before those two,
+  ⌘⇧F moved focus to the search field, which reads as „the shortcut does nothing" because the note
+  commits and the whole toolbar unmounts underneath it. Plain ⌘F still reaches the search field
+  from inside a note, deliberately, and *that* does commit the note on the way.
 - **TipTap's `focus()` lands a frame later, so „focus came back to the text" is an eventually-true
   assertion.** Read straight after the menu closes, `document.activeElement` is still the trigger
   button and the check fails against working code. `waitForFunction(() =>
