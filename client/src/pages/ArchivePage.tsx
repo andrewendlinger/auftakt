@@ -174,8 +174,14 @@ export function ArchivePage() {
                       {t.erledigt_am ? formatDate(t.erledigt_am) : ''}
                     </td>
                     {/* The strike propagates into the Markdown's block children (p, li,
-                        blockquote) — it is only atomic inline boxes it cannot enter. */}
-                    <td className="max-w-md px-3 py-2 line-through"><Markdown>{t.comment}</Markdown></td>
+                        blockquote) — it is only atomic inline boxes it cannot enter. The grey
+                        arrives by inheritance instead, which `prose-md--done` keeps intact past
+                        `.prose-md blockquote`'s own colour (the same modifier the task table's
+                        comment cell uses). A link keeps its sky palette on purpose — it is where
+                        the row leads, like the Zuordnung cell beside it. */}
+                    <td className="max-w-md px-3 py-2 line-through">
+                      <Markdown className="prose-md--done">{t.comment}</Markdown>
+                    </td>
                   </tr>
                 ))}
               </tbody>

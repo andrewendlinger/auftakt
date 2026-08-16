@@ -64,6 +64,19 @@ const INLINE_INPUT =
  * `DONE_PILL` is the third case: `PillSelect` and the checkbox colour themselves from an inline
  * `style` / a UA accent, which no class can outrank, so there the colour is taken out with a
  * filter — and nothing is struck, because a line across a 20 px pill reads as damage.
+ *
+ * A rendered comment is the fourth, and it is the same failure one level down: `.prose-md
+ * blockquote` sets a colour of its own, so a Zitat inside a done comment sat visibly darker than
+ * every other cell in the row — struck, but not greyed. That one is fixed where the rule it has
+ * to beat lives, as the `.prose-md--done` modifier in `index.css`; nothing else in that block
+ * paints text.
+ *
+ * Deliberately left alone, as chrome or as a destination rather than as the task's content: the
+ * drag handle, the chevron, the colour swatch, the trash can, the „mehr"/„bearbeiten" links, the
+ * „+ Kommentar" placeholder — and **links inside a comment**, which keep `EXTERNAL_LINK_CLASS`.
+ * A link is where the row leads, not what it says: greying one out reads as „no longer works"
+ * while it still navigates, and the strike reaches it anyway (an `<a>` is a non-atomic inline).
+ * It is the rule the Archiv applies to its Zuordnung cell, one level down.
  */
 const DONE_MUTED = 'text-neutral-400';
 const DONE_STRUCK = `${DONE_MUTED} line-through`;
@@ -1116,14 +1129,16 @@ function CommentCell({
     <div className="max-w-md min-w-64">
       {/* The strike goes on the wrapper, not on the rendered nodes: text-decoration *does*
           propagate into in-flow block descendants, which is what Markdown produces (p, li,
-          blockquote), so one class covers a whole comment however it is formatted. */}
+          blockquote), so one class covers a whole comment however it is formatted. The grey
+          travels the other way, by inheritance — which `prose-md--done` is here to keep intact
+          past the one rule that would break it. */}
       <div
         className={`cursor-text text-sm ${done ? DONE_STRUCK : 'text-neutral-600'} ${
           !expanded && long ? 'max-h-12 overflow-hidden' : ''
         }`}
         onDoubleClick={() => setEditing(true)}
       >
-        <Markdown>{task.comment}</Markdown>
+        <Markdown className={done ? 'prose-md--done' : ''}>{task.comment}</Markdown>
       </div>
       <div className="mt-0.5 flex gap-2 text-[11px] text-neutral-400">
         {long && (

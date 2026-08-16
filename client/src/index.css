@@ -134,6 +134,19 @@ body {
   margin: 1em 0;
 }
 
+/* Done variant (WP-58). A finished task's comment is greyed by the cell around it, and the whole
+   point of that grey is that it *inherits* — which `blockquote` above breaks, being the one node
+   in this block that paints text at all. A Zitat inside a done comment therefore sat at #6b7280
+   while every other cell in the row was neutral-400: struck, but visibly darker.
+
+   A modifier rather than a utility on the wrapper, for the same reason `--roomy` is one: the
+   rule it has to beat has identical specificity and Tailwind's utilities are imported *above*
+   this block, so an `[&_blockquote]:text-inherit` loses on order and silently does nothing. Here
+   the override sits after the rule it overrides, which is the whole mechanism. */
+.prose-md--done blockquote {
+  color: inherit;
+}
+
 /* Images in the flowing text (WP-37). Nothing constrained an <img> before, because nothing could
    author one — a Saalplan at its natural pixel size would simply run off the card.
 

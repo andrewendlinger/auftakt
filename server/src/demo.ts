@@ -423,8 +423,10 @@ const TASKS: DemoTask[] = [
   // Archived: done longer ago than ARCHIVE_AFTER_DAYS, so they leave the live views.
   { id: 24, project_id: 1, title: 'Probenraum gebucht', status: 'done', erledigt_am: stamp(ARCHIVED) },
   // The one archived row with a comment: „Archiv" renders that column too, and WP-58 mutes and
-  // strikes it there as well, so without a filled cell the page cannot be eyeballed.
-  { id: 25, project_id: 3, title: 'Technikrider geprüft', status: 'done', erledigt_am: stamp(ARCHIVED - 7), comment: 'Abnahme mit der **Haustechnik** — Anmerkungen eingearbeitet.' },
+  // strikes it there as well, so without a filled cell the page cannot be eyeballed. The Zitat
+  // is the part that needs a fixture: `.prose-md blockquote` paints its own colour and outranked
+  // the row's grey until the done comment handed it back.
+  { id: 25, project_id: 3, title: 'Technikrider geprüft', status: 'done', erledigt_am: stamp(ARCHIVED - 7), comment: 'Abnahme mit der **Haustechnik** — Anmerkungen eingearbeitet.\n\n> Nachtrag: zweiter Monitorweg fehlt noch.' },
   { id: 26, artist_id: 3, title: 'Vorvertrag unterschrieben', status: 'done', erledigt_am: stamp(ARCHIVED - 3) },
   { id: 27, title: 'Save-the-Date verschickt', status: 'done', erledigt_am: stamp(ARCHIVED - 16) },
 
@@ -434,8 +436,10 @@ const TASKS: DemoTask[] = [
   // (Fällig, „Abgabe"), checkbox („Bestätigt"), Markdown comment, timestamps. WP-58 mutes and
   // strikes each of them through a different mechanism, and no other done fixture has more than
   // a title to look at. Its past due date is deliberate and counts nowhere: `isOverdue` requires
-  // an *open* task.
-  { id: 29, project_id: 7, title: 'Programmtext eingereicht', status: 'done', priority: 'hoch', due_date: days(-5), comment: 'Fassung 3 an den *Verlag*, Freigabe liegt vor.', erledigt_am: stamp(-6) },
+  // an *open* task. The comment carries the two Markdown nodes that set a colour of their own: a
+  // Zitat, which must take the row's grey, and a link, which deliberately keeps its sky palette.
+  // Kept under 140 characters so the cell does not clamp and both stay visible.
+  { id: 29, project_id: 7, title: 'Programmtext eingereicht', status: 'done', priority: 'hoch', due_date: days(-5), comment: 'Fassung 3 an den [Verlag](https://example.org/verlag).\n\n> Bildunterschriften noch kürzen.', erledigt_am: stamp(-6) },
 
   { id: 30, project_id: 7, title: 'Saalbestuhlung klären', status: 'active', due_date: days(18) },
   { id: 31, project_id: 8, title: 'Teilnehmerliste finalisieren', status: 'active', priority: 'hoch', due_date: days(4) },
