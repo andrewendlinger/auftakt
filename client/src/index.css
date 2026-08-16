@@ -203,12 +203,23 @@ body {
 }
 
 /* Rich-text editor (RichTextEditor.tsx). The editable area carries `.prose-md` too, so
-   what-you-type matches the rendered output; these rules add only the editor chrome. */
+   what-you-type matches the rendered output; these rules add only the editor chrome.
+
+   **No `max-height`/`overflow-y` here (WP-56).** A 50vh cap meant that clicking into a note the
+   reading view showed whole dropped the user into a scrolling pane of their own text — the
+   reported „plötzlich in einem separaten Fenster mit Scrollbalken", with the reading view right
+   beside it proving it did not need one. Inside a dialog it was a scrollbar within `Modal`'s own
+   scrolling body, so the field scrolled while the form around it also did. Nothing is capped now:
+   on a page the editor is as tall as the text it replaces, and in a dialog the body scrolls.
+
+   `white-space: pre-wrap` is the one rule the reading view deliberately does *not* share.
+   ProseMirror needs it (a typed run of spaces is otherwise collapsed away as you type), while
+   `.prose-md` on the reading side renders react-markdown's DOM, which keeps the Markdown source's
+   own newlines as text nodes beside the `<br>` remark-breaks inserts for them — only whitespace
+   collapsing hides them. Measured: the same note grows from 274 px to 334 px if the reading view
+   takes this rule, because every soft break renders twice. */
 .rte-content {
   white-space: pre-wrap;
-  /* Grow with content, but cap so one long note can't crowd out the rest of a form. */
-  max-height: 50vh;
-  overflow-y: auto;
 }
 .rte-content:focus,
 .rte-content:focus-visible {
