@@ -14,7 +14,8 @@ import { cpus, freemem, homedir, totalmem, release, version as osVersionName } f
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { fileStamp, localStamp } from '../shared/time';
-import { buildMenu } from './menu';
+import { buildDockMenu, buildMenu } from './menu';
+import { activatePlan } from './activate';
 import { backupDirProblem, runStartupBackup } from './backup';
 import { WINDOW_MINIMUM, WINDOW_PREFERRED, cascadeBounds, fittedSize } from './cascade';
 import { exportFileName } from './exportName';
@@ -1038,6 +1039,12 @@ app.whenReady().then(async () => {
       onChooseBackup: () => void chooseBackupDir(BrowserWindow.getFocusedWindow()),
     }),
   );
+  // Beside the application menu, and for the same reason: both are app-level state, neither
+  // belongs to a window, and set here they are in place before the first one exists — a
+  // right-click on the Dock icon during a slow launch already has its entry. `app.dock` is
+  // typed `Dock | undefined` (undefined off macOS), so the optional call *is* the platform
+  // branch: nothing is built on Windows, since `?.` short-circuits the argument too.
+  app.dock?.setMenu(buildDockMenu({ onNewWindow: () => void createWindow() }));
   await createWindow();
   startupDone = true;
 
@@ -1057,8 +1064,18 @@ app.whenReady().then(async () => {
       void runStartupChores();
     }, 8000);
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) void createWindow();
+  // A Dock click used to be answered only when *no* window existed, and a minimized window is
+  // still a window — so with both windows minimized the handler did nothing and the one that
+  // came back was AppKit deminiaturizing the key window on its own; the other was reachable
+  // only from the Fenster menu or Exposé (WP-67). activatePlan holds the three-way decision and
+  // says why each branch is what it is; the loop is the same shape notifyBackupConfigChanged
+  // uses, because `getAllWindows()` is the only list of windows this app keeps (see liveWindow).
+  app.on('activate', (_event, hasVisibleWindows) => {
+    const plan = activatePlan(BrowserWindow.getAllWindows(), hasVisibleWindows);
+    if (plan.create) void createWindow();
+    // In the order they were opened, so the newest ends up frontmost — the same order they
+    // would land in if the user picked them out of the Dock one by one.
+    for (const w of plan.restore) w.restore();
   });
 });
 

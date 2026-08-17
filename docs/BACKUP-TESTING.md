@@ -219,6 +219,14 @@ focused-window season resolution. Run with at least two seasons present.
       second window on its own, and two import flows both end in a relaunch after replacing files.
 - [ ] Windows: double-click the shortcut while the app runs → a **new window**, not a raise.
       Ctrl+W closes one window; „Beenden" quits the app.
+- [ ] **macOS, das Dock** (WP-67), with two windows open: minimize both, then click the Auftakt
+      icon → **both** come back. One returning and the other being reachable only from the
+      Fenster menu is the bug this replaced. Leave one window on screen and minimize the other,
+      then click the icon → the visible window is raised and the minimized one stays where it
+      is; that is the Finder/Safari convention, not an oversight. Close every window (the app
+      keeps running) and click the icon → one window opens, as before.
+- [ ] **macOS, right-click the Dock icon** → „Neues Fenster" above macOS's own entries, and it
+      opens a cascaded window exactly like Cmd+N — including when no window is open at all.
 - [ ] Type into an inline editor in A, focus B, edit a different row there, focus A again → the
       draft in A survived and B's edit is visible in A's other rows.
 

@@ -546,6 +546,18 @@ land on the same pixel (PR50-06). New windows open unpinned and adopt the regist
 default from the first response echo — `switchSeason()` moves that default, so Cmd+N opens the
 last-switched season, not necessarily the opener's.
 
+**The Dock is macOS's second way to ask for a window** (WP-67). `app.dock?.setMenu` — set beside
+`Menu.setApplicationMenu`, before the first window exists, and typed `Dock | undefined` so the
+optional call *is* the platform branch — puts „Neues Fenster" in the icon's context menu: the same
+label and the same argument-less `createWindow()` that Cmd+N and `second-instance` already call.
+Clicking the icon runs `activatePlan()` (`electron/activate.ts`, pure, so `check:unit` can drive
+the branch matrix that no launch here ever will): nothing live left → open a window; a window
+already on screen → do nothing, the convention Finder and Safari follow, because minimizing the
+other one was deliberate; everything minimized → `restore()` all of them. That last branch is the
+fix — AppKit deminiaturizes at most one window by itself, so the second one was reachable only
+from the Fenster menu or Exposé — and it filters on `isMinimized()`, which is what keeps it
+idempotent beside AppKit whichever of the two runs first.
+
 **The cross-window behaviour has a gate**, `npm run check:browser` (WP-R6): the season switch
 staying window-local, a UI write reaching the other window while a `curl` write deliberately does
 not, the 410 recovery of a window whose season was deleted out of band, and the focus refetch that
