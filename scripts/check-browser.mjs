@@ -265,6 +265,14 @@ const NARROW = [
 ];
 
 /**
+ * The width `TaskSortEditor`'s `<select>` has while it still holds nothing but „Spalte wählen…" —
+ * measured at both narrow viewports. It is the *stuck* state case L must not measure in, and the
+ * reference the precondition there asks to have been left behind; the healthy width is a layout
+ * number (412 px at 610, 424 at 624) and deliberately not asserted.
+ */
+const PLACEHOLDER_SELECT_PX = 181;
+
+/**
  * One context per window *size*. `reducedMotion: 'reduce'` is the documented escape hatch: it
  * removes the boot overlay outright (DECISIONS.md) instead of racing its phases. The overlay does
  * not exist on the dev server anyway, but row animations do.
@@ -338,6 +346,15 @@ const chip = async (page) =>
  * assertions that merely read the state it announced.
  */
 const toast = (page, re) => page.locator('.pointer-events-auto').filter({ hasText: re });
+
+/**
+ * A card, addressed by text it contains — `Card` is the app's `div.rounded-2xl`, and the headings
+ * inside it are CSS-uppercased, so `hasText` (case-insensitive, substring) is the handle that
+ * survives that. Every selector inside a settings card goes through this rather than through the
+ * page: „Speichern", `input[type="number"]` and `<select>` are all ambiguous on a tab that holds
+ * four cards.
+ */
+const cardWith = (page, text) => page.locator('div.rounded-2xl').filter({ hasText: text });
 
 /**
  * The topmost dialog. Every `Modal` is a `div.fixed.inset-0` and the newest is the last of them.
@@ -1643,6 +1660,8 @@ try {
       // unconditional 700 ms budget, and a table measured in that window reports a *narrower*
       // preferred width than the one the user sees — the same run gave 758 and 1347 for
       // `#/project/1`.
+      /** Geometry of the sort editor's add row — filled in below, on the one page that has one. */
+      let addRule = { options: 0, rowRight: 0, cardRight: 0 };
       if (WITH_TABLE.has(hash)) {
         check(
           `${hash} hat eine Aufgabentabelle, bevor gemessen wird`,
@@ -1650,29 +1669,49 @@ try {
         );
       }
       // The same rule for the same reason, one layer down — and with a twist that is the whole
-      // reason this page looked flaky. The sort editor's `<select>` is ~181 px wide while it holds
-      // nothing but „Spalte wählen…", and **Chromium does not re-measure it when React fills the
-      // options in**: the width is decided at the select's first layout and then simply stays,
-      // whichever value it took. Waiting for the options is therefore not enough — measured after
-      // a `reload()` the box is 181 px in six loads out of six, and the page is clean whatever the
-      // CSS says. What does re-run the intrinsic sizing is a `change` on the select, i.e. the thing
-      // a user does before pressing „+ Hinzufügen": 24 loads out of 24 (WP-64c).
+      // reason this page looked flaky. The sort editor's `<select>` is `PLACEHOLDER_SELECT_PX` wide
+      // while it holds nothing but „Spalte wählen…", and **Chromium does not re-measure it when
+      // React fills the options in**: the width is decided at the select's first layout and then
+      // simply stays, whichever value it took. Waiting for the options is therefore not enough —
+      // measured after a `reload()` the box is 181 px in six loads out of six, and the page is
+      // clean whatever the CSS says. What does re-run the intrinsic sizing is a `change` on the
+      // select, i.e. the thing a user does before pressing „+ Hinzufügen": 24 of 24 (WP-64c).
+      //
+      // Everything here is scoped to the sort card. A page-wide `select` is one element today and
+      // a strict-mode violation the day this tab grows a second one — thrown from inside the
+      // check, past `check()` (which does not throw) and into the outer catch, i.e. every case
+      // after L silently skipped.
       if (hash === '/einstellungen') {
-        const options = await until(() => n.locator('select option').count(), (c) => c > 1);
+        const sortRow = cardWith(n, 'Automatische Aufgaben-Sortierung').locator('select');
+        const options = await until(() => sortRow.locator('option').count(), (c) => c > 1);
         // Guarded, because `check` does not throw and `selectOption` does: a page that no longer
         // renders this editor at all would abort the whole run instead of failing one assertion.
         let sized = 0;
         if (options > 1) {
-          await n.locator('select').selectOption({ index: 1 });
+          await sortRow.selectOption({ index: 1 });
+          // „It grew past the placeholder", not „it is at least N px": the healthy width is a
+          // layout number (412 px at 610, 424 at 624) and would have to be re-tuned by anyone who
+          // changes the card's padding, while the invariant under test is only that the box
+          // re-measured itself at all.
           sized = await until(
-            () => n.evaluate(() => Math.round(document.querySelector('select')?.getBoundingClientRect().width ?? 0)),
-            (w) => w > 300,
+            () => sortRow.evaluate((el) => Math.round(el.getBoundingClientRect().width)),
+            (w) => w > PLACEHOLDER_SELECT_PX + 50,
             5000,
           );
+          addRule = await sortRow.evaluate((el) => {
+            const select = /** @type {HTMLSelectElement} */ (el);
+            const button = select.parentElement?.querySelector('button') ?? null;
+            const card = select.closest('div.rounded-2xl');
+            return {
+              options: select.options.length,
+              rowRight: Math.round(button?.getBoundingClientRect().right ?? 0),
+              cardRight: Math.round(card?.getBoundingClientRect().right ?? 0),
+            };
+          });
         }
         check(
           `${hash}: die Spaltenauswahl ist gefüllt und vermessen, bevor die Seite gemessen wird`,
-          options > 1 && sized > 300,
+          options > 1 && sized > PLACEHOLDER_SELECT_PX + 50,
           `${options} Optionen, Auswahl ${sized} px breit`,
         );
       }
@@ -1689,21 +1728,12 @@ try {
         m.offenders.slice(0, 4).join(' · '),
       );
       // …and the same row against its *card* rather than against the window, because the window
-      // question is answered by a pixel of luck at one of the two widths: without `min-w-0` the
-      // button ended at 617 in a 610 px window (reported) and at exactly 624 in a 624 px one,
-      // which is inside the sweep's one pixel of slack (not reported). The card is where the row
-      // is actually cut off, so this is the assertion that bites at both widths (WP-64c).
+      // question is only asked in one of the two: without `min-w-0` the row ends at 617 px in
+      // **both** — 7 px past a 610 px viewport, where the sweep reports it, and 7 px inside a
+      // 624 px one, where the sweep has nothing to say while the row still overhangs its card
+      // (600 px) by 17. The card is where the content is actually cut off, so this is the
+      // assertion that bites at both widths (WP-64c).
       if (hash === '/einstellungen') {
-        const addRule = await n.evaluate(() => {
-          const select = document.querySelector('select');
-          const button = select?.parentElement?.querySelector('button') ?? null;
-          const card = select?.closest('div.rounded-2xl') ?? null;
-          return {
-            options: select?.options.length ?? 0,
-            rowRight: Math.round(button?.getBoundingClientRect().right ?? 0),
-            cardRight: Math.round(card?.getBoundingClientRect().right ?? 0),
-          };
-        });
         check(
           `${at}: die Sortier-Regel-Zeile endet in ihrer Karte`,
           addRule.rowRight > 0 && addRule.rowRight <= addRule.cardRight + 1,
@@ -2156,8 +2186,6 @@ try {
   // its own is satisfied by a router that changed the URL and rendered nothing into the `<Outlet>`.
   console.log('\nO · Die vier Reiter der Einstellungen');
   const C = scoped(config.id);
-  /** A settings card, addressed by text it contains — headings here are CSS-uppercased. */
-  const cardWith = (page, text) => page.locator('div.rounded-2xl').filter({ hasText: text });
   const tabLink = (page, slug) => page.locator(`a[href="#/einstellungen/${slug}"]`);
 
   const s = await open(context, '/dashboard');
@@ -2313,6 +2341,13 @@ try {
   console.log('\nQ · Die Optionslisten auf „Kategorien“');
   await tabLink(s, 'kategorien').click();
   await s.waitForURL(/#\/einstellungen\/kategorien$/, { timeout: 10_000 });
+  // Reloaded before anything is typed, and again after the save below. Every write on this page
+  // ends in a blanket invalidate, each refetch of `['settings']` reseeds this editor's draft, and
+  // more than one refetch can be in flight — case P has just made two writes. A reload starts a
+  // fresh cache with nothing pending, which is the only way this case can be sure the draft it
+  // types into is the draft it saves.
+  await s.reload();
+  await ready(s);
 
   const typeCard = cardWith(s, 'Termin-Typen');
   const types = () => api(C('/settings')).then((v) => v.event_types ?? []);
@@ -2321,38 +2356,70 @@ try {
   const typesBefore = await types();
   check('die Termin-Typen der Demo stehen darin', typesBefore.length === 4, typeText(typesBefore));
 
+  // Everything below reads the draft's own labels off the inputs (`el.value`, a *property* — React
+  // never writes the attribute) rather than trusting a position, and checks them **before** every
+  // save. The reason is the reseed: `OptionsEditor` re-seeds its draft from the server list on any
+  // `['settings']` refetch, so a row that is being typed can vanish under the script — and „the
+  // last row" is then a *demo* category, which a save would rename or delete for real. Read as
+  // assertions these are „what the user typed is in the draft and nothing else moved"; read as
+  // guards they are what keeps a red check from becoming a damaged fixture.
   const optionRows = typeCard.locator('[data-option-row]');
+  const draftLabels = () =>
+    typeCard
+      .locator('[data-option-label]')
+      .evaluateAll((els) => els.map((el) => /** @type {HTMLInputElement} */ (el).value));
+  const demoLabels = typeText(typesBefore);
   const newType = `Probe ${RUN}`;
-  await typeCard.getByRole('button', { name: '+ Typ' }).click();
-  await typeCard.locator('[data-option-label]').last().fill(newType);
-  await typeCard.getByRole('button', { name: 'Speichern' }).click();
-  const typesAfter = await until(types, (v) => v.some((o) => o.label === newType), 8000);
-  check('ein hinzugefügter Typ wird gespeichert', typesAfter.some((o) => o.label === newType), typeText(typesAfter));
-  // Waited for on the *rows*, not only on the API: the editor reseeds its draft from the server
-  // list whenever that changes, so anything typed between the save landing and the reseed arriving
-  // is thrown away — which is silent, and downstream reads as clicks landing on the wrong row.
-  const seeded = await until(() => optionRows.count(), (n) => n === 5, 8000);
-  check('…und der Editor übernimmt die gespeicherte Liste', seeded === 5, `${seeded} Zeilen`);
+  const saveTypes = typeCard.getByRole('button', { name: 'Speichern' });
+  /**
+   * Click „Speichern", bounded. The button is `disabled` while the draft equals the stored list,
+   * so a reseed landing between the read above and this click leaves a dead button — and the
+   * default 30 s actionability wait would end the *run* rather than the case. The message travels
+   * into the next check's detail instead.
+   */
+  const saveTypesNow = () =>
+    saveTypes
+      .click({ timeout: 8000 })
+      .then(() => '')
+      .catch((e) => ` — Speichern: ${String(e.message).split('\n')[0]}`);
 
-  // A row with no name is refused *before* it can be saved — and the refusal is the button, not a
-  // toast afterwards: `normalizeOptions` ends in `.filter(o => o.label)`, so a blank row saved
-  // would silently vanish and read as a failed save (RTE-12).
+  // A row with no name is refused *before* it can be saved, and the refusal is the button rather
+  // than a message afterwards: `normalizeOptions` ends in `.filter(o => o.label)`, so a blank row
+  // saved would be silently dropped and read as a failed save (RTE-12).
   await typeCard.getByRole('button', { name: '+ Typ' }).click();
+  await until(draftLabels, (v) => v.length === 5, 5000);
   const problem = await until(() => typeCard.locator('.text-amber-700').innerText().catch(() => ''), (t) => t.length > 0, 5000);
   check('eine namenlose Zeile wird benannt statt gespeichert', /keine Bezeichnung/.test(problem), problem.replace(/\n/g, ' '));
-  check('…und „Speichern“ ist so lange stumpf', !(await typeCard.getByRole('button', { name: 'Speichern' }).isEnabled()));
+  check('…und „Speichern“ ist so lange stumpf', !(await saveTypes.isEnabled()));
 
-  // One at a time, with the list length waited for in between: the rows are keyed by index, so
-  // two clicks on „the last ✕" inside one render address the same position twice — and the second
-  // one would then take a demo category with it.
+  await typeCard.locator('[data-option-label]').last().fill(newType);
+  const named = await until(draftLabels, (v) => v[4] === newType, 5000);
+  const namedOk = named.length === 5 && named[4] === newType && named.slice(0, 4).join(' | ') === demoLabels;
+  check('die getippte Zeile steht neben den unveränderten Demo-Kategorien', namedOk, named.join(' | '));
+  const savedAdd = namedOk ? await saveTypesNow() : ' — nicht gespeichert';
+  const typesAfter = await until(types, (v) => v.some((o) => o.label === newType), 8000);
+  check(
+    'ein benannter Typ wird gespeichert',
+    typesAfter.some((o) => o.label === newType),
+    `${typeText(typesAfter)}${savedAdd}`,
+  );
+  await s.reload();
+  await ready(s);
+  const seeded = await until(draftLabels, (v) => v.length === 5 && v[4] === newType, 8000);
+  check('…und steht nach einem Neuladen im Editor', seeded.join(' | ') === `${demoLabels} | ${newType}`, seeded.join(' | '));
+
+  // One row, one click: the rows are keyed by index, so two clicks on „das letzte ✕" inside one
+  // render address the same position twice — and the second would take a demo category with it.
   await optionRows.last().getByRole('button', { name: 'Entfernen' }).click();
-  const withoutBlank = await until(() => optionRows.count(), (n) => n === 5, 5000);
-  await optionRows.last().getByRole('button', { name: 'Entfernen' }).click();
-  const withoutProbe = await until(() => optionRows.count(), (n) => n === 4, 5000);
-  check('beide Zeilen lassen sich einzeln wieder entfernen', withoutBlank === 5 && withoutProbe === 4, `${withoutBlank} → ${withoutProbe}`);
-  await typeCard.getByRole('button', { name: 'Speichern' }).click();
+  const shrunk = await until(draftLabels, (v) => v.length === 4, 5000);
+  check('…und ✕ nimmt sie wieder heraus', shrunk.join(' | ') === demoLabels, shrunk.join(' | '));
+  const savedRemoval = shrunk.join(' | ') === demoLabels ? await saveTypesNow() : ' — nicht gespeichert';
   const typesRestored = await until(types, (v) => v.length === 4, 8000);
-  check('…und ✕ nimmt den Typ wieder heraus', typeText(typesRestored) === typeText(typesBefore), typeText(typesRestored));
+  check(
+    'die gespeicherte Liste steht wieder wie zuvor',
+    typeText(typesRestored) === demoLabels,
+    `${typeText(typesRestored)}${savedRemoval}`,
+  );
   // Removing a category *nothing uses* saves straight away; the reassignment dialog belongs to the
   // other branch. Asserted rather than assumed, and cleared if it is there — its backdrop would
   // otherwise swallow the next case's clicks and turn one red check into an aborted run.
@@ -2360,7 +2427,7 @@ try {
   check('ein unbenutzter Typ geht ohne Zuordnungs-Dialog', openDialogs === 0, `${openDialogs} Dialoge`);
   if (openDialogs > 0) {
     await s.keyboard.press('Escape');
-    await until(() => s.locator('.fixed.inset-0').count(), (n) => n === 0, 5000);
+    await gone(s.locator('.fixed.inset-0'));
   }
 
   // ======================================================================== R · seasons and backups
@@ -2377,8 +2444,10 @@ try {
   check('ohne Bridge ist der Backup-Ordner nicht wählbar', !(await backupCard.getByRole('button', { name: 'Wählen…' }).isEnabled()));
   check('…und die Karte sagt, warum', /nur in der Desktop-App/.test(await backupCard.innerText()));
 
+  // Scoped to the season card by the sentence only it carries: `li` is a page-wide selector, and
+  // the day anything else on this tab renders a list the rows below stop being the seasons.
   const homeLabel = registry.seasons.find((x) => x.id === HOME)?.label ?? '';
-  const seasonRows = s.locator('li');
+  const seasonRows = cardWith(s, 'Anlegen und Umbenennen').locator('li');
   const defaultRow = seasonRows.filter({ hasText: 'Standard' });
   check(
     'die Standard-Saison ist als solche markiert',
@@ -2387,12 +2456,16 @@ try {
   );
   check('…und trägt keinen Löschknopf, weil der Server sie ohnehin verweigert', (await defaultRow.locator('button[title="Löschen"]').count()) === 0);
 
+  // Reloaded rather than waited for: a season created over the API broadcasts nothing, so this
+  // window keeps rendering the list it has (docs/VERIFYING.md). That is a fact about the script's
+  // own fixture, not a promise of the app — `refetchOnWindowFocus` is on, so „it is not on screen
+  // yet" is a state a stray focus event may end at any moment, and asserting it would be asserting
+  // cache staleness as if it were an invariant.
   const doomedSeason = await makeSeason('Löschziel');
-  check('eine per API angelegte Saison steht noch nicht in der Liste', (await seasonRows.filter({ hasText: doomedSeason.label }).count()) === 0);
   await s.reload();
   await ready(s);
   const doomedRow = seasonRows.filter({ hasText: doomedSeason.label });
-  check('…nach einem Neuladen schon', await shown(doomedRow));
+  check('eine neu angelegte Saison steht nach dem Neuladen in der Liste', await shown(doomedRow));
 
   await doomedRow.locator('button[title="Löschen"]').click();
   await s.getByRole('heading', { name: /endgültig löschen$/ }).waitFor({ timeout: 8000 });
@@ -2405,17 +2478,19 @@ try {
   // WP-42: a confirm dialog has no tabbable in its body, so the focus effect falls through to the
   // footer's first button — and that is „Abbrechen". The keystroke that reaches the question
   // answers it, and the safe answer is the one it lands on.
-  const confirmFocus = await tabStop(s);
+  // Polled, like every other transition here: `Modal` places focus from a passive effect, so a
+  // one-shot read taken the moment the heading is on screen can precede it.
+  const confirmFocus = await until(() => tabStop(s), (v) => v.at >= 0, 5000);
   check('der Fokus liegt auf „Abbrechen“ (WP-42)', confirmFocus.text === 'Abbrechen', JSON.stringify(confirmFocus));
   await s.keyboard.press('Enter');
-  const afterEnter = await until(() => s.locator('.fixed.inset-0').count(), (n) => n === 0, 5000);
-  check('Enter beantwortet sie damit — der Dialog geht zu', afterEnter === 0, `${afterEnter} Dialoge`);
+  const afterEnter = await gone(s.locator('.fixed.inset-0'));
+  check('Enter beantwortet sie damit — der Dialog geht zu', afterEnter, `${await s.locator('.fixed.inset-0').count()} Dialoge`);
   check('…und die Saison steht noch da', (await api('/seasons')).seasons.some((x) => x.id === doomedSeason.id));
   // Leave nothing standing if that assertion failed: the delete below clicks the same 🗑, and a
   // confirm still up would turn one red check into an aborted run that never reaches R2 or S.
   if ((await s.locator('.fixed.inset-0').count()) > 0) {
     await s.keyboard.press('Escape');
-    await until(() => s.locator('.fixed.inset-0').count(), (n) => n === 0, 5000);
+    await gone(s.locator('.fixed.inset-0'));
   }
 
   await doomedRow.locator('button[title="Löschen"]').click();
@@ -2469,7 +2544,8 @@ try {
   await k.getByRole('button', { name: '✎ Bearbeiten' }).first().click();
   await k.getByRole('heading', { name: /bearbeiten$/ }).waitFor({ timeout: 8000 });
 
-  const opened = await tabStop(k);
+  // Polled: the focus effect is passive, so a read taken as the heading appears can precede it.
+  const opened = await until(() => tabStop(k), (v) => v.at >= 0, 5000);
   check(
     'der Dialog setzt den Fokus auf das erste Feld des Rumpfes, nicht auf das ✕ (WP-42)',
     opened.at === 1 && opened.tag === 'INPUT',
@@ -2504,17 +2580,25 @@ try {
   // never took focus in the first place, which is precisely the state the effect above prevents.
   const beforeClose = await tabStop(k);
   await k.keyboard.press('Escape');
-  const shut = await until(() => k.locator('.fixed.inset-0').count(), (n) => n === 0, 5000);
-  check('Escape schließt den ungeänderten Dialog', shut === 0, `${shut} Dialoge`);
+  const shut = await gone(k.locator('.fixed.inset-0'));
+  check('Escape schließt den ungeänderten Dialog', shut, `${await k.locator('.fixed.inset-0').count()} Dialoge`);
+  // Identity, not a substring: focus dropped to `<body>` answers `document.activeElement` with the
+  // body, and *its* `textContent` is the whole page — „✎ Bearbeiten" included. A check that asks
+  // whether the text contains the button's label is therefore green on precisely the regression it
+  // guards, which is loose focus.
   const handedBack = await until(
-    () => k.evaluate(() => (document.activeElement?.textContent ?? '').trim()),
-    (t) => t.includes('Bearbeiten'),
+    () =>
+      k.evaluate(() => {
+        const el = document.activeElement;
+        return { tag: el?.tagName ?? 'BODY', text: (el?.textContent ?? '').trim() };
+      }),
+    (v) => v.tag === 'BUTTON' && v.text === '✎ Bearbeiten',
     5000,
   );
   check(
     '…und der Fokus kommt aus dem Dialog zurück auf den Knopf, der ihn geöffnet hat (WP-42)',
-    beforeClose.at >= 0 && handedBack.includes('Bearbeiten'),
-    `${JSON.stringify(beforeClose)} → ${handedBack}`,
+    beforeClose.at >= 0 && handedBack.tag === 'BUTTON' && handedBack.text === '✎ Bearbeiten',
+    `${JSON.stringify(beforeClose)} → ${JSON.stringify(handedBack)}`,
   );
 
   // ======================================================================== S2 · the exception
@@ -2573,8 +2657,8 @@ try {
   check('Escape schließt nur das Menü und gibt den Fokus an die Pille zurück', returnedToPill.haspopup === 'listbox' && returnedToPill.inCard, JSON.stringify(returnedToPill));
   // ✕ and „Abbrechen" are deliberate exits and never ask about changes — Escape here would.
   await eventDialog.locator('button[title="Schließen"]').click();
-  const eventShut = await until(() => k.locator('.fixed.inset-0').count(), (n) => n === 0, 5000);
-  check('der Termin-Dialog lässt sich über ✕ schließen', eventShut === 0, `${eventShut} Dialoge`);
+  const eventShut = await gone(k.locator('.fixed.inset-0'));
+  check('der Termin-Dialog lässt sich über ✕ schließen', eventShut, `${await k.locator('.fixed.inset-0').count()} Dialoge`);
 
   // ======================================================================== T · the search overlay
   //
@@ -2835,7 +2919,7 @@ try {
   await topDialog(u).getByRole('button', { name: 'Weiter' }).click();
   const stacked = await until(() => u.locator('.fixed.inset-0').count(), (n) => n === 2, 5000);
   check('„Weiter“ stapelt den Schritt-Dialog auf das Formular', stacked === 2, `${stacked} Dialoge`);
-  const steps = await tabStop(u);
+  const steps = await until(() => tabStop(u), (v) => v.at >= 0, 5000);
   check(
     'auch dort liegt der Fokus auf der sicheren Antwort „Zurück“ (WP-42)',
     steps.at === 1 && steps.text === 'Zurück',
