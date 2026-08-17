@@ -27,8 +27,9 @@ of browsers that were already cached.
 
 **The committed gate is `npm run check:browser`** — it rebuilds `.demo`, boots the stack on
 `:4325` + `:5317` and drives it, so it cannot run beside `npm run demo` and says so rather than
-guessing. Run it after a change to the two-window/season paths or to the task table, the column
-manager or the editor; it is not a substitute for the passes below.
+guessing. Run it after a change to the two-window/season paths, to the task table, the column
+manager or the editor, to a delete or a reorder, and to anything that lays out narrow or prints;
+it is not a substitute for the passes below.
 
 **The Übersicht is `#/dashboard`. `#/` is the season landing page** — a different screen with no
 task tiles and no „Nächste Termine". Asserting dashboard content against `#/` fails against
@@ -118,12 +119,14 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 ## Playwright traps
 
 **Some of these are now committed, and this file is still where they are decided.**
-`npm run check:browser` (WP-R6, extended by WP-64a) encodes the ones its cases need — two pages in
-one context, the sessionStorage pin plus a document reload, `data-app-ready` over `networkidle`,
-the out-of-band delete, the toast that lands one query late, the anchored composer placeholder, the
-two `[data-column-row]` lists, the real keystroke a note needs before it stores anything, the ⠿ and
-its 2-px nudge, the dialog-scoped „Löschen", the toast filtered by its own record, and „gone" as a
-wait rather than a count. A new trap belongs **here first** and in the gate second: the gate covers
+`npm run check:browser` (WP-R6, extended by WP-64a and WP-64b) encodes the ones its cases need —
+two pages in one context, the sessionStorage pin plus a document reload, `data-app-ready` over
+`networkidle`, the out-of-band delete, the toast that lands one query late, the anchored composer
+placeholder, the two `[data-column-row]` lists, the real keystroke a note needs before it stores
+anything, the ⠿ and its 2-px nudge, the dialog-scoped „Löschen", the toast filtered by its own
+record, „gone" as a wait rather than a count, the two viewports a 624×560 window really produces,
+the overhang sweep's exemption for a scroll container, and the A4 `page.pdf()` whose default
+`printBackground: false` is a repro rather than an oversight. A new trap belongs **here first** and in the gate second: the gate covers
 the flows it drives, this file covers the app. Nothing below is retired by it — everything the gate does not drive is still
 verified by hand, and the gate itself is written from this list.
 
@@ -686,8 +689,70 @@ verified by hand, and the gate itself is written from this list.
 - **`sips -s format png` renders only page 1** of a PDF on macOS (no poppler needed). Page-level
   *text* needs `pdfjs-dist`, which joins glyph runs **without spaces** — match paging assertions on
   whitespace-stripped text.
+- **The project-code badge cannot tell the two states apart.** The sheet's header carries a
+  `border-b-4` in the *same* accent colour, and a border prints under `economy` as happily as
+  under `exact` — so that shade is in the PDF either way. Assert on a pure background instead: the
+  status-group pills on the project sheet (`.print-group-head span`) and the `ProjectStatusPill`.
+  Measured on `#/print/project/1`: 19 distinct fill colours with the fix, 18 without, and under
+  `economy` Chromium also *darkens* light text (`161,161,161` → `171,171,171`), which is another
+  reason not to key on a text colour.
+- **…and the status pill paints the *same* shade as its group heading.** Both come from
+  `DEFAULT_STATUS_OPTIONS`, so on a project whose status is „In Progress" — demo project 1 —
+  `#dbeafe` is on the sheet twice, once in the header and once as the group heading, and a
+  document-wide „is this colour in the PDF" is satisfied by the pill while the heading prints
+  white on white. Print such a sheet from a **copied season with the project's `status` PATCHed to
+  `null`**: each group colour is then painted exactly once, which pins the fill to the heading.
+  `check:browser` does that rather than keying on the first group's colour, which is only
+  accidentally unambiguous.
+- **An embedded image is not `/Subtype /Image`** — that matches **4** times on a sheet with no
+  picture at all, because Skia embeds colour emoji as bitmaps (📍 in the events, 🚐 in artist 1's
+  note). Nor is it `DCTDecode`, which pins the assertion to the fixture happening to be a JPEG.
+  What identifies the real one is its *stored size*, and Skia writes the keys newline-separated:
+  `/Subtype /Image\n/Width 260\n/Height 173` — take the numbers from the DOM
+  (`img.naturalWidth/naturalHeight`) and require a `/X<n> Do` in a page's content stream beside
+  it, or the picture is embedded but never drawn. **And wait for the bytes before printing**:
+  `img.complete && img.naturalWidth > 0`, since `printToPDF` will happily snapshot a layout whose
+  image has not arrived, which is a failure that comes and goes with runner load.
+- **No demo artist sets `artists.image`**, so `.print-page header img` on `#/print/artist/1` is
+  *not* the avatar — it is the two pictures inside artist 1's note (WP-37: one in a Zitat, one
+  wrapped in a link), which land inside `<header>` because `PrintHeader` renders the note as its
+  children. A check written against „the avatar" passes while the avatar `<img>` is deleted.
+- **`page.pdf()` prints Letter unless told otherwise.** The print block's numbers are A4's — „A4
+  inside the 14 mm @page margins leaves ~269 mm" is what `.prose-md img`'s 240 mm cap is derived
+  from — and the customer prints A4, so a paging assertion taken at the default measures a page
+  nobody has. Pass `{ format: 'A4' }`.
+- **Overriding a print rule at runtime is how a paper assertion proves it bites**, without
+  touching the source: `page.addStyleTag({ content: '@media print { … !important }' })`, take a
+  second `page.pdf()`, remove the tag. `!important` beats `index.css` on cascade rather than on
+  order. `check:browser` does exactly this twice — `print-color-adjust: economy` must make the
+  group pills vanish, `break-after: auto` must strand the group header — and without those
+  controls both cases would also pass on a Chromium that prints everything anyway.
+- **A Chromium PDF can be read with `node:zlib` alone; `pdfjs-dist` is only needed for *words*.**
+  Skia writes plain PDF 1.4 — `n 0 obj` bodies, a classic xref table, no object streams — with
+  FlateDecode content streams. Two traps in parsing one: slice a stream by its dictionary's own
+  `/Length` (a compressed stream may well contain the bytes „endstream", and a regex that searches
+  for it hands back a truncated stream that inflates to nothing), and take the page order from the
+  `/Pages` node's `/Kids` array, never from the order the objects happen to be written in. What is
+  readable that way: fill colours (`r g b rg`, so `.7255 .1098 .1098` is `rgb(185,28,28)` to within
+  a unit) and paint order, which is DOM order — enough for „did this print" and „where on the page
+  did it land". Text is hex glyph ids against a subset font, and how many glyphs one `Tj` holds is
+  a property of the font, so a `Tj` count is only ever comparable against another measurement of
+  the *same* document.
+- **Neither sheet prints a done task**, so WP-58's strike is not assertable on paper at all —
+  `PrintArtist` and `PrintProject` both filter on the Status column's done value and say so in the
+  heading. That heading is CSS-uppercased like every other one („AUFGABEN (1 OFFEN)"), so match it
+  case-insensitively.
 - The demo's project sheet only crosses a page boundary at a group header with a tuned fixture
-  (55 „new" + 6 „active" tasks); neighbouring counts silently miss it.
+  (55 „new" + 6 „active" tasks); neighbouring counts silently miss it. A sheet built from a
+  **fresh** season — no description, no contacts, no events, and therefore no custom columns and
+  no `thead` — needs **56 + 6**, which is the fixture `check:browser` builds over the API. The
+  window is one row wide in both directions: at 55 the rule changes nothing, at 57 the header
+  crosses on its own. What makes such a count survive a runner with other fonts is that every line
+  height on the sheet is an explicit Tailwind value, so the page a row lands on is not a font
+  metric — keep anything that could *wrap* out of the fixture and it stays reproducible. A search
+  around the tuned length must go **both ways** (56, 57, 55, 58, …): a boundary can drift down as
+  easily as up, and a search that only grows the list reports „no effect at any length" on a
+  perfectly good build, which reads exactly like the regression it guards.
 
 ## Native modules in the packaged app
 
@@ -1009,8 +1074,9 @@ verified by hand, and the gate itself is written from this list.
 ## Narrow windows
 
 Since WP-55 the window can go down to **624×560**, which is smaller than anything the interface
-was designed against, and none of the checks above ever set a viewport — Playwright's default is
-1280×720, so nothing here would have noticed.
+was designed against, and no check ever set a viewport — Playwright's default is 1280×720, so
+nothing would have noticed. `check:browser`'s case L does now, over `#/dashboard`, `#/`,
+`#/artist/1`, `#/project/1` and `#/archiv`; everything else at this width is still by hand.
 
 - **The viewport is not the window.** `useContentSize` is false, so `WINDOW_MINIMUM` is the outer
   size and the frame comes off before the renderer sees anything. Driving at 624×560 checks a
@@ -1021,9 +1087,24 @@ was designed against, and none of the checks above ever set a viewport — Playw
 - **`launch({ viewport })`** in `~/.claude/tools/playwright/lib/drive.mjs` takes it; nothing else
   changes.
 - **The assertion that catches real breakage is `documentElement.scrollWidth <=
-  clientWidth`,** plus a sweep for elements whose `right` exceeds the viewport *and* have no
-  ancestor with `overflow-x: auto|scroll|hidden`. Without that second half the task table fails
-  the check by design — it is supposed to scroll inside its own box.
+  clientWidth`,** plus a sweep for elements whose `right` exceeds the viewport. Without the second
+  half a card that is cut off is invisible — content clipped away never grows the document — and
+  without the first, nothing catches a page that simply got wider.
+- **The sweep's exemption is `auto|scroll`, never `hidden`.** The two are opposites for this
+  question: a scrollable ancestor *offers* the overhang (which is what the task table does by
+  design, WP-55), a `hidden` or `clip` one *cuts it off*, and a `Card className="overflow-hidden"`
+  whose row grew past the window is exactly the defect a narrow-window check exists for. Take the
+  verdict at the nearest ancestor that constrains the axis: `auto`/`scroll` → exempt; `hidden`/
+  `clip` → report, unless the element fits inside that clipper (then the clipper is the offender
+  and reports itself on its own turn). One blind spot remains and is worth knowing rather than
+  papering over: CSS promotes a `visible` paired with a non-`visible` to `auto`, so any box with
+  `overflow-y: auto` — every dialog, every popover with a vertical scroller — computes `auto` on
+  x too and exempts its subtree.
+- **Prove the sweep can still see something, with two probes rather than one.** A 3000 px `<div>`
+  on `body` must grow the document *and* be reported; the same `<div>` inside an
+  `overflow:hidden` box must **not** grow it and must still be reported. The second one is the
+  control that fails if the `hidden` rule above is ever loosened back to an exemption — and it has
+  to run through the shipped sweep, not through a copy of its loop pasted into the control.
 - **`div.overflow-x-auto` has an inner `div.min-w-min` since WP-55**, holding the add row and the
   `<table>` together so the two are the same width. A selector written as
   `div.overflow-x-auto > div.flex` for the add row matched before that and matches nothing now.
@@ -1033,6 +1114,27 @@ was designed against, and none of the checks above ever set a viewport — Playw
   `html[data-app-ready]` fires before the rows are laid out, and a table measured in that window
   reports a *narrower* preferred width than the one the user sees — the same run gave 758 and 1347
   for the same page.
+- **The width sweep does not notice `min-w-min` going away**, which is worth knowing before
+  writing a canary for it: the add row and the table both live inside `div.overflow-x-auto`, so
+  removing the box leaves `documentElement.scrollWidth` at exactly the viewport and the sweep
+  exempts everything under that scroller by design. The assertion that goes red is the pair —
+  `addRow.offsetWidth === table.offsetWidth` — which reads 1347/1347 with the box and 562/1347
+  (610 px viewport) or 576/1347 (624 px) without it. Assert alongside it that the table really
+  does overhang its container at that width (`scroller.scrollWidth > scroller.clientWidth`), or
+  the sweep's exemption is never exercised and the case proves less than it looks.
+- **`#/einstellungen` reports a 7 px overhang at 610 px about one load in ten** — and it is the
+  page, not the sweep. `TaskSortEditor`'s add row is a `<select>` beside „+ Hinzufügen", and
+  Chromium sizes that select either to ~181 px or to its longest option's ~465 px („Priorität
+  (ausgeblendet – sortiert nur auf Seiten, die sie zeigen)"), apparently depending on whether it
+  re-ran intrinsic sizing after the columns query filled the options in. At 465 the row really is
+  wider than its card, the state then holds for the life of that layout (still 617 after two
+  seconds), and 624 px has never shown it. Reproduced 2 in 12 driving the WP-55 page set, 0 in 46
+  loading the page on its own. `check:browser` therefore leaves that page out of its narrow sweep
+  and says so; fixing the row belongs with the rest of Einstellungen.
+- **The season switcher's menu is `div.absolute.z-40`**, and what WP-55 pinned on it is the pair
+  `overflow-y: auto` plus `max-height: min(24rem, 70vh)` — 348.6 px in a 498 px window. Assert
+  those rather than „the menu fits", which is true on a short list whatever the CSS says: the demo
+  has three seasons and a run's own fixtures only take it to eight.
 
 ## What is not verified this way
 

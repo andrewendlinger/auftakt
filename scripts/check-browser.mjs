@@ -13,7 +13,10 @@
  * the two-window season matrix (a window is a *page in one context* — BroadcastChannel is
  * partitioned per context, season pins live in per-page sessionStorage), and the core paths the
  * manual Windows hour walks anyway (create and complete a task, show and hide a column, save the
- * editor).
+ * editor). WP-64a added the record delete with its Papierkorb and undo, and reordering by the ⠿
+ * (I–K); WP-64b the two pure render assurances that had no automated check at all (L–N2) — the
+ * smallest window the app allows, and the print sheets, which are asserted against the bytes of
+ * `page.pdf()` because their defects exist only on paper.
  *
  * **The proof that this gate bites**: revert `client/src/main.tsx`'s focus listener to
  * `handleFocus(true)` (the #54 latch) and case A must fail. That case asserts the *second* focus
@@ -33,6 +36,7 @@ import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { inflateSync } from 'node:zlib';
 import { chromium } from 'playwright-core';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -244,18 +248,38 @@ async function assertDemo() {
 
 // ---------------------------------------------------------------------------- the browser
 
+/** The window every case but L runs in — comfortably wider than anything the app needs. */
+const WIDE = { width: 1400, height: 1000 };
+
 /**
- * `reducedMotion: 'reduce'` is the documented escape hatch: it removes the boot overlay
- * outright (DECISIONS.md) instead of racing its phases. The overlay does not exist on the dev
- * server anyway, but row animations do.
+ * The two viewports the smallest window the app allows really produces (WP-55, case L).
+ *
+ * `MINIMUM` is 624×560, but that is the *window*: `useContentSize` is false, so the frame comes
+ * off before the renderer sees anything. Driving at 624×560 checks a window nobody has.
  */
+const NARROW = [
+  // Windows 11, whose frame a customer's boot log measures at 14×62.
+  { label: 'Windows', width: 610, height: 498 },
+  // macOS takes nothing off the sides.
+  { label: 'macOS', width: 624, height: 532 },
+];
+
+/**
+ * One context per window *size*. `reducedMotion: 'reduce'` is the documented escape hatch: it
+ * removes the boot overlay outright (DECISIONS.md) instead of racing its phases. The overlay does
+ * not exist on the dev server anyway, but row animations do.
+ *
+ * A second context is only ever *wrong* for the cross-window cases — see `windows`, where the
+ * whole point is that BroadcastChannel is partitioned per context. A viewport is the one thing
+ * that cannot be shared, and `setViewportSize` on a page laid out at 1400 measures a reflow
+ * rather than a first layout, which is not the state a user's window is ever in.
+ */
+const windowContext = (browser, viewport) =>
+  browser.newContext({ reducedMotion: 'reduce', viewport });
+
 async function launch() {
   const browser = await chromium.launch();
-  const context = await browser.newContext({
-    reducedMotion: 'reduce',
-    viewport: { width: 1400, height: 1000 },
-  });
-  return { browser, context };
+  return { browser, context: await windowContext(browser, WIDE) };
 }
 
 /** Interactive, not `networkidle` — which lies when a query 500s or hangs. */
@@ -413,8 +437,225 @@ async function dragHandleOnto(page, source, target) {
   await page.mouse.up();
 }
 
+/**
+ * „Is anything on this page out of reach at this width?" — evaluated inside the page, so both
+ * halves sample one layout. Serialised to Chromium by `page.evaluate`, so it may close over
+ * nothing but the DOM.
+ *
+ * The first half is `documentElement.scrollWidth <= clientWidth`. On its own it is not enough:
+ * an element that overhangs inside a box that *clips* never grows the document at all, so a page
+ * would pass while a card row is cut off and unreachable — which is the WP-55 defect class this
+ * case exists for.
+ *
+ * The second half is the sweep, and what it has to get right is **why** a box may be wider than
+ * the window. Three verdicts, taken at the nearest ancestor that constrains the horizontal axis:
+ *
+ * - `auto` / `scroll` → the content is reachable by scrolling, which is exactly what the task
+ *   table does by design (WP-55). Exempt. Note that a box with `overflow-y: auto` and nothing set
+ *   on x computes to `auto` on x as well (CSS: a `visible` paired with a non-`visible` becomes
+ *   `auto`), so every dialog and popover with a vertical scroller exempts its subtree too. That
+ *   is still „reachable by scrolling", but it is the sweep's blind spot and worth knowing.
+ * - `hidden` / `clip` → the box cuts the content off instead of offering it. Reported, but only
+ *   when the element really is cut: an element that fits *inside* its clipper is fine, and if the
+ *   clipper itself overhangs the window then the clipper is the offender and reports itself on
+ *   its own turn through the loop.
+ * - nothing at all → the element is simply wider than the page. Reported.
+ */
+function overflowReport() {
+  const de = document.documentElement;
+  const vw = de.clientWidth;
+  /** @type {string[]} */
+  const offenders = [];
+  for (const el of Array.from(document.querySelectorAll('body *'))) {
+    const r = el.getBoundingClientRect();
+    // A zero box is `hidden`, a collapsed wrapper or an unmounted portal — never an overhang.
+    if (r.width === 0 || r.height === 0) continue;
+    // One pixel of slack: a fractional layout width rounds up against an integer viewport.
+    if (r.right <= vw + 1) continue;
+    let verdict = 'page';
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const ox = getComputedStyle(p).overflowX;
+      if (ox === 'visible') continue;
+      if (ox === 'auto' || ox === 'scroll' || ox === 'overlay') {
+        verdict = 'scrollbar';
+        break;
+      }
+      verdict = r.right <= p.getBoundingClientRect().right + 1 ? 'inside' : 'cut';
+      break;
+    }
+    if (verdict === 'scrollbar' || verdict === 'inside') continue;
+    const id = el.id ? `#${el.id}` : '';
+    const cls =
+      typeof el.className === 'string' && el.className
+        ? `.${el.className.split(' ').slice(0, 2).join('.')}`
+        : '';
+    offenders.push(
+      `${el.tagName.toLowerCase()}${id}${cls} bis ${Math.round(r.right)}${verdict === 'cut' ? ' (abgeschnitten)' : ''}`,
+    );
+  }
+  return { scrollWidth: de.scrollWidth, clientWidth: vw, offenders };
+}
+
+/**
+ * Hang a probe off `body`, measure it with **the shipped sweep**, take it away again.
+ *
+ * The measurement has to go through `overflowReport` itself rather than through a second copy of
+ * its loop: a control that re-implements the thing it is controlling validates the copy. The
+ * function closes over nothing, so `page.evaluate` can serialise it as it stands.
+ */
+async function sweepWithProbe(page, markup) {
+  await page.evaluate((html) => {
+    const host = document.createElement('div');
+    host.id = 'auftakt-probe-host';
+    host.innerHTML = html;
+    document.body.appendChild(host);
+  }, markup);
+  const report = await page.evaluate(overflowReport);
+  await page.evaluate(() => document.getElementById('auftakt-probe-host')?.remove());
+  return report;
+}
+
 /** `staleTime: 5_000` — a focus inside five seconds of the last fetch legitimately refetches nothing. */
 const STALE_MS = 5_000;
+
+// ---------------------------------------------------------------------------- the PDF
+//
+// The print sheets are the one surface whose defects exist *only on paper*: `page.pdf()`'s
+// default `printBackground: false` is itself the SHL-11 repro, and a screenshot can never show
+// that class of bug because screenshots always paint backgrounds. So the print cases assert
+// against the PDF's own bytes.
+//
+// Chromium writes a plain PDF 1.4 — classic `n 0 obj` bodies, an xref table, no object streams —
+// with FlateDecode content streams, so `node:zlib` is the whole of what is needed to read one and
+// no dependency is added for it. Text is hex glyph ids against a subset font, which is why
+// nothing below reads *words*: paging assertions are made on paint order and on fill colours,
+// both of which survive without the font's ToUnicode map (docs/VERIFYING.md says the same about
+// pdfjs-dist, which is the other way and is a dependency).
+
+/** Object `num`'s dictionary as latin1 — it stops at `stream`, so it never carries binary. */
+function pdfDict(raw, num) {
+  const at = raw.indexOf(`\n${num} 0 obj`);
+  if (at < 0) return '';
+  const end = raw.indexOf('endobj', at);
+  const stream = raw.indexOf('stream', at);
+  return raw.slice(at, stream >= 0 && stream < end ? stream : end);
+}
+
+/**
+ * Object `num`'s stream, inflated when the dictionary says FlateDecode.
+ *
+ * Sliced by the dictionary's own `/Length` rather than by searching for `endstream`: a compressed
+ * stream is arbitrary bytes and may well contain that word, and a regex over the whole file would
+ * then hand back a truncated — or a spliced — stream that inflates to nothing.
+ */
+function pdfStream(raw, buf, num) {
+  const at = raw.indexOf(`\n${num} 0 obj`);
+  const m = /stream\r?\n/.exec(raw.slice(at));
+  if (at < 0 || !m) return '';
+  const dict = pdfDict(raw, num);
+  const start = at + m.index + m[0].length;
+  const bytes = buf.subarray(start, start + Number(/\/Length (\d+)/.exec(dict)?.[1] ?? 0));
+  if (!/FlateDecode/.test(dict)) return bytes.toString('latin1');
+  try {
+    return inflateSync(bytes).toString('latin1');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * The decoded content stream of every page, **in page order** — which is the `/Kids` array's
+ * order, not the order the objects happen to be written in.
+ */
+function pdfPages(buf) {
+  const raw = buf.toString('latin1');
+  const kids = /\/Type\s*\/Pages[^>]*\/Kids\s*\[([^\]]*)\]/.exec(raw);
+  if (!kids) throw new Error('kein /Pages-Knoten im PDF');
+  return [...kids[1].matchAll(/(\d+) 0 R/g)]
+    .map((m) => pdfDict(raw, Number(m[1])))
+    .map((dict) => {
+      const one = /\/Contents (\d+) 0 R/.exec(dict);
+      const many = /\/Contents \[([^\]]*)\]/.exec(dict);
+      const refs = one
+        ? [Number(one[1])]
+        : [...(many?.[1] ?? '').matchAll(/(\d+) 0 R/g)].map((r) => Number(r[1]));
+      return refs.map((r) => pdfStream(raw, buf, r)).join('\n');
+    });
+}
+
+/** `rgb(11, 95, 233)` → `[11, 95, 233]`, so the expectation can be read off the page itself. */
+const rgbOf = (css) => (css.match(/\d+/g) ?? []).slice(0, 3).map(Number);
+
+/** Skia rounds its own way, and a `.7255 .1098 .1098 rg` is 185,28,28 only to within a unit. */
+const nearRgb = (a, b) => a.length === 3 && b.length === 3 && a.every((v, i) => Math.abs(v - b[i]) <= 2);
+
+/** Every non-stroking fill a content stream sets, as `[r,g,b]` 0..255, in paint order. */
+const pdfFills = (content) =>
+  [...content.matchAll(/(-?[\d.]+) (-?[\d.]+) (-?[\d.]+) rg/g)].map((m) => ({
+    rgb: [Math.round(Number(m[1]) * 255), Math.round(Number(m[2]) * 255), Math.round(Number(m[3]) * 255)],
+    at: m.index ?? 0,
+  }));
+
+/** One parse per PDF: the pages, and every fill on all of them. */
+function sheet(buf) {
+  const pages = pdfPages(buf);
+  return { buf, pages, fills: pages.flatMap((p) => pdfFills(p)) };
+}
+
+const painted = (s, css) => s.fills.some((f) => nearRgb(f.rgb, rgbOf(css)));
+
+/** How often the sheet fills in that colour — „once" is what pins a fill to one element. */
+const paintedTimes = (s, css) => s.fills.filter((f) => nearRgb(f.rgb, rgbOf(css))).length;
+
+/**
+ * Where a colour is painted in the sheet, and how much text sits before and after it *on that
+ * page*. Both counts are of text-showing operators, not of words: one `Tj` is one glyph run, and
+ * how many glyphs a run holds is a property of the font, not of the layout — so the numbers are
+ * only ever compared against another measurement of the same document, never against a constant.
+ */
+function paintedAt(s, css) {
+  const want = rgbOf(css);
+  for (let i = 0; i < s.pages.length; i++) {
+    const hit = pdfFills(s.pages[i]).find((f) => nearRgb(f.rgb, want));
+    if (!hit) continue;
+    const text = [...s.pages[i].matchAll(/T[jJ]/g)].map((m) => m.index ?? 0);
+    return {
+      page: i + 1,
+      pages: s.pages.length,
+      before: text.filter((t) => t < hit.at).length,
+      after: text.filter((t) => t > hit.at).length,
+    };
+  }
+  return { page: 0, pages: s.pages.length, before: 0, after: 0 };
+}
+
+const where = (p) => `Seite ${p.page}/${p.pages}, ${p.before} Textläufe davor, ${p.after} danach`;
+
+/**
+ * A4, not `page.pdf()`'s default Letter. The print block's numbers are A4's — „A4 inside the
+ * 14 mm @page margins leaves ~269 mm" is what the image cap is derived from — and the customer's
+ * printer is a German one, so Letter would measure a page nobody prints.
+ *
+ * `printBackground` is left at its default `false` **on purpose**: that is the SHL-11 repro, and
+ * passing `true` would make every colour assertion below pass against the defect.
+ */
+const printPdf = (page) => page.pdf({ format: 'A4' });
+
+/**
+ * Take a second PDF with one print rule overridden, and hand back both — the in-run proof that a
+ * paper assertion is about the rule under test rather than about something Chromium does anyway.
+ *
+ * The override is `!important` inside `@media print`, which beats index.css on cascade rather
+ * than on order, and the tag is removed again so the page is the shipped one afterwards.
+ */
+async function withoutPrintRule(page, css) {
+  const tag = await page.addStyleTag({ content: `@media print { ${css} }` });
+  const buf = await printPdf(page);
+  await tag.evaluate((el) => {
+    el.parentNode?.removeChild(el);
+  });
+  return sheet(buf);
+}
 
 // ---------------------------------------------------------------------------- the run
 
@@ -448,6 +689,71 @@ async function makeSeason(what, copy = false) {
   return season;
 }
 
+/**
+ * How many tasks the first status group starts with, and the lengths case N2 tries around it.
+ *
+ * The offsets are symmetric, and that is the point: the boundary can drift in **either**
+ * direction — a Chromium that changes a metric, or one line more or less of sheet chrome — and a
+ * search that only ever grows the list would report „keine Wirkung" on a perfectly good build,
+ * reading exactly like the regression it guards. Nearest first, so the normal run stops at 0.
+ */
+const PAGE_BREAK_FIRST = 56;
+const PAGE_BREAK_TRIES = [0, 1, -1, 2, -2, 3, -3];
+
+/**
+ * The project sheet's page-break fixture: one project whose open tasks fall into two status
+ * groups, the first sized so the second group's header lands on a page boundary.
+ *
+ * Built over the API into a fresh season rather than into `server/src/demo.ts`, for two reasons.
+ * Sixty-odd rows named „Aufgabe 07" are not a fixture anybody wants to scroll past on every
+ * `npm run demo`, and — more to the point — the sheet's geometry has to be *predictable* for the
+ * boundary to sit where it does: no description, no contacts, no events, nothing that wraps. Every
+ * line height on this sheet is an explicit Tailwind value, so the page a row lands on is the same
+ * on a runner with different fonts, which is what lets a tuned count survive CI at all.
+ *
+ * The project deliberately carries **no status**: `ProjectStatusPill` would then paint the header
+ * in the same shade as the „In Progress" group heading, and the case finds that heading in the PDF
+ * by its colour.
+ */
+async function fillPageBreakFixture(seasonId) {
+  const q = scoped(seasonId);
+  // Never the literals: the group headings, their colours and the values a task must carry are
+  // all the Status column's options, which the user may rename or reorder.
+  const columns = await api(q('/custom-columns'));
+  const status = columns.find((c) => c.kind === 'builtin' && c.key === 'status');
+  const open = JSON.parse(status?.options ?? '[]').filter((o) => !o.done);
+  if (open.length < 2) throw new Error(`Statusspalte hat keine zwei offenen Optionen: ${status?.options}`);
+
+  const artist = (await send('POST', q('/artists'), { name: 'Druckbogen', color: '#0b5fe9' })).body;
+  const project = (
+    await send('POST', q('/projects'), { artist_id: artist.id, code: 'DB1', name: 'Seitenumbruch' })
+  ).body;
+  const add = (title, value) => send('POST', q('/tasks'), { project_id: project.id, title, status: value });
+  /** @type {number[]} */
+  const firstGroup = [];
+  for (let i = 0; i < PAGE_BREAK_FIRST; i++) {
+    firstGroup.push((await add(`Aufgabe ${String(i + 1).padStart(2, '0')}`, open[0].value)).body.id);
+  }
+  // The second group is the one under test, and it is small: a header stranded above six rows is
+  // the shape the customer met, and a long group would be split by the page break anyway.
+  for (let i = 0; i < 6; i++) await add(`Nachlauf ${i + 1}`, open[1].value);
+
+  /**
+   * Take the first group to exactly `n` rows, in whichever direction that is. Shrinking is a soft
+   * delete, which is what the sheet's own query filters on, so it is the same fixture either way.
+   */
+  const resize = async (n) => {
+    while (firstGroup.length > n) {
+      await send('DELETE', q(`/tasks/${firstGroup.pop()}`));
+    }
+    while (firstGroup.length < n) {
+      firstGroup.push((await add(`Aufgabe ${String(firstGroup.length + 1).padStart(2, '0')}`, open[0].value)).body.id);
+    }
+    return firstGroup.length;
+  };
+  return { seasonId, project, resize };
+}
+
 try {
   const { browser: chrome, context } = await launch();
   browser = chrome;
@@ -460,6 +766,14 @@ try {
   // both and reads „4 Aufgaben", which is the fixture drifting, not a defect.
   const trash = await makeSeason('Löschen', true);
   const sorted = await makeSeason('Reihenfolge', true);
+  // Case N prints demo rows and needs one of them changed (project 1 loses its status pill, see
+  // there), so it gets a copy like the cases above — taken here, before anything has written.
+  const sheets = await makeSeason('Bögen', true);
+  // Case N2's page-break fixture is the one season that is **not** a copy: its whole point is a
+  // task list of a tuned length, and a copy would bring the demo's along. Built here with the
+  // others all the same, so a season this run created is never a season an earlier case wrote to.
+  const printed = await makeSeason('Druck');
+  const pageBreak = await fillPageBreakFixture(printed.id);
 
   // ======================================================================== A · the #54 canary
   //
@@ -1149,6 +1463,503 @@ try {
     .first()
     .evaluate((el) => getComputedStyle(el).opacity);
   check('a handle nobody is hovering is still visible', Number(rest) > 0.2, `opacity ${rest}`);
+
+  // ======================================================================== L · the smallest window
+  //
+  // WP-55 took the window minimum from 1024×680 to 624×560 so two of them fit side by side, and
+  // shipped that promise with nothing checking it: not one case above sets a viewport, and
+  // Playwright's default is 1280×720.
+  //
+  // **The viewport is not the window.** `useContentSize` is false, so `MINIMUM` is the outer size
+  // and the frame comes off before the renderer sees anything — driving at 624×560 checks a
+  // window nobody has. The real pair is the two `NARROW` viewports above. Both are under
+  // Tailwind's `sm:`, which is exactly 640, so both stay in the one-column layout; they are still
+  // checked separately, because 14 px of width and 34 of height is what a wrap decision is made
+  // of.
+  //
+  // What the two assertions per page are, and why neither is enough alone, is on
+  // `overflowReport`. They are followed here by a control that injects an overhanging element and
+  // requires the sweep to see it — otherwise „no offenders" is also what a sweep that silently
+  // matches nothing reports, which is the failure mode the whole file exists to avoid.
+  console.log('\nL · Das kleinste Fenster (WP-55)');
+  // Every page the WP-55 pass covered: the header search and the season switcher are on all of
+  // them, the task table is on three, and „Archiv" is where `SectionTitle` meets a w-64 search box.
+  //
+  // `#/einstellungen` is deliberately **not** in the list, and not because it passes. Roughly one
+  // load in ten it reports a 7 px overhang at 610 (never at 624), and the state then holds for the
+  // life of that layout: `TaskSortEditor`'s add row is a `<select>` beside „+ Hinzufügen", and
+  // Chromium sizes that select either to ~181 px or to its longest option's ~465 px depending on
+  // whether it re-ran intrinsic sizing after the columns query filled the options in. At 465 the
+  // row really is wider than the card. That is a finding about the page, not about the sweep — it
+  // belongs to WP-64c together with the rest of Einstellungen (docs/VERIFYING.md records it), and
+  // a gate that fails one run in ten is worse than no gate.
+  const NARROW_PAGES = ['/dashboard', '/', '/artist/1', '/project/1', '/archiv'];
+  const WITH_TABLE = new Set(['/dashboard', '/artist/1', '/project/1']);
+
+  for (const vp of NARROW) {
+    const ctx = await windowContext(chrome, vp);
+    const n = await open(ctx, NARROW_PAGES[0]);
+    for (const hash of NARROW_PAGES) {
+      if (hash !== NARROW_PAGES[0]) {
+        await n.goto(`${UI}/#${hash}`);
+        await n.reload(); // a `goto` to a different hash keeps data-app-ready — see `ready`
+        await ready(n);
+      }
+      // Measured only once a row is laid out. `data-app-ready` also arrives from BootReady's
+      // unconditional 700 ms budget, and a table measured in that window reports a *narrower*
+      // preferred width than the one the user sees — the same run gave 758 and 1347 for
+      // `#/project/1`.
+      if (WITH_TABLE.has(hash)) {
+        check(
+          `${hash} hat eine Aufgabentabelle, bevor gemessen wird`,
+          await shown(n.locator('div.overflow-x-auto table tbody tr')),
+        );
+      }
+      const m = await n.evaluate(overflowReport);
+      const at = `${vp.label} ${vp.width}×${vp.height} ${hash}`;
+      check(
+        `${at}: das Dokument ist nicht breiter als das Fenster`,
+        m.scrollWidth <= m.clientWidth,
+        `scrollWidth ${m.scrollWidth}, clientWidth ${m.clientWidth}`,
+      );
+      check(
+        `${at}: nichts ragt außerhalb eines Scroll-Containers hinaus`,
+        m.offenders.length === 0,
+        m.offenders.slice(0, 4).join(' · '),
+      );
+    }
+
+    // WP-55's third fix, and the one a width sweep cannot see: the add row and the `<table>` sit
+    // in one `min-w-min` box, so „Neue Aufgabe" and its bottom border are as wide as the table
+    // instead of ending in mid-air as soon as the table is scrolled. `offsetWidth`, never
+    // `scrollWidth` — the add row's content is short, and the question is how wide its *box* is.
+    await n.goto(`${UI}/#/project/1`);
+    await n.reload();
+    await ready(n);
+    await shown(n.locator('div.overflow-x-auto table tbody tr'));
+    const box = await n.evaluate(() => {
+      const scroller = /** @type {HTMLElement | null} */ (document.querySelector('div.overflow-x-auto'));
+      const table = /** @type {HTMLElement | null} */ (scroller?.querySelector('table') ?? null);
+      const addRow = /** @type {HTMLElement | null} */ (scroller?.querySelector('div.flex.items-center') ?? null);
+      return {
+        addRow: addRow?.offsetWidth ?? 0,
+        table: table?.offsetWidth ?? 0,
+        client: scroller?.clientWidth ?? 0,
+        scroll: scroller?.scrollWidth ?? 0,
+      };
+    });
+    check(
+      `${vp.label}: die Neue-Aufgabe-Zeile ist so breit wie die Tabelle`,
+      box.addRow > 0 && box.addRow === box.table,
+      `Zeile ${box.addRow}, Tabelle ${box.table}`,
+    );
+    // …and the case is not vacuous: at this width the table really does overhang its container,
+    // which is what makes the sweep's exemption above load-bearing rather than theoretical.
+    check(
+      `${vp.label}: die Tabelle scrollt wirklich in ihrem Container`,
+      box.scroll > box.client + 1,
+      `${box.scroll} in ${box.client}`,
+    );
+    await n.close();
+    await ctx.close();
+  }
+
+  // The sweep's own control, one probe per verdict it has to reach — „0 offenders" is also what a
+  // sweep that has quietly stopped matching anything reports.
+  const probe = await windowContext(chrome, NARROW[0]);
+  const g = await open(probe, '/dashboard');
+
+  const wide = await sweepWithProbe(g, '<div id="probe-weit" style="width:3000px;height:8px"></div>');
+  check(
+    'das breite Kontrollelement wächst das Dokument über den Viewport',
+    wide.scrollWidth > wide.clientWidth,
+    `${wide.scrollWidth} bei ${wide.clientWidth}`,
+  );
+  check(
+    '…und der Sweep meldet es',
+    wide.offenders.some((o) => o.includes('probe-weit')),
+    wide.offenders.join(' · '),
+  );
+
+  // The second one is the case the first half structurally cannot see, and the reason the sweep
+  // reports a `hidden` ancestor rather than exempting it: content cut off by a clipping box never
+  // grows the document, so `scrollWidth` stays exactly at the viewport while a row of a card is
+  // out of reach.
+  const cut = await sweepWithProbe(
+    g,
+    '<div style="overflow:hidden;width:100px"><div id="probe-abgeschnitten" style="width:3000px;height:8px"></div></div>',
+  );
+  check(
+    'ein abgeschnittenes Kontrollelement wächst das Dokument gerade nicht',
+    cut.scrollWidth <= cut.clientWidth,
+    `${cut.scrollWidth} bei ${cut.clientWidth}`,
+  );
+  check(
+    '…und genau deshalb muss der Sweep es melden',
+    cut.offenders.some((o) => o.includes('probe-abgeschnitten')),
+    cut.offenders.join(' · '),
+  );
+
+  // The season switcher is the one popover that does not go through `useAnchoredPopover`, which
+  // is what flips and caps the others against the viewport. It hangs off the *sticky* header, so
+  // an overlong list cannot be reached by scrolling the document either — in the smallest window
+  // its last entries were simply unreachable before WP-55 capped and scrolled it.
+  await g.locator('button[title$="wechseln"]').first().click();
+  const menu = g.locator('div.absolute.z-40').first();
+  check('der Saison-Umschalter öffnet im schmalen Fenster', await shown(menu));
+  const cap = await menu.evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return {
+      overflowY: cs.overflowY,
+      maxHeight: parseFloat(cs.maxHeight),
+      bottom: Math.round(el.getBoundingClientRect().bottom),
+      inner: window.innerHeight,
+    };
+  });
+  check('…seine Liste scrollt', cap.overflowY === 'auto', cap.overflowY);
+  check(
+    '…seine Höhe ist gegen den Viewport gedeckelt',
+    cap.maxHeight <= cap.inner * 0.7 + 1,
+    `max-height ${cap.maxHeight} bei ${cap.inner}`,
+  );
+  check('…und sie endet im Fenster', cap.bottom <= cap.inner, `Unterkante ${cap.bottom} bei ${cap.inner}`);
+  await g.keyboard.press('Escape');
+  await g.close();
+  await probe.close();
+
+  // ======================================================================== M · a done row
+  //
+  // WP-58: a done task was only half marked as done. `text-neutral-400` on the `<tr>` is pure
+  // inheritance, so every cell carrying a `text-*` of its own stayed black, and `line-through` on
+  // the `<tr>` reaches no cell at all — text-decoration does not propagate into atomic inline
+  // boxes, and nearly every leaf here is a `<button>` or an `inline-flex`.
+  //
+  // Which is why the naive assertion — read `text-decoration-line` off the `<p>` the Markdown
+  // renderer emits — fails against working code. The property is not inherited: the decoration
+  // propagates *visually* into in-flow block boxes while the computed value on every one of them
+  // stays `none`. So the strike is asserted on the element that carries the class, and the
+  // *precondition* that propagation relies on — `display: block`, `float: none`,
+  // `position: static` on the descendant — is asserted separately. An `inline-block` there would
+  // silently stop the strike.
+  //
+  // The colour half is WP-62's pair, and it has to be a pair: on the done row alone „grey wins"
+  // also passes on a build that never paints the colour at all.
+  console.log('\nM · Erledigte Zeilen: Strich, Grau und Farbe (WP-58, WP-62)');
+  const statusCol = (await api('/custom-columns')).find((c) => c.kind === 'builtin' && c.key === 'status');
+  const done = JSON.parse(statusCol?.options ?? '[]').find((o) => o.done)?.value ?? 'done';
+  const seven = await api('/tasks?project_id=7');
+  // Picked by their fixture properties rather than by id, so a renumbered demo fails loudly here
+  // instead of asserting about whatever row happens to carry that number.
+  const doneRow = seven.find((t) => t.status === done && (t.comment ?? '').includes('tc-'));
+  const openRow = seven.find((t) => t.status !== done && (t.comment ?? '').includes('tc-'));
+  const emptyRow = seven.find((t) => t.status === done && !t.due_date);
+  check(
+    'die Fixture-Zeilen stehen auf #/project/7 (WP-58)',
+    !!doneRow && !!openRow && !!emptyRow,
+    `erledigt ${doneRow?.id}, offen ${openRow?.id}, ohne Datum ${emptyRow?.id}`,
+  );
+  // Nothing below dereferences those rows, and the reason is that `check` does not throw: a demo
+  // whose fixture has drifted would raise a TypeError here, the outer catch would swallow it as
+  // one opaque „run completed" failure, and N/N2 would never run at all. Missing ids fall through
+  // to selectors that match nothing, so every assertion below reports what it really found.
+  const doneId = doneRow?.id ?? 0;
+  const doneTitle = doneRow?.title ?? '';
+
+  const h = await open(context, '/project/7');
+  await shown(h.locator('div.overflow-x-auto table tbody tr'));
+  // One evaluate for every reading: two round trips can straddle a background refetch's
+  // re-render and compare styles from different commits.
+  const marks = await h.evaluate(
+    ([dId, oId, eId, title]) => {
+      const row = (id) => document.querySelector(`[data-task-id="${id}"]`);
+      const cs = (el) => (el ? getComputedStyle(el) : null);
+      const titleBtn = Array.from(row(dId)?.querySelectorAll('button') ?? []).find(
+        (b) => b.textContent?.trim() === title,
+      );
+      const commentBox = row(dId)?.querySelector('div.cursor-text');
+      const para = commentBox?.querySelector('.prose-md p');
+      const quote = commentBox?.querySelector('.prose-md blockquote');
+      const doneSpan = commentBox?.querySelector('[class*="tc-"]');
+      const openSpan = row(oId)?.querySelector('div.cursor-text [class*="tc-"]');
+      const pill = row(dId)?.querySelector('button[aria-haspopup="listbox"]');
+      const dashes = Array.from(row(eId)?.querySelectorAll('td span') ?? [])
+        .filter((s) => s.textContent?.trim() === '—')
+        .map((s) => cs(s)?.textDecorationLine);
+      return {
+        title: { found: !!titleBtn, deco: cs(titleBtn)?.textDecorationLine },
+        box: { deco: cs(commentBox)?.textDecorationLine, color: cs(commentBox)?.color },
+        para: {
+          deco: cs(para)?.textDecorationLine,
+          display: cs(para)?.display,
+          float: cs(para)?.float,
+          position: cs(para)?.position,
+        },
+        quote: quote ? cs(quote)?.color : null,
+        doneSpan: doneSpan ? cs(doneSpan)?.color : null,
+        openSpan: openSpan ? cs(openSpan)?.color : null,
+        openColour: cs(row(oId)?.querySelector('div.cursor-text'))?.color,
+        pill: pill ? { filter: cs(pill)?.filter, opacity: cs(pill)?.opacity } : null,
+        dashes,
+      };
+    },
+    [doneId, openRow?.id ?? 0, emptyRow?.id ?? 0, doneTitle],
+  );
+
+  check('der Titel der erledigten Zeile ist durchgestrichen', marks.title.found && marks.title.deco === 'line-through', String(marks.title.deco));
+  check('ihr Kommentar auch', marks.box.deco === 'line-through', String(marks.box.deco));
+  check(
+    '…und das gerenderte <p> darunter meldet erwartungsgemäß „none“',
+    marks.para.deco === 'none',
+    String(marks.para.deco),
+  );
+  check(
+    '…weil der Strich per Blockfluss dorthin wandert — die Bedingung dafür steht',
+    marks.para.display === 'block' && marks.para.float === 'none' && marks.para.position === 'static',
+    `${marks.para.display} / ${marks.para.float} / ${marks.para.position}`,
+  );
+  // `.prose-md blockquote` sets a colour of its own, so a Zitat in einem erledigten Kommentar sat
+  // visibly darker than the rest of the row until `.prose-md--done` beat that rule.
+  check(
+    'das Zitat im erledigten Kommentar nimmt das Grau der Zeile',
+    marks.quote === marks.box.color,
+    `Zitat ${marks.quote}, Zelle ${marks.box.color}`,
+  );
+  // Tailwind v4 serialises `text-neutral-400` as `oklch(0.708 0 none)`, so the honest assertion is
+  // the comparison itself and never a hardcoded rgb.
+  check(
+    'der farbige Lauf der erledigten Zeile ebenso (WP-62)',
+    marks.doneSpan === marks.box.color,
+    `Lauf ${marks.doneSpan}, Zelle ${marks.box.color}`,
+  );
+  check(
+    '…und der der offenen Zeile bleibt rot — das Paar ist die Zusicherung',
+    marks.openSpan === 'rgb(185, 28, 28)' && marks.openSpan !== marks.openColour,
+    String(marks.openSpan),
+  );
+  check(
+    'die Status-Pille ist entfärbt statt durchgestrichen',
+    !!marks.pill && /grayscale/.test(marks.pill.filter ?? '') && Number(marks.pill.opacity) < 1,
+    JSON.stringify(marks.pill),
+  );
+  // A line through an em dash reads as a second dash, which is what `doneCell`'s `filled`
+  // argument exists for.
+  check(
+    'die „—“-Platzhalter der erledigten Zeile bleiben ungestrichen',
+    marks.dashes.length > 0 && marks.dashes.every((d) => d === 'none'),
+    marks.dashes.join(' | '),
+  );
+  await h.close();
+
+  // ======================================================================== N · the print sheets
+  //
+  // Everything here is asserted against the PDF's bytes rather than against the DOM, because the
+  // defects only exist on paper. `page.pdf()`'s default `printBackground: false` **is** the
+  // SHL-11 repro — Chromium's „Hintergrundgrafiken" is off by default in the browser and in
+  // Electron's `window.print()` — and a screenshot can never show it, because screenshots always
+  // paint backgrounds. The fix was `print-color-adjust: exact` scoped to `.print-page`.
+  //
+  // So the case takes a second PDF with that property overridden back to `economy` and requires
+  // the group headings to vanish from it. Without that control the case would also pass on a
+  // Chromium that simply prints backgrounds regardless — i.e. it would assert nothing about the
+  // fix. Measured: the `.print-page` colours are 19 with the fix and 18 without.
+  //
+  // Two things decide *which* colour may carry that assertion, and both rule out the obvious one.
+  // The project-code badge is out because the header's `border-b-4` carries the same accent and a
+  // border prints under `economy` too. And the status-group pills are only unambiguous once the
+  // project has **no status**: `ProjectStatusPill` paints „In Progress" in exactly the shade its
+  // group heading uses (`DEFAULT_STATUS_OPTIONS`), and demo project 1 carries that status — so on
+  // the demo, half of this assertion is satisfiable by a pill in the header while the group
+  // heading prints white on white. Hence the copied season and the one PATCH: in it each group
+  // colour is painted **exactly once**, which pins the fill to the heading rather than merely
+  // finding it somewhere on the sheet.
+  console.log('\nN · Druckbögen als PDF (SHL-11, WP-62)');
+  const P = scoped(sheets.id);
+  const stripped = await send('PATCH', P('/projects/1'), { status: null });
+  check('das Fixture-Projekt trägt keine Status-Pille mehr', stripped.body?.status === null, `HTTP ${stripped.status}`);
+
+  const p1 = await open(context, '/dashboard');
+  await pin(p1, sheets.id, '/print/project/1');
+  await p1.locator('.print-group-head').first().waitFor({ timeout: 10_000 });
+  const ink = await p1.evaluate(() => ({
+    groups: Array.from(document.querySelectorAll('.print-group-head span')).map(
+      (s) => getComputedStyle(s).backgroundColor,
+    ),
+    // Optional-chained on purpose: a fixture that lost its coloured runs must fail the one check
+    // written for it, not throw out of the case and take N2 with it.
+    rot: document.querySelector('.print-page .tc-rot')
+      ? getComputedStyle(document.querySelector('.print-page .tc-rot')).color
+      : '',
+    gruen: document.querySelector('.print-page .tc-gruen')
+      ? getComputedStyle(document.querySelector('.print-page .tc-gruen')).color
+      : '',
+    statusPill: document.querySelectorAll('.print-page header .rounded-full').length,
+  }));
+  check(
+    'der Projektbogen hat zwei Statusgruppen und farbigen Text',
+    ink.groups.length === 2 && !!ink.rot && !!ink.gruen && ink.statusPill === 0,
+    JSON.stringify(ink),
+  );
+
+  const paper = sheet(await printPdf(p1));
+  check('der Bogen wird zu einem PDF', paper.pages.length > 0, `${paper.pages.length} Seiten`);
+  check(
+    'die Hintergründe der Gruppenköpfe stehen auf dem Papier — je genau einmal (SHL-11)',
+    ink.groups.length > 0 && ink.groups.every((c) => paintedTimes(paper, c) === 1),
+    ink.groups.map((c) => `${c} ×${paintedTimes(paper, c)}`).join(' | '),
+  );
+  // WP-62's document-sized fixture is project 1's description: a `tc-gruen` list item and a
+  // `**<u><span class="tc-rot">…</span></u>**` run, i.e. the nesting the serializer produces.
+  check('die Schriftfarben auch (WP-62)', painted(paper, ink.rot) && painted(paper, ink.gruen), `${ink.rot} / ${ink.gruen}`);
+
+  const economy = await withoutPrintRule(
+    p1,
+    '.print-page { -webkit-print-color-adjust: economy !important; print-color-adjust: economy !important; }',
+  );
+  check(
+    '…und ohne print-color-adjust: exact wären sie weg — die Zusicherung ist nicht vakuum',
+    ink.groups.every((c) => !painted(economy, c)),
+    ink.groups.filter((c) => painted(economy, c)).join(' | '),
+  );
+  check(
+    '…während die Schriftfarbe bleibt: Vordergrund druckt Chromium ohnehin',
+    painted(economy, ink.rot),
+  );
+  await p1.close();
+
+  // The artist sheet's image, which is **not** an avatar: no demo artist sets `artists.image`, so
+  // what prints here are the two pictures in artist 1's note (WP-37 — one in a Zitat, one wrapped
+  // in a link), rendered inside `<header>` because `PrintHeader` takes the note as its children.
+  //
+  // „It printed" is asserted as an image XObject of the *stored* dimensions plus a `Do` that draws
+  // it. Both halves are needed and neither may be loosened: a bare `/Subtype /Image` count is 4 on
+  // a sheet with **no** picture at all, because Skia embeds colour emoji as bitmaps (📍 in the
+  // events, 🚐 in the note), and `DCTDecode` would pin the assertion to this fixture being a JPEG.
+  // The dimensions come from the DOM, so the check follows the fixture rather than repeating it.
+  const p2 = await open(context, '/print/artist/1');
+  await p2.locator('.print-page table').first().waitFor({ timeout: 10_000 });
+  // An `<img>` that has not arrived yet leaves the layout intact and the paper empty, and
+  // `printToPDF` will happily snapshot that — the one-run-in-ten failure mode this gate must not
+  // have. Wait for the bytes, not for the element.
+  const loaded = await p2
+    .waitForFunction(
+      () =>
+        Array.from(document.querySelectorAll('.print-page img')).every(
+          (i) => /** @type {HTMLImageElement} */ (i).complete && /** @type {HTMLImageElement} */ (i).naturalWidth > 0,
+        ),
+      { timeout: 10_000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  const shot = await p2.evaluate(() => {
+    const img = /** @type {HTMLImageElement | null} */ (document.querySelector('.print-page img'));
+    return img ? { w: img.naturalWidth, h: img.naturalHeight, inHeader: !!img.closest('header') } : null;
+  });
+  const artistPaper = sheet(await printPdf(p2));
+  check('das Bild aus der Notiz ist geladen, bevor gedruckt wird', loaded && !!shot, JSON.stringify(shot));
+  check(
+    '…und es steht mit seinen Maßen im PDF (WP-37)',
+    !!shot &&
+      new RegExp(`/Subtype\\s*/Image\\s*/Width ${shot.w}\\s*/Height ${shot.h}\\b`).test(
+        artistPaper.buf.toString('latin1'),
+      ) &&
+      artistPaper.pages.some((c) => /\/X\d+ Do/.test(c)),
+    shot ? `${shot.w}×${shot.h}, ${artistPaper.pages.length} Seiten` : 'kein Bild',
+  );
+  await p2.close();
+
+  // Both sheets omit done tasks and say so in the heading, which is the reason WP-58's strike is
+  // asserted on the table above and not here: a done row never reaches paper at all. Read from the
+  // same copied season the sheet is pinned to, so the count and the sheet cannot disagree about
+  // which database they are describing.
+  const p3 = await open(context, '/dashboard');
+  await pin(p3, sheets.id, '/print/project/7');
+  await p3.locator('.print-page table').first().waitFor({ timeout: 10_000 });
+  // Section headings are CSS-uppercased, so `innerText` says „AUFGABEN (1 OFFEN)" — a
+  // case-sensitive match here finds nothing on a sheet that is counting correctly.
+  const sheetText = (await p3.locator('.print-page').innerText()).toLowerCase();
+  const openCount = (await api(P('/tasks?project_id=7'))).filter((t) => t.status !== done).length;
+  check(
+    `der Bogen zählt „(${openCount} offen)“`,
+    sheetText.includes(`(${openCount} offen)`),
+    sheetText.split('\n').find((l) => l.includes('offen)')) ?? '',
+  );
+  check(
+    '…und die erledigte Aufgabe steht nicht darauf',
+    !!doneTitle && !sheetText.includes(doneTitle.toLowerCase()),
+    doneTitle || 'kein Fixture',
+  );
+  await p3.close();
+
+  // ======================================================================== N2 · a group header at a page break
+  //
+  // `.print-group-head` is a `<tr><td colSpan>`, so neither `tr { break-inside: avoid }` nor the
+  // heading rule beside it reached it, and „In Arbeit (7)" could print alone as the last line of a
+  // page. `break-after: avoid` on that class is the fix.
+  //
+  // The fixture is tuned to a page boundary and neighbouring counts silently miss it, which is
+  // exactly how this case would come to assert nothing. So it does not trust the number: it takes
+  // a second PDF with the rule overridden and requires the two to *differ*. If a runner's metrics
+  // move the boundary, the list is resized around the tuned length — three rows either way,
+  // nearest first — until they do; and with the rule gone from index.css no length differs at all,
+  // which is what makes this a gate rather than a fixture.
+  //
+  // The heading is found in the PDF by the colour of its own pill, and „is it stranded" is read as
+  // paint order: content is emitted in DOM order, so „nothing before it on its page" means it
+  // heads that page, and „n text runs after it" is how much of its group came along.
+  console.log('\nN2 · Der Gruppenkopf am Seitenumbruch');
+  const p4 = await open(context, '/dashboard');
+  await pin(p4, pageBreak.seasonId, `/print/project/${pageBreak.project.id}`);
+  await p4.locator('.print-group-head').first().waitFor({ timeout: 10_000 });
+  const heads = await p4.evaluate(() =>
+    Array.from(document.querySelectorAll('.print-group-head span')).map((s) => ({
+      text: s.textContent ?? '',
+      colour: getComputedStyle(s).backgroundColor,
+    })),
+  );
+  check(
+    `das Fixture hat zwei Gruppen, die erste mit ${PAGE_BREAK_FIRST} Aufgaben`,
+    heads.length === 2 && heads[0].text.includes(String(PAGE_BREAK_FIRST)),
+    heads.map((x) => x.text).join(' | '),
+  );
+
+  let boundary = null;
+  let last = null;
+  for (const offset of PAGE_BREAK_TRIES) {
+    if (boundary) break;
+    const rows = PAGE_BREAK_FIRST + offset;
+    if (offset !== 0) {
+      await pageBreak.resize(rows);
+      await p4.reload();
+      await ready(p4);
+      await p4.locator('.print-group-head').first().waitFor({ timeout: 10_000 });
+    }
+    const kept = paintedAt(sheet(await printPdf(p4)), heads[1]?.colour ?? '');
+    const split = paintedAt(
+      await withoutPrintRule(p4, '.print-group-head { break-after: auto !important; }'),
+      heads[1]?.colour ?? '',
+    );
+    last = { kept, split };
+    console.log(`      ${rows} Aufgaben — mit Regel: ${where(kept)} | ohne: ${where(split)}`);
+    if (kept.page > split.page) boundary = { rows, kept, split };
+  }
+
+  // Read the pill's colour back out of the PDF before anything is concluded from where it sits:
+  // „not found" and „found on page 1" are the same zero otherwise.
+  check('der Gruppenkopf ist im PDF wiederzufinden', (last?.kept.page ?? 0) > 0, where(last?.kept ?? { page: 0, pages: 0, before: 0, after: 0 }));
+  check(
+    'break-after: avoid schiebt den Gruppenkopf über den Umbruch',
+    !!boundary,
+    boundary ? `bei ${boundary.rows} Aufgaben` : `in ${PAGE_BREAK_TRIES.length} Längen keine Wirkung`,
+  );
+  if (boundary) {
+    check('…er steht dann als Erstes auf seiner Seite', boundary.kept.before === 0, where(boundary.kept));
+    check(
+      '…und nimmt mehr von seiner Gruppe mit als ohne die Regel',
+      boundary.kept.after > boundary.split.after,
+      `${boundary.kept.after} statt ${boundary.split.after}`,
+    );
+  }
+  await p4.close();
 
   console.log(`\n${failures ? `✗ ${failures} Fehler` : '✓ alles ok'} (${checks} Prüfungen)`);
 } catch (err) {
