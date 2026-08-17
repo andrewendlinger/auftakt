@@ -228,22 +228,38 @@ verified by hand, and the gate itself is written from this list.
   write), so a mail that carries the file carries no digest at all. Do not verify the digest by
   reading the dialog; read the summary itself under `check:unit`, where the four record species
   and the untrusted-`why` case are pinned.
-- **A Fehler also writes `Auftakt-Diagnose-<ref>.txt` to the desktop and reveals it**, because a
-  `mailto:` cannot attach anything. Three things follow for anyone verifying it. It is a *real
-  file on the desktop of whoever runs the app*, so never drive the unstubbed path from a script —
-  the browser stub in `lib/drive.mjs` records `saveDiagnostics`'s arguments into `window.__saved`
-  and the assertion belongs on the filename the mail body then carries. The file persists between
-  runs, so a manual pass that does not delete it is reading a stale bundle a minute later — the
-  reference in it is the tell. And **dev writes no boot log**, so a bundle built in dev holds the
-  machine section and „noch keinen Start protokolliert" under the log heading; that is the branch,
-  not a truncated file. A Wunsch writes nothing at all.
-- **There is one way through and no folder.** „Text kopieren" and „Diagnoseordner öffnen" were
-  removed once the bundle existed, so a script that waits for either hangs. `shell.showItemInFolder`
-  did *not* go with them: `save-diagnostics` still reveals the file it just wrote, which is one more
-  reason a driving script must stub the bridge rather than let the real one run. The address in
-  plain text under „Was wird mitgeschickt?" is the whole of the no-mail-client fallback now, and it
-  is there on **both** branches — it used to sit in the `else` of the attachment note, so the one
-  shape that shipped without it was the packaged Fehler, i.e. the one that needs it.
+- **A Fehler writes `Auftakt-Diagnose-<ref>.txt` to the desktop — on „Weiter", and nothing else
+  happens** (WP-66; it used to reveal the file in the Finder and launch a mail client too).
+  Four things follow for anyone verifying it. It is a *real file on the desktop of whoever runs
+  the app*, so never drive the unstubbed path from a script — the browser stub in `lib/drive.mjs`
+  records `saveDiagnostics`'s arguments into `window.__saved` and the assertion belongs on the
+  filename the handover then names. **The write is on „Weiter", not on the last button**, so a
+  script that only clicks „Weiter" has already produced the file, and one that waits for it after
+  „Fertig" waits for ever. The file persists between runs, so a manual pass that does not delete
+  it is reading a stale bundle a minute later — the reference in it is the tell. And **dev writes
+  no boot log**, so a bundle built in dev holds the machine section and „noch keinen Start
+  protokolliert" under the log heading; that is the branch, not a truncated file. A Wunsch writes
+  nothing at all.
+- **Going „Zurück", editing an answer and pressing „Weiter" again writes a *second* bundle.** The
+  file carries the report text, so the first one would otherwise be the version the customer
+  attaches; `uniqueBundleName` gives the second its own `…-2.txt` and the handover names that one.
+  An unchanged text writes nothing the second time, which is what keeps `window.__saved` at 1
+  across the Escape-and-back-again case.
+- **Nothing on this path opens anything by itself (WP-66).** „E-Mail öffnen" is gone: a script
+  that waits for it, or that expects `window.__external` to fill after „Weiter", hangs. The
+  `mailto:` now sits at the bottom of the handover as the link „E-Mail-Programm öffnen"
+  (`getByRole('link', …)`, not `button`), and it is the *only* thing that ever reaches
+  `openExternal` from this dialog — which makes the recording stub the instrument for the
+  promise as well: after „Weiter", `window.__external` must still be empty.
+- **The handover's three copy buttons need clipboard permission, and they really use it.** „An",
+  „Betreff" and „Text" are `navigator.clipboard.writeText` — no bridge involved, and the loopback
+  origin the packaged app runs on is a secure context, as is the dev server. To assert on them,
+  `context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: UI })` **before** the
+  page is opened, then read back with `page.evaluate(() => navigator.clipboard.readText())`; both
+  work headless. Without the grant the write rejects, the dialog shows the „Kopieren hat nicht
+  geklappt" toast and the button keeps its label — which reads as „the copy button is broken".
+  The label is the tell either way: on success it says „Kopiert ✓" for 2.5 s, so a second
+  assertion inside that window is looking for a button that no longer has the name it clicked.
 - **The text boxes stop at the mail's budget, not at their `maxLength`.** `maxLength` is 300 per
   field, but every keystroke goes through `fitFeedbackAnswer` first, so three boxes filled to 300
   with German come back holding fewer — the last one typed is the short one, and „Die E-Mail ist
@@ -427,7 +443,7 @@ verified by hand, and the gate itself is written from this list.
   and only the record dialogs wrap to the first field.
 - **The topmost card is the *last* `.fixed.inset-0 > div`, and the topmost `.fixed.inset-0` is
   often not a dialog at all.** A `Modal` opened out of another one is rendered *inside* it (the
-  feedback dialog's „So geht es weiter"), so document order puts the topmost last — a
+  feedback dialog's „So schickst du es ab"), so document order puts the topmost last — a
   `querySelector` finds the outer one. And `PillSelect`'s portal hangs its own click-away layer,
   a bare `div.fixed.inset-0` with no card in it, off `document.body`: while a pill menu is open
   `topDialog(page)` is *that layer*, so scope to `.first()` there. The count going 1 → 2 on
@@ -599,8 +615,9 @@ verified by hand, and the gate itself is written from this list.
   Its only observable is the URL handed to `openExternal`, and the real one opens a mail client
   on the machine running the script. Stub the bridge with an `openExternal` that *records* —
   `window.__external.push(url)` — then read it back with `new URL(...)` and `searchParams`, which
-  is also the only honest check of the encoding. Asserting on the dialog after „E-Mail öffnen"
-  asserts on nothing; it has already closed itself.
+  is also the only honest check of the encoding. Since WP-66 only the optional
+  „E-Mail-Programm öffnen" link produces one, and the dialog stays open behind it, so the recorder
+  answers two questions rather than one: what the link handed over, and that nothing else did.
   **`check:browser` carries its own copy of that stub** (WP-64c) rather than importing
   `lib/drive.mjs`, which belongs to the ad-hoc runtime, imports `playwright` and points at :4317.
   Two runtimes, one pattern: a change to the bridge has to be made in both. The gate's copy takes
@@ -622,13 +639,18 @@ verified by hand, and the gate itself is written from this list.
   „Herunterladen & installieren" button does not exist and the click waits for ever. Everything
   past `quitAndInstall` — the restart dialog, `setProgressBar`, NSIS — has no browser equivalent
   and is Windows-manual by construction.
-- **Sending takes two clicks, and the first one opens a dialog rather than closing one.** „Weiter"
-  in the form only opens the steps dialog („So geht es weiter"); „E-Mail öffnen" inside it is what
-  writes the bundle and hands over the `mailto:`. So `dialogs(page)` counts **2** in between —
-  scope to `topDialog(page)` or a bare `getByRole('button', {name: 'Zurück'})` matches nothing
-  useful — and a script that clicks „Weiter" and waits for `window.__external` hangs for ever.
-  Escape and the backdrop peel off the steps dialog only; the filled-in form is still behind it,
+- **„Weiter" opens a dialog rather than closing one, and it is the click that writes the file.**
+  It stacks the handover („So schickst du es ab") on the form, so `dialogs(page)` counts **2**
+  from there on — scope to `topDialog(page)`, or a bare `getByRole('button', {name: 'Zurück'})`
+  matches nothing useful. Its footer ends in „Fertig", which closes both and sends the toast
+  naming the bundle; nothing in the dialog claims the mail was sent, because the app cannot know.
+  Escape and the backdrop peel off the handover only; the filled-in form is still behind it,
   which is also how to check that a „Zurück" kept the typed answers.
+- **The handover has body tabbables, so focus does *not* land on „Zurück".** WP-42's „a confirm
+  focuses the footer's safe answer" holds for dialogs whose body has nothing to focus; this one's
+  first stop is „Adresse kopieren" (`tabStop` index 1), because `Modal` prefers the body's first
+  tabbable over the footer's. Enter on arrival copies the address — the first step, and nothing
+  that cannot be taken back.
 - **The dialog asks nothing until a kind is picked, and the questions differ per kind.** „Was ist
   passiert?" exists only under Fehler — a script keyed on it hangs on a Wunsch, where the same
   first box reads „Was möchtest du tun können?". Click `getByRole('button', {name: /^Fehler/})`

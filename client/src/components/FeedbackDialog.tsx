@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
-import { Btn, PickerRow } from './ui';
+import { useEffect, useRef, useState } from 'react';
+import { Btn, ExternalLink, PickerRow } from './ui';
 import { FooterHint, Label, Modal, TextArea } from './fields';
 import { useToast } from './Toast';
 import { useSeasonTerm } from '../hooks';
-import { openExternal, type Diagnostics } from '../lib/external';
+import { type Diagnostics } from '../lib/external';
 import {
   FEEDBACK_FIELD_MAX,
   FEEDBACK_KINDS,
@@ -13,6 +13,7 @@ import {
   feedbackMailBody,
   feedbackMailto,
   feedbackRef,
+  feedbackSubject,
   fitFeedbackAnswer,
   requiredField,
   type FeedbackContext,
@@ -22,22 +23,25 @@ import {
 import { useRovingFocus, rovingItem } from '../lib/rovingFocus';
 
 /**
- * The guided support mail (WP-54).
+ * The guided support mail (WP-54, reshaped by WP-66).
  *
  * A „Feedback" button that opens a blank mail gets „es geht nicht" back, which costs a round
  * of questions before anything can be looked at — and the one answer that would settle the
  * boot-gesture report (WP-61) is in a file the customer has no way to reach. So the dialog
- * asks the questions a usable report answers, and hands over the diagnostics: a short summary
- * inside the mail, and the log in full as a file on the desktop, because a `mailto:` cannot
- * carry an attachment (see `electron/diagnostics.ts`).
+ * asks the questions a usable report answers, and hands over the diagnostics: the log in full
+ * as a file on the desktop, because a `mailto:` cannot carry an attachment (see
+ * `electron/diagnostics.ts`).
  *
  * What it asks depends on the first answer. A wish and a fault are not the same question, and
  * asking „Was ist passiert?" about a wish is how feature requests arrive phrased as bugs.
  *
- * There is exactly one way out of it: „Weiter". No second button, no folder to go looking in —
- * the one step the app genuinely cannot do for anybody is attaching the file, so that is the
- * one step the dialog spends its words on. It spends them in a second dialog rather than in a
- * card above the button: a card is scrolled past, a dialog is answered.
+ * **Nothing on this path opens anything (WP-66).** It used to: one click wrote the file, opened
+ * a Finder window on it and launched a mail client, and the customer met two new windows before
+ * having read a word. Webmail in a browser is the normal case for the people this is for, and
+ * on such a machine the mail client either does not exist or is not the one they use. So the
+ * second step *hands over* instead — address, subject and text to copy, and the file already
+ * lying on the desktop — and the `mailto:` survives as one optional link for whoever does have
+ * a client set up. `docs/DECISIONS.md` carries the reversal.
  *
  * Everything shaped like logic is somewhere else and unit-tested: `feedbackMailto` builds the
  * URL, `FEEDBACK_KINDS` holds the questions, `summarizeBootLog` builds the diagnostic block.
@@ -51,13 +55,23 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [diag, setDiag] = useState<Diagnostics | null>(null);
   const [version, setVersion] = useState('');
-  const [sending, setSending] = useState(false);
   // Set by the last keystroke that did not fit, cleared by the next one that did — see
   // `onAnswer`. A box that stops taking text without saying why reads as a broken keyboard.
   const [full, setFull] = useState(false);
-  // The form, then the steps. Nothing is written and no client is opened until the second
-  // one is answered — „Weiter" is a question, not the action.
-  const [step, setStep] = useState<'form' | 'confirm'>('form');
+  // The form, then the handover. „Weiter" writes the diagnostics file and shows what the mail
+  // needs; from there on every step is the customer's own click.
+  const [step, setStep] = useState<'form' | 'send'>('form');
+  // What main actually wrote, once it has answered — `null` until then, and after a failed
+  // write it is the context with no attachment at all. The handover reads `out` below, so the
+  // predicted file name stands in for the sub-second the write is in flight.
+  const [sent, setSent] = useState<FeedbackContext | null>(null);
+  // The report text of the bundle already on the desktop. „Zurück", a corrected answer and
+  // „Weiter" again must not leave the customer attaching the *first* version of what they
+  // wrote, and re-writing an identical text would only litter the desktop with a `…-2.txt`.
+  const written = useRef('');
+  // Which row was just copied, so the button can say so where the eye already is. Cleared on a
+  // timer below; a failed copy says so in a toast instead, because there is nothing to confirm.
+  const [copied, setCopied] = useState<string | null>(null);
   // Stamped once, when the dialog opened: it names both the mail and the file written next to
   // it, so it has to be the same value in the preview below and in what actually goes out.
   const [ref] = useState(() => feedbackRef(new Date()));
@@ -74,6 +88,12 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
       .then(setDiag)
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (copied === null) return;
+    const t = window.setTimeout(() => setCopied(null), 2500);
+    return () => window.clearTimeout(t);
+  }, [copied]);
 
   // „Worum geht's?" is a *where*, not a severity: it is the one thing the maintainer cannot
   // work out from the text, and it decides which screen to open first.
@@ -93,8 +113,8 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
   const spec = kind ? FEEDBACK_KINDS[kind] : null;
   const draft: FeedbackDraft = { kind: kind ?? 'bug', area: area ?? '', answers };
   // Named before it exists, so „Was wird mitgeschickt?" shows the body that will really go
-  // out. Main returns the name it actually wrote and that is what gets sent; this is the
-  // prediction the preview is drawn from, and the two are pinned to agree in the tests.
+  // out. Main returns the name it actually wrote and that is what the handover shows; this is
+  // the prediction the preview is drawn from, and the two are pinned to agree in the tests.
   const willAttach =
     spec?.diagnostics === true && typeof window.auftakt?.saveDiagnostics === 'function'
       ? diagnosticsFileName(ref)
@@ -110,6 +130,8 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
     diagnostics: spec?.diagnostics ? (diag?.summary ?? '') : '',
     attachment: willAttach,
   };
+  // What the handover shows and copies: main's answer once it is in, the prediction until then.
+  const out = sent ?? ctx;
   const required = kind ? requiredField(kind) : null;
   const ready =
     kind !== null && area !== null && (answers[required?.key ?? '']?.trim().length ?? 0) > 0;
@@ -124,34 +146,80 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
     setAnswers((prev) => ({ ...prev, [key]: fitted }));
   };
 
-  const send = async () => {
-    setSending(true);
-    let sent = ctx;
-    if (willAttach) {
-      // Written and revealed before the mail opens, in that order: the compose window should
-      // be the thing on top when this is over, not a file manager.
-      //
-      // The copy that goes *into* the file carries neither the attach instruction nor the
-      // summary: a file telling its reader to attach that same file is nonsense, and the log
-      // it would summarize is printed in full two sections further down.
-      const forFile = feedbackBody(draft, { ...ctx, attachment: '', diagnostics: '' });
-      // Main answers `{ ok: false }` rather than throwing, but a channel that is not there at
-      // all rejects — and an unhandled rejection here would leave „E-Mail öffnen" disabled
-      // with no mail opened, which is the one state the second dialog must not be able to
-      // end in. A failed write is a mail without an attachment, never a dead button.
-      const saved = await window.auftakt?.saveDiagnostics?.(ref, forFile).catch(() => null);
-      // A failed write drops the attachment line and puts the summary back, because promising
-      // a file that was never written is worse than sending the short version of it.
-      sent = saved?.ok ? { ...ctx, attachment: saved.name } : { ...ctx, attachment: '' };
+  /**
+   * „Weiter": show the handover, and put the file on the desktop while it is being read.
+   *
+   * The write happens here rather than behind a button in the handover because the file has to
+   * *already be there* when the customer switches to their mail — they attach it before they
+   * come back, and a step telling them to attach a file that main has not written yet is the
+   * one instruction the dialog must not give. Nothing is revealed and nothing is opened; the
+   * only trace is a named text file where they can see it.
+   */
+  const toHandover = () => {
+    setStep('send');
+    if (!willAttach) return;
+    // The copy that goes *into* the file carries neither the attach instruction nor the
+    // summary: a file telling its reader to attach that same file is nonsense, and the log it
+    // would summarize is printed in full two sections further down.
+    const forFile = feedbackBody(draft, { ...ctx, attachment: '', diagnostics: '' });
+    if (forFile === written.current) return;
+    written.current = forFile;
+    setSent(null);
+    // Main answers `{ ok: false }` rather than throwing, but a channel that is not there at all
+    // rejects — and an unhandled rejection here would leave the handover promising a file that
+    // was never written. A failed write is a mail without an attachment, and it must be
+    // retryable, so the remembered text goes back to nothing.
+    void window.auftakt
+      ?.saveDiagnostics?.(ref, forFile)
+      .catch(() => null)
+      .then((saved) => {
+        if (!saved?.ok) written.current = '';
+        setSent(saved?.ok ? { ...ctx, attachment: saved.name } : { ...ctx, attachment: '' });
+      });
+  };
+
+  const copy = async (row: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(row);
+    } catch {
+      setCopied(null);
+      toast.show({
+        message: 'Kopieren hat nicht geklappt — bitte den Text von Hand markieren und kopieren.',
+      });
     }
-    openExternal(feedbackMailto(draft, sent));
-    // A mailto: is fire-and-forget — the app can never learn whether it was sent, and a
-    // customer who reads „gesendet" and closes their client is a bug report nobody gets.
-    toast.show({
-      message: sent.attachment
-        ? `Die Datei ${sent.attachment} liegt auf dem Schreibtisch — bitte an die E-Mail anhängen und abschicken.`
-        : 'E-Mail-Programm geöffnet — bitte dort noch abschicken.',
-    });
+  };
+
+  // The mail, field by field, in the order the compose window asks for them. „Text" shows a
+  // description rather than the body itself: it is up to twelve lines, it is already on screen
+  // in full under „Was wird mitgeschickt?" one dialog back, and what matters here is that the
+  // button puts it on the clipboard.
+  const fields = [
+    { key: 'to', label: 'An', shown: FEEDBACK_TO, copies: FEEDBACK_TO, action: 'Adresse kopieren' },
+    {
+      key: 'subject',
+      label: 'Betreff',
+      shown: feedbackSubject(draft, out),
+      copies: feedbackSubject(draft, out),
+      action: 'Betreff kopieren',
+    },
+    {
+      key: 'body',
+      label: 'Text',
+      shown: 'was du geschrieben hast, mit den technischen Angaben',
+      copies: feedbackMailBody(draft, out),
+      action: 'Text kopieren',
+    },
+  ];
+
+  // The dialog closes on the customer's own „Fertig", so nothing here can claim the mail was
+  // sent. What outlives the dialog is the file, so that is what the reminder is about.
+  const finish = () => {
+    if (out.attachment) {
+      toast.show({
+        message: `Die Datei ${out.attachment} liegt auf deinem Schreibtisch — bitte an die E-Mail anhängen und abschicken.`,
+      });
+    }
     onClose();
   };
 
@@ -172,7 +240,7 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
         <>
           {!ready && <FooterHint>{hint()}</FooterHint>}
           <Btn onClick={onClose}>Abbrechen</Btn>
-          <Btn variant="primary" onClick={() => setStep('confirm')} disabled={!ready}>
+          <Btn variant="primary" onClick={toHandover} disabled={!ready}>
             Weiter
           </Btn>
         </>
@@ -267,57 +335,74 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
                       Kontakte — du kannst sie vor dem Anhängen in Ruhe durchlesen.
                     </p>
                   )}
-                  {/* Unconditional, because the branch that needs it most is the one that used
-                      to hide it: a Fehler on a machine with no mail handler opens nothing at
-                      all, and this is then the only address anywhere in the app. */}
-                  <p className="mt-2">Ohne E-Mail-Programm: direkt an {FEEDBACK_TO} schreiben.</p>
                 </details>
               </>
             )}
           </>
         )}
 
-        {/* What „Weiter" is about to set off, before any of it happens — a file appearing on
-            the desktop and a mail opening on top of it is two surprises at once otherwise,
-            and the attaching only happens if they are expecting to have to do it.
+        {/* The handover. Everything the mail needs, in the order a compose window asks for it,
+            and not one thing that happens on its own: the file is already on the desktop, the
+            three buttons copy, and the `mailto:` is a link for whoever wants it (WP-66).
 
-            A dialog rather than the card this used to be, and rendered inside the one above
-            so `ModalDepthCtx` gives it a depth of its own: Escape peels it off and leaves the
-            filled-in form standing. Both buttons are in the footer, „Zurück" first, because a
-            confirm has no body tabbable and `Modal` focuses the footer's first button — the
-            keystroke that reaches the question should answer it with the safe answer. */}
-        {step === 'confirm' && (
+            A dialog rather than a card in the form so `ModalDepthCtx` gives it a depth of its
+            own: Escape peels it off and leaves the filled-in form standing. It is narrower than
+            the form behind it (`md`, the default) because it is a short list to work through,
+            not a form to fill in. */}
+        {step === 'send' && (
           <Modal
-            title="So geht es weiter"
+            title="So schickst du es ab"
             onClose={() => setStep('form')}
             footer={
               <>
                 <Btn onClick={() => setStep('form')}>Zurück</Btn>
-                <Btn variant="primary" onClick={() => void send()} disabled={sending}>
-                  E-Mail öffnen
+                <Btn variant="primary" onClick={finish}>
+                  Fertig
                 </Btn>
               </>
             }
           >
-            <ol className="list-decimal space-y-2 pl-5 text-sm text-neutral-600">
-              {willAttach && (
-                <li>
-                  Auftakt legt <code>{willAttach}</code> auf deinem Schreibtisch ab — das
-                  vollständige Startprotokoll und die Angaben zu deinem Rechner.
-                </li>
+            <div className="space-y-4 text-sm text-neutral-600">
+              {out.attachment && <p>Auftakt speichert eine Diagnose-Datei auf deinem Schreibtisch ab.</p>}
+              <p>Die E-Mail schreibst du selbst — im Browser oder im E-Mail-Programm:</p>
+
+              <div className="divide-y divide-neutral-100 rounded-xl border border-neutral-200">
+                {fields.map((f) => (
+                  <div key={f.key} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5">
+                    <span className="w-14 shrink-0 text-xs font-medium text-neutral-400">
+                      {f.label}
+                    </span>
+                    <span className="min-w-0 flex-1 break-words text-neutral-800">{f.shown}</span>
+                    {/* The label carries the row, so a screen reader hears three different
+                        buttons rather than three „kopieren" — and „Kopiert ✓" replaces it
+                        where the eye already is instead of in a toast at the far edge. */}
+                    <Btn onClick={() => void copy(f.key, f.copies)}>
+                      {copied === f.key ? 'Kopiert ✓' : f.action}
+                    </Btn>
+                  </div>
+                ))}
+              </div>
+
+              {out.attachment ? (
+                <p className="font-medium text-neutral-800">
+                  Zum Schluss die Datei <code>{out.attachment}</code> vom Schreibtisch anhängen und
+                  abschicken. Das Anhängen kann kein Programm für dich übernehmen.
+                </p>
+              ) : (
+                <p className="font-medium text-neutral-800">
+                  Zum Schluss abschicken — verschicken kann Auftakt die E-Mail nicht selbst.
+                </p>
               )}
-              <li>Dein E-Mail-Programm öffnet sich mit dem fertigen Text.</li>
-              {willAttach && (
-                <li className="font-medium text-neutral-800">
-                  Die Datei hängst du selbst an — zieh sie vom Schreibtisch in die E-Mail. Das
-                  kann kein Programm für dich übernehmen.
-                </li>
-              )}
-              <li>
-                Abschicken
-                {willAttach ? '.' : ' — Auftakt kann die E-Mail nicht selbst verschicken.'}
-              </li>
-            </ol>
+
+              {/* Last, small, and a link rather than a button: on the machines this feature is
+                  for there is often no mail client at all, and an offer that opens nothing is
+                  worse than no offer. For whoever does have one it saves the three copies. */}
+              <p className="text-xs text-neutral-500">
+                Mit einem eingerichteten E-Mail-Programm geht es auch in einem Schritt:{' '}
+                <ExternalLink href={feedbackMailto(draft, out)}>E-Mail-Programm öffnen</ExternalLink>
+                .
+              </p>
+            </div>
           </Modal>
         )}
       </div>

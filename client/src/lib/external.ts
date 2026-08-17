@@ -68,9 +68,10 @@ declare global {
       /** The last boots, already summarized by main — see electron/bootLog.ts (WP-54). */
       getDiagnostics?: () => Promise<Diagnostics>;
       /**
-       * Write the full log + machine details to the desktop as `Auftakt-Diagnose-<ref>.txt`
-       * and reveal it, because a `mailto:` cannot attach a file. `ref` is the mail's own
-       * reference; main re-validates its shape before it becomes a filename (X-02).
+       * Write the full log + machine details to the desktop as `Auftakt-Diagnose-<ref>.txt`,
+       * because a `mailto:` cannot attach a file — and *only* write it: the file manager the
+       * call used to open on top of it went with WP-66. `ref` is the mail's own reference;
+       * main re-validates its shape before it becomes a filename (X-02).
        */
       saveDiagnostics?: (ref: string, report: string) => Promise<DiagnosticsSave>;
       platform?: string;
