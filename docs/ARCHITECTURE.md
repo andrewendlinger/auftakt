@@ -194,6 +194,14 @@ best-effort and self-detecting, while flat `auftakt-<stamp>.db` files from befor
 left alone. A German `README.txt` at the root and a `MANIFEST.txt` per restore point explain the
 folder — CRLF and a UTF-8 BOM, because it is read in Notepad out of Google Drive.
 
+**The configured folder must already exist; everything below it is `mkdir -p`.** A run into a
+folder that is gone — renamed, deleted, on an ejected drive — is refused with a German message
+rather than recreated (WP-65): `mkdir -p` used to bring it back empty and the backup then
+succeeded into it, so nothing threw and the Electron dialog never fired while the user's older
+restore points sat under the old name. Only `backups/`, `pre-import/` and the dated folders are
+ours to create; the check is in `runBackup`, i.e. on every caller of the run, and reaches the
+user because `runStartupBackup` turns any non-OK response into a throw.
+
 **Inside** a restore point everything stays flat and keeps the `file` names from `seasons.json`:
 restoring is a hand copy over the data directory, so the season *label* goes into the manifest and
 never into a file name. Two things are therefore fixed: the dated folder names must keep matching

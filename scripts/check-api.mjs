@@ -15,7 +15,7 @@
  * second boot's health check from the first run's process.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -1980,7 +1980,11 @@ try {
     // file — so the refused season is backed up like every other one. Asserting the *files*, not
     // just the 200: „the run reported success but skipped the season it could not open" is the
     // shape that would still leave the customer without the backup they think they have.
+    // Created first: since WP-65 the run refuses a configured folder that is not there rather
+    // than recreating it (a renamed or unplugged one used to come back empty, silently), and the
+    // folder picker this stands in for only ever returns a folder that exists.
     const target = join(dataDir, 'sicherungen');
+    mkdirSync(target, { recursive: true });
     const run = await req('POST', '/backup', { dir: target });
     check('…and a startup backup still runs', run.status === 200, `${run.status} ${JSON.stringify(run.body)}`);
     check('…covering the refused season too', (run.body?.files ?? []).includes('auftakt.db'), JSON.stringify(run.body?.files));

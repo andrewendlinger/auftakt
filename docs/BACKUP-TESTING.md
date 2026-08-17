@@ -67,17 +67,18 @@ npm run dist:mac    # or dist:win
 - [ ] Any pre-existing flat `auftakt-<stamp>.db` files from older versions are still there.
 - [ ] Make the configured backup folder **read-only** and relaunch → an error dialog says no
       backup was written and points at Settings. **A console-only message is the old bug.**
-- [ ] **Deleting or renaming** the folder is a different case, and today it produces no dialog at
-      all: `runBackup` opens with `mkdirSync(target, { recursive: true })`, which is `mkdir -p` and
-      recreates the whole chain — the folder reappears, empty, and the backup genuinely succeeds
-      into it. Nothing throws, so the dialog above is never reached. Confirmed 2026-08-17 against
-      the demo stack: a `POST /api/backup` at a path two levels below a directory that does not
-      exist answers **200** and creates all of it; a read-only folder answers **500** (`EACCES`).
-      The user's earlier restore points stay behind under the old name — or on the unplugged
-      drive — while Settings keeps naming a folder that is no longer the one being written to.
-      **Open finding, not yet fixed**; a fix needs an existence check on the *configured* folder
-      before the run, without breaking the first backup into a folder the picker just created
-      (`properties: ['openDirectory', 'createDirectory']`).
+- [ ] **Rename** the configured backup folder (or delete it, or eject the drive it lives on) and
+      relaunch → the same error dialog appears and **names the missing folder**, and the folder is
+      **not** recreated: the old name still holds every restore point, and nothing new sits beside
+      it. **A silently recreated empty folder is the old bug (WP-65)** — `runBackup` opened with
+      `mkdirSync(target, { recursive: true })`, i.e. `mkdir -p`, so the whole chain reappeared and
+      the backup genuinely succeeded into it. Nothing threw, the dialog was never reached, and
+      Settings kept naming a folder that was no longer the one holding the backups.
+- [ ] Rename the folder back (or pick it again in Settings) → the next launch writes a dated
+      folder as usual, next to the earlier ones.
+- [ ] Point the app at a **brand-new folder created in the picker itself** („Neuer Ordner" in the
+      folder dialog) and relaunch → the first backup runs. An empty folder with no `backups/`
+      below it is the normal first-run state and must never be mistaken for a vanished one.
 
 ### 3c · The folder explains itself (WP-41)
 

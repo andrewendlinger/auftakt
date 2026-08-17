@@ -85,6 +85,48 @@ function migrateDatedFolders(backupDir: string, prefix: string, into: string): v
 }
 
 /**
+ * Why the configured backup folder cannot be written to *right now*, as a German message
+ * (null = fine). Checked immediately before the run, because that is the only moment at which
+ * the answer is worth anything: a folder is renamed, moved or unplugged while the app is closed.
+ *
+ * Without it the folder was silently **recreated** (WP-65). `runBackup` opens with
+ * `mkdirSync(target, { recursive: true })` — `mkdir -p` — so a vanished backup folder came back
+ * empty, with a fresh README and one restore point in it, and the run genuinely succeeded:
+ * nothing threw, so `reportBackupProblem`'s dialog (electron/main.ts) was never reached and the
+ * amber hint in Einstellungen stayed silent, `backup_dir` still being set. The customer kept
+ * backing up — into a folder that was no longer the one holding his older restore points. That
+ * is the ELP-03 failure case one door further in: there, a folder the backup could never use;
+ * here, one it could use yesterday and cannot find today.
+ *
+ * **Only the configured folder is checked, never `backups/` below it.** The picker runs with
+ * `properties: ['openDirectory', 'createDirectory']`, so a brand-new empty folder the user made
+ * seconds ago is the normal first-backup case and must still work — the sub-folders and the
+ * dated folder are ours to create, and `mkdir -p` stays right for exactly those.
+ *
+ * Named apart from `backupDirProblem` in `electron/backup.ts` deliberately: that one is a pure
+ * check of the path's *shape* (UNC, relative), which is why it can also run when the folder is
+ * picked. This one is about the filesystem's state at the moment of the write and answers
+ * nothing at pick time — the picker only ever returns a folder that exists.
+ */
+function backupDirUnavailable(backupDir: string): string | null {
+  let stats;
+  try {
+    stats = statSync(backupDir);
+  } catch {
+    // Any refusal to stat the path, not only ENOENT: an unreadable parent or a disconnected
+    // network volume is the same situation from the user's side — the folder is not there to
+    // write into. The message stays a question rather than a diagnosis for that reason. Keep it
+    // short: `reportBackupProblem` already prefixes „Es wurde keine Sicherung angelegt." and
+    // appends where to fix it, so anything more here is said twice.
+    return `Der Backup-Ordner „${backupDir}“ ist nicht mehr vorhanden — umbenannt, verschoben oder gelöscht, oder ein Laufwerk bzw. Cloud-Ordner ist gerade nicht verbunden.`;
+  }
+  if (!stats.isDirectory()) {
+    return `„${backupDir}“ ist eine Datei, kein Ordner, und kann nicht als Backup-Ordner verwendet werden.`;
+  }
+  return null;
+}
+
+/**
  * Write one dated restore point holding every season plus the registry, and keep the backup
  * folder explaining itself:
  *
@@ -106,6 +148,14 @@ function migrateDatedFolders(backupDir: string, prefix: string, into: string): v
  * explains them instead.
  */
 export function runBackup(backupDir: string): { dir: string; files: string[] } {
+  // Before anything is created, and inside the run rather than in the route below: the guard
+  // belongs against the `mkdirSync` two lines down, so a second caller of the backup run cannot
+  // be added without it. The route turns the throw into the same 500-with-message that a
+  // read-only folder already produces, which is the path `reportBackupProblem` is known to
+  // surface (docs/BACKUP-TESTING.md case 3) — one failure shape for the Electron side, not two.
+  const unavailable = backupDirUnavailable(backupDir);
+  if (unavailable) throw new Error(unavailable);
+
   const at = new Date();
   const pointsDir = join(backupDir, BACKUP_POINTS_DIR);
   const preImportDir = join(backupDir, PRE_IMPORT_DIR);

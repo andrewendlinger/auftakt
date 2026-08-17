@@ -12,6 +12,12 @@ import { isAbsolute, resolve } from 'node:path';
  * The check runs when the folder is *picked* as well as before every startup backup
  * (ELP-03): rejecting it only at startup meant a Windows user could choose a NAS share,
  * see it accepted, and never learn that their backups had stopped.
+ *
+ * Whether the folder still *exists* is deliberately not asked here — it is asked in
+ * `runBackup` (`server/src/routes/backup.ts`), immediately before the `mkdir -p` that would
+ * otherwise recreate a renamed or unplugged one (WP-65). Only the writing side can answer it
+ * for every caller, and at pick time there is nothing to answer: the picker returns a folder
+ * that exists, creating it if the user asked for a new one.
  */
 export function backupDirProblem(backupDir: string): string | null {
   if (/^(\\\\|\/\/)/.test(backupDir)) {
