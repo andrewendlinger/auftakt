@@ -605,6 +605,19 @@ verified by hand, and the gate itself is written from this list.
   `seasons.json`, so the drag issues `PATCH /api/landing` with the whole `documents` (or
   `sections`) array — a script waiting for `**/reorder` waits for ever. Assert against
   `GET /api/landing`, or after a `reload()`.
+- **A *refused* drop issues no request at all**, so there is nothing to poll for and no state to
+  wait on — the row simply snaps back. „Nothing happened" has to be asserted as a beat (longer
+  than the accepted reorder beside it took) followed by the same read, which is the one place in
+  a drag scenario where a fixed wait is the honest shape rather than a coin toss.
+- **The link list's group dimming is a CSS transition, so it has to be polled while the pointer
+  is still held.** `LinkList` puts `opacity-40` on every group but the dragged row's, on a
+  `transition-opacity` wrapper — sampled the instant the pointer arrives over the foreign group it
+  still reads ~0.99, so a check written as grab → move → read fails against working code, and the
+  700 ms sleep that hides it is a guess. Hold the drag (`mouse.down`, `mouse.move`, *no*
+  `mouse.up`), poll `getComputedStyle` until one foreign group has dropped, then assert — and
+  assert the **source** group is still `1` in the same sample, which is the half that fails if the
+  dimming is simply applied to everything. The wrappers are `div.transition-opacity` inside
+  `[data-section="links"]`, one per group, each holding its heading `span`.
 - **`keyboard.down` emits one keydown.** A repeat-key defect (TTU-24) needs events dispatched with
   `repeat: true`.
 - **Some repros only fire inside a refetch window.** On a local server the refetch beats a human's

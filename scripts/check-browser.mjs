@@ -70,6 +70,15 @@ async function api(path, init) {
   return res.json().catch(() => ({}));
 }
 
+/**
+ * Bind an API path to one season, for the fixture seasons the cases below work in.
+ *
+ * `?season=` is the header's twin — the middleware takes either, and a bare `fetch` has no header
+ * to send. One factory rather than one closure per case: the two differ only in the id, and a
+ * second copy is how the query-vs-`?` branch would start disagreeing with itself.
+ */
+const scoped = (id) => (path) => `${path}${path.includes('?') ? '&' : '?'}season=${id}`;
+
 /** @returns {Promise<{ status: number, body: any }>} */
 async function send(method, path, body) {
   const res = await fetch(`${API}${path}`, {
@@ -290,10 +299,41 @@ const seasonPin = (page) => page.evaluate(() => sessionStorage.getItem('auftakt-
 const chip = async (page) =>
   (await page.locator('button[title$="wechseln"]').first().innerText()).replace('▾', '').trim();
 
-/** Toasts stack and hold 6 s, so filter by the text under test — never `.first()`, never a sleep. */
+/**
+ * Toasts stack and hold 6 s, so filter by the text under test — never `.first()`, never a sleep.
+ *
+ * Six seconds is also a *deadline*: `ToastProvider` dismisses on a plain `setTimeout` and hovering
+ * does not pause it, so anything that has to click a toast's own button must do so before the
+ * assertions that merely read the state it announced.
+ */
 const toast = (page, re) => page.locator('.pointer-events-auto').filter({ hasText: re });
 
+/**
+ * The topmost dialog. Every `Modal` is a `div.fixed.inset-0` and the newest is the last of them.
+ *
+ * Scoping to it is not tidiness: the task table's row 🗑 carries `title="Löschen"`, so a page-wide
+ * button selector is ambiguous on any page that has tasks on it — and this is also what makes
+ * „Löschen" addressable inside *two stacked* dialogs.
+ */
+const topDialog = (page) => page.locator('.fixed.inset-0').last();
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * „It is there" — and the reason it is a wait rather than a `count()`.
+ *
+ * `ready()` resolves on `html[data-app-ready]`, which `BootReady` also sets from an
+ * **unconditional** 700 ms budget (`DATA_BUDGET_MS`, the escape hatch for a first load whose query
+ * is retrying), so a page can be „ready" with its queries still in flight. A one-shot count taken
+ * straight after `reload()` therefore reads 0 against working code on a slow runner. Wait for the
+ * node, then count it.
+ */
+const shown = (locator, timeout = 10_000) =>
+  locator
+    .first()
+    .waitFor({ timeout })
+    .then(() => true)
+    .catch(() => false);
 
 /**
  * „It is gone", as a wait rather than as a count.
@@ -680,10 +720,9 @@ try {
   check('…and Fällig is on screen', (await headers()).includes('fällig'));
 
   await d.getByRole('button', { name: /Spalten/ }).first().click();
-  // Every Modal is a `.fixed.inset-0` and the topmost is the last of them. Scoping to it is not
-  // tidiness: the task table's row 🗑 carries `title="Löschen"` too, so page-wide button
-  // selectors are ambiguous on any page that has tasks on it — which is this one.
-  const dialog = d.locator('.fixed.inset-0').last();
+  // Scoped to the topmost dialog for the reason `topDialog` gives — and this page in particular
+  // has tasks on it, so page-wide button selectors are ambiguous here.
+  const dialog = topDialog(d);
   // Two `[data-column-row]` lists live in this dialog since WP-59: „Globale Spalten" first, then
   // this page's own scope. The attribute carries no id, so address the row by its name — and not
   // the first row either, which is the locked Status column and has no toggle at all.
@@ -774,38 +813,33 @@ try {
   // 'Löschen' })` is ambiguous on any page with tasks on it — the task table's row 🗑 carries
   // `title="Löschen"` too — so every dialog button here is scoped to the topmost `.fixed.inset-0`.
   console.log('\nI · Löschen, Papierkorb, Rückgängig');
-  /** Fixture-season-scoped API path — `?season=` is the header's twin for a bare fetch. */
-  const T = (path) => `${path}${path.includes('?') ? '&' : '?'}season=${trash.id}`;
+  const T = scoped(trash.id);
   const e = await open(context, '/dashboard');
   await pin(e, trash.id, '/dashboard');
-  /** The topmost dialog. Every `Modal` is a `.fixed.inset-0` and the newest is the last of them. */
-  const top = () => e.locator('.fixed.inset-0').last();
+  // A locator is a query, not a snapshot, so this one `.last()` re-resolves on every use — it is
+  // the edit dialog while that is topmost and the confirm once it stacks on top.
+  const top = topDialog(e);
 
   await e.locator('[data-section="artists"] a[href="#/artist/1"]').first().click();
   await e.waitForURL(/#\/artist\/1$/, { timeout: 15_000 });
   // The URL changes with the transition, one query before the projects are on screen — a
   // `count()` read straight after it is 0 against a page that renders the card a moment later.
   const card = e.locator('[data-project-card="2"]');
-  const cardShown = await card
-    .first()
-    .waitFor({ timeout: 10_000 })
-    .then(() => true)
-    .catch(() => false);
-  check('the project is a card on its artist’s page', cardShown && (await card.count()) === 1);
+  check('the project is a card on its artist’s page', (await shown(card)) && (await card.count()) === 1);
   await card.click();
   await e.waitForURL(/#\/project\/2$/, { timeout: 15_000 });
 
   await e.getByRole('button', { name: '✎ Bearbeiten' }).click();
   const editHeading = e.getByRole('heading', { name: 'Projekt bearbeiten' });
   await editHeading.waitFor({ timeout: 8000 });
-  check('the edit dialog carries the delete button (WP-34)', await top().getByRole('button', { name: 'Löschen' }).isVisible());
+  check('the edit dialog carries the delete button (WP-34)', await top.getByRole('button', { name: 'Löschen' }).isVisible());
 
-  await top().getByRole('button', { name: 'Löschen' }).click();
+  await top.getByRole('button', { name: 'Löschen' }).click();
   await e.getByRole('heading', { name: 'Projekt löschen' }).waitFor({ timeout: 8000 });
   // The dependent count is fetched when the *confirm* opens, so „Wird geprüft, was mitgeht …" is
   // what is on screen first — reading the dialog straight away asserts against the pending state.
-  await top().getByText(/Mit dabei:/).waitFor({ timeout: 8000 });
-  const confirmBody = await top().innerText();
+  await top.getByText(/Mit dabei:/).waitFor({ timeout: 8000 });
+  const confirmBody = await top.innerText();
   check("the confirm counts the project's tasks", /3 Aufgaben/.test(confirmBody), confirmBody.replace(/\n/g, ' | '));
   check('…and points at the Archiv', /Gelöschte Einträge/.test(confirmBody));
 
@@ -815,22 +849,15 @@ try {
   check('Escape closes the confirm only, the form stays', await editHeading.isVisible());
   check('…and nothing was deleted', (await send('GET', T('/projects/2'))).status === 200);
 
-  await top().getByRole('button', { name: 'Löschen' }).click();
-  await top().getByRole('button', { name: 'In den Papierkorb' }).click();
+  await top.getByRole('button', { name: 'Löschen' }).click();
+  await top.getByRole('button', { name: 'In den Papierkorb' }).click();
   await e.waitForURL(/#\/artist\/1$/, { timeout: 15_000 });
   check('the delete lands on the parent page', (await e.evaluate(() => location.hash)) === '#/artist/1');
   check('the row is soft-deleted', (await send('GET', T('/projects/2'))).status === 404);
 
   // Scoped to the toast that names *this* record: toasts stack and hold six seconds, so in a
   // script an earlier step's „Rückgängig" is still on screen and `.first()` reverts the wrong row.
-  await check(
-    'an undo toast names the deleted project',
-    await toast(e, /Schulworkshop/)
-      .first()
-      .waitFor({ timeout: 10_000 })
-      .then(() => true)
-      .catch(() => false),
-  );
+  check('an undo toast names the deleted project', await shown(toast(e, /Schulworkshop/)));
   // The assertion the clicked route above exists for: `useUndoableDelete`'s `gone` marks the
   // deleted row's own keys stale instead of refetching them, so the page still mounted under the
   // redirect does not ask for a row that is in the Papierkorb, 404, and get told something is
@@ -843,21 +870,16 @@ try {
   await e.goto(`${UI}/#/project/2`);
   await e.reload(); // a `goto` to a different hash keeps data-app-ready — it says nothing about the route
   await ready(e);
-  await check(
+  check(
     'a bookmark to the deleted project shows „nicht gefunden“ (PGS-05)',
-    await e
-      .getByText('Projekt nicht gefunden')
-      .first()
-      .waitFor({ timeout: 8000 })
-      .then(() => true)
-      .catch(() => false),
+    await shown(e.getByText('Projekt nicht gefunden')),
   );
 
   await e.goto(`${UI}/#/archiv`);
   await e.reload();
   await ready(e);
   const trashRow = e.locator('div.divide-y > div').filter({ hasText: 'Schulworkshop' });
-  check('the Papierkorb lists the project', (await trashRow.count()) === 1);
+  check('the Papierkorb lists the project', (await shown(trashRow)) && (await trashRow.count()) === 1);
   await trashRow.getByRole('button', { name: 'Wiederherstellen' }).click();
   const restoredProject = await until(
     () => send('GET', T('/projects/2')).then((r) => r.status),
@@ -877,7 +899,7 @@ try {
   await e.reload();
   await ready(e);
   const artistCard = e.locator('[data-section="artists"] a[href="#/artist/3"]');
-  check('the artist is a card on the Übersicht', (await artistCard.count()) === 1);
+  check('the artist is a card on the Übersicht', (await shown(artistCard)) && (await artistCard.count()) === 1);
   await artistCard.first().click();
   await e.waitForURL(/#\/artist\/3$/, { timeout: 15_000 });
 
@@ -886,10 +908,10 @@ try {
   // `TextInput` renders no `type` — except in a `RecordFormModal`, whose text branch passes
   // `type="text"` explicitly. So this matches Name and not the colour field's untyped hex box,
   // which is the *only* other input in this dialog.
-  await top().locator('input[type="text"]').first().fill(`Wird eh gelöscht ${RUN}`);
-  await top().getByRole('button', { name: 'Löschen' }).click();
-  await top().getByText(/Mit dabei:/).waitFor({ timeout: 8000 });
-  const cascade = await top().innerText();
+  await top.locator('input[type="text"]').first().fill(`Wird eh gelöscht ${RUN}`);
+  await top.getByRole('button', { name: 'Löschen' }).click();
+  await top.getByText(/Mit dabei:/).waitFor({ timeout: 8000 });
+  const cascade = await top.innerText();
   check(
     'the confirm counts through the projects, not up to them',
     /\b2 Projekte\b/.test(cascade) &&
@@ -899,30 +921,39 @@ try {
     cascade.replace(/\n/g, ' | '),
   );
 
-  await top().getByRole('button', { name: 'In den Papierkorb' }).click();
+  await top.getByRole('button', { name: 'In den Papierkorb' }).click();
   await e.waitForURL(/#\/dashboard$/, { timeout: 15_000 });
-  check('a dirty form deletes without asking about the edits', (await e.getByText('Änderungen verwerfen?').count()) === 0);
-  check('the artist is soft-deleted', (await send('GET', T('/artists/3'))).status === 404);
-  check('the artist card disappears from the Übersicht', await gone(artistCard));
 
+  // Everything about the deleted state is **read** here and asserted after the undo, because the
+  // toast carrying that button is dismissed by a plain 6 s `setTimeout` that hovering does not
+  // pause. Five round trips plus an unbounded `gone()` between the delete and the click is how a
+  // run that is green on this machine goes red on a slower one — and the failure would read as
+  // „undo is broken" rather than „the script was too slow to press it". The reads themselves
+  // cannot be moved *after* the click: every one of them describes a row the undo brings back.
+  const discardPrompt = await e.getByText('Änderungen verwerfen?').count();
+  const cardGone = await gone(artistCard, 4000);
+  const deletedStatus = (await send('GET', T('/artists/3'))).status;
   const binned = (await api(T('/deleted'))).find((d) => d.type === 'artist');
-  check('…and the unsaved edit was dropped, not written', binned?.label === 'Kollektiv Halbton', String(binned?.label));
-  // SDL-01: an entry with live children never auto-purges, so „alles wiederherstellbar" holds
-  // indefinitely rather than for 30 days.
-  check('…and the entry will not auto-purge while children hang off it', binned?.purge_at === null, String(binned?.purge_at));
-
   const hits = await api(T(`/search?q=${encodeURIComponent('Klanginstallation')}`));
-  check(
-    "a deleted artist takes its projects out of the search",
-    hits.projects.filter((p) => p.artist_id === 3).length === 0,
-    JSON.stringify(hits.projects),
-  );
 
   // `click()` waits for the button; a `count()` here would race the toast's own render.
   await toast(e, /Kollektiv Halbton/).getByRole('button', { name: 'Rückgängig' }).first().click();
   const restoredArtist = await until(
     () => send('GET', T('/artists/3')).then((r) => r.status),
     (s) => s === 200,
+  );
+
+  check('a dirty form deletes without asking about the edits', discardPrompt === 0);
+  check('the artist is soft-deleted', deletedStatus === 404, `HTTP ${deletedStatus}`);
+  check('the artist card disappears from the Übersicht', cardGone);
+  check('…and the unsaved edit was dropped, not written', binned?.label === 'Kollektiv Halbton', String(binned?.label));
+  // SDL-01: an entry with live children never auto-purges, so „alles wiederherstellbar" holds
+  // indefinitely rather than for 30 days.
+  check('…and the entry will not auto-purge while children hang off it', binned?.purge_at === null, String(binned?.purge_at));
+  check(
+    'a deleted artist takes its projects out of the search',
+    hits.projects.filter((p) => p.artist_id === 3).length === 0,
+    JSON.stringify(hits.projects),
   );
   check('undo restores the artist', restoredArtist === 200, `HTTP ${restoredArtist}`);
 
@@ -941,7 +972,7 @@ try {
   // renumbered by hand — or renumbered the wrong parent's list — reshuffles rows on a page nobody
   // was looking at. Each half of this case therefore asserts the *other* parent stayed put.
   console.log('\nJ · Umsortieren per ⠿ — Kontakte und Karten');
-  const S = (path) => `${path}${path.includes('?') ? '&' : '?'}season=${sorted.id}`;
+  const S = scoped(sorted.id);
   const f = await open(context, '/project/1');
   await pin(f, sorted.id, '/project/1');
 
@@ -1015,9 +1046,15 @@ try {
   );
   await f.reload();
   await ready(f);
-  const hrefs = await f
-    .locator('[data-section="artists"] a[href^="#/artist/"]')
-    .evaluateAll((els) => els.map((el) => el.getAttribute('href')));
+  // Polled, not sampled: `ready()` can arrive on the 700 ms budget with the artists query still
+  // in flight, and an `evaluateAll` taken then returns `[]` against a page that is fine.
+  const hrefs = await until(
+    () =>
+      f
+        .locator('[data-section="artists"] a[href^="#/artist/"]')
+        .evaluateAll((els) => els.map((el) => el.getAttribute('href'))),
+    (list) => list.length >= 4,
+  );
   check('the persisted order survives a reload', hrefs[0] === '#/artist/4', hrefs.slice(0, 4).join(' '));
 
   // ======================================================================== K · the drag’s limit
@@ -1093,10 +1130,13 @@ try {
   // A refused drop issues no request at all, so there is nothing to poll for — the honest shape
   // is a beat longer than the reorder above took, then the same read.
   await sleep(800);
+  // One read for both the verdict and the detail — two fetches can sample different moments, and
+  // the log would then contradict its own verdict on exactly the run that needs reading.
+  const refused = await links();
   check(
     'the refused drop across the category border changed nothing',
-    JSON.stringify(await links()) === JSON.stringify(linksAfter),
-    (await links()).join(' | '),
+    JSON.stringify(refused) === JSON.stringify(linksAfter),
+    refused.join(' | '),
   );
 
   // The ⠿ used to be invisible until the row was hovered (WP-35). Reload with the pointer parked
