@@ -696,6 +696,27 @@ verified by hand, and the gate itself is written from this list.
   Measured on `#/print/project/1`: 19 distinct fill colours with the fix, 18 without, and under
   `economy` Chromium also *darkens* light text (`161,161,161` → `171,171,171`), which is another
   reason not to key on a text colour.
+- **…and the status pill paints the *same* shade as its group heading.** Both come from
+  `DEFAULT_STATUS_OPTIONS`, so on a project whose status is „In Progress" — demo project 1 —
+  `#dbeafe` is on the sheet twice, once in the header and once as the group heading, and a
+  document-wide „is this colour in the PDF" is satisfied by the pill while the heading prints
+  white on white. Print such a sheet from a **copied season with the project's `status` PATCHed to
+  `null`**: each group colour is then painted exactly once, which pins the fill to the heading.
+  `check:browser` does that rather than keying on the first group's colour, which is only
+  accidentally unambiguous.
+- **An embedded image is not `/Subtype /Image`** — that matches **4** times on a sheet with no
+  picture at all, because Skia embeds colour emoji as bitmaps (📍 in the events, 🚐 in artist 1's
+  note). Nor is it `DCTDecode`, which pins the assertion to the fixture happening to be a JPEG.
+  What identifies the real one is its *stored size*, and Skia writes the keys newline-separated:
+  `/Subtype /Image\n/Width 260\n/Height 173` — take the numbers from the DOM
+  (`img.naturalWidth/naturalHeight`) and require a `/X<n> Do` in a page's content stream beside
+  it, or the picture is embedded but never drawn. **And wait for the bytes before printing**:
+  `img.complete && img.naturalWidth > 0`, since `printToPDF` will happily snapshot a layout whose
+  image has not arrived, which is a failure that comes and goes with runner load.
+- **No demo artist sets `artists.image`**, so `.print-page header img` on `#/print/artist/1` is
+  *not* the avatar — it is the two pictures inside artist 1's note (WP-37: one in a Zitat, one
+  wrapped in a link), which land inside `<header>` because `PrintHeader` renders the note as its
+  children. A check written against „the avatar" passes while the avatar `<img>` is deleted.
 - **`page.pdf()` prints Letter unless told otherwise.** The print block's numbers are A4's — „A4
   inside the 14 mm @page margins leaves ~269 mm" is what `.prose-md img`'s 240 mm cap is derived
   from — and the customer prints A4, so a paging assertion taken at the default measures a page
@@ -728,7 +749,10 @@ verified by hand, and the gate itself is written from this list.
   window is one row wide in both directions: at 55 the rule changes nothing, at 57 the header
   crosses on its own. What makes such a count survive a runner with other fonts is that every line
   height on the sheet is an explicit Tailwind value, so the page a row lands on is not a font
-  metric — keep anything that could *wrap* out of the fixture and it stays reproducible.
+  metric — keep anything that could *wrap* out of the fixture and it stays reproducible. A search
+  around the tuned length must go **both ways** (56, 57, 55, 58, …): a boundary can drift down as
+  easily as up, and a search that only grows the list reports „no effect at any length" on a
+  perfectly good build, which reads exactly like the regression it guards.
 
 ## Native modules in the packaged app
 
@@ -1063,9 +1087,24 @@ nothing would have noticed. `check:browser`'s case L does now, over `#/dashboard
 - **`launch({ viewport })`** in `~/.claude/tools/playwright/lib/drive.mjs` takes it; nothing else
   changes.
 - **The assertion that catches real breakage is `documentElement.scrollWidth <=
-  clientWidth`,** plus a sweep for elements whose `right` exceeds the viewport *and* have no
-  ancestor with `overflow-x: auto|scroll|hidden`. Without that second half the task table fails
-  the check by design — it is supposed to scroll inside its own box.
+  clientWidth`,** plus a sweep for elements whose `right` exceeds the viewport. Without the second
+  half a card that is cut off is invisible — content clipped away never grows the document — and
+  without the first, nothing catches a page that simply got wider.
+- **The sweep's exemption is `auto|scroll`, never `hidden`.** The two are opposites for this
+  question: a scrollable ancestor *offers* the overhang (which is what the task table does by
+  design, WP-55), a `hidden` or `clip` one *cuts it off*, and a `Card className="overflow-hidden"`
+  whose row grew past the window is exactly the defect a narrow-window check exists for. Take the
+  verdict at the nearest ancestor that constrains the axis: `auto`/`scroll` → exempt; `hidden`/
+  `clip` → report, unless the element fits inside that clipper (then the clipper is the offender
+  and reports itself on its own turn). One blind spot remains and is worth knowing rather than
+  papering over: CSS promotes a `visible` paired with a non-`visible` to `auto`, so any box with
+  `overflow-y: auto` — every dialog, every popover with a vertical scroller — computes `auto` on
+  x too and exempts its subtree.
+- **Prove the sweep can still see something, with two probes rather than one.** A 3000 px `<div>`
+  on `body` must grow the document *and* be reported; the same `<div>` inside an
+  `overflow:hidden` box must **not** grow it and must still be reported. The second one is the
+  control that fails if the `hidden` rule above is ever loosened back to an exemption — and it has
+  to run through the shipped sweep, not through a copy of its loop pasted into the control.
 - **`div.overflow-x-auto` has an inner `div.min-w-min` since WP-55**, holding the add row and the
   `<table>` together so the two are the same width. A selector written as
   `div.overflow-x-auto > div.flex` for the add row matched before that and matches nothing now.

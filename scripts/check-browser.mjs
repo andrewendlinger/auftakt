@@ -438,17 +438,28 @@ async function dragHandleOnto(page, source, target) {
 }
 
 /**
- * „Is this page wider than its window?" — evaluated inside the page, so both halves sample one
- * layout. Serialised to Chromium by `page.evaluate`, so it may close over nothing but the DOM.
+ * „Is anything on this page out of reach at this width?" — evaluated inside the page, so both
+ * halves sample one layout. Serialised to Chromium by `page.evaluate`, so it may close over
+ * nothing but the DOM.
  *
  * The first half is `documentElement.scrollWidth <= clientWidth`. On its own it is not enough:
- * an element that overhangs *inside* a scroll container never grows the document, so a page can
- * pass while a card sticks out of a section that clips it.
+ * an element that overhangs inside a box that *clips* never grows the document at all, so a page
+ * would pass while a card row is cut off and unreachable — which is the WP-55 defect class this
+ * case exists for.
  *
- * The second half is the sweep, and it is the half that has to know the difference between an
- * overhang and a scroller. The task table is **supposed** to be wider than a 610 px window and
- * to scroll inside its own box (WP-55), so an element is only reported when nothing between it
- * and the root scrolls or clips horizontally.
+ * The second half is the sweep, and what it has to get right is **why** a box may be wider than
+ * the window. Three verdicts, taken at the nearest ancestor that constrains the horizontal axis:
+ *
+ * - `auto` / `scroll` → the content is reachable by scrolling, which is exactly what the task
+ *   table does by design (WP-55). Exempt. Note that a box with `overflow-y: auto` and nothing set
+ *   on x computes to `auto` on x as well (CSS: a `visible` paired with a non-`visible` becomes
+ *   `auto`), so every dialog and popover with a vertical scroller exempts its subtree too. That
+ *   is still „reachable by scrolling", but it is the sweep's blind spot and worth knowing.
+ * - `hidden` / `clip` → the box cuts the content off instead of offering it. Reported, but only
+ *   when the element really is cut: an element that fits *inside* its clipper is fine, and if the
+ *   clipper itself overhangs the window then the clipper is the offender and reports itself on
+ *   its own turn through the loop.
+ * - nothing at all → the element is simply wider than the page. Reported.
  */
 function overflowReport() {
   const de = document.documentElement;
@@ -461,17 +472,47 @@ function overflowReport() {
     if (r.width === 0 || r.height === 0) continue;
     // One pixel of slack: a fractional layout width rounds up against an integer viewport.
     if (r.right <= vw + 1) continue;
-    let clipped = false;
-    for (let p = el.parentElement; p && !clipped; p = p.parentElement) {
+    let verdict = 'page';
+    for (let p = el.parentElement; p; p = p.parentElement) {
       const ox = getComputedStyle(p).overflowX;
-      clipped = ox === 'auto' || ox === 'scroll' || ox === 'hidden';
+      if (ox === 'visible') continue;
+      if (ox === 'auto' || ox === 'scroll' || ox === 'overlay') {
+        verdict = 'scrollbar';
+        break;
+      }
+      verdict = r.right <= p.getBoundingClientRect().right + 1 ? 'inside' : 'cut';
+      break;
     }
-    if (!clipped) {
-      const cls = typeof el.className === 'string' ? el.className.split(' ').slice(0, 2).join('.') : '';
-      offenders.push(`${el.tagName.toLowerCase()}${cls ? `.${cls}` : ''} bis ${Math.round(r.right)}`);
-    }
+    if (verdict === 'scrollbar' || verdict === 'inside') continue;
+    const id = el.id ? `#${el.id}` : '';
+    const cls =
+      typeof el.className === 'string' && el.className
+        ? `.${el.className.split(' ').slice(0, 2).join('.')}`
+        : '';
+    offenders.push(
+      `${el.tagName.toLowerCase()}${id}${cls} bis ${Math.round(r.right)}${verdict === 'cut' ? ' (abgeschnitten)' : ''}`,
+    );
   }
   return { scrollWidth: de.scrollWidth, clientWidth: vw, offenders };
+}
+
+/**
+ * Hang a probe off `body`, measure it with **the shipped sweep**, take it away again.
+ *
+ * The measurement has to go through `overflowReport` itself rather than through a second copy of
+ * its loop: a control that re-implements the thing it is controlling validates the copy. The
+ * function closes over nothing, so `page.evaluate` can serialise it as it stands.
+ */
+async function sweepWithProbe(page, markup) {
+  await page.evaluate((html) => {
+    const host = document.createElement('div');
+    host.id = 'auftakt-probe-host';
+    host.innerHTML = html;
+    document.body.appendChild(host);
+  }, markup);
+  const report = await page.evaluate(overflowReport);
+  await page.evaluate(() => document.getElementById('auftakt-probe-host')?.remove());
+  return report;
 }
 
 /** `staleTime: 5_000` — a focus inside five seconds of the last fetch legitimately refetches nothing. */
@@ -563,6 +604,9 @@ function sheet(buf) {
 
 const painted = (s, css) => s.fills.some((f) => nearRgb(f.rgb, rgbOf(css)));
 
+/** How often the sheet fills in that colour — „once" is what pins a fill to one element. */
+const paintedTimes = (s, css) => s.fills.filter((f) => nearRgb(f.rgb, rgbOf(css))).length;
+
 /**
  * Where a colour is painted in the sheet, and how much text sits before and after it *on that
  * page*. Both counts are of text-showing operators, not of words: one `Tj` is one glyph run, and
@@ -645,9 +689,16 @@ async function makeSeason(what, copy = false) {
   return season;
 }
 
-/** How many tasks the first status group starts with, and how far case N2 may grow it. */
+/**
+ * How many tasks the first status group starts with, and the lengths case N2 tries around it.
+ *
+ * The offsets are symmetric, and that is the point: the boundary can drift in **either**
+ * direction — a Chromium that changes a metric, or one line more or less of sheet chrome — and a
+ * search that only ever grows the list would report „keine Wirkung" on a perfectly good build,
+ * reading exactly like the regression it guards. Nearest first, so the normal run stops at 0.
+ */
 const PAGE_BREAK_FIRST = 56;
-const PAGE_BREAK_MAX_EXTRA = 3;
+const PAGE_BREAK_TRIES = [0, 1, -1, 2, -2, 3, -3];
 
 /**
  * The project sheet's page-break fixture: one project whose open tasks fall into two status
@@ -678,11 +729,29 @@ async function fillPageBreakFixture(seasonId) {
     await send('POST', q('/projects'), { artist_id: artist.id, code: 'DB1', name: 'Seitenumbruch' })
   ).body;
   const add = (title, value) => send('POST', q('/tasks'), { project_id: project.id, title, status: value });
-  for (let i = 0; i < PAGE_BREAK_FIRST; i++) await add(`Aufgabe ${String(i + 1).padStart(2, '0')}`, open[0].value);
+  /** @type {number[]} */
+  const firstGroup = [];
+  for (let i = 0; i < PAGE_BREAK_FIRST; i++) {
+    firstGroup.push((await add(`Aufgabe ${String(i + 1).padStart(2, '0')}`, open[0].value)).body.id);
+  }
   // The second group is the one under test, and it is small: a header stranded above six rows is
   // the shape the customer met, and a long group would be split by the page break anyway.
   for (let i = 0; i < 6; i++) await add(`Nachlauf ${i + 1}`, open[1].value);
-  return { seasonId, project, first: open[0], add };
+
+  /**
+   * Take the first group to exactly `n` rows, in whichever direction that is. Shrinking is a soft
+   * delete, which is what the sheet's own query filters on, so it is the same fixture either way.
+   */
+  const resize = async (n) => {
+    while (firstGroup.length > n) {
+      await send('DELETE', q(`/tasks/${firstGroup.pop()}`));
+    }
+    while (firstGroup.length < n) {
+      firstGroup.push((await add(`Aufgabe ${String(firstGroup.length + 1).padStart(2, '0')}`, open[0].value)).body.id);
+    }
+    return firstGroup.length;
+  };
+  return { seasonId, project, resize };
 }
 
 try {
@@ -697,6 +766,9 @@ try {
   // both and reads „4 Aufgaben", which is the fixture drifting, not a defect.
   const trash = await makeSeason('Löschen', true);
   const sorted = await makeSeason('Reihenfolge', true);
+  // Case N prints demo rows and needs one of them changed (project 1 loses its status pill, see
+  // there), so it gets a copy like the cases above — taken here, before anything has written.
+  const sheets = await makeSeason('Bögen', true);
   // Case N2's page-break fixture is the one season that is **not** a copy: its whole point is a
   // task list of a tuned length, and a copy would bring the demo's along. Built here with the
   // others all the same, so a season this run created is never a season an earlier case wrote to.
@@ -1492,43 +1564,41 @@ try {
     await ctx.close();
   }
 
-  // The sweep's own control. An element wide enough to matter, hung off `body` where nothing
-  // clips it, has to be reported by both halves — a sweep that has quietly stopped matching
-  // anything reports the same „0 offenders" as a page that is fine.
+  // The sweep's own control, one probe per verdict it has to reach — „0 offenders" is also what a
+  // sweep that has quietly stopped matching anything reports.
   const probe = await windowContext(chrome, NARROW[0]);
   const g = await open(probe, '/dashboard');
-  const grown = await g.evaluate(() => {
-    const wide = document.createElement('div');
-    wide.style.cssText = 'width:3000px;height:8px';
-    document.body.appendChild(wide);
-    const de = document.documentElement;
-    const grew = de.scrollWidth > de.clientWidth;
-    const rect = wide.getBoundingClientRect();
-    wide.remove();
-    return { grew, right: Math.round(rect.right), client: de.clientWidth };
-  });
-  check('das Kontrollelement wächst das Dokument über den Viewport', grown.grew, `${grown.right} > ${grown.client}`);
-  const swept = await g.evaluate(() => {
-    const wide = document.createElement('div');
-    wide.style.cssText = 'width:3000px;height:8px';
-    document.body.appendChild(wide);
-    const de = document.documentElement;
-    const vw = de.clientWidth;
-    let found = false;
-    for (const el of Array.from(document.querySelectorAll('body *'))) {
-      const r = el.getBoundingClientRect();
-      if (r.width === 0 || r.height === 0 || r.right <= vw + 1) continue;
-      let clipped = false;
-      for (let p = el.parentElement; p && !clipped; p = p.parentElement) {
-        const ox = getComputedStyle(p).overflowX;
-        clipped = ox === 'auto' || ox === 'scroll' || ox === 'hidden';
-      }
-      if (!clipped) found = true;
-    }
-    wide.remove();
-    return found;
-  });
-  check('…und der Sweep meldet es (er trifft nicht bloß nichts)', swept);
+
+  const wide = await sweepWithProbe(g, '<div id="probe-weit" style="width:3000px;height:8px"></div>');
+  check(
+    'das breite Kontrollelement wächst das Dokument über den Viewport',
+    wide.scrollWidth > wide.clientWidth,
+    `${wide.scrollWidth} bei ${wide.clientWidth}`,
+  );
+  check(
+    '…und der Sweep meldet es',
+    wide.offenders.some((o) => o.includes('probe-weit')),
+    wide.offenders.join(' · '),
+  );
+
+  // The second one is the case the first half structurally cannot see, and the reason the sweep
+  // reports a `hidden` ancestor rather than exempting it: content cut off by a clipping box never
+  // grows the document, so `scrollWidth` stays exactly at the viewport while a row of a card is
+  // out of reach.
+  const cut = await sweepWithProbe(
+    g,
+    '<div style="overflow:hidden;width:100px"><div id="probe-abgeschnitten" style="width:3000px;height:8px"></div></div>',
+  );
+  check(
+    'ein abgeschnittenes Kontrollelement wächst das Dokument gerade nicht',
+    cut.scrollWidth <= cut.clientWidth,
+    `${cut.scrollWidth} bei ${cut.clientWidth}`,
+  );
+  check(
+    '…und genau deshalb muss der Sweep es melden',
+    cut.offenders.some((o) => o.includes('probe-abgeschnitten')),
+    cut.offenders.join(' · '),
+  );
 
   // The season switcher is the one popover that does not go through `useAnchoredPopover`, which
   // is what flips and caps the others against the viewport. It hangs off the *sticky* header, so
@@ -1588,6 +1658,12 @@ try {
     !!doneRow && !!openRow && !!emptyRow,
     `erledigt ${doneRow?.id}, offen ${openRow?.id}, ohne Datum ${emptyRow?.id}`,
   );
+  // Nothing below dereferences those rows, and the reason is that `check` does not throw: a demo
+  // whose fixture has drifted would raise a TypeError here, the outer catch would swallow it as
+  // one opaque „run completed" failure, and N/N2 would never run at all. Missing ids fall through
+  // to selectors that match nothing, so every assertion below reports what it really found.
+  const doneId = doneRow?.id ?? 0;
+  const doneTitle = doneRow?.title ?? '';
 
   const h = await open(context, '/project/7');
   await shown(h.locator('div.overflow-x-auto table tbody tr'));
@@ -1626,7 +1702,7 @@ try {
         dashes,
       };
     },
-    [doneRow.id, openRow.id, emptyRow.id, doneRow.title],
+    [doneId, openRow?.id ?? 0, emptyRow?.id ?? 0, doneTitle],
   );
 
   check('der Titel der erledigten Zeile ist durchgestrichen', marks.title.found && marks.title.deco === 'line-through', String(marks.title.deco));
@@ -1687,27 +1763,49 @@ try {
   // Chromium that simply prints backgrounds regardless — i.e. it would assert nothing about the
   // fix. Measured: the `.print-page` colours are 19 with the fix and 18 without.
   //
-  // The colours are read off the page rather than hardcoded, and they are deliberately not the
-  // project-code badge's: the header's `border-b-4` carries the same accent, and a border prints
-  // under `economy` too, so that one shade cannot tell the two states apart.
+  // Two things decide *which* colour may carry that assertion, and both rule out the obvious one.
+  // The project-code badge is out because the header's `border-b-4` carries the same accent and a
+  // border prints under `economy` too. And the status-group pills are only unambiguous once the
+  // project has **no status**: `ProjectStatusPill` paints „In Progress" in exactly the shade its
+  // group heading uses (`DEFAULT_STATUS_OPTIONS`), and demo project 1 carries that status — so on
+  // the demo, half of this assertion is satisfiable by a pill in the header while the group
+  // heading prints white on white. Hence the copied season and the one PATCH: in it each group
+  // colour is painted **exactly once**, which pins the fill to the heading rather than merely
+  // finding it somewhere on the sheet.
   console.log('\nN · Druckbögen als PDF (SHL-11, WP-62)');
-  const p1 = await open(context, '/print/project/1');
+  const P = scoped(sheets.id);
+  const stripped = await send('PATCH', P('/projects/1'), { status: null });
+  check('das Fixture-Projekt trägt keine Status-Pille mehr', stripped.body?.status === null, `HTTP ${stripped.status}`);
+
+  const p1 = await open(context, '/dashboard');
+  await pin(p1, sheets.id, '/print/project/1');
   await p1.locator('.print-group-head').first().waitFor({ timeout: 10_000 });
   const ink = await p1.evaluate(() => ({
     groups: Array.from(document.querySelectorAll('.print-group-head span')).map(
       (s) => getComputedStyle(s).backgroundColor,
     ),
-    rot: getComputedStyle(document.querySelector('.print-page .tc-rot')).color,
-    gruen: getComputedStyle(document.querySelector('.print-page .tc-gruen')).color,
+    // Optional-chained on purpose: a fixture that lost its coloured runs must fail the one check
+    // written for it, not throw out of the case and take N2 with it.
+    rot: document.querySelector('.print-page .tc-rot')
+      ? getComputedStyle(document.querySelector('.print-page .tc-rot')).color
+      : '',
+    gruen: document.querySelector('.print-page .tc-gruen')
+      ? getComputedStyle(document.querySelector('.print-page .tc-gruen')).color
+      : '',
+    statusPill: document.querySelectorAll('.print-page header .rounded-full').length,
   }));
-  check('der Projektbogen hat zwei Statusgruppen und farbigen Text', ink.groups.length === 2 && !!ink.rot && !!ink.gruen, JSON.stringify(ink));
+  check(
+    'der Projektbogen hat zwei Statusgruppen und farbigen Text',
+    ink.groups.length === 2 && !!ink.rot && !!ink.gruen && ink.statusPill === 0,
+    JSON.stringify(ink),
+  );
 
   const paper = sheet(await printPdf(p1));
   check('der Bogen wird zu einem PDF', paper.pages.length > 0, `${paper.pages.length} Seiten`);
   check(
-    'die Hintergründe der Gruppenköpfe stehen auf dem Papier (SHL-11)',
-    ink.groups.every((c) => painted(paper, c)),
-    ink.groups.join(' | '),
+    'die Hintergründe der Gruppenköpfe stehen auf dem Papier — je genau einmal (SHL-11)',
+    ink.groups.length > 0 && ink.groups.every((c) => paintedTimes(paper, c) === 1),
+    ink.groups.map((c) => `${c} ×${paintedTimes(paper, c)}`).join(' | '),
   );
   // WP-62's document-sized fixture is project 1's description: a `tc-gruen` list item and a
   // `**<u><span class="tc-rot">…</span></u>**` run, i.e. the nesting the serializer produces.
@@ -1728,29 +1826,58 @@ try {
   );
   await p1.close();
 
-  // The artist sheet's own two questions. The avatar is a real `<img>` served from
-  // `/api/images/:token`, so „it printed" means an embedded image XObject *and* a `Do` that draws
-  // it — an image that failed to load leaves the layout intact and the paper empty.
+  // The artist sheet's image, which is **not** an avatar: no demo artist sets `artists.image`, so
+  // what prints here are the two pictures in artist 1's note (WP-37 — one in a Zitat, one wrapped
+  // in a link), rendered inside `<header>` because `PrintHeader` takes the note as its children.
+  //
+  // „It printed" is asserted as an image XObject of the *stored* dimensions plus a `Do` that draws
+  // it. Both halves are needed and neither may be loosened: a bare `/Subtype /Image` count is 4 on
+  // a sheet with **no** picture at all, because Skia embeds colour emoji as bitmaps (📍 in the
+  // events, 🚐 in the note), and `DCTDecode` would pin the assertion to this fixture being a JPEG.
+  // The dimensions come from the DOM, so the check follows the fixture rather than repeating it.
   const p2 = await open(context, '/print/artist/1');
   await p2.locator('.print-page table').first().waitFor({ timeout: 10_000 });
-  const avatar = await p2.evaluate(() => !!document.querySelector('.print-page header img'));
+  // An `<img>` that has not arrived yet leaves the layout intact and the paper empty, and
+  // `printToPDF` will happily snapshot that — the one-run-in-ten failure mode this gate must not
+  // have. Wait for the bytes, not for the element.
+  const loaded = await p2
+    .waitForFunction(
+      () =>
+        Array.from(document.querySelectorAll('.print-page img')).every(
+          (i) => /** @type {HTMLImageElement} */ (i).complete && /** @type {HTMLImageElement} */ (i).naturalWidth > 0,
+        ),
+      { timeout: 10_000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  const shot = await p2.evaluate(() => {
+    const img = /** @type {HTMLImageElement | null} */ (document.querySelector('.print-page img'));
+    return img ? { w: img.naturalWidth, h: img.naturalHeight, inHeader: !!img.closest('header') } : null;
+  });
   const artistPaper = sheet(await printPdf(p2));
-  check('der Künstlerbogen zeigt ein Bild', avatar);
+  check('das Bild aus der Notiz ist geladen, bevor gedruckt wird', loaded && !!shot, JSON.stringify(shot));
   check(
-    '…und es steht auch im PDF',
-    artistPaper.buf.includes('DCTDecode') && artistPaper.pages.some((c) => /\/X\d+ Do/.test(c)),
-    `${artistPaper.pages.length} Seiten`,
+    '…und es steht mit seinen Maßen im PDF (WP-37)',
+    !!shot &&
+      new RegExp(`/Subtype\\s*/Image\\s*/Width ${shot.w}\\s*/Height ${shot.h}\\b`).test(
+        artistPaper.buf.toString('latin1'),
+      ) &&
+      artistPaper.pages.some((c) => /\/X\d+ Do/.test(c)),
+    shot ? `${shot.w}×${shot.h}, ${artistPaper.pages.length} Seiten` : 'kein Bild',
   );
   await p2.close();
 
   // Both sheets omit done tasks and say so in the heading, which is the reason WP-58's strike is
-  // asserted on the table above and not here: a done row never reaches paper at all.
-  const p3 = await open(context, '/print/project/7');
+  // asserted on the table above and not here: a done row never reaches paper at all. Read from the
+  // same copied season the sheet is pinned to, so the count and the sheet cannot disagree about
+  // which database they are describing.
+  const p3 = await open(context, '/dashboard');
+  await pin(p3, sheets.id, '/print/project/7');
   await p3.locator('.print-page table').first().waitFor({ timeout: 10_000 });
   // Section headings are CSS-uppercased, so `innerText` says „AUFGABEN (1 OFFEN)" — a
   // case-sensitive match here finds nothing on a sheet that is counting correctly.
   const sheetText = (await p3.locator('.print-page').innerText()).toLowerCase();
-  const openCount = seven.filter((t) => t.status !== done).length;
+  const openCount = (await api(P('/tasks?project_id=7'))).filter((t) => t.status !== done).length;
   check(
     `der Bogen zählt „(${openCount} offen)“`,
     sheetText.includes(`(${openCount} offen)`),
@@ -1758,8 +1885,8 @@ try {
   );
   check(
     '…und die erledigte Aufgabe steht nicht darauf',
-    !sheetText.includes(doneRow.title.toLowerCase()),
-    doneRow.title,
+    !!doneTitle && !sheetText.includes(doneTitle.toLowerCase()),
+    doneTitle || 'kein Fixture',
   );
   await p3.close();
 
@@ -1772,9 +1899,9 @@ try {
   // The fixture is tuned to a page boundary and neighbouring counts silently miss it, which is
   // exactly how this case would come to assert nothing. So it does not trust the number: it takes
   // a second PDF with the rule overridden and requires the two to *differ*. If a runner's metrics
-  // move the boundary by a row, up to three more tasks are added until they do — and with the rule
-  // gone from index.css no count differs at all, which is what makes this a gate rather than a
-  // fixture.
+  // move the boundary, the list is resized around the tuned length — three rows either way,
+  // nearest first — until they do; and with the rule gone from index.css no length differs at all,
+  // which is what makes this a gate rather than a fixture.
   //
   // The heading is found in the PDF by the colour of its own pill, and „is it stranded" is read as
   // paint order: content is emitted in DOM order, so „nothing before it on its page" means it
@@ -1797,9 +1924,11 @@ try {
 
   let boundary = null;
   let last = null;
-  for (let extra = 0; extra <= PAGE_BREAK_MAX_EXTRA && !boundary; extra++) {
-    if (extra > 0) {
-      await pageBreak.add(`Aufgabe ${PAGE_BREAK_FIRST + extra}`, pageBreak.first.value);
+  for (const offset of PAGE_BREAK_TRIES) {
+    if (boundary) break;
+    const rows = PAGE_BREAK_FIRST + offset;
+    if (offset !== 0) {
+      await pageBreak.resize(rows);
       await p4.reload();
       await ready(p4);
       await p4.locator('.print-group-head').first().waitFor({ timeout: 10_000 });
@@ -1810,8 +1939,8 @@ try {
       heads[1]?.colour ?? '',
     );
     last = { kept, split };
-    console.log(`      ${PAGE_BREAK_FIRST + extra} Aufgaben — mit Regel: ${where(kept)} | ohne: ${where(split)}`);
-    if (kept.page > split.page) boundary = { extra, kept, split };
+    console.log(`      ${rows} Aufgaben — mit Regel: ${where(kept)} | ohne: ${where(split)}`);
+    if (kept.page > split.page) boundary = { rows, kept, split };
   }
 
   // Read the pill's colour back out of the PDF before anything is concluded from where it sits:
@@ -1820,7 +1949,7 @@ try {
   check(
     'break-after: avoid schiebt den Gruppenkopf über den Umbruch',
     !!boundary,
-    boundary ? `bei ${PAGE_BREAK_FIRST + boundary.extra} Aufgaben` : `in ${PAGE_BREAK_MAX_EXTRA + 1} Längen keine Wirkung`,
+    boundary ? `bei ${boundary.rows} Aufgaben` : `in ${PAGE_BREAK_TRIES.length} Längen keine Wirkung`,
   );
   if (boundary) {
     check('…er steht dann als Erstes auf seiner Seite', boundary.kept.before === 0, where(boundary.kept));
