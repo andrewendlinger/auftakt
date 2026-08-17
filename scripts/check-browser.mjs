@@ -3085,9 +3085,13 @@ try {
   await topDialog(u).getByRole('button', { name: 'Weiter' }).click();
   const held = await until(() => u.evaluate(() => /** @type {any} */ (window).__saved), (v) => v.length > 1, 8000);
   check('ein korrigierter Text schreibt eine zweite Datei', held.length === 2 && held[1].report.includes('auch nach einem Neustart'), `${held.length} Dateien`);
+  // The button says so rather than only greying out: the write races a 2 s GPU timeout, and the
+  // person waiting is the one already reporting a fault. Note that this is also why a script may
+  // not address „Weiter" by name across a held save — for that moment it is not called that.
   check(
     '…und die Übergabe wartet darauf, statt einen Namen zu raten',
-    (await u.locator('.fixed.inset-0').count()) === 1 && !(await topDialog(u).getByRole('button', { name: 'Weiter' }).isEnabled()),
+    (await u.locator('.fixed.inset-0').count()) === 1 &&
+      (await topDialog(u).getByRole('button', { name: 'Speichert…' }).isDisabled()),
   );
   await u.evaluate(() => /** @type {any} */ (window).__finishSave());
   const file2 = `Auftakt-Diagnose-${ref}-2.txt`;
@@ -3102,8 +3106,25 @@ try {
     body2.split('\n')[0],
   );
 
+  // Taking the correction back is the one step a single remembered text cannot pass: `written`
+  // is keyed by the report text, so a text already on the desktop is a *lookup* — the first
+  // bundle holds exactly it — and the earlier cache hits do not prove that, because there the
+  // remembered name and the predictable one are the same string. Here they differ, and a third
+  // write would also still be held: the handover would simply never open.
+  await topDialog(u).getByRole('button', { name: 'Zurück' }).click();
+  await u.locator('textarea').nth(0).fill('Der Druckbogen bleibt leer.');
+  await topDialog(u).getByRole('button', { name: 'Weiter' }).click();
+  const reverted = await until(() => topDialog(u).innerText(), (t) => t.includes(file), 8000);
+  check(
+    'ein zurückgenommener Text nennt wieder die erste Datei und schreibt keine dritte',
+    reverted.includes(file) && !reverted.includes(file2) && (await u.evaluate(() => /** @type {any} */ (window).__saved)).length === 2,
+    file,
+  );
+  const bodyBack = await copy('Text kopieren', (t) => t.startsWith('!!') && !t.includes('-2.txt'));
+  check('…und der kopierte Text hängt sie an, nicht die zweite', bodyBack.split('\n')[0] === `!! BITTE NOCH ANHÄNGEN: ${file}`, bodyBack.split('\n')[0]);
+
   await topDialog(u).getByRole('button', { name: 'Fertig' }).click();
-  check('der Hinweis nennt die Datei beim Namen', await shown(toast(u, new RegExp(file2))));
+  check('der Hinweis nennt die Datei beim Namen', await shown(toast(u, new RegExp(file))));
   await u.close();
 
   console.log(`\n${failures ? `✗ ${failures} Fehler` : '✓ alles ok'} (${checks} Prüfungen)`);

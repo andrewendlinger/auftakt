@@ -248,13 +248,18 @@ verified by hand, and the gate itself is written from this list.
   gives the second its own name and main returns it. Three consequences for a driving script.
   **The dialog remembers report text → name**, so a text already on the desktop — an unchanged
   one, or an edit taken back again — names that bundle without writing a third: `window.__saved`
-  stays where it was, which is also what makes the Escape-and-back-again case a 1. **A stub that
-  always answers `Auftakt-Diagnose-${ref}.txt` cannot see any of this** — it makes the one name
-  the handover must never predict indistinguishable from the one it may — so both stubs emulate
-  the suffix (second save of a reference → `…-2.txt`). And **`window.__holdSave = true` parks the
-  next save** until `window.__finishSave()`: while it is parked the handover must not be on
-  screen at all and „Weiter" must be disabled, which is how „it waits for the write instead of
-  guessing the name" is asserted rather than assumed.
+  stays where it was, which is also what makes the Escape-and-back-again case a 1. Only the
+  *taken-back* edit tests that, though: everywhere else the remembered name and the predictable
+  one are the same string, so a guess passes as well as a lookup. **A stub that always answers
+  `Auftakt-Diagnose-${ref}.txt` cannot see any of this** — it makes the one name the handover
+  must never predict indistinguishable from the one it may — so both stubs emulate the suffix
+  (second save of a reference → `…-2.txt`). And **`window.__holdSave = true` parks the next save**
+  until `window.__finishSave()`: while it is parked the handover must not be on screen at all,
+  which is how „it waits for the write instead of guessing the name" is asserted rather than
+  assumed. During that wait the primary button is disabled **and reads „Speichert…"**, so
+  `getByRole('button', { name: 'Weiter' })` matches nothing for as long as the save is held — up
+  to two seconds in the real app, where `collectSystemFacts` races `getGPUInfo` against its own
+  timeout.
 - **Nothing on this path opens anything by itself (WP-66).** „E-Mail öffnen" is gone: a script
   that waits for it, or that expects `window.__external` to fill after „Weiter", hangs. The
   `mailto:` now sits at the bottom of the handover as the link „E-Mail-Programm öffnen"

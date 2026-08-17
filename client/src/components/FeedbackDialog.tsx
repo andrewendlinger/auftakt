@@ -278,10 +278,14 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
         <>
           {!ready && <FooterHint>{hint()}</FooterHint>}
           <Btn onClick={onClose}>Abbrechen</Btn>
-          {/* Disabled while main is writing, which is the whole of the wait: the handover is
-              composed from the name main returns, so it opens once and opens correct. */}
+          {/* Disabled *and* re-labelled while main is writing: the handover is composed from the
+              name main returns, so it opens once and opens correct — but the wait is up to two
+              seconds when the GPU process is the thing that is wedged (`collectSystemFacts`
+              races `getGPUInfo` against a 2 s timeout, and a wedged GPU is exactly what a Fehler
+              gets reported about). A primary button that only greys out for that long reads as a
+              dead button, and the person watching it is the one already having a bad time. */}
           <Btn variant="primary" onClick={toHandover} disabled={!ready || saving}>
-            Weiter
+            {saving ? 'Speichert…' : 'Weiter'}
           </Btn>
         </>
       }
