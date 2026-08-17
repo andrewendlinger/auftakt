@@ -568,6 +568,29 @@ verified by hand, and the gate itself is written from this list.
   `disabled` while the draft is invalid (`validateOptions`) or unchanged, so a script that clicks
   it and waits for a message waits 30 s on a dead button. The refusal to read is the pair: the
   disabled button and the amber sentence naming the row („Kategorie 6 hat keine Bezeichnung …").
+- **`aria-current` on a tab lands one commit after the URL.** `waitForURL` resolves on the history
+  entry, `NavLink` marks itself on the render that follows — so a read taken straight after the
+  navigation says `null` on a router that is working. Poll for it. (And assert something the target
+  tab actually renders beside it: „the link is current" is also true of a route that rendered
+  nothing into the `<Outlet>`.)
+- **`OptionsEditor` reseeds its draft from the server list, and throws away what was typed in
+  between.** `useEffect(() => setDraft(options), [options])` — so anything added between a save
+  landing and its invalidate arriving simply vanishes, silently. A script that adds a row, saves,
+  and adds the next row as soon as the *API* shows the first one is racing that reseed: the second
+  row disappears, and every following click addresses a row one position off — which is how a
+  cleanup step ends up removing a demo category and hanging on the reassignment dialog it opens.
+  Wait for the **rows**, not for the API, before touching the editor again.
+- **Its rows are keyed by index, so two clicks on „the last ✕" inside one render hit the same
+  position twice.** One row is removed, the second click re-runs the same `removeAt(i)` — and if
+  the list shrank in between, the position now holds a different option. Remove one at a time and
+  wait for the row count to drop before the next click; with a used category behind it, the
+  rediscovery of this costs a demo fixture rather than a red check.
+- **Read an option row's label off `el.value`, and check the whole draft before every save.** React
+  writes `value` as a property, so the labels are invisible to a selector — but `evaluateAll(els =>
+  els.map(el => el.value))` reads them, which is the only way to find out *which* row „the last
+  one" currently is. `check:browser` asserts the full label list before each „Speichern" for that
+  reason: as an assertion it says „what was typed is in the draft and nothing else moved", and as a
+  guard it is what stops the reseed above from turning a red check into a renamed demo category.
 - **The two „Zeitfenster" boxes must be *emptied*, not selected-over.** Their defect (PGS-04) was
   a clamp per keystroke: the empty field was written back as a 1 and the next digits appended, so
   clearing 14 and typing 60 stored 160. `ControlOrMeta+a` followed by typing never leaves the box
@@ -1188,10 +1211,12 @@ still by hand.
   The row itself was fixed in WP-64c (`min-w-0`, so the flex item may shrink below its longest
   option); `#/einstellungen` is in `check:browser`'s narrow page set since.
 - **At 624 px the same overhang is invisible to a window sweep, which is why the assertion is
-  against the *card*.** Without the fix „+ Hinzufügen" ends at 617 px in both windows: past a
-  610 px viewport (reported) and at exactly the edge of a 624 px one, inside the sweep's one pixel
-  of slack (not reported). „Does the row end inside its card" bites at both widths and is the
-  honest question anyway — that is where the content is cut off.
+  against the *card*.** The row's right edge does not move with the window — the page's left inset
+  is the same at both widths and the row's content width is fixed by the select — so without the
+  fix „+ Hinzufügen" ends at **617 px in both**: 7 px past a 610 px viewport, where the sweep
+  reports it, and 7 px *inside* a 624 px one, where the sweep has nothing to say while the row
+  still overhangs its card (600 px) by 17. „Does the row end inside its card" bites at both widths
+  and is the honest question anyway — the card is where the content is cut off.
 - **The season switcher's menu is `div.absolute.z-40`**, and what WP-55 pinned on it is the pair
   `overflow-y: auto` plus `max-height: min(24rem, 70vh)` — 348.6 px in a 498 px window. Assert
   those rather than „the menu fits", which is true on a short list whatever the CSS says: the demo
