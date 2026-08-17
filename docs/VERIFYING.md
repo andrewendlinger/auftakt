@@ -28,8 +28,9 @@ of browsers that were already cached.
 **The committed gate is `npm run check:browser`** — it rebuilds `.demo`, boots the stack on
 `:4325` + `:5317` and drives it, so it cannot run beside `npm run demo` and says so rather than
 guessing. Run it after a change to the two-window/season paths, to the task table, the column
-manager or the editor, to a delete or a reorder, and to anything that lays out narrow or prints;
-it is not a substitute for the passes below.
+manager or the editor, to a delete or a reorder, to anything under `#/einstellungen`, to a
+dialog's keyboard behaviour or the search overlay, and to anything that lays out narrow or
+prints; it is not a substitute for the passes below.
 
 **The Übersicht is `#/dashboard`. `#/` is the season landing page** — a different screen with no
 task tiles and no „Nächste Termine". Asserting dashboard content against `#/` fails against
@@ -119,14 +120,16 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 ## Playwright traps
 
 **Some of these are now committed, and this file is still where they are decided.**
-`npm run check:browser` (WP-R6, extended by WP-64a and WP-64b) encodes the ones its cases need —
+`npm run check:browser` (WP-R6, extended by WP-64a, WP-64b and WP-64c) encodes the ones its cases need —
 two pages in one context, the sessionStorage pin plus a document reload, `data-app-ready` over
 `networkidle`, the out-of-band delete, the toast that lands one query late, the anchored composer
 placeholder, the two `[data-column-row]` lists, the real keystroke a note needs before it stores
 anything, the ⠿ and its 2-px nudge, the dialog-scoped „Löschen", the toast filtered by its own
 record, „gone" as a wait rather than a count, the two viewports a 624×560 window really produces,
-the overhang sweep's exemption for a scroll container, and the A4 `page.pdf()` whose default
-`printBackground: false` is a repro rather than an oversight. A new trap belongs **here first** and in the gate second: the gate covers
+the overhang sweep's exemption for a scroll container, the A4 `page.pdf()` whose default
+`printBackground: false` is a repro rather than an oversight, the tab order read as *positions*
+rather than as keystrokes, the recording bridge stub, and the `<select>` that has to be used once
+before it can be measured. A new trap belongs **here first** and in the gate second: the gate covers
 the flows it drives, this file covers the app. Nothing below is retired by it — everything the gate does not drive is still
 verified by hand, and the gate itself is written from this list.
 
@@ -413,6 +416,31 @@ verified by hand, and the gate itself is written from this list.
   inside it forever. `PillSelect`'s option menu is the exception the trap makes: it portals to
   `document.body`, so while it is open `document.activeElement` is *outside* the dialog card and
   moves with ↑/↓, not Tab.
+- **Read a tab walk as a *position in the dialog's own tab order*, never as a list of elements.**
+  Collect the card's tabbables with `Modal`'s own filter (`tabIndex >= 0`, not `[disabled]`, not
+  inside `[inert]`, `getClientRects().length > 0`) and report the index of `document.activeElement`
+  in it. `-1` is then the one answer that matters — focus on `<body>`, on the page behind the
+  backdrop, or in a portal are all „the trap let go" — and every WP-42 promise becomes a number:
+  index 0 is always the header's ✕, so „the dialog focused its first *field*" is 1, and „the
+  forward wrap skipped the ✕" is a cycle that never returns to 0. On the artist dialog the walk is
+  `2 3 4 5 6 7 1`; a *confirm* has no tabbable in its body, so its wrap goes to the ✕ (`1 2 0 1`)
+  and only the record dialogs wrap to the first field.
+- **The topmost card is the *last* `.fixed.inset-0 > div`, and the topmost `.fixed.inset-0` is
+  often not a dialog at all.** A `Modal` opened out of another one is rendered *inside* it (the
+  feedback dialog's „So geht es weiter"), so document order puts the topmost last — a
+  `querySelector` finds the outer one. And `PillSelect`'s portal hangs its own click-away layer,
+  a bare `div.fixed.inset-0` with no card in it, off `document.body`: while a pill menu is open
+  `topDialog(page)` is *that layer*, so scope to `.first()` there. The count going 1 → 2 on
+  opening a pill is the tell.
+- **Do not wait for a dialog by its heading when the card behind it carries the same words.**
+  „Feedback & Diagnose" is the card's `<h2>` and the dialog's `<h3>`, so
+  `getByRole('heading', { name: 'Feedback & Diagnose' })` is a strict-mode violation that reads as
+  „the dialog never opened". Wait for the dialog's own first control instead.
+- **A tab walk that reaches a rich-text field never leaves it.** The editor's keymap handles Tab
+  (WP-49 indents with it), so a walk through the Termin dialog stops moving at Notizen and every
+  further press reports the same element — which reads as a broken tab order. Walk a dialog
+  *without* an editor when the assertion is about the cycle (the Künstler dialog is the clean one:
+  ✕, Name, Bild wählen, Farbe, Hex, Löschen, Abbrechen, Speichern).
 - **React sets `value` as a *property***, so `input[value="…"]` never matches; address a focused
   field as `input:focus`. Since WP-42 *every* dialog autofocuses its first field, so `input:focus`
   is only unambiguous scoped to the dialog card — or outside any dialog, where an `InlineInput`
@@ -482,8 +510,13 @@ verified by hand, and the gate itself is written from this list.
   Enter then leaves the editor open and writes nothing (WP-43).
 - **Search hits are not tab stops.** ↑/↓ move a marker while focus stays in the field, so read
   `aria-activedescendant` against the `[role="option"]` ids rather than `document.activeElement`,
-  and press Enter on the *field*. Tab from the field lands on the panel's scroll container —
-  Chromium makes an `overflow-y-auto` region focusable — which is one stop, not a hit.
+  and press Enter on the *field*. What Tab from the field lands on is **not fixed**, and asserting
+  it is how this check goes red on a good build: Chromium makes an `overflow-y-auto` region
+  focusable only while it really scrolls, so with a long list the next stop is the panel itself and
+  with the demo's six „Konzert" hits — `scrollHeight === clientHeight` — it is the next button in
+  the header instead. Assert what the rule actually says: the next stop is **not a hit**. And read
+  the hit count in the same evaluate, because „focus is not on a hit" is also true of a panel that
+  closed on the keystroke.
 - **⌘F/⌘K focus the search field, and are inert while any dialog is open.** A script that expects
   the shortcut to work over a modal is asserting the opposite of the rule (WP-43).
 - **An option group is one tab stop, so a tab walk that counted pills now ends somewhere else.**
@@ -527,13 +560,54 @@ verified by hand, and the gate itself is written from this list.
   Navigate straight to the slug: `#/einstellungen/aufgaben` („Aufgaben & Übersicht"),
   `/kategorien`, `/daten` („<Saison> & Daten") or `/hilfe` („Programm & Hilfe"). The labels moved
   in WP-54 and the slugs did not, so a script keyed on a slug survived it and one keyed on a
-  label did not.
+  label did not. `a[href^="#/einstellungen/"]` is the tab bar and exactly four elements; a bare
+  `nav a` also takes the header's own links, and `#/einstellungen` itself is an index route that
+  redirects rather than a page — assert that as a navigation (`waitForURL`), because after a
+  `reload()` the URL is the redirected one either way.
+- **A settings editor refuses by going *stumpf*, not by complaining afterwards.** „Speichern" is
+  `disabled` while the draft is invalid (`validateOptions`) or unchanged, so a script that clicks
+  it and waits for a message waits 30 s on a dead button. The refusal to read is the pair: the
+  disabled button and the amber sentence naming the row („Kategorie 6 hat keine Bezeichnung …").
+- **`aria-current` on a tab lands one commit after the URL.** `waitForURL` resolves on the history
+  entry, `NavLink` marks itself on the render that follows — so a read taken straight after the
+  navigation says `null` on a router that is working. Poll for it. (And assert something the target
+  tab actually renders beside it: „the link is current" is also true of a route that rendered
+  nothing into the `<Outlet>`.)
+- **`OptionsEditor` reseeds its draft from the server list, and throws away what was typed in
+  between.** `useEffect(() => setDraft(options), [options])` — so anything added between a save
+  landing and its invalidate arriving simply vanishes, silently. A script that adds a row, saves,
+  and adds the next row as soon as the *API* shows the first one is racing that reseed: the second
+  row disappears, and every following click addresses a row one position off — which is how a
+  cleanup step ends up removing a demo category and hanging on the reassignment dialog it opens.
+  Wait for the **rows**, not for the API, before touching the editor again.
+- **Its rows are keyed by index, so two clicks on „the last ✕" inside one render hit the same
+  position twice.** One row is removed, the second click re-runs the same `removeAt(i)` — and if
+  the list shrank in between, the position now holds a different option. Remove one at a time and
+  wait for the row count to drop before the next click; with a used category behind it, the
+  rediscovery of this costs a demo fixture rather than a red check.
+- **Read an option row's label off `el.value`, and check the whole draft before every save.** React
+  writes `value` as a property, so the labels are invisible to a selector — but `evaluateAll(els =>
+  els.map(el => el.value))` reads them, which is the only way to find out *which* row „the last
+  one" currently is. `check:browser` asserts the full label list before each „Speichern" for that
+  reason: as an assertion it says „what was typed is in the draft and nothing else moved", and as a
+  guard it is what stops the reseed above from turning a red check into a renamed demo category.
+- **The two „Zeitfenster" boxes must be *emptied*, not selected-over.** Their defect (PGS-04) was
+  a clamp per keystroke: the empty field was written back as a 1 and the next digits appended, so
+  clearing 14 and typing 60 stored 160. `ControlOrMeta+a` followed by typing never leaves the box
+  empty and passes against exactly that — press Backspace first.
 - **A `mailto:` is fire-and-forget, so the feedback dialog produces no app state to assert on.**
   Its only observable is the URL handed to `openExternal`, and the real one opens a mail client
   on the machine running the script. Stub the bridge with an `openExternal` that *records* —
   `window.__external.push(url)` — then read it back with `new URL(...)` and `searchParams`, which
   is also the only honest check of the encoding. Asserting on the dialog after „E-Mail öffnen"
   asserts on nothing; it has already closed itself.
+  **`check:browser` carries its own copy of that stub** (WP-64c) rather than importing
+  `lib/drive.mjs`, which belongs to the ad-hoc runtime, imports `playwright` and points at :4317.
+  Two runtimes, one pattern: a change to the bridge has to be made in both. The gate's copy takes
+  the platform and the two update answers as parameters, because `checkForUpdates`'s `refresh`
+  argument is the card's own distinction between the cached startup check and the one the button
+  asks for — which is how one page drives both the „Herunterladen & installieren" branch and the
+  „Zur Releases-Seite" one.
 - **The update card's progress bar cannot be reached by a stub that only answers questions.**
   The percentage is *pushed* from main over `onUpdateProgress`, so a bridge stub whose members all
   return promises leaves the card frozen in its first frame — which is exactly the frame it used
@@ -1076,7 +1150,8 @@ verified by hand, and the gate itself is written from this list.
 Since WP-55 the window can go down to **624×560**, which is smaller than anything the interface
 was designed against, and no check ever set a viewport — Playwright's default is 1280×720, so
 nothing would have noticed. `check:browser`'s case L does now, over `#/dashboard`, `#/`,
-`#/artist/1`, `#/project/1` and `#/archiv`; everything else at this width is still by hand.
+`#/artist/1`, `#/project/1`, `#/archiv` and `#/einstellungen`; everything else at this width is
+still by hand.
 
 - **The viewport is not the window.** `useContentSize` is false, so `WINDOW_MINIMUM` is the outer
   size and the frame comes off before the renderer sees anything. Driving at 624×560 checks a
@@ -1122,15 +1197,26 @@ nothing would have noticed. `check:browser`'s case L does now, over `#/dashboard
   (610 px viewport) or 576/1347 (624 px) without it. Assert alongside it that the table really
   does overhang its container at that width (`scroller.scrollWidth > scroller.clientWidth`), or
   the sweep's exemption is never exercised and the case proves less than it looks.
-- **`#/einstellungen` reports a 7 px overhang at 610 px about one load in ten** — and it is the
-  page, not the sweep. `TaskSortEditor`'s add row is a `<select>` beside „+ Hinzufügen", and
-  Chromium sizes that select either to ~181 px or to its longest option's ~465 px („Priorität
-  (ausgeblendet – sortiert nur auf Seiten, die sie zeigen)"), apparently depending on whether it
-  re-ran intrinsic sizing after the columns query filled the options in. At 465 the row really is
-  wider than its card, the state then holds for the life of that layout (still 617 after two
-  seconds), and 624 px has never shown it. Reproduced 2 in 12 driving the WP-55 page set, 0 in 46
-  loading the page on its own. `check:browser` therefore leaves that page out of its narrow sweep
-  and says so; fixing the row belongs with the rest of Einstellungen.
+- **A `<select>` keeps the width of its *first* layout, and React fills its options in later.**
+  This is what made `#/einstellungen` look like a page that overhangs one load in ten (WP-64b's
+  reading), and it is neither the page being flaky nor the sweep: `TaskSortEditor`'s add row is a
+  `<select>` beside „+ Hinzufügen", Chromium sizes it to its longest option — „Priorität
+  (ausgeblendet – sortiert nur auf Seiten, die sie zeigen)", 465 px — and **does not re-measure
+  when the columns query adds those options a moment later**. Whichever width the first layout
+  took simply stays: after a `reload()` the box is 181 px in six loads out of six (and the row
+  fits, whatever the CSS says), while a `goto` to the tab without a reload is 465 in six out of
+  six. Waiting for `select option` to be there is therefore *not* enough to measure it — what
+  re-runs the intrinsic sizing is a `change` on the select, i.e. what a user does before pressing
+  „+ Hinzufügen": 24 loads out of 24. Use the select once, then measure.
+  The row itself was fixed in WP-64c (`min-w-0`, so the flex item may shrink below its longest
+  option); `#/einstellungen` is in `check:browser`'s narrow page set since.
+- **At 624 px the same overhang is invisible to a window sweep, which is why the assertion is
+  against the *card*.** The row's right edge does not move with the window — the page's left inset
+  is the same at both widths and the row's content width is fixed by the select — so without the
+  fix „+ Hinzufügen" ends at **617 px in both**: 7 px past a 610 px viewport, where the sweep
+  reports it, and 7 px *inside* a 624 px one, where the sweep has nothing to say while the row
+  still overhangs its card (600 px) by 17. „Does the row end inside its card" bites at both widths
+  and is the honest question anyway — the card is where the content is cut off.
 - **The season switcher's menu is `div.absolute.z-40`**, and what WP-55 pinned on it is the pair
   `overflow-y: auto` plus `max-height: min(24rem, 70vh)` — 348.6 px in a 498 px window. Assert
   those rather than „the menu fits", which is true on a short list whatever the CSS says: the demo

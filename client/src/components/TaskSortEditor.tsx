@@ -147,10 +147,18 @@ export function TaskSortEditor({
       </ol>
       {available.length > 0 && (
         <div className="flex gap-2">
+          {/* `min-w-0` is the whole of what keeps this row inside its card in a narrow window.
+              A `<select>`'s automatic minimum width is its *longest option* — here „Priorität
+              (ausgeblendet – sortiert nur auf Seiten, die sie zeigen)", 465 px — so as a flex
+              item with the default `min-width: auto` it refuses to shrink and pushes
+              „+ Hinzufügen" out of the card: measured at 617 px in a 610 px window (WP-64c).
+              The list only reaches that width once the columns query has filled the options in,
+              which is why the overhang appeared to come and go. Shrinking is what a `<select>`
+              does gracefully — it clips its own label — so the row stays usable. */}
           <select
             value={toAdd}
             onChange={(e) => setToAdd(e.target.value)}
-            className="rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-sm text-neutral-800 outline-none focus:border-neutral-500"
+            className="min-w-0 rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-sm text-neutral-800 outline-none focus:border-neutral-500"
           >
             <option value="">Spalte wählen…</option>
             {available.map((c) => (
