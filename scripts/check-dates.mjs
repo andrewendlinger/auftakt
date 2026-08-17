@@ -18,7 +18,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { createConnection } from 'node:net';
-import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -280,7 +280,12 @@ try {
   check('the purge countdown is 30 days, not 29 (PGS-12)', daysLeft === 30, `${daysLeft} (purge_at ${row.purge_at})`);
 
   // backup folder names (ELP-09/DBW-09)
+  // Created here rather than left to the run: since WP-65 a backup refuses a configured folder
+  // that does not exist instead of recreating it, because that is how a renamed or unplugged one
+  // was silently replaced by an empty one. The picker only ever hands over a folder that exists,
+  // so creating it is what makes this harness match the product's caller.
   const backupDir = join(dataDir, 'backups');
+  mkdirSync(backupDir, { recursive: true });
   const b1 = await api('POST', '/backup', { dir: backupDir });
   const b2 = await api('POST', '/backup', { dir: backupDir });
   const name = b1.dir.split('/').pop();

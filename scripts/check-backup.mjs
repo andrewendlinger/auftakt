@@ -249,6 +249,44 @@ for (const s of seasons) {
 }
 check('MANIFEST names the app version', /App-Version: \S+/.test(manifest));
 
+// --- [1d] a vanished backup folder is refused, not silently recreated (WP-65) ---
+// runBackup opened with mkdirSync(target, { recursive: true }), i.e. mkdir -p, so a folder the
+// user had renamed, moved or left on an unplugged drive came back empty with a fresh README and
+// one restore point in it. The run succeeded, nothing threw, and the startup backup's error
+// dialog was therefore never reached: the customer kept backing up somewhere other than where his
+// older restore points were. Reported from the macOS pass as „es kam nie eine Warnung".
+{
+  const ghostRoot = join(workDir, 'weg');
+  const ghost = join(ghostRoot, 'auftakt-backups');
+  const missing = await post('backup', { dir: ghost });
+  check('a vanished backup folder is refused', missing.status >= 400, `${missing.status} ${missing.body.error ?? ''}`);
+  check('the refusal names the folder', (missing.body.error ?? '').includes(ghost), missing.body.error);
+  check('a vanished backup folder is NOT recreated (the old bug)', !existsSync(ghostRoot), ghostRoot);
+
+  // The trap this must not spring: the folder picker runs with `createDirectory`, so the very
+  // first backup goes into a folder that was created seconds ago and is empty — no README, no
+  // backups/ below it. Checking anything but the *configured* folder would refuse that.
+  const fresh = join(workDir, 'frisch-gewaehlt');
+  mkdirSync(fresh);
+  const first = await post('backup', { dir: fresh });
+  check(
+    'a first backup into a brand-new empty folder still runs',
+    first.status === 200 && existsSync(first.body.dir ?? ''),
+    first.body.error ?? first.body.dir,
+  );
+
+  // A file where the folder is expected: mkdir -p fails there anyway, but with a raw EEXIST the
+  // user is left to decode. The message names the cause instead.
+  const notADir = join(workDir, 'kein-ordner');
+  writeFileSync(notADir, 'not a folder');
+  const refused = await post('backup', { dir: notADir });
+  check(
+    'a file in place of the backup folder is refused',
+    refused.status >= 400 && /Datei/.test(refused.body.error ?? ''),
+    `${refused.status} ${refused.body.error ?? ''}`,
+  );
+}
+
 // --- [1b] the backup folder is season-independent (WP-39) ---
 // It used to live in the active season's settings table, so switching season left an empty
 // backup_dir behind: no backup, and — where an older build had already marked first_run_done
@@ -395,6 +433,34 @@ if (process.platform === 'win32' || process.getuid?.() === 0) {
   } catch (err) {
     check('database still reopens after a failing import', false, err.message);
   }
+}
+
+// --- [2d] an import must not resurrect a vanished backup folder (WP-65) ---
+// The other door into the same silence. The pre-import safety copy goes to
+// <backupDir>/pre-import/… through the same mkdir -p, so an import recreated the folder the
+// startup backup had just refused — and the import is exactly what a user reaches for after
+// that warning. From the next launch backups would run into the resurrected empty folder again,
+// with the new warning satisfied and the real restore points still under the old name. The copy
+// falls back to the data dir instead: the rescue survives, nothing is recreated.
+{
+  const ghost = join(workDir, 'weg-beim-import');
+  mkdirSync(ghost);
+  await post('backup/dir', { dir: ghost }); // configured while it existed…
+  rmSync(ghost, { recursive: true, force: true }); // …and renamed away while the app was closed
+  const rescued = await post('backup/import', { path: incoming });
+  check('an import still runs with the backup folder gone', rescued.status === 200, rescued.body.error ?? '');
+  check('…and does not recreate it (the old bug)', !existsSync(ghost), ghost);
+  check(
+    '…while the safety copy lands beside the database',
+    (rescued.body.backup ?? '').startsWith(`${activePath}.pre-import-`) && rescued.body.backup.endsWith('.bak'),
+    rescued.body.backup,
+  );
+  check(
+    '…and holds the data it is supposed to rescue',
+    existsSync(rescued.body.backup ?? '') && rows(rescued.body.backup, 'artists') > 0,
+    existsSync(rescued.body.backup ?? '') ? `${rows(rescued.body.backup, 'artists')} artists` : 'fehlt',
+  );
+  await post('backup/dir', { dir: backupDir }); // back to the real folder for what follows
 }
 
 // --- pruning keeps the newest KEEP restore points and drops the oldest, and the old flat

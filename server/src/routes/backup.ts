@@ -6,6 +6,7 @@ import {
   BACKUP_POINTS_DIR,
   PRE_IMPORT_DIR,
   SCHEMA_VERSION,
+  backupDirUnavailable,
   backupStamp,
   fileSchemaVersion,
   getBackupConfig,
@@ -106,6 +107,15 @@ function migrateDatedFolders(backupDir: string, prefix: string, into: string): v
  * explains them instead.
  */
 export function runBackup(backupDir: string): { dir: string; files: string[] } {
+  // Before anything is created, and inside the run rather than in the route below: the guard
+  // belongs against the `mkdirSync` two lines down, so a second caller of the backup run cannot
+  // be added without it. The route turns the throw into the same 500-with-message that a
+  // read-only folder already produces, which is the path `reportBackupProblem` is known to
+  // surface (docs/BACKUP-TESTING.md case 3) — one failure shape for the Electron side, not two.
+  // The rule itself lives in db.ts, because the import's pre-import copy has to apply it too.
+  const unavailable = backupDirUnavailable(backupDir);
+  if (unavailable) throw new Error(unavailable);
+
   const at = new Date();
   const pointsDir = join(backupDir, BACKUP_POINTS_DIR);
   const preImportDir = join(backupDir, PRE_IMPORT_DIR);
