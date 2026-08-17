@@ -13,6 +13,7 @@ import {
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fileStamp, localStamp } from '../../shared/time';
+import { isAnnouncementId } from './lib/announcements';
 import { CHILD_EDGES, DELETE_ORDER } from './lib/cascade';
 import { currentSeasonId, currentSeasonRef } from './seasonContext';
 
@@ -537,11 +538,22 @@ export function setAnnouncementVersionSeen(version: string): void {
   saveRegistry(reg);
 }
 
-/** Record the local day a dated announcement was confirmed on. */
+/**
+ * Record the local day a dated announcement was confirmed on.
+ *
+ * `id` becomes a **property name**, so it is checked here at the write and not only where it came
+ * in: the route already refuses an id no stored announcement carries, and this is the second of
+ * the two, because a sink whose key is a string somebody else validated is one refactor away from
+ * being a sink whose key is whatever arrived. `isAnnouncementId` is the same predicate the parse
+ * applies, so an id that can be stored is exactly an id that can be recorded.
+ */
 export function setAnnouncementSeen(id: string, day: string): void {
+  if (!isAnnouncementId(id)) return;
   const reg = readRegistry();
   const cur = reg.announcementsSeen ?? {};
-  reg.announcementsSeen = { ...cur, ids: { ...cur.ids, [id]: day } };
+  const ids: Record<string, string> = { ...cur.ids };
+  ids[id] = day;
+  reg.announcementsSeen = { ...cur, ids };
   saveRegistry(reg);
 }
 

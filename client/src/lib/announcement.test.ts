@@ -131,6 +131,18 @@ describe('parseAnnouncements', () => {
   it('drops a celebrate that is not literally true', () => {
     expect(parseAnnouncements([{ ...testfest, celebrate: 'ja' }])[0]?.celebrate).toBeUndefined();
   });
+
+  it('drops an id that is not an ASCII slug', () => {
+    // The id becomes a *property name* in the „schon gesehen" map, so the shape is enforced at
+    // the parse: an announcement carrying an id nobody can record is one that could never be
+    // dismissed, which is worse than not showing it.
+    for (const id of ['__proto__', 'mit leerzeichen', '', '.punkt', 'ä'.repeat(3), 'x'.repeat(65)]) {
+      expect(parseAnnouncements([{ ...testfest, id }])).toEqual([]);
+    }
+    for (const id of ['testfest', 'version:1.2.3', 'a_b-c.d', 'X9']) {
+      expect(parseAnnouncements([{ ...testfest, id }]).map((a) => a.id)).toEqual([id]);
+    }
+  });
 });
 
 describe('dueAnnouncements', () => {

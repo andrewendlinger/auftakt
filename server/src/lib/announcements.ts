@@ -60,6 +60,27 @@ export const CATCH_UP_DAYS = 14;
 const YEARLY = /^(\d{2})-(\d{2})$/;
 const ONCE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
+/**
+ * What an announcement id may look like — an ASCII slug, and nothing else.
+ *
+ * The id is not decoration: „schon gesehen" is a map keyed by it, so it ends up as a **property
+ * name written from a value that reached the server over HTTP**. `{ ['__proto__']: day }` does
+ * not actually pollute a prototype and a day is a string either way, so this is not an
+ * exploitable hole — but „the key of a write is remote input" is a shape that only stays safe by
+ * accident, and one refactor of the map into a plain assignment would end that. A shape the
+ * caller cannot leave is cheaper than an argument about which of the two spellings is safe.
+ *
+ * It is enforced *here*, in the parse, rather than at the write: `seasons.json` is hand-edited,
+ * so an id nobody can use is the same kind of mistake as a missing title, and it should drop the
+ * entry rather than produce an announcement that can never be dismissed.
+ */
+const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
+
+/** Is this a usable announcement id? The one definition — parse and write both ask it. */
+export function isAnnouncementId(id: unknown): id is string {
+  return typeof id === 'string' && ID.test(id);
+}
+
 /** `01`–`12` and `01`–`31`. Cheap sanity, not a calendar: `02-31` never matches a real day anyway. */
 function validMonthDay(month: string, day: string): boolean {
   const m = Number(month);
@@ -113,7 +134,7 @@ function parseOne(raw: unknown): Announcement | null {
   const id = typeof r.id === 'string' ? r.id.trim() : '';
   const title = typeof r.title === 'string' ? r.title.trim() : '';
   const body = typeof r.body === 'string' ? r.body : '';
-  if (!id || !title || !body) return null;
+  if (!isAnnouncementId(id) || !title || !body) return null;
   return {
     id,
     title,

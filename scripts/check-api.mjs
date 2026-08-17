@@ -521,6 +521,20 @@ try {
     const badId = await req('POST', '/announcements/seen', { id: 42 });
     check('a non-string id is refused', badId.status === 400, String(badId.status));
 
+    // „Seen" is a map keyed by the id, so an id taken from the body would be a property name the
+    // caller chose. The route answers only for an id this installation's own seasons.json
+    // carries, and writes that spelling — so an unknown one is a 404 and stores nothing at all.
+    const unknown = await req('POST', '/announcements/seen', { id: 'gibt-es-nicht' });
+    check('an id no stored announcement carries is refused', unknown.status === 404, String(unknown.status));
+    const polluting = await req('POST', '/announcements/seen', { id: '__proto__' });
+    check('…and so is one that is not an ASCII slug', polluting.status === 404, String(polluting.status));
+    const ids = JSON.parse(readFileSync(registry, 'utf8')).announcementsSeen?.ids ?? {};
+    check(
+      '…neither of them reaches the registry',
+      Object.keys(ids).join(',') === 'testfest' && !Object.hasOwn(ids, '__proto__'),
+      Object.keys(ids).join(','),
+    );
+
     install(undefined);
     check('removing the key makes the feature inert again', (await ok('GET', '/announcements')).dated.length === 0);
   }

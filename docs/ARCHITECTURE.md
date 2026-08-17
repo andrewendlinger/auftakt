@@ -525,6 +525,11 @@ yearly, `YYYY-MM-DD` once; due on its latest occurrence at or before `localDay()
 so `client/src/lib/announcement.test.ts` reaches it from the client Vitest suite. The client has
 **no date logic at all**: it asks `GET /api/announcements` and renders the answer.
 
+An `id` is an **ASCII slug** (`isAnnouncementId`) and an entry carrying anything else drops out of
+the parse, because the id becomes a *property name* in the seen map. `POST /seen` looks the id up
+in the stored array and writes the spelling it found there — never the one from the body — and the
+write checks the shape again; an id no announcement carries is a 404 and stores nothing.
+
 **The marker is in the registry, never in `settings`.** `announcementsSeen` sits beside
 `backupDir`/`backupPrompted` in `seasons.json` for the reason WP-39 established: a value in the
 season-scoped `settings` table is silently forgotten on the next season switch, and it would not
