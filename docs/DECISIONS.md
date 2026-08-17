@@ -8,6 +8,70 @@ If you are about to re-raise one of these, the bar is new information, not a fre
 
 ---
 
+## „Ein Weg, keine Auswahl" — REVERSED: the feedback path opens nothing by itself (decided 2026-08-14 WP-54, reversed 2026-08-17 WP-66)
+
+**What WP-54 decided.** One button and one path. „Text kopieren" was removed on 2026-08-14 as a
+hedge — „two buttons of equal weight, and the customer deciding which situation they are in
+before they know they are in one" — and „Diagnoseordner öffnen" went with it once the bundle was
+written for them. What was left was „E-Mail öffnen": one click that wrote
+`Auftakt-Diagnose-<ref>.txt` to the desktop, revealed it with `shell.showItemInFolder`, and
+launched the customer's mail client on a prepared `mailto:`, in that order, „so the compose
+window is what ends up in front". The fallback for a machine without a mail client was one
+sentence of plain text under „Was wird mitgeschickt?".
+
+**Why it is reversed.** The entry that removed „Text kopieren" already named the failing case —
+„a machine with no mail handler clicks „E-Mail öffnen", nothing opens, and the app then holds no
+address anywhere" — and answered it with a sentence, because that machine was priced as the edge
+case. It is not the edge case. The customers this feature exists for read their mail in Gmail in a
+browser; the local client is either absent or the one they abandoned, and a `mailto:` on such a
+machine opens nothing, or opens the wrong thing. Instigated by Andre on 2026-08-17 out of the
+macOS pass, on his own device, in his own words: „works but is too much opening happening at once
+— DO NOT OPEN A MAIL PROGRAM OR FINDER."
+
+Two windows also arrived *before* anything had been read. The Finder window and the compose
+window landed on one click, and the one step the app genuinely cannot take — attaching the file —
+was explained in a dialog that was by then behind both of them.
+
+**The new contract.** „Weiter" writes the diagnostics file to the desktop and shows the handover;
+after that every step is the customer's own click, and the app opens nothing on its own.
+
+- **The file is still written, and still to the desktop.** That half of WP-54 stands unchanged:
+  a `mailto:` cannot attach, so the file exists to be attached by hand. Only the reveal is gone —
+  `shell.showItemInFolder` now appears nowhere in the app.
+- **It is written on „Weiter", not on the last button — and the handover waits for it.** The
+  customer leaves for their mail in the middle of the handover and attaches the file before coming
+  back, so a step telling them to attach a file main has not written yet is the one instruction
+  the dialog must not give. Waiting is the other half of the same sentence: every line of the
+  handover names the file — the attach step, the body „Text kopieren" hands over, the `mailto:`,
+  the toast — and the name is predictable exactly once. Going „Zurück", correcting an answer and
+  pressing „Weiter" again writes a *second* bundle, because attaching the first version of what
+  they wrote is worse than a stray text file, and `uniqueBundleName` calls that one `…-2.txt`. A
+  handover opened on the prediction would send them to the file holding the draft they had just
+  replaced, so „Weiter" is disabled for the length of the write instead. The dialog remembers
+  report text → name, so a text that is already on the desktop — an unchanged one, or an edit
+  taken back — names *that* bundle rather than writing a third.
+- **The handover is the mail, field by field**: An, Betreff, Text — the order the compose window
+  asks for them in — each with its own copy button. This is the „Text kopieren" WP-54 removed, and
+  it comes back for the opposite reason to the one it left with: it is no longer a second path
+  competing with a first, it *is* the path. The Betreff is shown in full because it is what the
+  inbox sorts on; the Text is described rather than printed, since it is on screen in full one
+  dialog back under „Was wird mitgeschickt?".
+- **The `mailto:` survives as one optional link**, last and small, for whoever does have a client
+  set up. A link rather than a button, and never the primary: on the machines this feature is for,
+  an offer that opens nothing is worse than no offer.
+- **The no-mail-client sentence under „Was wird mitgeschickt?" is dropped.** It existed because
+  the address appeared nowhere else when nothing opened; the address is now the first row of the
+  handover, on both branches, and a second telling is a second thing to keep true.
+- **What „Fertig" may claim is unchanged, for WP-54's reason.** The app cannot learn whether a
+  mail was sent, so nothing says „gesendet"; the toast names the file, because the file is the
+  only thing that outlives the dialog.
+
+**What did not come back.** „Diagnoseordner öffnen" stays removed, and no button anywhere routes
+the customer into `userData` — that decision was about a folder full of Chromium caches and
+nothing above bears on it.
+
+---
+
 ## Das Browser-Gate bringt seinen Browser selbst mit und steht neben `npm run check` (2026-08-17, WP-R6, #7)
 
 The client had no automated coverage that ever lays a page out. `check:unit` reaches pure
@@ -343,18 +407,24 @@ sent until they press send. The diagnostic block is timings, a version and a vie
 personal data.
 
 What it costs is knowing. A `mailto:` is fire-and-forget: the app cannot learn whether the mail was
-sent, so the toast says „bitte dort noch abschicken" rather than „gesendet".
+sent, so nothing anywhere on this path says „gesendet" — the toast asks them to send it, and since
+WP-66 the customer closes the dialog themselves.
 
-**„Text kopieren" was removed on 2026-08-14**, and with it the reasoning that a machine with no
+The `mailto:` itself stands. What was decided *around* it — one button, no choice, the client
+opened for them — was **reversed on 2026-08-17 (WP-66)**; see „The feedback path opens nothing by
+itself" at the top of this file. The two paragraphs below are the record of what it reversed.
+
+~~**„Text kopieren" was removed on 2026-08-14**, and with it the reasoning that a machine with no
 mail client needs a second button. It was a hedge: two buttons of equal weight, and the customer
 deciding which situation they are in before they know they are in one. The path that matters is the
 one that works, and the fallback survives as a sentence — the address in plain text under „Was wird
-mitgeschickt?", where somebody actually stuck will look. One button, no branch to choose.
+mitgeschickt?", where somebody actually stuck will look. One button, no branch to choose.~~
 
-That sentence is **unconditional**, which it was not when it shipped: it sat in the `else` of the
+~~That sentence is **unconditional**, which it was not when it shipped: it sat in the `else` of the
 attachment note, so the packaged app reporting a *Fehler* — the main path — showed it to nobody. The
 branch that hides it is exactly the branch that needs it. A machine with no mail handler clicks
-„E-Mail öffnen", nothing opens, and the app then holds no address anywhere.
+„E-Mail öffnen", nothing opens, and the app then holds no address anywhere.~~ That last sentence is
+the one WP-66 took seriously: it is not an aside about an unusual machine, it is the customer.
 
 ## „Diagnoseordner öffnen" was removed once the file was written for them (2026-08-14, WP-54)
 
@@ -364,11 +434,14 @@ already lying on the desktop. Two routes to the same evidence is one route more 
 needs, and the one being kept is the one that ends with the file attached.
 
 The `reveal-diagnostics` channel went with it rather than staying behind as an unused handler.
-`shell.showItemInFolder` itself stays, in `save-diagnostics` and nowhere else (`electron/main.ts`):
-it reveals the bundle it has just written, on a path the renderer cannot aim — the removed thing is
-the standalone button and the channel that let a renderer ask for a folder, not the reveal. If a
-bundle cannot be written, the mail carries the five-line summary instead; nothing routes the
-customer into `userData` again.
+~~`shell.showItemInFolder` itself stays, in `save-diagnostics` and nowhere else
+(`electron/main.ts`): it reveals the bundle it has just written, on a path the renderer cannot aim
+— the removed thing is the standalone button and the channel that let a renderer ask for a folder,
+not the reveal.~~ **The reveal went too, on 2026-08-17 (WP-66)**, and `shell.showItemInFolder` now
+appears nowhere in the app: a Finder window arriving on a click the customer thought was about a
+mail is the same surprise as the folder button, one call further down. If a bundle cannot be
+written, the mail carries the five-line summary instead; nothing routes the customer into
+`userData` again, and this half of the decision is unaffected.
 
 ## A `mailto:` cannot attach, so the app writes the file instead (2026-08-14, WP-54)
 
@@ -384,7 +457,8 @@ to 100 records, ~35 KB, and even one folded line per boot is ~12 KB against a bu
 *encoded* characters. Five is what is left after three German fields, not timidity.
 
 So the file is made attachable instead of the mail made bigger. `save-diagnostics` writes one
-`Auftakt-Diagnose-<ref>.txt` and reveals it selected, and the mail names that filename.
+`Auftakt-Diagnose-<ref>.txt` ~~and reveals it selected~~ (the reveal removed by WP-66), and the
+mail names that filename.
 
 - **The desktop, not beside the log in userData.** The file exists to be dragged into a mail. A
   folder they already have open beats one they have to be sent into, and `boot-log.jsonl` sits
@@ -399,18 +473,20 @@ So the file is made attachable instead of the mail made bigger. `save-diagnostic
   names the customer, and the shape of the path is the half that has ever explained a fault. The
   scrub runs over the finished text, so a path the person typed into the report is covered too.
 
-What it costs is one manual step — the drag — and that is the floor, not a shortfall. „E-Mail
-öffnen" reveals the file first and opens the client second, so the compose window is what ends up
-in front.
+What it costs is one manual step — the attaching — and that is the floor, not a shortfall.
+~~„E-Mail öffnen" reveals the file first and opens the client second, so the compose window is what
+ends up in front.~~ Since WP-66 nothing is opened at all: „Weiter" writes the file, and the
+handover names it.
 
 Because that step is the floor, it is where the words go, and **the words are a dialog rather than
 a card (2026-08-14).** The steps were first written as a numbered card above the send button, which
 put the one thing the customer has to do at the bottom of a scrolling form under three text boxes —
 the easiest place in the feature to skip. „Weiter" now opens a second dialog carrying those steps
-and nothing else, and only its „E-Mail öffnen" writes the file and opens the client. A card is
-scrolled past; a dialog is answered. It also settles what the button may claim: „E-Mail schreiben"
-promised a mail this click does not write, and „verschicken" would have promised a send that is not
-this app's to make.
+and nothing else. A card is scrolled past; a dialog is answered. It also settled what the button
+may claim: „E-Mail schreiben" promised a mail that click did not write, and „verschicken" would
+have promised a send that is not this app's to make — and „E-Mail öffnen" itself went the same way
+in WP-66, having promised an opening that on the customer's machine does not happen. The second
+dialog now ends in „Fertig", which claims nothing.
 
 The draft then opens on the instruction to attach the file, on the first line, because a mail
 client shows the first line and not the signature. Kind, area and reference used to sit above it

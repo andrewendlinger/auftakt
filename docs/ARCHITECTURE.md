@@ -641,12 +641,15 @@ instead of racing.
 
 `get-diagnostics` takes **no argument**: main derives `boot-log.jsonl`'s path from
 `app.getPath('userData')` and hands the renderer finished summary text plus a path it may only
-display. A path *from* the renderer would be a `shell.showItemInFolder` pointed anywhere on the
-machine — the same hole the scheme allowlist closes for `openExternal` (X-02).
+display. A path *from* the renderer would be a filesystem call pointed anywhere on the machine —
+the same hole the scheme allowlist closes for `openExternal` (X-02).
 
 `save-diagnostics` is the exception, and it exists because a `mailto:` cannot carry an attachment
 (see `docs/DECISIONS.md`): it writes the full log plus the machine's details to the desktop so the
-customer has one named file to drag into their mail. It takes two arguments and trusts neither. The
+customer has one named file to attach. Writing is now *all* it does — it revealed the file in the
+Finder until WP-66, and nothing on the feedback path opens a window the customer did not ask for
+any more, `shell.showItemInFolder` appearing nowhere in the app. It takes two arguments and trusts
+neither. The
 report body is capped like the boot payload is, and the file name comes from the mail's own
 reference — validated by `isBundleRef` in `electron/diagnostics.ts` against `AF-` plus ten digits,
 an alphabet in which no separator, no `..` and no drive letter can be spelt. The renderer picks a

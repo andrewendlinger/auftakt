@@ -225,11 +225,16 @@ async function collectSystemFacts({ gpu: withGpu = true } = {}): Promise<SystemF
 export type DiagnosticsSave = { ok: true; name: string } | { ok: false };
 
 /**
- * Write the diagnostics bundle to the desktop and reveal it (WP-54).
+ * Write the diagnostics bundle to the desktop (WP-54; the reveal removed by WP-66).
  *
  * The desktop rather than beside the log in userData: this file exists to be dragged into a
  * mail, and a folder the user already has open beats one they have to be sent into. It is
  * plainly theirs to delete afterwards, which a file in `AppData` is not.
+ *
+ * It used to `shell.showItemInFolder` the file it had just written, so that the customer met a
+ * Finder/Explorer window on the way to their mail client. WP-66 took that out: the window
+ * arrived before they had read anything, and the dialog now names the file instead. Nothing on
+ * the feedback path opens anything the customer did not click.
  *
  * `ref` is the mail's own reference and the only renderer value that becomes a filename —
  * `isBundleRef` is why that is safe, and the directory is never the renderer's to choose.
@@ -258,7 +263,6 @@ async function saveDiagnostics(ref: unknown, report: unknown): Promise<Diagnosti
     const name = uniqueBundleName(ref, (candidate) => existsSync(join(desktop, candidate)));
     const file = join(desktop, name);
     writeFileSync(file, bundle, 'utf8');
-    shell.showItemInFolder(file);
     return { ok: true, name };
   } catch {
     // A bundle that cannot be written must not cost the mail: the dialog composes without

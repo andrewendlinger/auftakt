@@ -465,9 +465,10 @@ async function dragHandleOnto(page, source, target) {
 //
 // Two of the app's surfaces only exist when `window.auftakt` does — the update card (WP-60) and
 // the diagnostics half of the feedback dialog (WP-54) — and neither may be driven for real: the
-// real `saveDiagnostics` writes a file to the desktop of whoever runs this and opens a Finder
-// window on it, and the real `installUpdate` downloads a release. So the preload bridge is
-// replaced by one that **records** instead.
+// real `saveDiagnostics` writes a file to the desktop of whoever runs this, and the real
+// `installUpdate` downloads a release. So the preload bridge is replaced by one that **records**
+// instead — which is also the instrument for WP-66's promise that nothing opens by itself: a call
+// that no longer happens is a recorder that stays empty.
 //
 // Ported from `~/.claude/tools/playwright/lib/drive.mjs` rather than imported: that module is the
 // ad-hoc runtime's, it imports `playwright` (this gate has only `playwright-core`) and it points at
@@ -494,6 +495,9 @@ const stubElectron = (page, opts = {}) =>
     // its button is clicked; no-ops until then, so a script may call them unconditionally.
     w.__updateProgress = () => {};
     w.__finishUpdate = () => {};
+    // Off by default: every save answers at once unless a case asks to hold one open.
+    w.__holdSave = false;
+    w.__finishSave = () => {};
     w.auftakt = {
       exportDatabase() {},
       importDatabase() {},
@@ -528,9 +532,21 @@ const stubElectron = (page, opts = {}) =>
           file: '/tmp/Auftakt/boot-log.jsonl',
           system: 'macOS 15.6 · 1728×1117 @2×',
         }),
+      // Two things the naive stub got wrong and the dialog depends on (WP-66). It **emulates
+      // `uniqueBundleName`**: main never overwrites a bundle already lying on the desktop, so
+      // the second save of one reference comes back `…-2.txt` — a stub that always answers
+      // `…​.txt` makes the one name the handover must not predict indistinguishable from the
+      // one it may. And it can be **held**, like `installUpdate`: with `__holdSave` set the
+      // promise parks until `__finishSave()`, which is the only way to observe that „Weiter"
+      // waits for the write instead of opening a handover naming a guess.
       saveDiagnostics: (ref, report) => {
         w.__saved.push({ ref, report });
-        return Promise.resolve({ ok: true, name: `Auftakt-Diagnose-${ref}.txt` });
+        const n = w.__saved.filter((s) => s.ref === ref).length;
+        const name = `Auftakt-Diagnose-${ref}${n > 1 ? `-${n}` : ''}.txt`;
+        if (!w.__holdSave) return Promise.resolve({ ok: true, name });
+        return new Promise((resolve) => {
+          w.__finishSave = () => resolve({ ok: true, name });
+        });
       },
       bootSettled: () => Promise.resolve(),
       onBackupConfigChanged: () => () => {},
@@ -558,7 +574,7 @@ const stubElectron = (page, opts = {}) =>
 const tabStop = (page) =>
   page.evaluate(() => {
     // The **last** card, not the first: a Modal opened out of another one is rendered inside it
-    // (the feedback dialog's „So geht es weiter"), so document order puts the topmost last. A
+    // (the feedback dialog's „So schickst du es ab"), so document order puts the topmost last. A
     // `PillSelect` menu's click-away layer is a `.fixed.inset-0` with no card in it and never
     // matches here.
     const card = [...document.querySelectorAll('.fixed.inset-0 > div')].pop() ?? null;
@@ -2884,12 +2900,22 @@ try {
   // A `mailto:` is fire-and-forget, so the dialog produces no app state to assert on: the URL
   // handed to `openExternal` is the whole of its output, and the real one opens a mail client on
   // the machine running this. The file is worse — the real `saveDiagnostics` writes to the desktop
-  // and reveals it in the Finder (WP-54) — so the recording stub is not convenience here, it is
-  // the only way this case may exist at all.
+  // (WP-54) — so the recording stub is not convenience here, it is the only way this case may
+  // exist at all.
   //
-  // The assertion is that the four places the reference appears agree: the recorded file name, the
-  // subject, the body's attach line and its stamp. That is what a customer's mail is *for*.
-  console.log('\nU2 · Der Feedback-Dialog am Bridge-Stub (WP-54)');
+  // Two assertions, and WP-66 added the second. The first is that the four places the reference
+  // appears agree: the recorded file name, the subject, the body's attach line and its stamp —
+  // that is what a customer's mail is *for*. The second is what the handover no longer does:
+  // „Weiter" writes the file and **opens nothing**, so `window.__external` has to still be empty
+  // when the dialog is fully on screen, and only the optional link may fill it. A recorder is the
+  // right instrument for a call that must not happen.
+  //
+  // The clipboard is real, not stubbed: the three copy buttons are `navigator.clipboard`, so the
+  // context is granted both permissions and the assertions read the clipboard back. `bringToFront`
+  // because a clipboard write needs the document focused and earlier cases left pages open.
+  console.log('\nU2 · Der Feedback-Dialog am Bridge-Stub (WP-54, WP-66)');
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: UI });
+  await u.bringToFront();
   await u.goto(`${UI}/#/einstellungen/hilfe`);
   await u.reload();
   await ready(u);
@@ -2915,42 +2941,73 @@ try {
   const ready2 = await until(() => topDialog(u).getByRole('button', { name: 'Weiter' }).isEnabled(), (v) => v === true, 5000);
   check('mit der Pflichtantwort wird „Weiter“ scharf', ready2 === true);
 
-  // Sending takes two clicks and the first one *opens* a dialog rather than closing one.
+  // „Weiter" *opens* a dialog rather than closing one — and since WP-66 it is also the click that
+  // writes the file, because the customer leaves for their mail in the middle of the handover and
+  // attaches it before coming back. The handover then waits for the write: it is composed from
+  // the name main returns, and that name is only guessable for the first bundle (held case below).
   await topDialog(u).getByRole('button', { name: 'Weiter' }).click();
   const stacked = await until(() => u.locator('.fixed.inset-0').count(), (n) => n === 2, 5000);
-  check('„Weiter“ stapelt den Schritt-Dialog auf das Formular', stacked === 2, `${stacked} Dialoge`);
+  check('„Weiter“ stapelt die Übergabe auf das Formular', stacked === 2, `${stacked} Dialoge`);
+  const saved = await until(() => u.evaluate(() => /** @type {any} */ (window).__saved), (v) => v.length > 0, 8000);
+  const ref = String(saved[0]?.ref ?? '');
+  const file = `Auftakt-Diagnose-${ref}.txt`;
+  check('ein Fehler schreibt die Diagnosedatei über die Bridge', /^AF-\d{10}$/.test(ref), ref || 'nichts geschrieben');
+  // The whole of WP-66 in one line. Before it, this same click revealed the file in the Finder
+  // and launched a mail client; a recorder that stays empty is the only way to hold that shut.
+  check(
+    '…und öffnet dabei nichts (WP-66)',
+    (await u.evaluate(() => /** @type {any} */ (window).__external)).length === 0,
+    (await u.evaluate(() => /** @type {any} */ (window).__external)).join(' '),
+  );
+  const handover = await until(() => topDialog(u).innerText(), (t) => t.includes(file), 5000);
+  check('die Übergabe nennt die Datei, die main wirklich geschrieben hat', handover.includes(file), file);
+  check('…und sagt, dass das Anhängen niemand für den Kunden übernehmen kann', /Das Anhängen kann kein Programm für dich übernehmen/.test(handover));
+  // Focus is *not* on „Zurück" here: WP-42's rule is „the footer's safe answer when the body has
+  // nothing to focus", and this body's first stop is the first thing the customer has to do.
   const steps = await until(() => tabStop(u), (v) => v.at >= 0, 5000);
   check(
-    'auch dort liegt der Fokus auf der sicheren Antwort „Zurück“ (WP-42)',
-    steps.at === 1 && steps.text === 'Zurück',
+    'der Fokus liegt auf dem ersten Schritt, nicht im Fuß (WP-42/66)',
+    steps.at === 1 && steps.text === 'Adresse kopieren',
     JSON.stringify(steps),
   );
   await u.keyboard.press('Escape');
   const peeled = await until(() => u.locator('.fixed.inset-0').count(), (n) => n === 1, 5000);
-  check('Escape schält nur ihn ab, das Formular bleibt stehen', peeled === 1 && (await u.locator('textarea').nth(0).inputValue()) === 'Der Druckbogen bleibt leer.', await u.locator('textarea').nth(0).inputValue());
+  check('Escape schält nur sie ab, das Formular bleibt stehen', peeled === 1 && (await u.locator('textarea').nth(0).inputValue()) === 'Der Druckbogen bleibt leer.', await u.locator('textarea').nth(0).inputValue());
 
   await topDialog(u).getByRole('button', { name: 'Weiter' }).click();
-  await topDialog(u).getByRole('button', { name: 'E-Mail öffnen' }).click();
-  const saved = await until(() => u.evaluate(() => /** @type {any} */ (window).__saved), (v) => v.length > 0, 8000);
-  const mails = await until(() => u.evaluate(() => /** @type {any} */ (window).__external), (v) => v.length > 0, 8000);
-  const ref = String(saved[0]?.ref ?? '');
-  const file = `Auftakt-Diagnose-${ref}.txt`;
-  check('ein Fehler schreibt die Diagnosedatei über die Bridge', /^AF-\d{10}$/.test(ref), ref || 'nichts geschrieben');
-  const mail = new URL(mails[0] ?? 'mailto:');
-  const subject = new URLSearchParams(mail.search).get('subject') ?? '';
-  const body = new URLSearchParams(mail.search).get('body') ?? '';
-  check('die Mail geht an die Support-Adresse', mail.pathname === 'auftakt@e-mail.de', mail.pathname);
+  await topDialog(u).getByRole('button', { name: 'Adresse kopieren' }).waitFor({ timeout: 8000 });
+  check(
+    'zurück und wieder vor schreibt dieselbe Datei nicht zweimal',
+    (await u.evaluate(() => /** @type {any} */ (window).__saved)).length === 1,
+  );
+
+  // The three copy buttons are the path now: address, subject, body — the order a compose window
+  // asks for them in. Read back out of the real clipboard, which is what the customer pastes.
+  //
+  // `click()` returns when the event was dispatched, not when the handler's `writeText` settled,
+  // so every read is a `until` on a shape the *previous* content does not have. Reading once
+  // straight after the click passes or fails on timing.
+  const copy = async (name, shape) => {
+    await topDialog(u).getByRole('button', { name }).click();
+    return until(() => u.evaluate(() => navigator.clipboard.readText()), shape, 5000);
+  };
+  const address = await copy('Adresse kopieren', (t) => t === 'auftakt@e-mail.de');
+  check('„Adresse kopieren“ legt die Support-Adresse in die Zwischenablage', address === 'auftakt@e-mail.de', address);
+  const subject = await copy('Betreff kopieren', (t) => t.startsWith('['));
   check(
     'ihr Betreff trägt Kennung, Art, Bereich und Version',
     subject === `[${ref}] Auftakt-Fehler: Allgemein (v0.0.0-test)`,
     subject,
   );
+  const body = await copy('Text kopieren', (t) => t.startsWith('!!'));
   check(
     'die erste Zeile des Textes ist die eine Sache, die niemand für den Kunden tun kann',
     body.split('\n')[0] === `!! BITTE NOCH ANHÄNGEN: ${file}`,
     body.split('\n')[0],
   );
   check('…und der technische Block nennt dieselbe Kennung', body.includes(`Fehler · Allgemein · Kennung: ${ref}`), body.split('\n').find((l) => l.includes('Kennung')) ?? '');
+  check('ein geglückter Kopiervorgang sagt es am Knopf', await shown(topDialog(u).getByRole('button', { name: 'Kopiert ✓' })));
+
   // The report is read positively first: „it does not contain X" is also true of an empty string,
   // and an empty one is what a broken `feedbackBody` would hand the bridge.
   const report = String(saved[0]?.report ?? '');
@@ -2963,25 +3020,111 @@ try {
     '…aber weder die Anhangzeile noch die Zusammenfassung — beides stünde darin doppelt',
     !/BITTE NOCH ANHÄNGEN/.test(report) && !/Startdiagnose/.test(report),
   );
-  check('der Hinweis nennt die Datei beim Namen', await shown(toast(u, new RegExp(file))));
+
+  // The `mailto:` is the one optional shortcut, a link and not a button, and the *only* thing on
+  // this path that ever reaches `openExternal`.
+  await topDialog(u).getByRole('link', { name: 'E-Mail-Programm öffnen' }).click();
+  const mails = await until(() => u.evaluate(() => /** @type {any} */ (window).__external), (v) => v.length > 0, 8000);
+  const mail = new URL(mails[0] ?? 'mailto:');
+  check('erst der optionale Link reicht eine Mail an die Bridge', mails.length === 1 && mail.pathname === 'auftakt@e-mail.de', mails.join(' ').slice(0, 60));
+  check(
+    '…mit demselben Betreff, den der Knopf kopiert hat',
+    new URLSearchParams(mail.search).get('subject') === subject,
+    new URLSearchParams(mail.search).get('subject') ?? '',
+  );
+  check('…und der Dialog bleibt dabei stehen', (await u.locator('.fixed.inset-0').count()) === 2);
 
   // A Wunsch is the other branch and writes nothing at all: startup timings say nothing about it,
   // so no file, no attach line, no summary — and the budget goes to the person's own words.
-  await u.getByRole('button', { name: 'Feedback senden…' }).click();
-  await topDialog(u).getByRole('button', { name: /^Wunsch/ }).waitFor({ timeout: 8000 });
+  //
+  // Driven by switching the kind **inside the dialog that has already written a bundle**, which
+  // is the only place the defect lives: a fresh dialog has nothing to inherit, so a Wunsch driven
+  // from one passes whether or not the write's answer is cleared on the way through.
+  await topDialog(u).getByRole('button', { name: 'Zurück' }).click();
   await topDialog(u).getByRole('button', { name: /^Wunsch/ }).click();
-  await topDialog(u).getByRole('button', { name: 'Allgemein', exact: true }).click();
   await until(() => u.locator('textarea').count(), (n) => n === 3, 5000);
   check('der Wunsch fragt etwas anderes', /Was möchtest du tun können\?/.test(await topDialog(u).innerText()));
   await u.locator('textarea').nth(0).fill('Die Künstlerliste nach Land sortieren.');
   await topDialog(u).getByRole('button', { name: 'Weiter' }).click();
-  await topDialog(u).getByRole('button', { name: 'E-Mail öffnen' }).click();
-  const afterWish = await until(() => u.evaluate(() => /** @type {any} */ (window).__external), (v) => v.length > 1, 8000);
-  const wishBody = new URLSearchParams(new URL(afterWish[afterWish.length - 1]).search).get('body') ?? '';
-  const wishSubject = new URLSearchParams(new URL(afterWish[afterWish.length - 1]).search).get('subject') ?? '';
+  const wishBody = await copy('Text kopieren', (t) => t.startsWith('---'));
+  const wishSubject = await copy('Betreff kopieren', (t) => t.startsWith('['));
   check('…und schreibt dafür keine Datei', (await u.evaluate(() => /** @type {any} */ (window).__saved)).length === 1);
+  const wishText = await topDialog(u).innerText();
+  check('…und erbt auch keine: kein Anhang, keine Diagnose-Datei aus dem Fehler davor', !/anhängen/i.test(wishText) && !/Diagnose-Datei/.test(wishText), wishText.replace(/\n/g, ' | ').slice(0, 100));
   check('sein Betreff sagt „Wunsch“', /Auftakt-Wunsch: Allgemein/.test(wishSubject), wishSubject);
   check('…und sein Text beginnt ohne Anhangzeile', wishBody.split('\n')[0] === '--- Was ich tun können möchte', wishBody.split('\n')[0]);
+  await topDialog(u).getByRole('link', { name: 'E-Mail-Programm öffnen' }).click();
+  const wishMails = await until(() => u.evaluate(() => /** @type {any} */ (window).__external), (v) => v.length > 1, 8000);
+  check(
+    '…und auch seine Mail trägt keine Anhangzeile',
+    !/BITTE NOCH ANH/.test(new URLSearchParams(new URL(wishMails[wishMails.length - 1]).search).get('body') ?? ''),
+    (new URLSearchParams(new URL(wishMails[wishMails.length - 1]).search).get('body') ?? '').split('\n')[0],
+  );
+
+  // Back to the Fehler, unedited: the answers of both kinds survive a switch (they are keyed per
+  // field), so the report text is the one already on the desktop and it must name *that* bundle
+  // rather than write a second one.
+  await topDialog(u).getByRole('button', { name: 'Zurück' }).click();
+  await topDialog(u).getByRole('button', { name: /^Fehler/ }).click();
+  await topDialog(u).getByRole('button', { name: 'Weiter' }).click();
+  const backAgain = await until(() => topDialog(u).innerText(), (t) => /Diagnose/.test(t), 5000);
+  check(
+    'zurück zum Fehler nennt wieder dieselbe Datei und schreibt keine zweite',
+    backAgain.includes(file) && (await u.evaluate(() => /** @type {any} */ (window).__saved)).length === 1,
+    file,
+  );
+
+  // A corrected answer *must* write a second bundle — and the handover may not open until main
+  // has said what it is called, because `uniqueBundleName` makes it `…-2.txt` and every line in
+  // the handover names the file. Held open on purpose, which is the only way to see the wait.
+  await topDialog(u).getByRole('button', { name: 'Zurück' }).click();
+  await u.locator('textarea').nth(0).fill('Der Druckbogen bleibt leer — auch nach einem Neustart.');
+  await u.evaluate(() => {
+    /** @type {any} */ (window).__holdSave = true;
+  });
+  await topDialog(u).getByRole('button', { name: 'Weiter' }).click();
+  const held = await until(() => u.evaluate(() => /** @type {any} */ (window).__saved), (v) => v.length > 1, 8000);
+  check('ein korrigierter Text schreibt eine zweite Datei', held.length === 2 && held[1].report.includes('auch nach einem Neustart'), `${held.length} Dateien`);
+  // The button says so rather than only greying out: the write races a 2 s GPU timeout, and the
+  // person waiting is the one already reporting a fault. Note that this is also why a script may
+  // not address „Weiter" by name across a held save — for that moment it is not called that.
+  check(
+    '…und die Übergabe wartet darauf, statt einen Namen zu raten',
+    (await u.locator('.fixed.inset-0').count()) === 1 &&
+      (await topDialog(u).getByRole('button', { name: 'Speichert…' }).isDisabled()),
+  );
+  await u.evaluate(() => /** @type {any} */ (window).__finishSave());
+  const file2 = `Auftakt-Diagnose-${ref}-2.txt`;
+  const renamed = await until(() => topDialog(u).innerText(), (t) => t.includes(file2), 8000);
+  // `file` is not a substring of `file2` — `…AF-….txt` against `…AF-…-2.txt` — so „the first one
+  // is not mentioned" is a real assertion rather than one the second name satisfies anyway.
+  check('dann nennt sie die zweite Datei, nicht die erste', renamed.includes(file2) && !renamed.includes(file), file2);
+  const body2 = await copy('Text kopieren', (t) => t.includes('-2.txt'));
+  check(
+    '…und der kopierte Text hängt dieselbe zweite Datei an',
+    body2.split('\n')[0] === `!! BITTE NOCH ANHÄNGEN: ${file2}`,
+    body2.split('\n')[0],
+  );
+
+  // Taking the correction back is the one step a single remembered text cannot pass: `written`
+  // is keyed by the report text, so a text already on the desktop is a *lookup* — the first
+  // bundle holds exactly it — and the earlier cache hits do not prove that, because there the
+  // remembered name and the predictable one are the same string. Here they differ, and a third
+  // write would also still be held: the handover would simply never open.
+  await topDialog(u).getByRole('button', { name: 'Zurück' }).click();
+  await u.locator('textarea').nth(0).fill('Der Druckbogen bleibt leer.');
+  await topDialog(u).getByRole('button', { name: 'Weiter' }).click();
+  const reverted = await until(() => topDialog(u).innerText(), (t) => t.includes(file), 8000);
+  check(
+    'ein zurückgenommener Text nennt wieder die erste Datei und schreibt keine dritte',
+    reverted.includes(file) && !reverted.includes(file2) && (await u.evaluate(() => /** @type {any} */ (window).__saved)).length === 2,
+    file,
+  );
+  const bodyBack = await copy('Text kopieren', (t) => t.startsWith('!!') && !t.includes('-2.txt'));
+  check('…und der kopierte Text hängt sie an, nicht die zweite', bodyBack.split('\n')[0] === `!! BITTE NOCH ANHÄNGEN: ${file}`, bodyBack.split('\n')[0]);
+
+  await topDialog(u).getByRole('button', { name: 'Fertig' }).click();
+  check('der Hinweis nennt die Datei beim Namen', await shown(toast(u, new RegExp(file))));
   await u.close();
 
   console.log(`\n${failures ? `✗ ${failures} Fehler` : '✓ alles ok'} (${checks} Prüfungen)`);

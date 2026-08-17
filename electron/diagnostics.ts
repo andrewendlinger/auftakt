@@ -78,10 +78,10 @@ export const BUNDLE_PREFIX = 'Auftakt-Diagnose-';
  * Whether an IPC argument may become a filename.
  *
  * `save-diagnostics` is the one diagnostics channel that takes an argument at all, against the
- * rule its neighbour follows (`get-diagnostics` takes none, so that a `showItemInFolder` can
- * never be pointed anywhere the renderer likes — X-02). The rule holds here because of the
- * alphabet: `AF-` and ten digits cannot spell a separator, a `..` or a drive letter, so the
- * renderer picks a *name* and main still picks the directory.
+ * rule its neighbour follows (`get-diagnostics` takes none, so that no path the renderer names
+ * can ever reach the filesystem — X-02). The rule holds here because of the alphabet: `AF-` and
+ * ten digits cannot spell a separator, a `..` or a drive letter, so the renderer picks a *name*
+ * and main still picks the directory.
  *
  * The renderer builds these in `client/src/lib/feedbackMail.ts` and this is not imported from
  * there on purpose. Main validating with the renderer's own validator is not validation, and
