@@ -8,6 +8,7 @@ import { coalesced, onBroadcast } from './lib/broadcast';
 import { reportError } from './lib/errors';
 import { signalFailed } from './boot';
 import { Layout } from './components/Layout';
+import { AnnouncementOverlay } from './components/AnnouncementOverlay';
 import { BootReady } from './components/BootReady';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { GlobalErrorSurface } from './components/GlobalErrorSurface';
@@ -167,6 +168,11 @@ createRoot(document.getElementById('root')!).render(
                 <Route path="print/artist/:id" element={<PrintArtist />} />
                 <Route path="print/project/:id" element={<PrintProject />} />
               </Routes>
+              {/* A sibling of <Routes>, not a route: it has to survive navigation, and it is not
+                  a page. Inside ErrorBoundary so a defect in it lands on the German fallback
+                  rather than in a blank window. Renders null unless there is something to
+                  announce, which on an installation without a payload is always (WP-63). */}
+              <AnnouncementOverlay />
             </ErrorBoundary>
           </HashRouter>
         </UndoProvider>

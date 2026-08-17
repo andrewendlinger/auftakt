@@ -33,6 +33,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -3126,6 +3127,189 @@ try {
   await topDialog(u).getByRole('button', { name: 'Fertig' }).click();
   check('der Hinweis nennt die Datei beim Namen', await shown(toast(u, new RegExp(file))));
   await u.close();
+
+  // ======================================================================== V · announcements
+  //
+  // The announcement overlay (WP-63) — the only surface in the app that decides for itself
+  // whether to exist, and the only one whose *absence* the other 250 assertions here depend on.
+  // A full-screen `z-[60]` layer appearing unbidden would swallow every click in this gate, so
+  // „inert without a payload" is asserted first and asserted again at the end, after the case has
+  // installed one and taken it away.
+  //
+  // **The negatives are waits, not counts.** `ready()` resolves on `html[data-app-ready]`, which
+  // `BootReady` also sets from an unconditional budget, so the feed request may still be in
+  // flight; a `count() === 0` taken there passes against an overlay that is one round trip from
+  // appearing — which is the failure this case exists to catch. `shown(…, 2000)` gives it a real
+  // chance to turn up and then reports that it did not.
+  //
+  // The payload is hand-written into `.demo/seasons.json`, exactly the way a real dated
+  // announcement is installed: nothing writes that key, there is no UI behind it, and there is
+  // deliberately no fixture in `server/src/demo.ts` — a card in front of every `npm run demo`
+  // would be in the way of every other visual check.
+  //
+  // Two contexts, and the second one is the point. Everything here runs at
+  // `reducedMotion: 'reduce'` (the boot gesture's documented escape hatch), which is also the
+  // branch that must render the card *without* a canvas — so the default context asserts the
+  // reduced-motion variant for free. The fireworks themselves only exist at
+  // `no-preference`, and „a canvas element is in the DOM" is not the assertion worth having:
+  // this gate exists for the defects that appear only once something is laid out, and a canvas
+  // loop that never paints is exactly one of them. So the pixels are read back.
+  console.log('\nV · Ankündigungen (WP-63)');
+  const registryPath = join(root, '.demo', 'seasons.json');
+  const readReg = () => JSON.parse(readFileSync(registryPath, 'utf8'));
+  /** Hand-install into the registry, the way the one real payload is installed. */
+  const writeReg = (fn) => {
+    const reg = readReg();
+    fn(reg);
+    writeFileSync(registryPath, JSON.stringify(reg, null, 2));
+  };
+  const pad = (n) => String(n).padStart(2, '0');
+  const now = new Date();
+  const TODAY = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const overlay = (page) => page.locator('[data-announcement]');
+
+  const v0 = await open(context);
+  check('ohne Payload zeigt die Demo keine Ankündigung', !(await shown(overlay(v0), 2000)));
+  await v0.close();
+
+  // A neutral fixture, dated today. `celebrate` is set here and read in both contexts below.
+  writeReg((reg) => {
+    reg.announcements = [
+      { id: 'testfest', title: 'Testfest', body: 'Eine Zeile.\n\nGrüße', date: TODAY.slice(5), celebrate: true },
+    ];
+  });
+
+  const v1 = await open(context);
+  check('ein datierter Payload erscheint beim Start', await shown(overlay(v1).first()));
+  check('…mit seinem Titel', (await v1.locator('#announcement-title').textContent()) === 'Testfest');
+  // The last paragraph is set apart as a sign-off — smaller, warm gold — and the lead must not
+  // still carry it. Two locators, because „the body contains both" would pass on one block.
+  check(
+    '…der letzte Absatz steht abgesetzt als Signatur',
+    (await v1.locator('.announcement-signoff').textContent())?.trim() === 'Grüße',
+  );
+  check(
+    '…und der Fließtext trägt ihn nicht noch einmal',
+    (await v1.locator('.announcement-body').textContent())?.trim() === 'Eine Zeile.',
+  );
+  check('…ohne Feuerwerk, weil das Fenster reduzierte Bewegung meldet', (await v1.locator('[data-announcement] canvas').count()) === 0);
+  // A dialog layer without being a `Modal`: the search shortcut must not reach past it and put
+  // the caret in a field behind a full-screen backdrop (`registerModalLayer` → `anyModalOpen()`).
+  // `ControlOrMeta`, like case S — the browser job runs on Linux.
+  await v1.keyboard.press('ControlOrMeta+k');
+  // The assertion is the *caret*, never „the field is not there": `GlobalSearch` renders its
+  // input permanently in the header, so a count of `input[role="combobox"]` is 1 on every page
+  // of the app and would pass against a shortcut that reached straight past this overlay. What
+  // `anyModalOpen()` exists to prevent is focus landing in that field behind a full-screen
+  // backdrop — so read the focus, and read it as a wait, because it would move one React round
+  // after the keystroke.
+  const caretInSearch = await until(
+    () => v1.evaluate(() => document.activeElement === document.querySelector('input[role="combobox"]')),
+    (v) => v === true,
+    1500,
+  );
+  check('⌘K setzt den Cursor nicht hinter die Überlagerung', caretInSearch === false);
+  // Tab cycles inside the card instead of walking out the back of it and landing on a link the
+  // user cannot see. The card holds exactly one tab stop, so the wrap is back onto the button.
+  await v1.keyboard.press('Tab');
+  check(
+    'Tab bleibt auf der Bestätigung, statt hinter die Überlagerung zu laufen',
+    await v1.evaluate(() => document.activeElement?.hasAttribute('data-announcement-confirm') === true),
+  );
+
+  await overlay(v1).getByRole('button', { name: 'Danke!' }).click();
+  check('„Danke!“ schließt die Karte', await gone(overlay(v1)));
+  const stamped = await until(() => Promise.resolve(readReg().announcementsSeen?.ids?.testfest), (d) => d === TODAY, 5000);
+  // The *server* stamps the day (localDay), never the client: a client that could name the day
+  // could name yesterday and make a yearly announcement repeat on every start.
+  check('…und der Server stempelt den Tag in die Registry', stamped === TODAY, String(stamped));
+  await v1.reload();
+  await ready(v1);
+  check('…ein Neustart holt sie nicht zurück', !(await shown(overlay(v1), 2000)));
+  await v1.close();
+
+  // The other trigger, driven the only way it can be without shipping a second build: put the
+  // marker back to a version that predates every entry in CHANGELOG.md. What this really asserts
+  // is the bundling — `__APP_VERSION__` and the `?raw` import of a file *above* the Vite root
+  // both have to have survived into the browser, and neither is visible to typecheck or to any
+  // other gate.
+  const APP_VERSION = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
+  const newest = readFileSync(join(root, 'CHANGELOG.md'), 'utf8').split(/^## (?=\d+\.\d+\.\d+)/m)[1] ?? '';
+  // The entry's first line of prose, with the Markdown taken off — what the card must render as
+  // text. Derived from the file at run time, so writing the next release's notes cannot break it.
+  const notesProbe = (newest.split('\n').slice(1).find((l) => l.trim()) ?? '')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/[*_`#]/g, '')
+    .replace(/^\s*[-–—]\s*/, '')
+    .trim()
+    .slice(0, 24);
+  writeReg((reg) => {
+    delete reg.announcements;
+    reg.announcementsSeen = { version: '0.0.1' };
+  });
+
+  const v2 = await open(context);
+  check('nach einem Update erscheint „Was ist neu“', await shown(overlay(v2).first()));
+  check('…mit der laufenden Version im Titel', (await v2.locator('#announcement-title').textContent()) === `Auftakt ${APP_VERSION}`, APP_VERSION);
+  const notes = (await v2.locator('.announcement-body').textContent()) ?? '';
+  check('…und dem echten CHANGELOG.md aus dem Bundle', notesProbe.length > 8 && notes.includes(notesProbe), notesProbe);
+  // Rendered as Markdown, not dumped as source: the entry is a list and has to arrive as one.
+  check('…als Markdown gerendert, nicht als Quelltext', (await v2.locator('.announcement-body li').count()) > 0);
+  check('…und ohne Signatur, denn eine Release-Notiz endet in einer Aufzählung', (await v2.locator('.announcement-signoff').count()) === 0);
+  await overlay(v2).getByRole('button', { name: 'Alles klar' }).click();
+  check('„Alles klar“ merkt sich die Version', await gone(overlay(v2)));
+  const marked = await until(() => Promise.resolve(readReg().announcementsSeen?.version), (v) => v === APP_VERSION, 5000);
+  check('…in der Registry, nicht in den Saison-Settings', marked === APP_VERSION, String(marked));
+  await v2.close();
+
+  // The fireworks, in a window that has not asked for less motion. Reading the pixels back is
+  // the whole assertion: a mounted canvas whose loop never runs looks identical from the DOM.
+  writeReg((reg) => {
+    reg.announcements = [
+      { id: 'feuerwerk', title: 'Testfest', body: 'Eine Zeile.\n\nGrüße', date: TODAY.slice(5), celebrate: true },
+    ];
+  });
+  const lively = await browser.newContext({ reducedMotion: 'no-preference', viewport: WIDE });
+  try {
+    const v3 = await open(lively);
+    check('ein Fenster ohne „weniger Bewegung“ bekommt das Feuerwerk', await shown(v3.locator('[data-announcement] canvas')));
+    const litPixels = await until(
+      () =>
+        v3.evaluate(() => {
+          const c = /** @type {HTMLCanvasElement | null} */ (document.querySelector('[data-announcement] canvas'));
+          const g = c?.getContext('2d');
+          if (!c || !g) return -1;
+          const d = g.getImageData(0, 0, c.width, c.height).data;
+          let n = 0;
+          for (let i = 3; i < d.length; i += 4) if (d[i] > 8) n++;
+          return n;
+        }),
+      (n) => n > 200,
+      8000,
+    );
+    check('…und die Schleife malt wirklich', litPixels > 200, `${litPixels} Pixel`);
+    // The scrim stays translucent — the app has to remain visible behind it, which is what rules
+    // out the obvious trail trick (a half-transparent wash accumulates to opaque in a few frames).
+    const scrimAlpha = await v3.evaluate(() => {
+      const el = document.querySelector('[data-announcement] > [aria-hidden="true"]');
+      const m = el && getComputedStyle(el).backgroundColor.match(/rgba?\(([^)]+)\)/);
+      return m ? Number(m[1].split(',')[3] ?? 1) : 1;
+    });
+    check('…hinter einem durchscheinenden, nie deckenden Schleier', scrimAlpha > 0 && scrimAlpha < 0.95, String(scrimAlpha));
+    await v3.close();
+  } finally {
+    await lively.close();
+  }
+
+  // Leave the demo the way every other case found it: no payload, and a marker that says this
+  // version has been seen. A gate that armed an overlay and walked away would break the next run.
+  writeReg((reg) => {
+    delete reg.announcements;
+    reg.announcementsSeen = { version: APP_VERSION };
+  });
+  const v4 = await open(context);
+  check('ohne Payload ist die Überlagerung wieder still', !(await shown(overlay(v4), 2000)));
+  await v4.close();
 
   console.log(`\n${failures ? `✗ ${failures} Fehler` : '✓ alles ok'} (${checks} Prüfungen)`);
 } catch (err) {

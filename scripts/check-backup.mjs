@@ -192,6 +192,17 @@ const second = (await post('seasons', { label: 'Zweite Saison' })).body;
   db.close();
 }
 
+// A hand-installed announcement (WP-63). It lives in `seasons.json` and nowhere else — no route
+// writes it, which is exactly why its survival has to be asserted here: there is no season
+// database to carry it, and „ride along in backups automatically" is the reason the registry was
+// chosen over the settings table in the first place. Written directly, the way the real one is.
+{
+  const reg = JSON.parse(readFileSync(join(dataDir, 'seasons.json'), 'utf8'));
+  reg.announcements = [{ id: 'testfest', title: 'Testfest', body: 'Eine Zeile.', date: '03-14' }];
+  reg.announcementsSeen = { version: '0.0.1', ids: { testfest: '2027-03-14' } };
+  writeFileSync(join(dataDir, 'seasons.json'), JSON.stringify(reg, null, 2));
+}
+
 // --- [1a] a backup covers every season, and the copies are not empty ---
 const backup = await post('backup', { dir: backupDir });
 const point = backup.body.dir;
@@ -203,6 +214,24 @@ check('restore point holds every season', seasons.every((s) => existsSync(join(p
 for (const s of seasons) {
   const n = rows(join(point, s.file), 'artists');
   check(`  ${s.file} contains rows (WAL captured)`, n > 0, `${n} artists`);
+}
+
+// The registry copy has to be the registry, not just a file of the right name: restoring is a
+// hand copy over the data directory, so anything living only in `seasons.json` — the landing
+// content, the season terms, and since WP-63 the announcements and what has already been seen —
+// is only as safe as this copy.
+{
+  const copied = JSON.parse(readFileSync(join(point, 'seasons.json'), 'utf8'));
+  check(
+    'the copied registry carries the announcements',
+    copied.announcements?.[0]?.id === 'testfest',
+    JSON.stringify(copied.announcements),
+  );
+  check(
+    '…and what has already been seen, so a restore does not replay it',
+    copied.announcementsSeen?.ids?.testfest === '2027-03-14' && copied.announcementsSeen?.version === '0.0.1',
+    JSON.stringify(copied.announcementsSeen),
+  );
 }
 
 // --- [1c] the folder explains itself: sub-folders, README, MANIFEST (WP-41) ---
@@ -413,6 +442,11 @@ if (process.platform === 'win32' || process.getuid?.() === 0) {
   // request that leaves the server holding an open connection before the chmod.
   const survived = /** @type {any} */ (await (await fetch(api('backup/status'))).json()).backupDir;
   check('an import leaves the backup folder configured', survived === backupDir, survived);
+  // Same reasoning one key over (WP-63): an import replaces a season database and never the
+  // registry, so the announcement state has to be exactly where it was — otherwise importing a
+  // backup would replay every announcement the user has already dismissed.
+  const feed = /** @type {any} */ (await (await fetch(api('announcements'))).json());
+  check('an import leaves the announcement state alone', feed.version === '0.0.1', String(feed.version));
   const intact = rows(activePath, 'artists');
   chmodSync(dataDir, 0o500);
   let failed;

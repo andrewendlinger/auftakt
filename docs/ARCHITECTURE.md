@@ -502,6 +502,45 @@ delete site, where the id is known — with the extra rule that a page still fol
 must not be written to at all, or the standard freezes onto it as an arrangement the user never
 made.
 
+## Announcements: two triggers, one card, inert by default
+
+One shape (`Announcement` — `id`, `title`, Markdown `body`, optional `celebrate`/`version`/`date`),
+two ways it fires, one renderer (`client/src/components/AnnouncementOverlay.tsx`, WP-63).
+
+**„Was ist neu" is the client's half.** `CHANGELOG.md` is inlined into the bundle with a `?raw`
+import and the running version is a build-time `define` from the **root** `package.json`
+(`client/vite.config.ts` → `__APP_VERSION__`); `lib/changelog.ts` splits the file on
+`^## (\d+\.\d+\.\d+)` — which is why `docs/DECISIONS.md` requires a bare version number there —
+and compares with `isNewer` from `electron/updateCheck.ts`, the same answer the update card gives.
+Neither the file nor the version may come from `electron-builder.yml`'s `files:` or from the
+preload bridge: a repo-root entry in `files:` packs the whole repository (`check:package`), and a
+bridge call does not exist in browser dev, which is where the UI is developed and where
+`check:browser` drives it.
+
+**Dated announcements are the server's half.** They come from an `announcements` array in the
+registry, are hand-installed, and nothing writes them — there is no create route and no UI.
+`server/src/lib/announcements.ts` is the only place that knows what a `date` means (`MM-DD`
+yearly, `YYYY-MM-DD` once; due on its latest occurrence at or before `localDay()`, within
+`CATCH_UP_DAYS`, and only while the stored seen-day is older than that occurrence) and it is pure,
+so `client/src/lib/announcement.test.ts` reaches it from the client Vitest suite. The client has
+**no date logic at all**: it asks `GET /api/announcements` and renders the answer.
+
+**The marker is in the registry, never in `settings`.** `announcementsSeen` sits beside
+`backupDir`/`backupPrompted` in `seasons.json` for the reason WP-39 established: a value in the
+season-scoped `settings` table is silently forgotten on the next season switch, and it would not
+travel with a backup. `POST /api/announcements/seen` stamps the day itself from `localDay()` — a
+client that could name the day could name yesterday and make a yearly announcement repeat on every
+start — exactly as `tasks.erledigt_am` is stamped server-side.
+
+**Inert is the default and it is load-bearing.** No key, no card; a first start ever initialises
+the version marker silently and shows nothing. The overlay is a `z-[60]` `no-print` layer mounted
+in `main.tsx` inside `<ErrorBoundary>` as a sibling of `<Routes>`, so an unexpected one would
+swallow every click in `check:browser` — which is why that gate asserts the silence before and
+after it installs a payload of its own, and why there is deliberately **no fixture in
+`server/src/demo.ts`**. It is not a `Modal` (no title bar, a canvas behind it, above the toasts at
+`z-50`) but keeps `Modal`'s contract through `registerModalLayer`/`tabbables`/`topModalDepth` in
+`components/fields.tsx`, so „a dialog is open" has one definition and Tab cannot walk out the back.
+
 ## Client contracts
 
 Which module owns which invariant. Reach for these rather than rebuilding the behaviour.

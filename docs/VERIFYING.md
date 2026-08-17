@@ -796,6 +796,36 @@ verified by hand, and the gate itself is written from this list.
   the steady state was fine, twice. Snapshot all geometry in one `evaluate`, or better, phrase the
   assertion as an eventually-true `waitForFunction` so a transition can never be the sample.
 
+### The announcement overlay (WP-63)
+
+- **It is invisible until you install a payload, and that is deliberate.** There is no fixture in
+  `server/src/demo.ts` and no UI that creates one — a card in front of every `npm run demo` would
+  be in the way of every other visual check. Write the key by hand into `.demo/seasons.json`
+  (gitignored), the way the real one is installed:
+  `announcements: [{ id, title, body, date: 'MM-DD', celebrate: true }]`. The registry is re-read
+  from disk on every request, so the next `reload()` picks it up — no server restart.
+- **„Was ist neu" is driven from the marker, not from a second build.** Set
+  `announcementsSeen: { version: '0.9.0' }` in the same file and reload: anything in `CHANGELOG.md`
+  above that version is what the card shows. Setting it to a version *above* the running one is how
+  you keep it out of the way while looking at a dated announcement.
+- **„Nothing is shown" has to be a wait, never a `count()`.** `html[data-app-ready]` is also set
+  from `BootReady`'s unconditional budget, so the feed request can still be in flight when the page
+  is „ready" — a zero counted there passes against an overlay that is one round trip from
+  appearing, which is the whole failure this assertion exists for. Wait ~2 s for the node and then
+  report that it never came.
+- **`GlobalSearch` renders its input permanently in the app header.** „⌘K did not reach past the
+  overlay" is therefore *not* `input[role="combobox"]` being absent — that locator matches on every
+  page of the app, and the assertion passes against a shortcut that walks straight through. Read
+  `document.activeElement` instead: what `anyModalOpen()` prevents is the caret landing in that
+  field behind a full-screen backdrop.
+- **The fireworks need `reducedMotion: 'no-preference'`.** Every other driving context here uses
+  `reduce` — the boot gesture's documented escape hatch — and that is *also* the branch the overlay
+  renders without a canvas, so the standard context gets the reduced-motion variant for free and can
+  never see the celebration. And „a `<canvas>` is in the DOM" proves nothing: a loop that never runs
+  looks identical from the DOM. Read the pixels back
+  (`getImageData(…).data`, count alpha > 8) — headless Chromium runs `requestAnimationFrame` and the
+  canvas is same-origin, so it is not tainted.
+
 ## Print and PDF
 
 - **`page.pdf()`'s default `printBackground: false` *is* the SHL-11 repro** — and a screenshot can

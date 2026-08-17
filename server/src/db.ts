@@ -116,6 +116,30 @@ interface Registry {
    */
   backupDir?: string;
   backupPrompted?: boolean;
+  /**
+   * Dated announcements, and what has already been confirmed (WP-63).
+   *
+   * `announcements` is **hand-installed only** — no route writes it, and there is no UI behind
+   * it. It is read as `unknown[]` on purpose and validated by `lib/announcements.ts`: this file
+   * is edited by hand, so a wrong shape is an ordinary input and has to drop out rather than
+   * throw.
+   *
+   * The state beside it is here, next to `backupDir`/`backupPrompted`, for the same reason those
+   * two are: it is season-independent. In the `settings` table it would be a value per season, so
+   * switching season would silently forget it and every announcement would come back — WP-39 one
+   * key over. The registry also travels with backups, which is what makes „schon gesehen" survive
+   * a restore.
+   *
+   * `version` is the last app version whose „Was ist neu" was confirmed. Absent means *no start
+   * has ever recorded one*, which is what the first start initialises silently: someone who has
+   * just installed the app needs no list of what used to be different.
+   */
+  announcements?: unknown[];
+  announcementsSeen?: {
+    version?: string;
+    /** announcement id → the local day (`YYYY-MM-DD`) it was confirmed on. */
+    ids?: Record<string, string>;
+  };
 }
 
 const DEFAULT_SEASON_LABEL = 'Festival 2026';
@@ -469,6 +493,55 @@ export function setBackupDir(dir: string): void {
 export function setBackupPrompted(): void {
   const reg = readRegistry();
   reg.backupPrompted = true;
+  saveRegistry(reg);
+}
+
+/** What this installation has already been shown (WP-63). See `Registry.announcementsSeen`. */
+export interface AnnouncementState {
+  /** Last app version whose „Was ist neu" was confirmed; `null` = no start has recorded one yet. */
+  version: string | null;
+  /** announcement id → the local day it was confirmed on. */
+  seen: Record<string, string>;
+}
+
+/**
+ * The raw `announcements` array, untouched.
+ *
+ * Deliberately `unknown[]`: validating is `lib/announcements.ts`'s job and this is a
+ * hand-maintained key, so „not an array at all" is a shape it has to answer for rather than
+ * crash on. An installation without the key — which is every installation the mechanism ships
+ * to — reads as an empty list, and the feature is then inert end to end.
+ */
+export function storedAnnouncements(): unknown[] {
+  const raw = readRegistry().announcements;
+  return Array.isArray(raw) ? raw : [];
+}
+
+export function getAnnouncementState(): AnnouncementState {
+  const stored = readRegistry().announcementsSeen;
+  const ids = stored?.ids;
+  const seen: Record<string, string> = {};
+  // Copied key by key rather than handed back: a hand-edited file can hold anything under `ids`,
+  // and the comparison downstream is a string `<`, which a number or an object would answer
+  // nonsensically instead of loudly.
+  if (ids && typeof ids === 'object') {
+    for (const [id, day] of Object.entries(ids)) if (typeof day === 'string') seen[id] = day;
+  }
+  return { version: typeof stored?.version === 'string' ? stored.version : null, seen };
+}
+
+/** Record „the „Was ist neu" for this app version has been seen" — also the first-start marker. */
+export function setAnnouncementVersionSeen(version: string): void {
+  const reg = readRegistry();
+  reg.announcementsSeen = { ...reg.announcementsSeen, version };
+  saveRegistry(reg);
+}
+
+/** Record the local day a dated announcement was confirmed on. */
+export function setAnnouncementSeen(id: string, day: string): void {
+  const reg = readRegistry();
+  const cur = reg.announcementsSeen ?? {};
+  reg.announcementsSeen = { ...cur, ids: { ...cur.ids, [id]: day } };
   saveRegistry(reg);
 }
 

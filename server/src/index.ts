@@ -23,6 +23,7 @@ import { exportRouter } from './routes/export';
 import { imagesRouter } from './routes/images';
 import { seasonsRouter } from './routes/seasons';
 import { landingRouter } from './routes/landing';
+import { announcementsRouter } from './routes/announcements';
 import { backupRouter } from './routes/backup';
 import { usageRouter } from './routes/usage';
 
@@ -190,6 +191,7 @@ app.use('/api/export', exportRouter);
 app.use('/api/images', imagesRouter);
 app.use('/api/seasons', seasonsRouter);
 app.use('/api/landing', landingRouter);
+app.use('/api/announcements', announcementsRouter);
 app.use('/api/backup', backupRouter);
 
 // In the packaged Electron app the server also serves the built client (loaded

@@ -42,18 +42,58 @@ export function anyModalOpen(): boolean {
   return openModals.size > 0;
 }
 
+/**
+ * The depth of the topmost open layer — 0 when nothing but the announcement overlay is up, since
+ * that registers at 0 and every real `Modal` starts at 1.
+ *
+ * Escape and Tab are handled by whichever layer *is* the top, so this comparison is made in three
+ * places (`Modal`'s two handlers and `AnnouncementOverlay`'s). One function rather than three
+ * inline loops: they must agree, and „topmost" is the whole rule.
+ */
+export function topModalDepth(): number {
+  let top = 0;
+  for (const d of openModals.values()) top = Math.max(top, d);
+  return top;
+}
+
+/**
+ * Register a layer that is *not* a `Modal` as „a dialog is open" — the announcement overlay
+ * (WP-63), which needs its own markup (no title bar, a canvas behind the card, `z-[60]` above
+ * the toasts) but is every bit as modal as the rest.
+ *
+ * Without it, ⌘F/⌘K would move focus into the search field behind a full-screen backdrop, which
+ * is exactly the state `anyModalOpen()` exists to prevent — and it would render *under* the
+ * overlay, at `z-50`. Registering keeps „a dialog is open" with one definition instead of two
+ * that can disagree.
+ *
+ * **Depth 0 on purpose.** `Modal`'s Escape and Tab handlers act only at `Math.max(…depths)`, and
+ * every real `Modal` starts at 1, so a zero can never win that comparison and can never take a
+ * dialog's Escape away from it. This layer handles its own Escape.
+ */
+export function registerModalLayer(depth = 0): () => void {
+  const token = {};
+  openModals.set(token, depth);
+  return () => {
+    openModals.delete(token);
+  };
+}
+
 const FOCUSABLE = 'a[href], button, input, select, textarea, [contenteditable="true"], [tabindex]';
 
 /**
  * What Tab can reach inside `root`, in tab order — DOM order, since nothing here uses a positive
  * `tabIndex`.
  *
+ * Exported for the announcement overlay (WP-63), which is a dialog layer without being a `Modal`
+ * and needs the same answer: two spellings of „what can Tab reach" would eventually disagree, and
+ * the `[inert]`/`getClientRects()`/`tabIndex >= 0` rules below are the whole substance of it.
+ *
  * `tabIndex >= 0` is what drops the rich-text toolbar (its buttons opt out with `-1`), `[inert]`
  * drops the whole form while „Änderungen verwerfen?" is up, and `getClientRects()` drops what is
  * rendered but not shown. A disabled „Speichern" has to go too, or the cycle would wrap one
  * element early while a save is blocked.
  */
-function tabbables(root: HTMLElement | null): HTMLElement[] {
+export function tabbables(root: HTMLElement | null): HTMLElement[] {
   if (!root) return [];
   return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
     (el) =>
@@ -105,22 +145,14 @@ export function Modal({
   dirtyRef.current = dirty;
   confirmingRef.current = confirming;
 
-  useEffect(() => {
-    const token = {};
-    openModals.set(token, depth);
-    return () => {
-      openModals.delete(token);
-    };
-  }, [depth]);
+  useEffect(() => registerModalLayer(depth), [depth]);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
       // A layer that handled the key for itself (RichTextEditor's link bar and emoji picker)
       // marks it; anything below the topmost dialog stays out of the way entirely.
-      let top = 0;
-      for (const d of openModals.values()) top = Math.max(top, d);
-      if (depth !== top) return;
+      if (depth !== topModalDepth()) return;
       if (confirmingRef.current) setConfirming(false); // Escape backs out of the question.
       else if (dirtyRef.current) setConfirming(true);
       else onClose();
@@ -149,9 +181,7 @@ export function Modal({
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.key !== 'Tab' || e.defaultPrevented) return;
-      let top = 0;
-      for (const d of openModals.values()) top = Math.max(top, d);
-      if (depth !== top) return;
+      if (depth !== topModalDepth()) return;
       const card = cardRef.current;
       const active = document.activeElement as HTMLElement | null;
       const loose = !active || active === document.body;
