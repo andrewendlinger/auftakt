@@ -65,8 +65,19 @@ npm run dist:mac    # or dist:win
 - [ ] Open each `.db` (DB Browser for SQLite) → rows are present. **An empty file is the old bug.**
 - [ ] Relaunch a few times → one folder per launch, oldest pruned past 30.
 - [ ] Any pre-existing flat `auftakt-<stamp>.db` files from older versions are still there.
-- [ ] Delete the configured backup folder (or make it read-only) and relaunch → an error dialog
-      says no backup was written and points at Settings. **A console-only message is the old bug.**
+- [ ] Make the configured backup folder **read-only** and relaunch → an error dialog says no
+      backup was written and points at Settings. **A console-only message is the old bug.**
+- [ ] **Deleting or renaming** the folder is a different case, and today it produces no dialog at
+      all: `runBackup` opens with `mkdirSync(target, { recursive: true })`, which is `mkdir -p` and
+      recreates the whole chain — the folder reappears, empty, and the backup genuinely succeeds
+      into it. Nothing throws, so the dialog above is never reached. Confirmed 2026-08-17 against
+      the demo stack: a `POST /api/backup` at a path two levels below a directory that does not
+      exist answers **200** and creates all of it; a read-only folder answers **500** (`EACCES`).
+      The user's earlier restore points stay behind under the old name — or on the unplugged
+      drive — while Settings keeps naming a folder that is no longer the one being written to.
+      **Open finding, not yet fixed**; a fix needs an existence check on the *configured* folder
+      before the run, without breaking the first backup into a folder the picker just created
+      (`properties: ['openDirectory', 'createDirectory']`).
 
 ### 3c · The folder explains itself (WP-41)
 
