@@ -38,12 +38,18 @@ after that every step is the customer's own click, and the app opens nothing on 
 - **The file is still written, and still to the desktop.** That half of WP-54 stands unchanged:
   a `mailto:` cannot attach, so the file exists to be attached by hand. Only the reveal is gone —
   `shell.showItemInFolder` now appears nowhere in the app.
-- **It is written on „Weiter", not on the last button.** The customer leaves for their mail in the
-  middle of the handover and attaches the file before coming back, so a step telling them to
-  attach a file main has not written yet is the one instruction the dialog must not give. Going
-  „Zurück", correcting an answer and pressing „Weiter" again re-writes it (`uniqueBundleName` gives
-  the second one its own name), because attaching the first version of what they wrote is worse
-  than a stray text file.
+- **It is written on „Weiter", not on the last button — and the handover waits for it.** The
+  customer leaves for their mail in the middle of the handover and attaches the file before coming
+  back, so a step telling them to attach a file main has not written yet is the one instruction
+  the dialog must not give. Waiting is the other half of the same sentence: every line of the
+  handover names the file — the attach step, the body „Text kopieren" hands over, the `mailto:`,
+  the toast — and the name is predictable exactly once. Going „Zurück", correcting an answer and
+  pressing „Weiter" again writes a *second* bundle, because attaching the first version of what
+  they wrote is worse than a stray text file, and `uniqueBundleName` calls that one `…-2.txt`. A
+  handover opened on the prediction would send them to the file holding the draft they had just
+  replaced, so „Weiter" is disabled for the length of the write instead. The dialog remembers
+  report text → name, so a text that is already on the desktop — an unchanged one, or an edit
+  taken back — names *that* bundle rather than writing a third.
 - **The handover is the mail, field by field**: An, Betreff, Text — the order the compose window
   asks for them in — each with its own copy button. This is the „Text kopieren" WP-54 removed, and
   it comes back for the opposite reason to the one it left with: it is no longer a second path

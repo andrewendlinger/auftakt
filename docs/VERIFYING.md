@@ -233,18 +233,28 @@ verified by hand, and the gate itself is written from this list.
   Four things follow for anyone verifying it. It is a *real file on the desktop of whoever runs
   the app*, so never drive the unstubbed path from a script — the browser stub in `lib/drive.mjs`
   records `saveDiagnostics`'s arguments into `window.__saved` and the assertion belongs on the
-  filename the handover then names. **The write is on „Weiter", not on the last button**, so a
-  script that only clicks „Weiter" has already produced the file, and one that waits for it after
-  „Fertig" waits for ever. The file persists between runs, so a manual pass that does not delete
+  filename the handover then names. **The write is on „Weiter", not on the last button, and the
+  handover waits for it**, so a script that only clicks „Weiter" has already produced the file,
+  one that waits for it after „Fertig" waits for ever, and one that expects the second dialog to
+  appear in the same tick as the click is racing an IPC round trip (`collectSystemFacts` awaits
+  the GPU calls). The file persists between runs, so a manual pass that does not delete
   it is reading a stale bundle a minute later — the reference in it is the tell. And **dev writes
   no boot log**, so a bundle built in dev holds the machine section and „noch keinen Start
   protokolliert" under the log heading; that is the branch, not a truncated file. A Wunsch writes
   nothing at all.
-- **Going „Zurück", editing an answer and pressing „Weiter" again writes a *second* bundle.** The
-  file carries the report text, so the first one would otherwise be the version the customer
-  attaches; `uniqueBundleName` gives the second its own `…-2.txt` and the handover names that one.
-  An unchanged text writes nothing the second time, which is what keeps `window.__saved` at 1
-  across the Escape-and-back-again case.
+- **Going „Zurück", editing an answer and pressing „Weiter" again writes a *second* bundle, and
+  the handover then names `…-2.txt`.** The file carries the report text, so the first one would
+  otherwise be the version the customer attaches; `uniqueBundleName` (`electron/diagnostics.ts`)
+  gives the second its own name and main returns it. Three consequences for a driving script.
+  **The dialog remembers report text → name**, so a text already on the desktop — an unchanged
+  one, or an edit taken back again — names that bundle without writing a third: `window.__saved`
+  stays where it was, which is also what makes the Escape-and-back-again case a 1. **A stub that
+  always answers `Auftakt-Diagnose-${ref}.txt` cannot see any of this** — it makes the one name
+  the handover must never predict indistinguishable from the one it may — so both stubs emulate
+  the suffix (second save of a reference → `…-2.txt`). And **`window.__holdSave = true` parks the
+  next save** until `window.__finishSave()`: while it is parked the handover must not be on
+  screen at all and „Weiter" must be disabled, which is how „it waits for the write instead of
+  guessing the name" is asserted rather than assumed.
 - **Nothing on this path opens anything by itself (WP-66).** „E-Mail öffnen" is gone: a script
   that waits for it, or that expects `window.__external` to fill after „Weiter", hangs. The
   `mailto:` now sits at the bottom of the handover as the link „E-Mail-Programm öffnen"
@@ -254,12 +264,16 @@ verified by hand, and the gate itself is written from this list.
 - **The handover's three copy buttons need clipboard permission, and they really use it.** „An",
   „Betreff" and „Text" are `navigator.clipboard.writeText` — no bridge involved, and the loopback
   origin the packaged app runs on is a secure context, as is the dev server. To assert on them,
-  `context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: UI })` **before** the
-  page is opened, then read back with `page.evaluate(() => navigator.clipboard.readText())`; both
-  work headless. Without the grant the write rejects, the dialog shows the „Kopieren hat nicht
-  geklappt" toast and the button keeps its label — which reads as „the copy button is broken".
-  The label is the tell either way: on success it says „Kopiert ✓" for 2.5 s, so a second
-  assertion inside that window is looking for a button that no longer has the name it clicked.
+  `context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: UI })` — a *context*
+  permission, so it may be granted at any point, before or after the page is open — then read
+  back with `page.evaluate(() => navigator.clipboard.readText())`; both work headless. The write
+  also needs the page focused, so `bringToFront()` it when earlier cases left pages open. Without
+  the grant the write rejects, the dialog shows a „Kopieren hat nicht geklappt" toast and the
+  button keeps its label — which reads as „the copy button is broken". Two tells. On success the
+  label says „Kopiert ✓" for 2.5 s, so a second assertion inside that window is looking for a
+  button that no longer has the name it clicked; and a failed **„Text kopieren"** reveals the
+  body in a `<pre>` inside the handover, since that row shows a description rather than the text
+  and „von Hand markieren" would otherwise point at nothing.
 - **The text boxes stop at the mail's budget, not at their `maxLength`.** `maxLength` is 300 per
   field, but every keystroke goes through `fitFeedbackAnswer` first, so three boxes filled to 300
   with German come back holding fewer — the last one typed is the short one, and „Die E-Mail ist
@@ -639,10 +653,11 @@ verified by hand, and the gate itself is written from this list.
   „Herunterladen & installieren" button does not exist and the click waits for ever. Everything
   past `quitAndInstall` — the restart dialog, `setProgressBar`, NSIS — has no browser equivalent
   and is Windows-manual by construction.
-- **„Weiter" opens a dialog rather than closing one, and it is the click that writes the file.**
-  It stacks the handover („So schickst du es ab") on the form, so `dialogs(page)` counts **2**
-  from there on — scope to `topDialog(page)`, or a bare `getByRole('button', {name: 'Zurück'})`
-  matches nothing useful. Its footer ends in „Fertig", which closes both and sends the toast
+- **„Weiter" opens a dialog rather than closing one, it is the click that writes the file, and it
+  waits for that write.** It stacks the handover („So schickst du es ab") on the form once main
+  has answered, so `dialogs(page)` counts **2** from there on — scope to `topDialog(page)`, or a
+  bare `getByRole('button', {name: 'Zurück'})` matches nothing useful. Its footer ends in
+  „Fertig", which closes both and sends the toast
   naming the bundle; nothing in the dialog claims the mail was sent, because the app cannot know.
   Escape and the backdrop peel off the handover only; the filled-in form is still behind it,
   which is also how to check that a „Zurück" kept the typed answers.

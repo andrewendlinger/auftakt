@@ -58,20 +58,28 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
   // Set by the last keystroke that did not fit, cleared by the next one that did — see
   // `onAnswer`. A box that stops taking text without saying why reads as a broken keyboard.
   const [full, setFull] = useState(false);
-  // The form, then the handover. „Weiter" writes the diagnostics file and shows what the mail
-  // needs; from there on every step is the customer's own click.
+  // The form, then the handover. „Weiter" writes the diagnostics file and *then* shows what the
+  // mail needs; from there on every step is the customer's own click.
   const [step, setStep] = useState<'form' | 'send'>('form');
-  // What main actually wrote, once it has answered — `null` until then, and after a failed
-  // write it is the context with no attachment at all. The handover reads `out` below, so the
-  // predicted file name stands in for the sub-second the write is in flight.
+  // What main really wrote, and the only thing the handover is ever composed from: `null` means
+  // there is no file (a Wunsch, the browser build, a failed write). Never a prediction — the
+  // handover does not open until this is settled, because everything in it names the file.
   const [sent, setSent] = useState<FeedbackContext | null>(null);
-  // The report text of the bundle already on the desktop. „Zurück", a corrected answer and
-  // „Weiter" again must not leave the customer attaching the *first* version of what they
-  // wrote, and re-writing an identical text would only litter the desktop with a `…-2.txt`.
-  const written = useRef('');
+  // „Weiter" pressed, main not back yet. It disables the button rather than opening a handover
+  // that would have to guess the name.
+  const [saving, setSaving] = useState(false);
+  // Report text → the name main gave the bundle holding it. Keyed by the text and not by „has
+  // anything been written at all": „Zurück", a corrected answer and „Weiter" again has to write
+  // a *second* bundle, because attaching the first version of what they wrote is worse than a
+  // stray text file — while going back to a text that is already on the desktop has to name
+  // that file rather than write a third.
+  const written = useRef(new Map<string, string>());
   // Which row was just copied, so the button can say so where the eye already is. Cleared on a
   // timer below; a failed copy says so in a toast instead, because there is nothing to confirm.
   const [copied, setCopied] = useState<string | null>(null);
+  // Set by a failed „Text kopieren" only: the row shows a description, so „bitte von Hand
+  // markieren" has nothing to point at until the body is actually on screen.
+  const [showText, setShowText] = useState(false);
   // Stamped once, when the dialog opened: it names both the mail and the file written next to
   // it, so it has to be the same value in the preview below and in what actually goes out.
   const [ref] = useState(() => feedbackRef(new Date()));
@@ -130,7 +138,9 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
     diagnostics: spec?.diagnostics ? (diag?.summary ?? '') : '',
     attachment: willAttach,
   };
-  // What the handover shows and copies: main's answer once it is in, the prediction until then.
+  // What the handover shows and copies. `sent` is set before the step changes, so inside the
+  // handover this is always main's answer; `ctx` covers the form, where nothing has been
+  // written yet and `attachment` is only the prediction „Was wird mitgeschickt?" previews.
   const out = sent ?? ctx;
   const required = kind ? requiredField(kind) : null;
   const ready =
@@ -147,47 +157,53 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
   };
 
   /**
-   * „Weiter": show the handover, and put the file on the desktop while it is being read.
+   * „Weiter": put the file on the desktop, *then* show the handover.
+   *
+   * In that order, and the step waits for main's answer. Everything in the handover names the
+   * file — the attach line, the body the „Text kopieren" button hands over, the `mailto:` behind
+   * the optional link, the toast — and the name is only predictable for the *first* bundle: a
+   * second one comes back as `…-2.txt` (`uniqueBundleName`), so a handover opened before main
+   * answered would tell a customer who has just corrected an answer to attach the file holding
+   * the draft they replaced.
    *
    * The write happens here rather than behind a button in the handover because the file has to
-   * *already be there* when the customer switches to their mail — they attach it before they
-   * come back, and a step telling them to attach a file that main has not written yet is the
-   * one instruction the dialog must not give. Nothing is revealed and nothing is opened; the
-   * only trace is a named text file where they can see it.
+   * already be there when the customer switches to their mail — they attach it before they come
+   * back, and a step telling them to attach a file that main has not written yet is the one
+   * instruction the dialog must not give. Nothing is revealed and nothing is opened; the only
+   * trace is a named text file where they can see it.
    */
   const toHandover = () => {
-    setStep('send');
-    if (!willAttach) return;
+    // A Wunsch carries no file, and must not inherit the one a Fehler wrote in this same
+    // dialog: `sent` outlives a „Zurück", so leaving it standing would put a bug bundle's
+    // attach line into a wish's mail and name it in the toast.
+    if (!willAttach) {
+      setSent(null);
+      setStep('send');
+      return;
+    }
     // The copy that goes *into* the file carries neither the attach instruction nor the
     // summary: a file telling its reader to attach that same file is nonsense, and the log it
     // would summarize is printed in full two sections further down.
     const forFile = feedbackBody(draft, { ...ctx, attachment: '', diagnostics: '' });
-    if (forFile === written.current) return;
-    written.current = forFile;
-    setSent(null);
+    const already = written.current.get(forFile);
+    if (already !== undefined) {
+      setSent({ ...ctx, attachment: already });
+      setStep('send');
+      return;
+    }
+    setSaving(true);
     // Main answers `{ ok: false }` rather than throwing, but a channel that is not there at all
-    // rejects — and an unhandled rejection here would leave the handover promising a file that
-    // was never written. A failed write is a mail without an attachment, and it must be
-    // retryable, so the remembered text goes back to nothing.
+    // rejects — and an unhandled rejection here would leave „Weiter" disabled with no handover
+    // ever shown. A failed write is a mail without an attachment, never a dead button.
     void window.auftakt
       ?.saveDiagnostics?.(ref, forFile)
       .catch(() => null)
       .then((saved) => {
-        if (!saved?.ok) written.current = '';
+        if (saved?.ok) written.current.set(forFile, saved.name);
         setSent(saved?.ok ? { ...ctx, attachment: saved.name } : { ...ctx, attachment: '' });
+        setSaving(false);
+        setStep('send');
       });
-  };
-
-  const copy = async (row: string, text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(row);
-    } catch {
-      setCopied(null);
-      toast.show({
-        message: 'Kopieren hat nicht geklappt — bitte den Text von Hand markieren und kopieren.',
-      });
-    }
   };
 
   // The mail, field by field, in the order the compose window asks for them. „Text" shows a
@@ -195,13 +211,21 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
   // in full under „Was wird mitgeschickt?" one dialog back, and what matters here is that the
   // button puts it on the clipboard.
   const fields = [
-    { key: 'to', label: 'An', shown: FEEDBACK_TO, copies: FEEDBACK_TO, action: 'Adresse kopieren' },
+    {
+      key: 'to',
+      label: 'An',
+      shown: FEEDBACK_TO,
+      copies: FEEDBACK_TO,
+      action: 'Adresse kopieren',
+      failed: 'Kopieren hat nicht geklappt — die Adresse steht im Dialog und lässt sich von Hand markieren.',
+    },
     {
       key: 'subject',
       label: 'Betreff',
       shown: feedbackSubject(draft, out),
       copies: feedbackSubject(draft, out),
       action: 'Betreff kopieren',
+      failed: 'Kopieren hat nicht geklappt — der Betreff steht im Dialog und lässt sich von Hand markieren.',
     },
     {
       key: 'body',
@@ -209,8 +233,22 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
       shown: 'was du geschrieben hast, mit den technischen Angaben',
       copies: feedbackMailBody(draft, out),
       action: 'Text kopieren',
+      failed: 'Kopieren hat nicht geklappt — der Text steht jetzt im Dialog und lässt sich von Hand markieren.',
     },
   ];
+
+  const copy = async (field: (typeof fields)[number]) => {
+    try {
+      await navigator.clipboard.writeText(field.copies);
+      setCopied(field.key);
+    } catch {
+      setCopied(null);
+      // The other two rows show their value; this one shows a description, so „von Hand
+      // markieren" is an instruction with nothing to follow it until the body is on screen.
+      if (field.key === 'body') setShowText(true);
+      toast.show({ message: field.failed });
+    }
+  };
 
   // The dialog closes on the customer's own „Fertig", so nothing here can claim the mail was
   // sent. What outlives the dialog is the file, so that is what the reminder is about.
@@ -240,7 +278,9 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
         <>
           {!ready && <FooterHint>{hint()}</FooterHint>}
           <Btn onClick={onClose}>Abbrechen</Btn>
-          <Btn variant="primary" onClick={toHandover} disabled={!ready}>
+          {/* Disabled while main is writing, which is the whole of the wait: the handover is
+              composed from the name main returns, so it opens once and opens correct. */}
+          <Btn variant="primary" onClick={toHandover} disabled={!ready || saving}>
             Weiter
           </Btn>
         </>
@@ -376,12 +416,21 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
                     {/* The label carries the row, so a screen reader hears three different
                         buttons rather than three „kopieren" — and „Kopiert ✓" replaces it
                         where the eye already is instead of in a toast at the far edge. */}
-                    <Btn onClick={() => void copy(f.key, f.copies)}>
+                    <Btn onClick={() => void copy(f)}>
                       {copied === f.key ? 'Kopiert ✓' : f.action}
                     </Btn>
                   </div>
                 ))}
               </div>
+
+              {/* Only after a copy was actually refused — a locked-down clipboard, an insecure
+                  origin. The row above says what the text *is*; this is the text itself, so the
+                  failure toast's „von Hand markieren" has something to point at. */}
+              {showText && (
+                <pre className="max-h-48 select-text overflow-auto whitespace-pre-wrap break-words rounded-lg bg-neutral-50 p-3 text-xs text-neutral-600">
+                  {fields.find((f) => f.key === 'body')?.copies}
+                </pre>
+              )}
 
               {out.attachment ? (
                 <p className="font-medium text-neutral-800">
