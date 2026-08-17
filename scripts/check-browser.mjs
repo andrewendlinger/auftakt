@@ -286,10 +286,17 @@ async function launch() {
 const ready = (page, timeout = 20_000) =>
   page.waitForSelector('html[data-app-ready]', { timeout }).then(() => page);
 
-/** `#/dashboard` is Übersicht; bare `#/` is the season landing page — different screens. */
-async function open(context, hashPath = '/dashboard') {
+/**
+ * `#/dashboard` is Übersicht; bare `#/` is the season landing page — different screens.
+ *
+ * `prepare` runs on the fresh page *before* the first navigation, which is the only moment an
+ * init script can be installed — `stubElectron` below has to be in place before the renderer
+ * looks for `window.auftakt`, and a page that has already loaded cannot be given one.
+ */
+async function open(context, hashPath = '/dashboard', prepare) {
   const page = await context.newPage();
   page.on('pageerror', (e) => check(`no page error (${hashPath})`, false, e.message));
+  if (prepare) await prepare(page);
   await page.goto(`${UI}/#${hashPath}`);
   return ready(page);
 }
@@ -436,6 +443,130 @@ async function dragHandleOnto(page, source, target) {
   await dragOver(page, target);
   await page.mouse.up();
 }
+
+// ---------------------------------------------------------------------------- the bridge, stubbed
+//
+// Two of the app's surfaces only exist when `window.auftakt` does — the update card (WP-60) and
+// the diagnostics half of the feedback dialog (WP-54) — and neither may be driven for real: the
+// real `saveDiagnostics` writes a file to the desktop of whoever runs this and opens a Finder
+// window on it, and the real `installUpdate` downloads a release. So the preload bridge is
+// replaced by one that **records** instead.
+//
+// Ported from `~/.claude/tools/playwright/lib/drive.mjs` rather than imported: that module is the
+// ad-hoc runtime's, it imports `playwright` (this gate has only `playwright-core`) and it points at
+// :4317. The pattern is the shared part and it stays documented there; this is its committed copy.
+
+/**
+ * Install the recording bridge. Must run before the first navigation — see `open`'s `prepare`.
+ *
+ * `opts.platform` and the two update answers are parameters because the card branches on them and
+ * each branch fails *silently* on the wrong value: without `canInstall` the „Herunterladen &
+ * installieren" button is simply not in the DOM and the click waits out its timeout.
+ *
+ * @param {import('playwright-core').Page} page
+ * @param {{ platform?: string, silent?: unknown, manual?: unknown }} opts
+ */
+const stubElectron = (page, opts = {}) =>
+  page.addInitScript((o) => {
+    const w = /** @type {any} */ (window);
+    // Recorders, not spies: a `mailto:` is fire-and-forget, so the URL handed to `openExternal`
+    // is the only observable the feedback dialog produces at all.
+    w.__external = [];
+    w.__saved = [];
+    // Replaced by the real subscriber and the real resolver as soon as the update card mounts and
+    // its button is clicked; no-ops until then, so a script may call them unconditionally.
+    w.__updateProgress = () => {};
+    w.__finishUpdate = () => {};
+    w.auftakt = {
+      exportDatabase() {},
+      importDatabase() {},
+      chooseBackupDir() {},
+      openExternal(url) {
+        w.__external.push(url);
+      },
+      getVersion: () => Promise.resolve('0.0.0-test'),
+      // `refresh` is the card's own distinction: false is the cached silent startup check it
+      // reads on mount, true the one „Nach Updates suchen" asks for.
+      checkForUpdates: (refresh) => Promise.resolve((refresh ? o.manual : o.silent) ?? null),
+      // The percentage is *pushed* from main, so a bridge whose members only answer questions
+      // leaves the card frozen in its first frame — which is exactly the frame the WP-60 defect
+      // left it in for ever, i.e. a stub that cannot drive this proves nothing about the fix.
+      installUpdate: () =>
+        new Promise((resolve) => {
+          w.__finishUpdate = resolve;
+        }),
+      onUpdateProgress: (cb) => {
+        w.__updateProgress = cb;
+        return () => {
+          w.__updateProgress = () => {};
+        };
+      },
+      getDiagnostics: () =>
+        Promise.resolve({
+          summary:
+            'Startdiagnose — 2 Einträge (Zeit in UTC):\n' +
+            '2026-08-11 12:00 · v0.0.0-test · play/done · bereit 420 · Ende 2100 ms\n' +
+            '2026-08-11 12:03 · v0.0.0-test · cross/abort:hitch · bereit 430 · Ende 1800 ms',
+          hasLog: true,
+          file: '/tmp/Auftakt/boot-log.jsonl',
+          system: 'macOS 15.6 · 1728×1117 @2×',
+        }),
+      saveDiagnostics: (ref, report) => {
+        w.__saved.push({ ref, report });
+        return Promise.resolve({ ok: true, name: `Auftakt-Diagnose-${ref}.txt` });
+      },
+      bootSettled: () => Promise.resolve(),
+      onBackupConfigChanged: () => () => {},
+      platform: o.platform ?? 'darwin',
+    };
+  }, opts);
+
+// ---------------------------------------------------------------------------- focus
+
+/**
+ * Where the focus sits **in the topmost dialog's own tab order** — the index into exactly the list
+ * `Modal`'s trap walks, so the WP-42 promises can be asserted as positions instead of as element
+ * names that a re-worded button would break.
+ *
+ * `at: -1` is the answer that matters: focus is on `<body>`, on the page behind the backdrop, or
+ * in a portal — all three are „the trap let go", and the first is the state the focus effect
+ * exists to prevent. Index 0 is always the header's ✕, so „the dialog focused its first *field*"
+ * is `at === 1` and „the forward wrap skipped the ✕" is a walk that never returns to 0.
+ *
+ * The filter is `tabbables()`'s from `client/src/components/fields.tsx`: a positive `tabIndex`
+ * exists nowhere in this app, `[inert]` drops the form while „Änderungen verwerfen?" is up, a
+ * disabled „Speichern" would otherwise make the cycle wrap one element early, and
+ * `getClientRects()` drops what is rendered but not shown.
+ */
+const tabStop = (page) =>
+  page.evaluate(() => {
+    // The **last** card, not the first: a Modal opened out of another one is rendered inside it
+    // (the feedback dialog's „So geht es weiter"), so document order puts the topmost last. A
+    // `PillSelect` menu's click-away layer is a `.fixed.inset-0` with no card in it and never
+    // matches here.
+    const card = [...document.querySelectorAll('.fixed.inset-0 > div')].pop() ?? null;
+    const items = card
+      ? Array.from(
+          card.querySelectorAll(
+            'a[href], button, input, select, textarea, [contenteditable="true"], [tabindex]',
+          ),
+        ).filter(
+          (el) =>
+            /** @type {HTMLElement} */ (el).tabIndex >= 0 &&
+            !el.hasAttribute('disabled') &&
+            !el.closest('[inert]') &&
+            el.getClientRects().length > 0,
+        )
+      : [];
+    const at = items.indexOf(document.activeElement);
+    const el = items[at];
+    return {
+      at,
+      n: items.length,
+      tag: el?.tagName ?? document.activeElement?.tagName ?? 'BODY',
+      text: (el?.textContent ?? '').trim().slice(0, 24),
+    };
+  });
 
 /**
  * „Is anything on this page out of reach at this width?" — evaluated inside the page, so both
@@ -773,6 +904,11 @@ try {
   // task list of a tuned length, and a copy would bring the demo's along. Built here with the
   // others all the same, so a season this run created is never a season an earlier case wrote to.
   const printed = await makeSeason('Druck');
+  // Cases O–R2 *rewrite* settings — the sort hierarchy, the option lists, the two windows — so they
+  // work in a copy of their own rather than in the demo every other case reads. Taken here with the
+  // rest: the assertions below start from the seeded values („eine Regel: Status", four event
+  // types), and a copy taken later would carry whatever an earlier case had left behind.
+  const config = await makeSeason('Einstellungen', true);
   const pageBreak = await fillPageBreakFixture(printed.id);
 
   // ======================================================================== A · the #54 canary
@@ -1485,15 +1621,13 @@ try {
   // Every page the WP-55 pass covered: the header search and the season switcher are on all of
   // them, the task table is on three, and „Archiv" is where `SectionTitle` meets a w-64 search box.
   //
-  // `#/einstellungen` is deliberately **not** in the list, and not because it passes. Roughly one
-  // load in ten it reports a 7 px overhang at 610 (never at 624), and the state then holds for the
-  // life of that layout: `TaskSortEditor`'s add row is a `<select>` beside „+ Hinzufügen", and
-  // Chromium sizes that select either to ~181 px or to its longest option's ~465 px depending on
-  // whether it re-ran intrinsic sizing after the columns query filled the options in. At 465 the
-  // row really is wider than the card. That is a finding about the page, not about the sweep — it
-  // belongs to WP-64c together with the rest of Einstellungen (docs/VERIFYING.md records it), and
-  // a gate that fails one run in ten is worse than no gate.
-  const NARROW_PAGES = ['/dashboard', '/', '/artist/1', '/project/1', '/archiv'];
+  // `#/einstellungen` joined the list in WP-64c, together with the fix that made it pass: the add
+  // row of `TaskSortEditor` is a `<select>` beside „+ Hinzufügen", and a `<select>`'s automatic
+  // minimum width is its longest option — 465 px here — so as a flex item it refused to shrink and
+  // pushed the button 7 px past a 610 px window. `min-w-0` lets it shrink again. Why the overhang
+  // looked intermittent (WP-64b measured it 2 in 12), and what this page therefore needs before it
+  // can be measured at all, is on the precondition below.
+  const NARROW_PAGES = ['/dashboard', '/', '/artist/1', '/project/1', '/archiv', '/einstellungen'];
   const WITH_TABLE = new Set(['/dashboard', '/artist/1', '/project/1']);
 
   for (const vp of NARROW) {
@@ -1515,6 +1649,33 @@ try {
           await shown(n.locator('div.overflow-x-auto table tbody tr')),
         );
       }
+      // The same rule for the same reason, one layer down — and with a twist that is the whole
+      // reason this page looked flaky. The sort editor's `<select>` is ~181 px wide while it holds
+      // nothing but „Spalte wählen…", and **Chromium does not re-measure it when React fills the
+      // options in**: the width is decided at the select's first layout and then simply stays,
+      // whichever value it took. Waiting for the options is therefore not enough — measured after
+      // a `reload()` the box is 181 px in six loads out of six, and the page is clean whatever the
+      // CSS says. What does re-run the intrinsic sizing is a `change` on the select, i.e. the thing
+      // a user does before pressing „+ Hinzufügen": 24 loads out of 24 (WP-64c).
+      if (hash === '/einstellungen') {
+        const options = await until(() => n.locator('select option').count(), (c) => c > 1);
+        // Guarded, because `check` does not throw and `selectOption` does: a page that no longer
+        // renders this editor at all would abort the whole run instead of failing one assertion.
+        let sized = 0;
+        if (options > 1) {
+          await n.locator('select').selectOption({ index: 1 });
+          sized = await until(
+            () => n.evaluate(() => Math.round(document.querySelector('select')?.getBoundingClientRect().width ?? 0)),
+            (w) => w > 300,
+            5000,
+          );
+        }
+        check(
+          `${hash}: die Spaltenauswahl ist gefüllt und vermessen, bevor die Seite gemessen wird`,
+          options > 1 && sized > 300,
+          `${options} Optionen, Auswahl ${sized} px breit`,
+        );
+      }
       const m = await n.evaluate(overflowReport);
       const at = `${vp.label} ${vp.width}×${vp.height} ${hash}`;
       check(
@@ -1527,6 +1688,28 @@ try {
         m.offenders.length === 0,
         m.offenders.slice(0, 4).join(' · '),
       );
+      // …and the same row against its *card* rather than against the window, because the window
+      // question is answered by a pixel of luck at one of the two widths: without `min-w-0` the
+      // button ended at 617 in a 610 px window (reported) and at exactly 624 in a 624 px one,
+      // which is inside the sweep's one pixel of slack (not reported). The card is where the row
+      // is actually cut off, so this is the assertion that bites at both widths (WP-64c).
+      if (hash === '/einstellungen') {
+        const addRule = await n.evaluate(() => {
+          const select = document.querySelector('select');
+          const button = select?.parentElement?.querySelector('button') ?? null;
+          const card = select?.closest('div.rounded-2xl') ?? null;
+          return {
+            options: select?.options.length ?? 0,
+            rowRight: Math.round(button?.getBoundingClientRect().right ?? 0),
+            cardRight: Math.round(card?.getBoundingClientRect().right ?? 0),
+          };
+        });
+        check(
+          `${at}: die Sortier-Regel-Zeile endet in ihrer Karte`,
+          addRule.rowRight > 0 && addRule.rowRight <= addRule.cardRight + 1,
+          `„+ Hinzufügen“ bis ${addRule.rowRight}, Karte bis ${addRule.cardRight}, ${addRule.options} Optionen`,
+        );
+      }
     }
 
     // WP-55's third fix, and the one a width sweep cannot see: the add row and the `<table>` sit
@@ -1960,6 +2143,762 @@ try {
     );
   }
   await p4.close();
+
+  // ======================================================================== O · the four tabs
+  //
+  // Einstellungen is four *routes*, each behind a `NavLink`, and not four buttons — so
+  // `getByRole('button', { name: 'Kategorien' })` waits out its timeout against a page that is
+  // working perfectly (docs/VERIFYING.md). The slugs are the half that survives: WP-54 renamed all
+  // four labels and moved two cards between the tabs, and every script keyed on a slug came
+  // through that untouched while every script keyed on a label did not.
+  //
+  // Each tab is then asserted by a card only that tab renders. „The link marks itself current" on
+  // its own is satisfied by a router that changed the URL and rendered nothing into the `<Outlet>`.
+  console.log('\nO · Die vier Reiter der Einstellungen');
+  const C = scoped(config.id);
+  /** A settings card, addressed by text it contains — headings here are CSS-uppercased. */
+  const cardWith = (page, text) => page.locator('div.rounded-2xl').filter({ hasText: text });
+  const tabLink = (page, slug) => page.locator(`a[href="#/einstellungen/${slug}"]`);
+
+  const s = await open(context, '/dashboard');
+  await pin(s, config.id, '/einstellungen/kategorien');
+  // The redirect is asserted as a navigation, not as „the URL is this after a reload": `#/einstellungen`
+  // has no page of its own, it is an index route that sends the window on to the first tab.
+  await s.goto(`${UI}/#/einstellungen`);
+  const landed = await s
+    .waitForURL(/#\/einstellungen\/aufgaben$/, { timeout: 10_000 })
+    .then(() => true)
+    .catch(() => false);
+  check('#/einstellungen leitet auf „Aufgaben & Übersicht“ weiter', landed, await s.evaluate(() => location.hash));
+
+  const tabs = s.locator('a[href^="#/einstellungen/"]');
+  check(
+    'die vier Reiter sind Links',
+    (await shown(tabs)) && (await tabs.count()) === 4,
+    `${await tabs.count()} Links`,
+  );
+  check(
+    '…und keine Buttons — genau daran wartet sich ein `getByRole("button")` tot',
+    (await s.getByRole('button', { name: 'Programm & Hilfe' }).count()) === 0,
+  );
+
+  for (const tab of [
+    { slug: 'aufgaben', card: 'Automatische Aufgaben-Sortierung' },
+    { slug: 'kategorien', card: 'Dokument-Kategorien' },
+    { slug: 'daten', card: 'Datenbank & Backups' },
+    { slug: 'hilfe', card: 'Feedback & Diagnose' },
+  ]) {
+    await tabLink(s, tab.slug).click();
+    await s.waitForURL(new RegExp(`#/einstellungen/${tab.slug}$`), { timeout: 10_000 });
+    // `aria-current` is set on render, which is a commit later than the URL change.
+    const current = await until(() => tabLink(s, tab.slug).getAttribute('aria-current'), (v) => v === 'page', 5000);
+    check(`„${tab.slug}“ markiert sich als aktiver Reiter`, current === 'page', String(current));
+    check(`…und rendert „${tab.card}“`, await shown(cardWith(s, tab.card)));
+  }
+  // „Programm & Hilfe" is the one tab whose contents depend on there being an Electron bridge, and
+  // this window has none: `UpdateCard` sits behind `hasElectron` while the feedback card
+  // deliberately does not (a `mailto:` needs no bridge, and a card that vanished in browser mode
+  // would be a card no driving script could ever see). Case U asserts the other half against the
+  // stub — the pair is the assertion, „the card is there" alone says nothing about the branch.
+  check(
+    'ohne Bridge fehlt die Update-Karte auf diesem Reiter',
+    (await cardWith(s, 'Version & Updates').count()) === 0,
+  );
+
+  // ======================================================================== P · the editors write
+  //
+  // Three editors share „Aufgaben & Übersicht" and all three write through the same guarded PATCH,
+  // so the assertion that means anything for each of them is the **stored** value: an editor that
+  // renders its change and never sends it looks identical on screen, which is exactly the state
+  // PGS-09 left the user in.
+  //
+  // `TaskSortEditor` has no „Speichern" — it writes on every interaction — so each step is polled
+  // for rather than slept on. The two „Zeitfenster" fields are asserted as a *pair*: they have sat
+  // on one tab since WP-54, they look alike, and each has to write its own key. „Both cards save"
+  // is also true of a page that writes one key twice.
+  console.log('\nP · Die Editoren auf „Aufgaben & Übersicht“ schreiben wirklich');
+  await tabLink(s, 'aufgaben').click();
+  await s.waitForURL(/#\/einstellungen\/aufgaben$/, { timeout: 10_000 });
+
+  const sortCard = cardWith(s, 'Automatische Aufgaben-Sortierung');
+  const rules = () => api(C('/settings')).then((v) => v.task_sort ?? []);
+  const ruleText = (v) => v.map((r) => `${r.id}:${r.dir}`).join(' | ');
+  // The option list arrives with the columns query; „Fällig" is not selectable before it does.
+  const options = await until(() => sortCard.locator('select option').count(), (c) => c > 1);
+  check('die Spaltenauswahl ist gefüllt', options > 1, `${options} Optionen`);
+  const rulesBefore = await rules();
+  check('die Saison startet mit genau einer Regel', ruleText(rulesBefore) === 'status:asc', ruleText(rulesBefore));
+
+  await sortCard.locator('select').selectOption('due');
+  await sortCard.getByRole('button', { name: '+ Hinzufügen' }).click();
+  const added = await until(rules, (v) => v.length === 2);
+  check('eine hinzugefügte Regel steht in den Einstellungen', ruleText(added) === 'status:asc | due:asc', ruleText(added));
+
+  const secondRule = sortCard.locator('[data-rule-row]').nth(1);
+  await secondRule.getByRole('button', { name: 'Absteigend' }).click();
+  const turned = await until(rules, (v) => v[1]?.dir === 'desc');
+  check('…die Richtung wird mitgeschrieben', ruleText(turned) === 'status:asc | due:desc', ruleText(turned));
+
+  await secondRule.locator('[data-arrow="up"]').click();
+  const reordered = await until(rules, (v) => v[0]?.id === 'due');
+  check('…und ▲ schreibt die neue Reihenfolge', ruleText(reordered) === 'due:desc | status:asc', ruleText(reordered));
+  // RTE-14: the focus goes with the rule, or the second ↑ undoes the first — focus would sit on
+  // the position the rule left, which now holds the rule it swapped with. The restore runs off the
+  // *server* array, so it lands a render after the write; polled for that reason (docs/VERIFYING.md).
+  const carried = await until(
+    () =>
+      s.evaluate(() => {
+        const row = document.activeElement?.closest('[data-rule-row]');
+        return {
+          row: row ? Array.from(document.querySelectorAll('[data-rule-row]')).indexOf(row) : -1,
+          arrow: document.activeElement?.getAttribute('data-arrow') ?? '',
+        };
+      }),
+    (v) => v.row === 0,
+    5000,
+  );
+  check('der Fokus wandert mit der verschobenen Regel (RTE-14)', carried.row === 0 && !!carried.arrow, JSON.stringify(carried));
+
+  await sortCard.locator('[data-rule-row]').first().getByRole('button', { name: 'Entfernen' }).click();
+  const dropped = await until(rules, (v) => v.length === 1);
+  check('…und ✕ nimmt sie wieder heraus', ruleText(dropped) === 'status:asc', ruleText(dropped));
+
+  // Both „Zeitfenster" boxes are `type="number"` on this one tab since WP-54, which is why every
+  // selector here is scoped to its card — a bare `input[type="number"]` is ambiguous and so is
+  // „Speichern".
+  //
+  // The gesture is „leeren, dann tippen", and that is the whole point of it: the draft is a
+  // *string*, clamped on blur and on save rather than per keystroke, because clamping each
+  // keystroke wrote the empty field back as a 1 and the next digits appended to it — so emptying
+  // the box and typing 60 stored 160, with no validation message (PGS-04). Select-all-and-type
+  // never empties the field and passes against that defect.
+  const attentionCard = cardWith(s, 'Aufgaben-Übersicht');
+  const eventCard = cardWith(s, 'Termine in der Übersicht');
+  check('beide Zeitfenster-Felder liegen auf diesem Reiter (WP-54)', (await s.locator('input[type="number"]').count()) === 2);
+
+  await attentionCard.getByRole('button', { name: 'Bald fällig' }).click();
+  const attentionBox = attentionCard.locator('input[type="number"]');
+  await attentionBox.click();
+  await attentionBox.press('ControlOrMeta+a');
+  await attentionBox.press('Backspace');
+  await attentionBox.type('60');
+  await attentionCard.getByRole('button', { name: 'Speichern' }).click();
+  const savedWindow = await until(() => api(C('/settings')), (v) => v.attention_window_days === '60', 8000);
+  check(
+    'die Übersichts-Karte schreibt Fenster und Kennzahlen in einem Zug',
+    savedWindow.attention_window_days === '60' && JSON.stringify(savedWindow.task_stats ?? []).includes('baldfaellig'),
+    `${savedWindow.attention_window_days} Tage, ${JSON.stringify(savedWindow.task_stats ?? [])}`,
+  );
+  check('…und der Knopf ist danach wieder stumpf', !(await attentionCard.getByRole('button', { name: 'Speichern' }).isEnabled()));
+
+  const eventBox = eventCard.locator('input[type="number"]');
+  await eventBox.click();
+  await eventBox.press('ControlOrMeta+a');
+  await eventBox.press('Backspace');
+  await eventBox.type('21');
+  await eventCard.getByRole('button', { name: 'Speichern' }).click();
+  const both = await until(() => api(C('/settings')), (v) => v.event_window_days === '21', 8000);
+  check(
+    '…die Termin-Karte schreibt ihren eigenen Schlüssel und lässt den anderen stehen',
+    both.event_window_days === '21' && both.attention_window_days === '60',
+    `Termine ${both.event_window_days}, Aufmerksamkeit ${both.attention_window_days}`,
+  );
+
+  // ======================================================================== Q · the option lists
+  //
+  // „Kategorien" is three `OptionsEditor`s over one settings key each. The interesting half is not
+  // that a save lands but that a *refused* one does not: `validateOptions` is shared with the
+  // column manager because the invariants belong to the option list rather than to the screen
+  // editing it — bolted onto one call site, the other silently discarded the row (RTE-12).
+  console.log('\nQ · Die Optionslisten auf „Kategorien“');
+  await tabLink(s, 'kategorien').click();
+  await s.waitForURL(/#\/einstellungen\/kategorien$/, { timeout: 10_000 });
+
+  const typeCard = cardWith(s, 'Termin-Typen');
+  const types = () => api(C('/settings')).then((v) => v.event_types ?? []);
+  const typeText = (v) => v.map((o) => o.label).join(' | ');
+  check('alle drei Listen stehen auf dem Reiter', (await shown(typeCard)) && (await s.locator('div.rounded-2xl:has([data-option-row])').count()) === 3);
+  const typesBefore = await types();
+  check('die Termin-Typen der Demo stehen darin', typesBefore.length === 4, typeText(typesBefore));
+
+  const optionRows = typeCard.locator('[data-option-row]');
+  const newType = `Probe ${RUN}`;
+  await typeCard.getByRole('button', { name: '+ Typ' }).click();
+  await typeCard.locator('[data-option-label]').last().fill(newType);
+  await typeCard.getByRole('button', { name: 'Speichern' }).click();
+  const typesAfter = await until(types, (v) => v.some((o) => o.label === newType), 8000);
+  check('ein hinzugefügter Typ wird gespeichert', typesAfter.some((o) => o.label === newType), typeText(typesAfter));
+  // Waited for on the *rows*, not only on the API: the editor reseeds its draft from the server
+  // list whenever that changes, so anything typed between the save landing and the reseed arriving
+  // is thrown away — which is silent, and downstream reads as clicks landing on the wrong row.
+  const seeded = await until(() => optionRows.count(), (n) => n === 5, 8000);
+  check('…und der Editor übernimmt die gespeicherte Liste', seeded === 5, `${seeded} Zeilen`);
+
+  // A row with no name is refused *before* it can be saved — and the refusal is the button, not a
+  // toast afterwards: `normalizeOptions` ends in `.filter(o => o.label)`, so a blank row saved
+  // would silently vanish and read as a failed save (RTE-12).
+  await typeCard.getByRole('button', { name: '+ Typ' }).click();
+  const problem = await until(() => typeCard.locator('.text-amber-700').innerText().catch(() => ''), (t) => t.length > 0, 5000);
+  check('eine namenlose Zeile wird benannt statt gespeichert', /keine Bezeichnung/.test(problem), problem.replace(/\n/g, ' '));
+  check('…und „Speichern“ ist so lange stumpf', !(await typeCard.getByRole('button', { name: 'Speichern' }).isEnabled()));
+
+  // One at a time, with the list length waited for in between: the rows are keyed by index, so
+  // two clicks on „the last ✕" inside one render address the same position twice — and the second
+  // one would then take a demo category with it.
+  await optionRows.last().getByRole('button', { name: 'Entfernen' }).click();
+  const withoutBlank = await until(() => optionRows.count(), (n) => n === 5, 5000);
+  await optionRows.last().getByRole('button', { name: 'Entfernen' }).click();
+  const withoutProbe = await until(() => optionRows.count(), (n) => n === 4, 5000);
+  check('beide Zeilen lassen sich einzeln wieder entfernen', withoutBlank === 5 && withoutProbe === 4, `${withoutBlank} → ${withoutProbe}`);
+  await typeCard.getByRole('button', { name: 'Speichern' }).click();
+  const typesRestored = await until(types, (v) => v.length === 4, 8000);
+  check('…und ✕ nimmt den Typ wieder heraus', typeText(typesRestored) === typeText(typesBefore), typeText(typesRestored));
+  // Removing a category *nothing uses* saves straight away; the reassignment dialog belongs to the
+  // other branch. Asserted rather than assumed, and cleared if it is there — its backdrop would
+  // otherwise swallow the next case's clicks and turn one red check into an aborted run.
+  const openDialogs = await s.locator('.fixed.inset-0').count();
+  check('ein unbenutzter Typ geht ohne Zuordnungs-Dialog', openDialogs === 0, `${openDialogs} Dialoge`);
+  if (openDialogs > 0) {
+    await s.keyboard.press('Escape');
+    await until(() => s.locator('.fixed.inset-0').count(), (n) => n === 0, 5000);
+  }
+
+  // ======================================================================== R · seasons and backups
+  //
+  // The data tab holds the only *irreversible* delete in the app — a season is a file, not a row:
+  // no `deleted_at`, no Papierkorb, no undo (DECISIONS.md) — and the backup card, which is the
+  // one card that renders differently for having no Electron bridge. This page has none, so the
+  // browser half is asserted here and its stubbed twin in case U.
+  console.log('\nR · Saisons löschen und die Backup-Karte ohne Bridge');
+  await tabLink(s, 'daten').click();
+  await s.waitForURL(/#\/einstellungen\/daten$/, { timeout: 10_000 });
+
+  const backupCard = cardWith(s, 'Datenbank & Backups');
+  check('ohne Bridge ist der Backup-Ordner nicht wählbar', !(await backupCard.getByRole('button', { name: 'Wählen…' }).isEnabled()));
+  check('…und die Karte sagt, warum', /nur in der Desktop-App/.test(await backupCard.innerText()));
+
+  const homeLabel = registry.seasons.find((x) => x.id === HOME)?.label ?? '';
+  const seasonRows = s.locator('li');
+  const defaultRow = seasonRows.filter({ hasText: 'Standard' });
+  check(
+    'die Standard-Saison ist als solche markiert',
+    (await shown(defaultRow)) && (await defaultRow.innerText()).includes(homeLabel),
+    (await defaultRow.count()) ? (await defaultRow.innerText()).replace(/\n/g, ' ') : 'keine Zeile',
+  );
+  check('…und trägt keinen Löschknopf, weil der Server sie ohnehin verweigert', (await defaultRow.locator('button[title="Löschen"]').count()) === 0);
+
+  const doomedSeason = await makeSeason('Löschziel');
+  check('eine per API angelegte Saison steht noch nicht in der Liste', (await seasonRows.filter({ hasText: doomedSeason.label }).count()) === 0);
+  await s.reload();
+  await ready(s);
+  const doomedRow = seasonRows.filter({ hasText: doomedSeason.label });
+  check('…nach einem Neuladen schon', await shown(doomedRow));
+
+  await doomedRow.locator('button[title="Löschen"]').click();
+  await s.getByRole('heading', { name: /endgültig löschen$/ }).waitFor({ timeout: 8000 });
+  const confirmText = await topDialog(s).innerText();
+  check(
+    'die Rückfrage nennt die Saison und sagt, dass es keinen Weg zurück gibt',
+    confirmText.includes(doomedSeason.label) && /nicht rückgängig/.test(confirmText),
+    confirmText.replace(/\n/g, ' | '),
+  );
+  // WP-42: a confirm dialog has no tabbable in its body, so the focus effect falls through to the
+  // footer's first button — and that is „Abbrechen". The keystroke that reaches the question
+  // answers it, and the safe answer is the one it lands on.
+  const confirmFocus = await tabStop(s);
+  check('der Fokus liegt auf „Abbrechen“ (WP-42)', confirmFocus.text === 'Abbrechen', JSON.stringify(confirmFocus));
+  await s.keyboard.press('Enter');
+  const afterEnter = await until(() => s.locator('.fixed.inset-0').count(), (n) => n === 0, 5000);
+  check('Enter beantwortet sie damit — der Dialog geht zu', afterEnter === 0, `${afterEnter} Dialoge`);
+  check('…und die Saison steht noch da', (await api('/seasons')).seasons.some((x) => x.id === doomedSeason.id));
+  // Leave nothing standing if that assertion failed: the delete below clicks the same 🗑, and a
+  // confirm still up would turn one red check into an aborted run that never reaches R2 or S.
+  if ((await s.locator('.fixed.inset-0').count()) > 0) {
+    await s.keyboard.press('Escape');
+    await until(() => s.locator('.fixed.inset-0').count(), (n) => n === 0, 5000);
+  }
+
+  await doomedRow.locator('button[title="Löschen"]').click();
+  await topDialog(s).getByRole('button', { name: 'Endgültig löschen' }).click();
+  const remaining = await until(
+    () => api('/seasons').then((r) => (r.seasons ?? []).map((x) => x.id)),
+    (ids) => !ids.includes(doomedSeason.id),
+  );
+  check('„Endgültig löschen“ löscht sie wirklich', !remaining.includes(doomedSeason.id), `${remaining.length} Saisons übrig`);
+  check('…und der Hinweis nennt sie', await shown(toast(s, new RegExp(doomedSeason.label))));
+
+  // ======================================================================== R2 · the term
+  //
+  // „Saison" is a word the user owns: it is stored registry-wide in seasons.json, not per season,
+  // and every screen composes its headings from it. The tab's own label is the shortest proof that
+  // the word travels — `SettingsPage` builds it from `useSeasonTerm`, so a card that saved into
+  // the wrong store would leave the tab reading „Saison & Daten" beside a renamed everything else.
+  console.log('\nR2 · Die Bezeichnung trägt bis in den Reiter');
+  const termCard = cardWith(s, 'Bezeichnung');
+  await termCard.locator('input').nth(0).fill('Festival');
+  await termCard.locator('input').nth(1).fill('Festivals');
+  await termCard.getByRole('button', { name: 'Speichern' }).click();
+  const terms = await until(() => api('/seasons').then((r) => r.terms ?? {}), (t) => t.season === 'Festival', 8000);
+  check('die Bezeichnung wird registryweit gespeichert', terms.season === 'Festival' && terms.seasonPlural === 'Festivals', JSON.stringify(terms));
+  const renamedTab = await until(() => tabLink(s, 'daten').innerText(), (t) => t.includes('Festival'), 5000);
+  check('…und der Reiter heißt danach', renamedTab.trim() === 'Festival & Daten', renamedTab.trim());
+
+  await termCard.locator('input').nth(0).fill('');
+  await termCard.locator('input').nth(1).fill('');
+  await termCard.getByRole('button', { name: 'Speichern' }).click();
+  const reset = await until(() => api('/seasons').then((r) => r.terms ?? {}), (t) => !t.season, 8000);
+  check('leer lassen setzt sie zurück', !reset.season, JSON.stringify(reset));
+  const plainTab = await until(() => tabLink(s, 'daten').innerText(), (t) => t.includes('Saison'), 5000);
+  check('…und der Reiter heißt wieder wie ab Werk', plainTab.trim() === 'Saison & Daten', plainTab.trim());
+  await s.close();
+
+  // ======================================================================== S · the keyboard
+  //
+  // WP-42 gave every `Modal` three duties, and all three are about where the caret is rather than
+  // about what is on screen: place focus on open, keep Tab inside the card, hand focus back to the
+  // opener on close. Focus left behind the backdrop meant the next Enter pressed the button that
+  // had opened the dialog — and opened it a second time.
+  //
+  // Every assertion below is a *position in the dialog's own tab order* (`tabStop`), never a count
+  // of keystrokes: a `type="date"` is three tab stops, so a fixed-length walk silently ends inside
+  // a picker and reads as a broken tab order (docs/VERIFYING.md). Index 0 is the header's ✕, so
+  // „the first field of the body" is 1 — which is the rule WP-42 states, and the ✕ keeps its place
+  // in the natural order rather than being the first thing anyone lands on.
+  console.log('\nS · Tastatur: Fokus setzen, halten, zurückgeben (WP-42)');
+  const k = await open(context, '/artist/1');
+  await k.getByRole('button', { name: '✎ Bearbeiten' }).first().click();
+  await k.getByRole('heading', { name: /bearbeiten$/ }).waitFor({ timeout: 8000 });
+
+  const opened = await tabStop(k);
+  check(
+    'der Dialog setzt den Fokus auf das erste Feld des Rumpfes, nicht auf das ✕ (WP-42)',
+    opened.at === 1 && opened.tag === 'INPUT',
+    JSON.stringify(opened),
+  );
+  /** @type {{ at: number, n: number, tag: string, text: string }[]} */
+  const walk = [];
+  for (let i = 0; i < Math.max(opened.n - 1, 1); i++) {
+    await k.keyboard.press('Tab');
+    walk.push(await tabStop(k));
+  }
+  check(
+    'Tab bleibt im Dialog',
+    walk.length > 1 && walk.every((w) => w.at >= 0),
+    walk.map((w) => `${w.at}`).join(' '),
+  );
+  check(
+    '…läuft im Kreis und kommt am ersten Feld heraus, nicht am ✕',
+    walk[walk.length - 1]?.at === opened.at && !walk.some((w) => w.at === 0),
+    walk.map((w) => `${w.at}:${w.tag}`).join(' '),
+  );
+  // Backwards the ✕ *is* in the way, deliberately: it keeps its natural place, and only the wrap
+  // off it goes to the end of the dialog rather than to the page behind the backdrop.
+  await k.keyboard.press('Shift+Tab');
+  const onClose = await tabStop(k);
+  check('Shift+Tab vom ersten Feld erreicht das ✕', onClose.at === 0, JSON.stringify(onClose));
+  await k.keyboard.press('Shift+Tab');
+  const wrapped = await tabStop(k);
+  check('…und von dort springt es ans Ende des Dialogs', wrapped.at === wrapped.n - 1, JSON.stringify(wrapped));
+
+  // Read before the dialog goes: „focus is on the opener afterwards" is also true of a dialog that
+  // never took focus in the first place, which is precisely the state the effect above prevents.
+  const beforeClose = await tabStop(k);
+  await k.keyboard.press('Escape');
+  const shut = await until(() => k.locator('.fixed.inset-0').count(), (n) => n === 0, 5000);
+  check('Escape schließt den ungeänderten Dialog', shut === 0, `${shut} Dialoge`);
+  const handedBack = await until(
+    () => k.evaluate(() => (document.activeElement?.textContent ?? '').trim()),
+    (t) => t.includes('Bearbeiten'),
+    5000,
+  );
+  check(
+    '…und der Fokus kommt aus dem Dialog zurück auf den Knopf, der ihn geöffnet hat (WP-42)',
+    beforeClose.at >= 0 && handedBack.includes('Bearbeiten'),
+    `${JSON.stringify(beforeClose)} → ${handedBack}`,
+  );
+
+  // ======================================================================== S2 · the exception
+  //
+  // `PillSelect`'s option menu is the one place the trap deliberately lets go: it portals to
+  // `document.body` and runs the listbox contract with *real* focus on the options (RTE-11), so
+  // pulling focus back into the card would break the field it serves.
+  //
+  // The menu also brings its own click-away layer — another `div.fixed.inset-0`, appended to the
+  // end of the body — so `topDialog()` stops being the dialog the moment it opens. Everything
+  // below therefore addresses the Modal as the *first* one.
+  console.log('\nS2 · Das portalte Menü ist die Ausnahme (RTE-11)');
+  await k.getByRole('button', { name: '+ Termin' }).first().click();
+  await k.getByRole('heading', { name: 'Neuer Termin' }).waitFor({ timeout: 8000 });
+  const eventDialog = k.locator('.fixed.inset-0').first();
+  await eventDialog.locator('button[aria-haspopup="listbox"]').first().click();
+  check('das Menü öffnet', await shown(k.locator('[role="listbox"]')));
+  const portaled = await k.evaluate(() => {
+    const card = document.querySelector('.fixed.inset-0 > div');
+    const menu = document.querySelector('[role="listbox"]');
+    return {
+      role: document.activeElement?.getAttribute('role') ?? '',
+      option: (document.activeElement?.textContent ?? '').trim(),
+      inCard: !!card && card.contains(document.activeElement),
+      atBody: menu?.parentElement === document.body,
+      layers: document.querySelectorAll('.fixed.inset-0').length,
+    };
+  });
+  check(
+    'der Fokus steht auf einer Option außerhalb der Dialogkarte (RTE-11)',
+    portaled.role === 'option' && !portaled.inCard && portaled.atBody,
+    JSON.stringify(portaled),
+  );
+  check('…und das Menü legt eine zweite .fixed.inset-0 über den Dialog', portaled.layers === 2, `${portaled.layers} Schichten`);
+  await k.keyboard.press('ArrowDown');
+  const stepped = await until(
+    () => k.evaluate(() => ({ text: (document.activeElement?.textContent ?? '').trim(), role: document.activeElement?.getAttribute('role') ?? '' })),
+    (v) => v.text !== portaled.option,
+    3000,
+  );
+  check('dort bewegt ↓ den Fokus weiter, nicht Tab', stepped.role === 'option' && stepped.text !== portaled.option, `${portaled.option} → ${stepped.text}`);
+  await k.keyboard.press('Escape');
+  const returnedToPill = await until(
+    () =>
+      k.evaluate(() => {
+        const card = document.querySelector('.fixed.inset-0 > div');
+        return {
+          haspopup: document.activeElement?.getAttribute('aria-haspopup') ?? '',
+          inCard: !!card && card.contains(document.activeElement),
+          menus: document.querySelectorAll('[role="listbox"]').length,
+        };
+      }),
+    (v) => v.menus === 0,
+    5000,
+  );
+  check('Escape schließt nur das Menü und gibt den Fokus an die Pille zurück', returnedToPill.haspopup === 'listbox' && returnedToPill.inCard, JSON.stringify(returnedToPill));
+  // ✕ and „Abbrechen" are deliberate exits and never ask about changes — Escape here would.
+  await eventDialog.locator('button[title="Schließen"]').click();
+  const eventShut = await until(() => k.locator('.fixed.inset-0').count(), (n) => n === 0, 5000);
+  check('der Termin-Dialog lässt sich über ✕ schließen', eventShut === 0, `${eventShut} Dialoge`);
+
+  // ======================================================================== T · the search overlay
+  //
+  // The search field is a combobox and the hits are `[role="option"]` that focus never enters:
+  // ↑/↓ move `aria-activedescendant` while the caret stays in the field, because the field is a
+  // *filter* and every keystroke after ↓ would otherwise have to be routed back into it. The hits
+  // are `tabIndex={-1}` for the same reason — they used to be twenty tab stops behind the field.
+  //
+  // So nothing here reads `document.activeElement` to find the marked hit, and nothing presses
+  // Enter on a hit: both are how a script asserts the opposite of the contract (WP-43).
+  console.log('\nT · Die Suchüberlagerung (WP-43)');
+  const field = k.locator('input[role="combobox"]');
+  await k.keyboard.press('ControlOrMeta+k');
+  const inField = await until(
+    () => k.evaluate(() => document.activeElement === document.querySelector('input[role="combobox"]')),
+    (v) => v === true,
+    5000,
+  );
+  check('⌘K setzt den Cursor ins Suchfeld', inField);
+  await k.keyboard.type('Konzert');
+  const hitCount = await until(() => k.locator('#gs-hits [role="option"]').count(), (n) => n > 1, 8000);
+  check('die Trefferliste öffnet und hat mehrere Treffer', hitCount > 1, `${hitCount} Treffer`);
+
+  const marker = () =>
+    k.evaluate(() => {
+      const input = document.querySelector('input[role="combobox"]');
+      const hits = Array.from(document.querySelectorAll('#gs-hits [role="option"]'));
+      return {
+        ad: input?.getAttribute('aria-activedescendant') ?? '',
+        ids: hits.map((h) => h.id),
+        selected: hits.filter((h) => h.getAttribute('aria-selected') === 'true').map((h) => h.id),
+        tabIndexes: [...new Set(hits.map((h) => /** @type {HTMLElement} */ (h).tabIndex))],
+        inField: document.activeElement === input,
+      };
+    });
+  const firstHit = await marker();
+  check(
+    'der Marker steht auf dem ersten Treffer und ist genau einer',
+    firstHit.ad === firstHit.ids[0] && firstHit.selected.join() === firstHit.ad,
+    JSON.stringify({ ad: firstHit.ad, selected: firstHit.selected }),
+  );
+  check('Treffer sind keine Tabstopps', firstHit.tabIndexes.join() === '-1', firstHit.tabIndexes.join());
+  await k.keyboard.press('ArrowDown');
+  const second = await until(marker, (m) => m.ad === m.ids[1], 5000);
+  check(
+    '↓ bewegt den Marker und lässt den Fokus im Feld',
+    second.ad === second.ids[1] && second.selected.join() === second.ad && second.inField,
+    JSON.stringify({ ad: second.ad, inField: second.inField }),
+  );
+  await k.keyboard.press('Tab');
+  // `hits` is in the reading because „focus is not on a hit" is also true of a panel that closed
+  // on the keystroke — the assertion is about the *open* list having no tab stops in it.
+  const afterTab = await k.evaluate(() => ({
+    isHit: !!document.activeElement?.closest('#gs-hits [role="option"]'),
+    role: document.activeElement?.getAttribute('role') ?? '',
+    tag: document.activeElement?.tagName ?? 'BODY',
+    hits: document.querySelectorAll('#gs-hits [role="option"]').length,
+  }));
+  check(
+    'Tab führt aus dem Feld heraus, aber nie auf einen Treffer',
+    afterTab.hits > 0 && !afterTab.isHit && afterTab.role !== 'option',
+    JSON.stringify(afterTab),
+  );
+
+  // ⌘F is the second way in and answers the other habit; it has to work from outside the field too.
+  await k.keyboard.press('ControlOrMeta+f');
+  const backInField = await until(
+    () => k.evaluate(() => document.activeElement === document.querySelector('input[role="combobox"]')),
+    (v) => v === true,
+    5000,
+  );
+  check('⌘F holt den Cursor zurück ins Feld', backInField);
+  // Walked to, never counted: which groups this query returns is a fixture fact, and the group
+  // order decides how many ↓ a project hit is away.
+  const wantedHit = (await marker()).ids.find((id) => id.startsWith('gs-hit-p')) ?? '';
+  for (let i = 0; i < 12 && (await marker()).ad !== wantedHit; i++) await k.keyboard.press('ArrowDown');
+  const onProject = await marker();
+  check('der Marker lässt sich bis auf einen Projekttreffer laufen', !!wantedHit && onProject.ad === wantedHit, onProject.ad || 'kein Projekttreffer');
+  await k.keyboard.press('Enter');
+  const wantedHash = `#/project/${wantedHit.replace('gs-hit-p', '')}`;
+  const opening = await until(() => k.evaluate(() => location.hash), (h) => h === wantedHash, 8000);
+  check('Enter im Feld öffnet den markierten Treffer', opening === wantedHash, `${opening} für ${wantedHit}`);
+  check('…und leert die Suche', (await field.inputValue()) === '', await field.inputValue());
+
+  await k.keyboard.press('ControlOrMeta+f');
+  await k.keyboard.type('Konzert');
+  await shown(k.locator('#gs-hits [role="option"]'));
+  await k.keyboard.press('Escape');
+  const panelGone = await until(() => k.locator('#gs-hits').count(), (n) => n === 0, 5000);
+  check(
+    'Escape legt zuerst die Liste weg und lässt die Eingabe stehen',
+    panelGone === 0 && (await field.inputValue()) === 'Konzert',
+    await field.inputValue(),
+  );
+  await k.keyboard.press('Escape');
+  const emptied = await until(() => field.inputValue(), (v) => v === '', 5000);
+  check('…und erst der zweite Escape leert sie', emptied === '', emptied);
+
+  // The rule that makes the two shortcuts safe: over an open dialog they do nothing. A listener
+  // that moved focus would tear the trap open from the outside and park the caret behind the
+  // backdrop — the state `Modal`'s focus effect exists to prevent (WP-43).
+  await k.goto(`${UI}/#/artist/1`);
+  await k.reload();
+  await ready(k);
+  await k.getByRole('button', { name: '✎ Bearbeiten' }).first().click();
+  await k.getByRole('heading', { name: /bearbeiten$/ }).waitFor({ timeout: 8000 });
+  await k.keyboard.press('ControlOrMeta+f');
+  await k.keyboard.press('ControlOrMeta+k');
+  await sleep(400);
+  const inert = await k.evaluate(() => {
+    const search = document.querySelector('input[role="combobox"]');
+    return {
+      dialog: document.querySelectorAll('.fixed.inset-0').length,
+      onSearch: document.activeElement === search,
+      expanded: search?.getAttribute('aria-expanded') ?? '',
+      panels: document.querySelectorAll('#gs-hits').length,
+    };
+  });
+  check(
+    '⌘F und ⌘K sind bei offenem Dialog wirkungslos (WP-43)',
+    inert.dialog === 1 && !inert.onSearch && inert.panels === 0 && inert.expanded === 'false',
+    JSON.stringify(inert),
+  );
+  await k.keyboard.press('Escape');
+  await k.close();
+
+  // ======================================================================== U · the update card
+  //
+  // Everything below runs against the recording bridge and never against the real one — see
+  // `stubElectron`. Three prerequisites decide whether this card is reachable at all, and each
+  // one fails silently on its own: it lives at **`#/einstellungen/hilfe`** and nowhere else
+  // (`#/einstellungen` lands on „Aufgaben & Übersicht", where every selector here matches nothing),
+  // `checkForUpdates` has to answer `updateAvailable`, and the in-app install only exists with
+  // `canInstall` — on the stub's defaults the button is simply not in the DOM.
+  //
+  // What WP-60 added is the *progress*, and the reason the percentage is pushed rather than
+  // polled is also the reason a naive stub proves nothing here: with no subscriber the card sits
+  // in its first frame for ever, which is exactly what the defect looked like.
+  console.log('\nU · Die Update-Karte am Bridge-Stub (WP-60)');
+  const u = await open(context, '/einstellungen/hilfe', (page) =>
+    stubElectron(page, {
+      platform: 'win32',
+      silent: { current: '0.0.0-test', latest: '9.9.9', url: 'https://example.invalid/releases', updateAvailable: true, canInstall: true },
+      manual: { current: '0.0.0-test', latest: '9.9.9', url: 'https://example.invalid/releases', updateAvailable: true, canInstall: false },
+    }),
+  );
+  const updateCard = cardWith(u, 'Version & Updates');
+  check('die Karte, die es ohne Bridge nicht gibt (Fall O), steht hier', await shown(updateCard));
+  const version = await until(() => updateCard.innerText(), (t) => t.includes('0.0.0-test'), 5000);
+  check(
+    'sie nennt die Version aus der Bridge',
+    version.includes('0.0.0-test'),
+    version.split('\n').find((l) => l.includes('Installierte')) ?? '',
+  );
+  // Mounting reads the *cached silent* check, so an available update is on screen without anyone
+  // having clicked „Nach Updates suchen".
+  check('…und die stille Startprüfung steht ohne Klick da', await shown(updateCard.getByText('Version 9.9.9 ist verfügbar.')));
+
+  const progress = () =>
+    u.evaluate(() => {
+      const box = document.querySelector('.rounded-lg.bg-neutral-50');
+      const track = box?.querySelector('span.inline-block.overflow-hidden') ?? null;
+      const fill = track?.firstElementChild ?? null;
+      return {
+        text: (box?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+        pulsing: !!track && track.className.includes('animate-pulse'),
+        width: fill instanceof HTMLElement ? fill.style.width : '',
+      };
+    });
+  await updateCard.getByRole('button', { name: 'Herunterladen & installieren' }).click();
+  const started = await until(progress, (d) => d.text.includes('heruntergeladen'), 5000);
+  check(
+    'vor dem ersten Datenpaket zeigt der Balken die ehrliche Unbekannte statt einer Null',
+    started.pulsing && !started.text.includes('%'),
+    JSON.stringify(started),
+  );
+  check(
+    '…und der Hinweis auf den Neustart steht daneben (WP-60)',
+    /Danach fragt Auftakt, ob es zum Installieren neu starten soll/.test(started.text),
+    started.text,
+  );
+  await u.evaluate(() => /** @type {any} */ (window).__updateProgress(42));
+  const at42 = await until(progress, (d) => d.width === '42%', 5000);
+  check('ein gemeldeter Fortschritt erreicht Balken und Beschriftung', at42.width === '42%' && at42.text.includes('42 %') && !at42.pulsing, JSON.stringify(at42));
+  // The clamp sits at the boundary rather than inside `ProgressBar`, because electron-updater has
+  // been seen to overshoot on the last chunk — a clamp that only reaches the bar leaves the label
+  // beside it reading „103 %".
+  await u.evaluate(() => /** @type {any} */ (window).__updateProgress(103));
+  const over = await until(progress, (d) => d.text.includes('100'), 5000);
+  check('ein Überlauf wird an der Grenze gekappt, nicht erst im Balken', over.text.includes('100 %') && over.width === '100%', JSON.stringify(over));
+
+  await u.evaluate(() => /** @type {any} */ (window).__finishUpdate());
+  const availableAgain = await until(() => updateCard.innerText(), (t) => t.includes('Herunterladen & installieren'), 8000);
+  check(
+    'nach dem Abschluss steht die Karte wieder auf „verfügbar“',
+    availableAgain.includes('Version 9.9.9 ist verfügbar.'),
+    availableAgain.replace(/\n/g, ' | '),
+  );
+
+  // The manual check is the other door, and it answers with the *other* branch: without
+  // `canInstall` the card sends the user to the Releases page over `openExternal` — the mac path,
+  // and the only observable a fire-and-forget bridge call has.
+  await updateCard.getByRole('button', { name: 'Nach Updates suchen' }).click();
+  check('„Nach Updates suchen“ holt die zweite Antwort', await shown(updateCard.getByRole('button', { name: 'Zur Releases-Seite' })));
+  await updateCard.getByRole('button', { name: 'Zur Releases-Seite' }).click();
+  const externals = await until(() => u.evaluate(() => /** @type {any} */ (window).__external), (v) => v.length > 0, 5000);
+  check('…und der Knopf reicht die URL an die Bridge weiter', externals[0] === 'https://example.invalid/releases', externals.join(' '));
+
+  // The other half of case R's backup card: with a bridge the buttons are live and the browser
+  // note is gone, which is what makes R's „nur in der Desktop-App" assertion about the branch
+  // rather than about the wording.
+  await u.goto(`${UI}/#/einstellungen/daten`);
+  await u.reload();
+  await ready(u);
+  const stubbedBackup = cardWith(u, 'Datenbank & Backups');
+  check('mit Bridge ist der Backup-Ordner wählbar', await stubbedBackup.getByRole('button', { name: 'Wählen…' }).isEnabled());
+  const backupText = await stubbedBackup.innerText();
+  check('…die Browser-Warnung ist weg', !/nur in der Desktop-App/.test(backupText));
+  check('…und ohne gewählten Ordner warnt die Karte, dass nichts gesichert wird', /Ohne Backup-Ordner/.test(backupText), backupText.replace(/\n/g, ' | ').slice(0, 120));
+
+  // ======================================================================== U2 · the feedback dialog
+  //
+  // A `mailto:` is fire-and-forget, so the dialog produces no app state to assert on: the URL
+  // handed to `openExternal` is the whole of its output, and the real one opens a mail client on
+  // the machine running this. The file is worse — the real `saveDiagnostics` writes to the desktop
+  // and reveals it in the Finder (WP-54) — so the recording stub is not convenience here, it is
+  // the only way this case may exist at all.
+  //
+  // The assertion is that the four places the reference appears agree: the recorded file name, the
+  // subject, the body's attach line and its stamp. That is what a customer's mail is *for*.
+  console.log('\nU2 · Der Feedback-Dialog am Bridge-Stub (WP-54)');
+  await u.goto(`${UI}/#/einstellungen/hilfe`);
+  await u.reload();
+  await ready(u);
+  await u.getByRole('button', { name: 'Feedback senden…' }).click();
+  // Waited for by the dialog's own first control, not by its heading: the card behind it carries
+  // the *same* words in an `<h2>`, so `getByRole('heading', { name: 'Feedback & Diagnose' })` is
+  // two elements and a strict-mode violation.
+  await topDialog(u).getByRole('button', { name: /^Fehler/ }).waitFor({ timeout: 8000 });
+  check('der Dialog fragt nichts, bevor eine Art gewählt ist', (await u.locator('textarea').count()) === 0);
+  check('…und sagt im Fuß, woran es liegt', /Bitte zuerst Fehler oder Wunsch wählen/.test(await topDialog(u).innerText()));
+  check('…„Weiter“ ist so lange stumpf', !(await topDialog(u).getByRole('button', { name: 'Weiter' }).isEnabled()));
+
+  await topDialog(u).getByRole('button', { name: /^Fehler/ }).click();
+  check('nach der Art wird der Bereich gefragt, noch keine Texte', (await u.locator('textarea').count()) === 0 && (await shown(topDialog(u).getByRole('button', { name: 'Allgemein', exact: true }))));
+  await topDialog(u).getByRole('button', { name: 'Allgemein', exact: true }).click();
+  const asked = await until(() => u.locator('textarea').count(), (n) => n === 3, 5000);
+  check('…und erst dann die drei Fehlerfragen', asked === 3, `${asked} Felder`);
+  // „Was ist passiert?" exists only under Fehler — under Wunsch the same first box asks something
+  // else, which is why the two branches are driven separately below.
+  check('die erste Frage ist die des Fehlers', /Was ist passiert\?/.test(await topDialog(u).innerText()));
+
+  await u.locator('textarea').nth(0).fill('Der Druckbogen bleibt leer.');
+  const ready2 = await until(() => topDialog(u).getByRole('button', { name: 'Weiter' }).isEnabled(), (v) => v === true, 5000);
+  check('mit der Pflichtantwort wird „Weiter“ scharf', ready2 === true);
+
+  // Sending takes two clicks and the first one *opens* a dialog rather than closing one.
+  await topDialog(u).getByRole('button', { name: 'Weiter' }).click();
+  const stacked = await until(() => u.locator('.fixed.inset-0').count(), (n) => n === 2, 5000);
+  check('„Weiter“ stapelt den Schritt-Dialog auf das Formular', stacked === 2, `${stacked} Dialoge`);
+  const steps = await tabStop(u);
+  check(
+    'auch dort liegt der Fokus auf der sicheren Antwort „Zurück“ (WP-42)',
+    steps.at === 1 && steps.text === 'Zurück',
+    JSON.stringify(steps),
+  );
+  await u.keyboard.press('Escape');
+  const peeled = await until(() => u.locator('.fixed.inset-0').count(), (n) => n === 1, 5000);
+  check('Escape schält nur ihn ab, das Formular bleibt stehen', peeled === 1 && (await u.locator('textarea').nth(0).inputValue()) === 'Der Druckbogen bleibt leer.', await u.locator('textarea').nth(0).inputValue());
+
+  await topDialog(u).getByRole('button', { name: 'Weiter' }).click();
+  await topDialog(u).getByRole('button', { name: 'E-Mail öffnen' }).click();
+  const saved = await until(() => u.evaluate(() => /** @type {any} */ (window).__saved), (v) => v.length > 0, 8000);
+  const mails = await until(() => u.evaluate(() => /** @type {any} */ (window).__external), (v) => v.length > 0, 8000);
+  const ref = String(saved[0]?.ref ?? '');
+  const file = `Auftakt-Diagnose-${ref}.txt`;
+  check('ein Fehler schreibt die Diagnosedatei über die Bridge', /^AF-\d{10}$/.test(ref), ref || 'nichts geschrieben');
+  const mail = new URL(mails[0] ?? 'mailto:');
+  const subject = new URLSearchParams(mail.search).get('subject') ?? '';
+  const body = new URLSearchParams(mail.search).get('body') ?? '';
+  check('die Mail geht an die Support-Adresse', mail.pathname === 'auftakt@e-mail.de', mail.pathname);
+  check(
+    'ihr Betreff trägt Kennung, Art, Bereich und Version',
+    subject === `[${ref}] Auftakt-Fehler: Allgemein (v0.0.0-test)`,
+    subject,
+  );
+  check(
+    'die erste Zeile des Textes ist die eine Sache, die niemand für den Kunden tun kann',
+    body.split('\n')[0] === `!! BITTE NOCH ANHÄNGEN: ${file}`,
+    body.split('\n')[0],
+  );
+  check('…und der technische Block nennt dieselbe Kennung', body.includes(`Fehler · Allgemein · Kennung: ${ref}`), body.split('\n').find((l) => l.includes('Kennung')) ?? '');
+  // The report is read positively first: „it does not contain X" is also true of an empty string,
+  // and an empty one is what a broken `feedbackBody` would hand the bridge.
+  const report = String(saved[0]?.report ?? '');
+  check(
+    'die Datei trägt, was der Kunde geschrieben hat',
+    report.includes('Der Druckbogen bleibt leer.') && report.includes(ref),
+    report.split('\n')[0] ?? '',
+  );
+  check(
+    '…aber weder die Anhangzeile noch die Zusammenfassung — beides stünde darin doppelt',
+    !/BITTE NOCH ANHÄNGEN/.test(report) && !/Startdiagnose/.test(report),
+  );
+  check('der Hinweis nennt die Datei beim Namen', await shown(toast(u, new RegExp(file))));
+
+  // A Wunsch is the other branch and writes nothing at all: startup timings say nothing about it,
+  // so no file, no attach line, no summary — and the budget goes to the person's own words.
+  await u.getByRole('button', { name: 'Feedback senden…' }).click();
+  await topDialog(u).getByRole('button', { name: /^Wunsch/ }).waitFor({ timeout: 8000 });
+  await topDialog(u).getByRole('button', { name: /^Wunsch/ }).click();
+  await topDialog(u).getByRole('button', { name: 'Allgemein', exact: true }).click();
+  await until(() => u.locator('textarea').count(), (n) => n === 3, 5000);
+  check('der Wunsch fragt etwas anderes', /Was möchtest du tun können\?/.test(await topDialog(u).innerText()));
+  await u.locator('textarea').nth(0).fill('Die Künstlerliste nach Land sortieren.');
+  await topDialog(u).getByRole('button', { name: 'Weiter' }).click();
+  await topDialog(u).getByRole('button', { name: 'E-Mail öffnen' }).click();
+  const afterWish = await until(() => u.evaluate(() => /** @type {any} */ (window).__external), (v) => v.length > 1, 8000);
+  const wishBody = new URLSearchParams(new URL(afterWish[afterWish.length - 1]).search).get('body') ?? '';
+  const wishSubject = new URLSearchParams(new URL(afterWish[afterWish.length - 1]).search).get('subject') ?? '';
+  check('…und schreibt dafür keine Datei', (await u.evaluate(() => /** @type {any} */ (window).__saved)).length === 1);
+  check('sein Betreff sagt „Wunsch“', /Auftakt-Wunsch: Allgemein/.test(wishSubject), wishSubject);
+  check('…und sein Text beginnt ohne Anhangzeile', wishBody.split('\n')[0] === '--- Was ich tun können möchte', wishBody.split('\n')[0]);
+  await u.close();
 
   console.log(`\n${failures ? `✗ ${failures} Fehler` : '✓ alles ok'} (${checks} Prüfungen)`);
 } catch (err) {
