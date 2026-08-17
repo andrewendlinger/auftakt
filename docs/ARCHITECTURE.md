@@ -546,6 +546,13 @@ land on the same pixel (PR50-06). New windows open unpinned and adopt the regist
 default from the first response echo — `switchSeason()` moves that default, so Cmd+N opens the
 last-switched season, not necessarily the opener's.
 
+**The cross-window behaviour has a gate**, `npm run check:browser` (WP-R6): the season switch
+staying window-local, a UI write reaching the other window while a `curl` write deliberately does
+not, the 410 recovery of a window whose season was deleted out of band, and the focus refetch that
+backs all of it — asserted on the *second* focus, since #54's failure mode was silence. Windows
+are pages in one `BrowserContext` there, which is the Electron shape: BroadcastChannel is
+partitioned per context, season pins live in per-page `sessionStorage`.
+
 `WINDOW_PREFERRED` (1440×900) and `WINDOW_MINIMUM` (624×560) live in `cascade.ts` rather than
 `main.ts`, because the only thing that ever checks them is `cascade.test.ts`, which cannot import
 `main.ts` — `electron/tsconfig.json` is `include: ["*.ts"]` and `main.ts` imports `electron`. The

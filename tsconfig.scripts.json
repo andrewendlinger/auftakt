@@ -27,7 +27,11 @@
   // the root depends on it directly, for the Electron main process.
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2023"],
+    // `DOM` for `check:browser`: the callbacks it hands to `page.evaluate` are compiled here but
+    // run inside Chromium, so `document` and `window` are real for them and unresolvable without
+    // it. It costs the other scripts nothing — Node has neither global, so a stray `document` in
+    // one of them fails at runtime either way, and their real guard is `types: ["node"]`.
+    "lib": ["ES2023", "DOM"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     // Relative, and with no `baseUrl`: TypeScript 7 removed that option outright, and resolves

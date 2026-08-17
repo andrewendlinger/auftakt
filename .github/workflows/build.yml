@@ -100,8 +100,56 @@ jobs:
           done
           exit $rc
 
+  # The browser gate, beside `checks` rather than inside it. `npm run check:browser` boots the
+  # demo stack and drives it with Chromium, so it needs a browser binary and a free :5317 —
+  # neither of which `npm run check` may ever require, since that has to stay runnable on any
+  # machine at any moment. Unlike `check:package` it still runs on every pull request: it guards
+  # the two-window season matrix and the core task/column/editor paths, and finding a regression
+  # in those at release time is the cadence problem the whole reversal in docs/DECISIONS.md is
+  # about. Parallel to `checks`, so it costs wall clock only when it fails.
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+            client/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm --prefix server ci
+          npm --prefix client ci
+
+      # `playwright-core` downloads nothing on install — that is why it is the dependency and
+      # `playwright` is not (docs/DECISIONS.md). The browser is fetched here instead, and cached
+      # on the lockfile, so a run only pays for it when the pinned version moves.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium
+        run: npx playwright-core install --with-deps chromium
+
+      - name: Browser gate
+        run: npm run check:browser
+
   build:
-    needs: checks
+    needs: [checks, browser]
     # The installers are the expensive half — two runners, a native rebuild of
     # better-sqlite3 and electron-builder. Only worth it for something publishable.
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'

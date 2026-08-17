@@ -10,6 +10,11 @@ export default defineConfig({
   base: './',
   server: {
     port: 5317,
+    // Fail rather than slide to the next free port. 5317 is not a preference: the server's
+    // ALLOWED_ORIGINS is built from it, so a dev client that landed on 5318 would have every
+    // write answered with a bare 403 and would read as a broken app (docs/VERIFYING.md). It also
+    // keeps `check:browser` honest — a fallback would leave it driving whatever holds 5317.
+    strictPort: true,
     proxy: {
       '/api': `http://localhost:${SERVER_PORT}`,
     },
