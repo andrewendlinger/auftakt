@@ -199,8 +199,18 @@ folder that is gone — renamed, deleted, on an ejected drive — is refused wit
 rather than recreated (WP-65): `mkdir -p` used to bring it back empty and the backup then
 succeeded into it, so nothing threw and the Electron dialog never fired while the user's older
 restore points sat under the old name. Only `backups/`, `pre-import/` and the dated folders are
-ours to create; the check is in `runBackup`, i.e. on every caller of the run, and reaches the
-user because `runStartupBackup` turns any non-OK response into a throw.
+ours to create; the check is `backupDirUnavailable()` in `db.ts`, called by `runBackup` — i.e. on
+every caller of the run — and it reaches the user because `runStartupBackup` turns any non-OK
+response into a throw.
+
+**The import's pre-import copy obeys the same rule with the opposite reaction.** It writes into
+`<backupDir>/pre-import/` through the same `mkdir -p`, so it would resurrect the folder the
+backup had just refused — and the import is exactly what a user reaches for after that warning.
+`importIntoCurrentSeason` therefore treats a missing folder as *none configured* and puts the
+safety copy beside the database (`<season>.db.pre-import-<stamp>.bak`, pruned in the data dir
+like every other folder-less pre-import copy). Refusing the import would take the rescue away at
+the moment it is wanted; the Electron confirmation names the path this function returns, so it
+stays true about where the copy actually went.
 
 **Inside** a restore point everything stays flat and keeps the `file` names from `seasons.json`:
 restoring is a hand copy over the data directory, so the season *label* goes into the manifest and

@@ -128,6 +128,11 @@ that season's settings.
       quitting (`window-all-closed` only calls `quit()` off darwin), so confirm with
       `lsof -ti tcp:4317` before believing the result.
 - [ ] Open the named pre-import backup → it contains the *previous* data and is not empty.
+- [ ] **With the backup folder renamed away** (case 3): import anyway. It runs, the confirmation
+      names a copy **next to the database** (`…\auftakt.db.pre-import-<stamp>.bak` in the data
+      dir) instead of one in the backup folder, and the renamed folder is **still not** recreated.
+      **A resurrected empty backup folder is the old bug (WP-65)** — the import used to `mkdir -p`
+      it back, after which every launch backed up into it in silence again.
 - [ ] Now add a season, switch to it, and import a second database from there. Quit, relaunch.
       **This is the exact crash repro — it must open cleanly.**
 

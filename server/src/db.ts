@@ -1738,16 +1738,29 @@ export function importIntoCurrentSeason(candidatePath: string, backupDir: string
 
   const season = currentSeason();
   const dest = join(dataDir(), season.file);
+  // A configured folder that is no longer there counts as none for this one copy (WP-65).
+  // `mkdirSync(…, { recursive: true })` below would otherwise recreate it — and this is the
+  // path the user takes *after* the startup backup has just refused it and told them so: they
+  // open Einstellungen → „Datenbank importieren…" to get their data back, the safety copy
+  // resurrects the ghost folder, and from the next launch every backup silently succeeds into
+  // it again while the real restore points stay under the old name. The complaint would be back
+  // through a different door, with the warning that is supposed to catch it now satisfied.
+  //
+  // Falling back rather than refusing: an import is the rescue, and a missing *backup* folder is
+  // no reason to withhold it. The copy is still written, next to the database, which is where it
+  // goes whenever there is no backup folder — and `runImport` (electron/main.ts) names the path
+  // this function returns, so the confirmation stays true about where it actually landed.
+  const usableBackupDir = backupDir && !backupDirUnavailable(backupDir) ? backupDir : '';
   // A season registered but never opened has no file yet — nothing to back up, and
   // reporting a path to a file we did not write would be a lie.
   let backup = '';
   if (existsSync(dest)) {
-    backup = preImportBackupPath(dest, backupDir);
+    backup = preImportBackupPath(dest, usableBackupDir);
     mkdirSync(dirname(backup), { recursive: true });
     snapshotDb(dest, backup);
     // The backup folder's own pre-import-* snapshots are pruned by the backup run; these
     // sit in the data dir, which nothing else sweeps.
-    if (!backupDir) prunePreImportFiles(dest);
+    if (!usableBackupDir) prunePreImportFiles(dest);
   }
 
   const staged = `${dest}.import-tmp`;
@@ -1794,7 +1807,60 @@ export const BACKUP_KEEP = 30;
 export const BACKUP_POINTS_DIR = 'backups';
 export const PRE_IMPORT_DIR = 'pre-import';
 
-/** Pre-import safety copy: into the backup folder when there is one, else next to the DB. */
+/**
+ * Why the configured backup folder cannot be written to *right now*, as a German message
+ * (null = fine). Asked immediately before each write into it, because that is the only moment at
+ * which the answer is worth anything: a folder is renamed, moved or unplugged while the app is
+ * closed, and both write sites open with `mkdirSync(…, { recursive: true })`.
+ *
+ * That `mkdir -p` is what made a vanished backup folder invisible (WP-65): it came back empty,
+ * with a fresh README and one restore point in it, and the run genuinely succeeded — nothing
+ * threw, so `reportBackupProblem`'s dialog (electron/main.ts) was never reached and the amber
+ * hint in Einstellungen stayed silent, `backup_dir` still being set. The customer kept backing up
+ * into a folder that was no longer the one holding his older restore points. It is the ELP-03
+ * failure case one door further in: there, a folder the backup could never use; here, one it
+ * could use yesterday and cannot find today.
+ *
+ * **Only the configured folder is checked, never `backups/` or `pre-import/` below it.** The
+ * folder picker runs with `properties: ['openDirectory', 'createDirectory']`, so a brand-new
+ * empty folder the user made seconds ago is the normal first-backup case and must still work —
+ * the sub-folders and the dated folders are ours to create, and `mkdir -p` stays right for those.
+ *
+ * It lives here rather than in routes/backup.ts because there are **two** writers into that
+ * folder and they answer the same question differently: the backup run refuses (`runBackup`
+ * throws → 500 → the Electron dialog), while the import falls back to a copy beside the database
+ * (`importIntoCurrentSeason`) — refusing the import would take the rescue away at the moment it
+ * is wanted. One spelling of the rule, two reactions to it.
+ *
+ * Named apart from `backupDirProblem` in `electron/backup.ts` deliberately: that one is a pure
+ * check of the path's *shape* (UNC, relative), which is why it can also run when the folder is
+ * picked and why a Vitest can import it without a filesystem. This one is about the state of the
+ * disk at the moment of the write and answers nothing at pick time — the picker only ever
+ * returns a folder that exists.
+ */
+export function backupDirUnavailable(backupDir: string): string | null {
+  let stats;
+  try {
+    stats = statSync(backupDir);
+  } catch {
+    // Any refusal to stat the path, not only ENOENT: an unreadable parent or a disconnected
+    // network volume is the same situation from the user's side — the folder is not there to
+    // write into. The message stays a question rather than a diagnosis for that reason. Keep it
+    // short: `reportBackupProblem` already prefixes „Es wurde keine Sicherung angelegt." and
+    // appends where to fix it, so anything more here is said twice.
+    return `Der Backup-Ordner „${backupDir}“ ist nicht mehr vorhanden — umbenannt, verschoben oder gelöscht, oder ein Laufwerk bzw. Cloud-Ordner ist gerade nicht verbunden.`;
+  }
+  if (!stats.isDirectory()) {
+    return `„${backupDir}“ ist eine Datei, kein Ordner, und kann nicht als Backup-Ordner verwendet werden.`;
+  }
+  return null;
+}
+
+/**
+ * Pre-import safety copy: into the backup folder when there is a usable one, else next to the DB.
+ * „Usable" includes „still there" — see `importIntoCurrentSeason`, which passes '' for a folder
+ * that has vanished so that this copy does not recreate it (WP-65).
+ */
 function preImportBackupPath(dbPath: string, backupDir: string): string {
   const name = `${basename(dbPath, '.db')}.db`;
   return backupDir

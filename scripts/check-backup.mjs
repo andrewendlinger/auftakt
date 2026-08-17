@@ -435,6 +435,34 @@ if (process.platform === 'win32' || process.getuid?.() === 0) {
   }
 }
 
+// --- [2d] an import must not resurrect a vanished backup folder (WP-65) ---
+// The other door into the same silence. The pre-import safety copy goes to
+// <backupDir>/pre-import/… through the same mkdir -p, so an import recreated the folder the
+// startup backup had just refused — and the import is exactly what a user reaches for after
+// that warning. From the next launch backups would run into the resurrected empty folder again,
+// with the new warning satisfied and the real restore points still under the old name. The copy
+// falls back to the data dir instead: the rescue survives, nothing is recreated.
+{
+  const ghost = join(workDir, 'weg-beim-import');
+  mkdirSync(ghost);
+  await post('backup/dir', { dir: ghost }); // configured while it existed…
+  rmSync(ghost, { recursive: true, force: true }); // …and renamed away while the app was closed
+  const rescued = await post('backup/import', { path: incoming });
+  check('an import still runs with the backup folder gone', rescued.status === 200, rescued.body.error ?? '');
+  check('…and does not recreate it (the old bug)', !existsSync(ghost), ghost);
+  check(
+    '…while the safety copy lands beside the database',
+    (rescued.body.backup ?? '').startsWith(`${activePath}.pre-import-`) && rescued.body.backup.endsWith('.bak'),
+    rescued.body.backup,
+  );
+  check(
+    '…and holds the data it is supposed to rescue',
+    existsSync(rescued.body.backup ?? '') && rows(rescued.body.backup, 'artists') > 0,
+    existsSync(rescued.body.backup ?? '') ? `${rows(rescued.body.backup, 'artists')} artists` : 'fehlt',
+  );
+  await post('backup/dir', { dir: backupDir }); // back to the real folder for what follows
+}
+
 // --- pruning keeps the newest KEEP restore points and drops the oldest, and the old flat
 //     layout is migrated into the sub-folders on the way (WP-41) ---
 // The fixtures are written at the TOP level on purpose: that is the shape every installation
