@@ -33,7 +33,7 @@ describe('activatePlan', () => {
     const [a, b, c] = [win({ minimized: true }), win({ minimized: true }), win({ minimized: true })];
     const plan = activatePlan([a, b, c], false);
     expect(plan.create).toBe(false);
-    // In opening order, and all of them — the report is that the second window never came back.
+    // All of them, in the order they came in — the report is that the second never came back.
     expect(plan.restore).toEqual([a, b, c]);
   });
 
@@ -50,10 +50,10 @@ describe('activatePlan', () => {
     expect(activatePlan([win({ minimized: true })], false).create).toBe(false);
   });
 
-  it('skips whatever AppKit already deminiaturized', () => {
-    // AppKit pulls at most one window out by itself, and the order it does that in relative to
-    // this handler is not ours to pick — filtering on isMinimized() is what makes the two
-    // idempotent side by side, either way round.
+  it('skips whatever came back on its own', () => {
+    // One window returns on a Dock click without the handler, and neither which part of macOS
+    // does that nor whether it lands before this runs or after is observable from here.
+    // Filtering on isMinimized() is what makes the two idempotent side by side, either way round.
     const restored = win();
     const stillDown = win({ minimized: true });
     expect(activatePlan([restored, stillDown], false).restore).toEqual([stillDown]);

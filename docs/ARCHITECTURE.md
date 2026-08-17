@@ -554,9 +554,13 @@ Clicking the icon runs `activatePlan()` (`electron/activate.ts`, pure, so `check
 the branch matrix that no launch here ever will): nothing live left → open a window; a window
 already on screen → do nothing, the convention Finder and Safari follow, because minimizing the
 other one was deliberate; everything minimized → `restore()` all of them. That last branch is the
-fix — AppKit deminiaturizes at most one window by itself, so the second one was reachable only
-from the Fenster menu or Exposé — and it filters on `isMinimized()`, which is what keeps it
-idempotent beside AppKit whichever of the two runs first.
+fix: on a Dock click one window comes back with no help from the app, and with two minimized the
+second was reachable only from the Fenster menu or Exposé. **What restores that one is left
+unnamed on purpose** — the app can observe neither which part of macOS does it nor whether it
+happens before the handler or after — so nothing depends on it: the set is filtered on
+`isMinimized()`, so a window already back is not in it and one still down is restored exactly
+once, either way round. Which window ends up frontmost afterwards is macOS's; the guarantee is
+only that none is left in the Dock.
 
 **The cross-window behaviour has a gate**, `npm run check:browser` (WP-R6): the season switch
 staying window-local, a UI write reaching the other window while a `curl` write deliberately does

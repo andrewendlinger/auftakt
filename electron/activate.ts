@@ -17,7 +17,7 @@ export interface ActivatableWindow {
 export interface ActivatePlan<T> {
   /** Open a window: the app is running with nothing left to show. */
   create: boolean;
-  /** The windows to `restore()`, in the order they were opened. */
+  /** The windows to `restore()`, in the order `getAllWindows()` handed them over. */
   restore: T[];
 }
 
@@ -25,18 +25,22 @@ export interface ActivatePlan<T> {
  * macOS keeps the app running with its windows closed, so a Dock click has three answers:
  *
  * - **Nothing left** → open a window. That branch was always here.
- * - **Something on screen** → do nothing. `hasVisibleWindows` is AppKit's own answer, handed to
- *   `applicationShouldHandleReopen:hasVisibleWindows:` and passed straight through to the
+ * - **Something on screen** → do nothing. `hasVisibleWindows` is macOS's own answer: AppKit hands
+ *   it to `applicationShouldHandleReopen:hasVisibleWindows:`, which Electron forwards to the
  *   `activate` event, and the convention it encodes is Finder's and Safari's: activating an app
  *   that already has a window on screen raises that window and leaves the minimized ones in the
  *   Dock. Minimizing is deliberate; a click meant for the window on screen must not undo it.
- * - **Everything minimized** → bring them all back. AppKit deminiaturizes at most one window by
- *   itself, so with two minimized windows the second one was reachable only through the Fenster
- *   menu or Exposé — the report this exists for (WP-67).
+ * - **Everything minimized** → bring them all back. On a Dock click *one* window returns without
+ *   any help from here, and with two minimized windows the second one was reachable through
+ *   nothing but the Fenster menu or Exposé — the report this exists for (WP-67).
  *
- * Restoring is filtered on `isMinimized()`, which is what makes it idempotent next to AppKit:
- * whichever window it has already pulled out is simply not in the set, whether it got there
- * before this ran or after.
+ * Whatever macOS restores on its own is deliberately left unnamed: this code can observe neither
+ * which part of it does that nor whether it happens before this runs or after, and it does not
+ * need to. The set is filtered on `isMinimized()`, so a window that is already back is simply not
+ * in it and one that is still down is restored exactly once — either way round.
+ *
+ * Nothing here decides which window ends up frontmost. That is macOS's, together with whatever it
+ * brought back itself; the guarantee is only that no window is left in the Dock.
  *
  * Destroyed windows are dropped before the count rather than after, for the reason `liveWindow()`
  * in main.ts gives at length: `getAllWindows()` is Electron's registry, and a window on its way

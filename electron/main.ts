@@ -1065,16 +1065,16 @@ app.whenReady().then(async () => {
     }, 8000);
 
   // A Dock click used to be answered only when *no* window existed, and a minimized window is
-  // still a window — so with both windows minimized the handler did nothing and the one that
-  // came back was AppKit deminiaturizing the key window on its own; the other was reachable
-  // only from the Fenster menu or Exposé (WP-67). activatePlan holds the three-way decision and
-  // says why each branch is what it is; the loop is the same shape notifyBackupConfigChanged
-  // uses, because `getAllWindows()` is the only list of windows this app keeps (see liveWindow).
+  // still a window — so with both windows minimized the handler did nothing, and the one window
+  // that did come back came back without it; the other was reachable only from the Fenster menu
+  // or Exposé (WP-67). activatePlan holds the three-way decision and says why each branch is what
+  // it is, including why it names nothing as the restorer of that one window; the loop is the
+  // same shape notifyBackupConfigChanged uses, because `getAllWindows()` is the only list of
+  // windows this app keeps (see liveWindow).
   app.on('activate', (_event, hasVisibleWindows) => {
     const plan = activatePlan(BrowserWindow.getAllWindows(), hasVisibleWindows);
     if (plan.create) void createWindow();
-    // In the order they were opened, so the newest ends up frontmost — the same order they
-    // would land in if the user picked them out of the Dock one by one.
+    // All of them come back. Which one ends up frontmost is macOS's call, not this loop's.
     for (const w of plan.restore) w.restore();
   });
 });
