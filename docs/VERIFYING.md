@@ -118,12 +118,13 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 ## Playwright traps
 
 **Some of these are now committed, and this file is still where they are decided.**
-`npm run check:browser` (WP-R6) encodes the ones its cases need — two pages in one context, the
-sessionStorage pin plus a document reload, `data-app-ready` over `networkidle`, the out-of-band
-delete, the toast that lands one query late, the anchored composer placeholder, the two
-`[data-column-row]` lists, the real keystroke a note needs before it stores anything. A new trap
-belongs **here first** and in the gate second: the gate covers the flows it drives, this file
-covers the app. Nothing below is retired by it — everything the gate does not drive is still
+`npm run check:browser` (WP-R6, extended by WP-64a) encodes the ones its cases need — two pages in
+one context, the sessionStorage pin plus a document reload, `data-app-ready` over `networkidle`,
+the out-of-band delete, the toast that lands one query late, the anchored composer placeholder, the
+two `[data-column-row]` lists, the real keystroke a note needs before it stores anything, the ⠿ and
+its 2-px nudge, the dialog-scoped „Löschen", the toast filtered by its own record, and „gone" as a
+wait rather than a count. A new trap belongs **here first** and in the gate second: the gate covers
+the flows it drives, this file covers the app. Nothing below is retired by it — everything the gate does not drive is still
 verified by hand, and the gate itself is written from this list.
 
 - **How a page was *reached* changes what a delete on it does.** „Daten konnten nicht aktualisiert
@@ -355,6 +356,15 @@ verified by hand, and the gate itself is written from this list.
 - **The demo seeds several seasons** (three at the time of writing) and their ids shift as
   fixtures accumulate. Create your own fixture season over the API and use the returned id;
   a hardcoded "season 2" assertion matches a different database on every run.
+- **A *copied* season keeps every row id, which is what makes the fixture facts below usable in
+  one.** `copyRows` carries `id`, so „project 2 has 3 tasks" and „artist 3 reaches 14" hold inside
+  a copy, and a scenario that mutates rows can therefore run in its own season instead of on the
+  shared demo. Two riders. The copy drops soft-deleted rows (`deleted_at IS NULL` per row), so the
+  new season's Papierkorb starts **empty** — which is what lets `/api/deleted` be read by type
+  rather than by name — and a subtask whose parent stayed behind arrives as a root task. And the
+  copy is a snapshot of the season *as it is at that moment*: take it before anything has written,
+  or an earlier step's fixture rides along and the documented counts drift (a task added to
+  project 2 makes its confirm read „4 Aufgaben", which looks exactly like a broken cascade).
 - **Focus-refetch never fires between two visible Electron windows on `visibilitychange`** — the
   client wires React Query's `focusManager` to real `focus` events instead. Headlessly, trigger it
   with `window.dispatchEvent(new Event('focus'))`, and remember `staleTime: 5_000`: a focus inside
@@ -564,6 +574,26 @@ verified by hand, and the gate itself is written from this list.
 - **Match the handle's title with `^=`, not `=`.** In a link list *with* categories the tooltip is
   „Zum Verschieben ziehen (innerhalb der Kategorie)"; everywhere else it is the bare sentence. An
   exact-match selector finds nothing on `#/project/1`.
+- **Two more moves belong in the recipe, and both are silent when missing.** The pointer has to
+  *travel* before Chromium turns the press into a native drag, so a single `mouse.move` to the
+  destination starts nothing — go there with `{ steps: 25 }`. And the last `dragover` before the
+  release is what sets the drop target, so end with a 5-step 2-px nudge; a move that finishes on
+  the coordinate the previous gesture already ended at can leave `overKey` where it was.
+- **A driven drag never delivers a `drop` anywhere but to the reorderer, so CCL-15 is not
+  gateable from a browser.** Measured with a listener on the global search field while dragging a
+  contact row onto it: `dragenter` and `dragover` arrive (seven of them, with the payload's MIME
+  in `dataTransfer.types`), and `mouse.up` dispatches **no `drop` at all** — the field stays
+  empty even with `DRAG_MIME` reverted to `text/plain`, i.e. with the defect back in place. So an
+  „a row released over an input types nothing into it" assertion passes against the bug and must
+  not be written. The corollary is about the fix as a whole: **deleting the `setData` call
+  outright changes nothing a driven run can see** (Chromium starts a drag with an empty data
+  store; only Firefox refuses one), so „remove `DRAG_MIME`" is not a canary for the drag cases —
+  removing `handleProps`' `onPointerDown` is, and it takes nine of them red at once. CCL-15 and
+  the Firefox half stay hand-verified.
+- **`waitForURL` resolves one query before the target page has rows on it.** A client-side
+  navigation changes the hash with the transition, so a `count()` read straight after it is 0 on
+  a page that renders the card a moment later — and the *click* that follows passes anyway,
+  because a locator waits. Wait for the node before counting it.
 - **The handle is `opacity-40` at rest and `opacity-100` on row hover** (WP-35 — it used to be
   invisible until hovered). Both states are hit-testable, so actionability was never the issue;
   what changed is that a screenshot assertion about a "clean" row now has a ⠿ in it.
@@ -575,6 +605,19 @@ verified by hand, and the gate itself is written from this list.
   `seasons.json`, so the drag issues `PATCH /api/landing` with the whole `documents` (or
   `sections`) array — a script waiting for `**/reorder` waits for ever. Assert against
   `GET /api/landing`, or after a `reload()`.
+- **A *refused* drop issues no request at all**, so there is nothing to poll for and no state to
+  wait on — the row simply snaps back. „Nothing happened" has to be asserted as a beat (longer
+  than the accepted reorder beside it took) followed by the same read, which is the one place in
+  a drag scenario where a fixed wait is the honest shape rather than a coin toss.
+- **The link list's group dimming is a CSS transition, so it has to be polled while the pointer
+  is still held.** `LinkList` puts `opacity-40` on every group but the dragged row's, on a
+  `transition-opacity` wrapper — sampled the instant the pointer arrives over the foreign group it
+  still reads ~0.99, so a check written as grab → move → read fails against working code, and the
+  700 ms sleep that hides it is a guess. Hold the drag (`mouse.down`, `mouse.move`, *no*
+  `mouse.up`), poll `getComputedStyle` until one foreign group has dropped, then assert — and
+  assert the **source** group is still `1` in the same sample, which is the half that fails if the
+  dimming is simply applied to everything. The wrappers are `div.transition-opacity` inside
+  `[data-section="links"]`, one per group, each holding its heading `span`.
 - **`keyboard.down` emits one keydown.** A repeat-key defect (TTU-24) needs events dispatched with
   `repeat: true`.
 - **Some repros only fire inside a refetch window.** On a local server the refetch beats a human's
@@ -676,6 +719,15 @@ verified by hand, and the gate itself is written from this list.
   Schulworkshop") has exactly 3 tasks and nothing else, so its confirm reads „3 Aufgaben"; artist 3
   („Kollektiv Halbton") reaches 2 projects, 1 contact, 14 tasks and 1 event, which is the case that
   proves the count walks *through* projects rather than stopping at them.
+- **What that confirm actually says has changed, and the old sentences are gone.** It reads
+  „<Name>“ in den Papierkorb legen?", then „Mit dabei: 3 Aufgaben." (`cascadeText`, German list
+  punctuation — the last separator is „und", never a comma), then „Alles wiederherstellbar im
+  Archiv unter „Gelöschte Einträge“." „Gelöscht wird nur dieser Eintrag" and „verschwinden damit
+  aus allen Listen" were deliberately removed (they explained soft delete, which the user never
+  asked about) — a script keyed on either waits for markup that is no longer there.
+  The count is also **fetched when the confirm opens**, so „Wird geprüft, was mitgeht …" is what
+  is on screen first; read the dialog straight after its heading and the assertion lands on the
+  pending state.
 
 - **The default `task_sort` is `[status]`, and a rule for a hidden column is inert.** A season
   created before WP-32 still *stores* `[status, priority, due]` and behaves identically — the
