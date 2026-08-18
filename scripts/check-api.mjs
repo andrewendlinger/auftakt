@@ -498,16 +498,24 @@ try {
     const badVersion = await req('POST', '/announcements/seen', { version: '' });
     check('an empty version is refused', badVersion.status === 400, String(badVersion.status));
 
-    // A hand-installed payload, with a neutral name and a date that is simply today.
+    // A hand-installed payload, with a neutral name and a date that is simply today. The three
+    // rejects beside it are the shapes a hand-edited file really produces.
     install([
-      { id: 'testfest', title: 'Testfest', body: 'Eine Zeile.\n\nGrüße', date: today.slice(5), celebrate: true },
+      { id: 'testfest', title: 'Testfest', body: 'Eine Zeile.\n\nGrüße', date: today.slice(5), celebrate: true, version: '9.9.9' },
       { id: 'spaeter', title: 'Später', body: 'Noch nicht.', date: day(inTwoMonths).slice(5) },
       { id: 'kaputt', title: 'Kaputt', body: 'x', date: 'irgendwann' },
+      // A day February does not have. Not a non-match: `Date.UTC(y, 1, 31)` rolls forward to
+      // 3 March, so before the calendar check this fired on a day the payload never named.
+      { id: 'unmoeglich', title: 'Unmöglich', body: 'x', date: '02-31' },
       'gar kein Objekt',
     ]);
     const due = await ok('GET', '/announcements');
     check('a payload dated today is due', due.dated.map((a) => a.id).join(',') === 'testfest', JSON.stringify(due.dated.map((a) => a.id)));
     check('…and carries its celebrate flag', due.dated[0]?.celebrate === true);
+    // The invariant every client branch reads: a *stored* announcement is a dated one. Carrying a
+    // `version` would make it render as „Was ist neu" and confirm as a version — so its id would
+    // never be stamped and the card would come back on every start of the whole catch-up window.
+    check('…but never a version, whatever the file says', due.dated[0]?.version === undefined, JSON.stringify(due.dated[0]?.version));
     // seasons.json is hand-edited by design, so a wrong shape is ordinary input: it has to drop
     // out silently rather than take the route — and the app's start — down with it.
     check('a malformed entry drops out instead of throwing', due.dated.length === 1);

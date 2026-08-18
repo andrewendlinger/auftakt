@@ -23,9 +23,10 @@ import { localDay } from '../../../shared/time';
  *
  * `date` is the trigger this module owns — `MM-DD` repeats every year, `YYYY-MM-DD` fires in its
  * own year and never again. `version` exists because the same shape carries the „Was ist neu"
- * card the client builds out of `CHANGELOG.md`; a `version` on a *stored* announcement triggers
- * nothing, since the repo's own release announcements come from the changelog and not from an
- * array somebody would have to keep in step with it.
+ * card the client builds out of `CHANGELOG.md`; it is **never set on a stored announcement**, and
+ * `parseOne` strips it if the file carries one. The repo's own release announcements come from the
+ * changelog, not from an array somebody would have to keep in step with it — so on this side of
+ * the boundary `version === undefined` is an invariant the client is entitled to rely on.
  *
  * `celebrate` hangs off the announcement, not off the trigger: a release may set it just as a
  * dated one may leave it off.
@@ -81,11 +82,49 @@ export function isAnnouncementId(id: unknown): id is string {
   return typeof id === 'string' && ID.test(id);
 }
 
-/** `01`–`12` and `01`–`31`. Cheap sanity, not a calendar: `02-31` never matches a real day anyway. */
+const DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+const isLeapYear = (y: number): boolean => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+
+/**
+ * Does `MM-DD` exist in *some* year? February takes 29 — see `occurrenceIn`.
+ *
+ * A real calendar and not a range check, because a range check does not fail safe here. `02-31`
+ * is not simply „never matched": `Date.UTC(y, 1, 31)` rolls it forward to 3 March, so a typo'd
+ * `02-31` used to fire on a day the payload never named — inside the catch-up window, and looking
+ * for all the world like a working announcement on the wrong date. Same for `04-31`, `06-31`,
+ * `09-31` and `11-31`. A hand-edited typo must produce **no** announcement, not one three days out.
+ */
 function validMonthDay(month: string, day: string): boolean {
   const m = Number(month);
   const d = Number(day);
-  return m >= 1 && m <= 12 && d >= 1 && d <= 31;
+  return m >= 1 && m <= 12 && d >= 1 && d <= (DAYS_IN_MONTH[m - 1] ?? 0);
+}
+
+/** Does this exact day exist in this exact year? The leap-aware half of the check above. */
+function existsIn(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12 || day < 1) return false;
+  return day <= (month === 2 && !isLeapYear(year) ? 28 : DAYS_IN_MONTH[month - 1]!);
+}
+
+/**
+ * `MM-DD` in `year`, as a day that really exists.
+ *
+ * **`02-29` in a common year falls forward to 1 March**, and that is a decision rather than an
+ * accident of arithmetic. A yearly date is meant to come round every year; refusing `02-29`
+ * outright would mean a payload that fires in 2028 and 2032 and is silently absent in between,
+ * which is not what „jährlich" promises. Falling forward is also the convention people use for a
+ * 29 February anniversary. It is one line and it is spelled out here because the alternative —
+ * letting `Date.UTC` normalise it downstream — is what made `02-31` fire on 3 March.
+ *
+ * `02-29` is the only input that can reach the second branch: every other `MM-DD` that exists in
+ * one year exists in all of them, and `validMonthDay` has already dropped the ones that exist in
+ * none.
+ */
+function occurrenceIn(year: number, monthDay: string): string {
+  const month = Number(monthDay.slice(0, 2));
+  const day = Number(monthDay.slice(3, 5));
+  return existsIn(year, month, day) ? `${year}-${monthDay}` : `${year}-03-01`;
 }
 
 /**
@@ -108,26 +147,45 @@ function daysBetween(from: string, to: string): number {
  * A yearly `MM-DD` has one occurrence per year, so the answer is this year's if it has already
  * happened and last year's otherwise. A `YYYY-MM-DD` has exactly one ever, so it is the answer
  * once it has passed and `null` before.
+ *
+ * **The answer is always a day that exists.** Nothing downstream re-checks it, and a returned
+ * `2027-02-31` would be handed to `Date.UTC` and quietly become 3 March.
  */
 export function lastOccurrence(date: unknown, today: string): string | null {
   if (typeof date !== 'string' || !ONCE.test(today)) return null;
 
   const once = ONCE.exec(date);
   if (once) {
-    if (!validMonthDay(once[2]!, once[3]!)) return null;
+    // A one-off names one specific day in one specific year, so it can be checked exactly — and
+    // if that day does not exist (`2027-02-29`, `2027-06-31`) it is a typo. A typo has to produce
+    // nothing at all; producing something on a neighbouring day is the worse of the two failures.
+    if (!existsIn(Number(once[1]), Number(once[2]), Number(once[3]))) return null;
     return date <= today ? date : null;
   }
 
   const yearly = YEARLY.exec(date);
   if (!yearly || !validMonthDay(yearly[1]!, yearly[2]!)) return null;
   const year = Number(today.slice(0, 4));
-  const thisYear = `${year}-${date}`;
   // String compare, not Date compare: both sides are fixed-width `YYYY-MM-DD`, where
   // lexicographic order *is* chronological order. That is the property the whole convention buys.
-  return thisYear <= today ? thisYear : `${year - 1}-${date}`;
+  // Compared on the raw `MM-DD` and resolved afterwards: the only date where the two spellings
+  // differ is `02-29`, and `YYYY-02-29` sorts exactly where 29 February would if it existed.
+  return `${year}-${date}` <= today ? occurrenceIn(year, date) : occurrenceIn(year - 1, date);
 }
 
-/** One stored entry, or `null` when it is not shaped like an announcement. */
+/**
+ * One stored entry, or `null` when it is not shaped like an announcement.
+ *
+ * **A stored announcement never comes back carrying `version`, whatever the file says.** That
+ * field marks the card the client builds out of `CHANGELOG.md`, and every branch downstream reads
+ * it as „this is release notes": the tone, the sign-off suppression, and — the one that bites —
+ * which marker gets written on confirm (`{ version }` rather than `{ id }`). A hand-edited entry
+ * carrying both `date` and `version` therefore fired on its date, presented itself as „Was ist
+ * neu", and on confirm wrote its `version` string into the version marker instead of stamping its
+ * id: the card came back on every start for the whole catch-up window, and the marker now held a
+ * version nothing would ever be newer than. Dropping the field here is what makes „stored ⇒ dated"
+ * true by construction rather than by everyone downstream remembering it.
+ */
 function parseOne(raw: unknown): Announcement | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const r = raw as Record<string, unknown>;
@@ -140,7 +198,6 @@ function parseOne(raw: unknown): Announcement | null {
     title,
     body,
     ...(r.celebrate === true ? { celebrate: true } : {}),
-    ...(typeof r.version === 'string' && r.version ? { version: r.version } : {}),
     ...(typeof r.date === 'string' && r.date ? { date: r.date } : {}),
   };
 }

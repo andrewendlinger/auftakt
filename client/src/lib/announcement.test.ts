@@ -53,6 +53,42 @@ describe('lastOccurrence', () => {
       expect(lastOccurrence(bad, '2027-03-14')).toBeNull();
     }
   });
+
+  it('refuses a day its month does not have, instead of sliding it late', () => {
+    // The failure this replaces was not „no match": `Date.UTC(y, 1, 31)` rolls 02-31 forward to
+    // 3 March, so a typo fired on a day the payload never named, inside the catch-up window and
+    // looking exactly like a working announcement on the wrong date.
+    for (const bad of ['02-30', '02-31', '04-31', '06-31', '09-31', '11-31']) {
+      expect(lastOccurrence(bad, '2027-03-05')).toBeNull();
+      expect(lastOccurrence(bad, '2027-12-31')).toBeNull();
+    }
+    // A one-off names one specific day in one specific year, so it can be checked exactly.
+    expect(lastOccurrence('2027-02-29', '2027-06-01')).toBeNull();
+    expect(lastOccurrence('2027-06-31', '2027-06-01')).toBeNull();
+    expect(lastOccurrence('2028-02-29', '2028-06-01')).toBe('2028-02-29');
+  });
+
+  it('lets a yearly 02-29 fall forward to 1 March in a common year', () => {
+    // Decided, not incidental: a yearly date has to come round every year, and a payload that is
+    // silently absent in three years out of four is not what „jährlich" promises.
+    expect(lastOccurrence('02-29', '2028-02-29')).toBe('2028-02-29'); // leap: its own day
+    expect(lastOccurrence('02-29', '2027-03-01')).toBe('2027-03-01'); // common: falls forward
+    expect(lastOccurrence('02-29', '2027-02-28')).toBe('2026-03-01'); // not yet: last year's
+  });
+
+  it('never answers a day that does not exist', () => {
+    // Nothing downstream re-checks the answer — `daysBetween` hands it to `Date.UTC`, which would
+    // quietly turn an impossible day into a real one somewhere else in the month.
+    const days = ['01-31', '02-29', '03-31', '04-30', '12-31'].flatMap((md) =>
+      ['2027-06-15', '2028-06-15', '2027-01-01'].map((today) => lastOccurrence(md, today)),
+    );
+    for (const day of days) {
+      expect(day).not.toBeNull();
+      const [y, m, d] = day!.split('-').map(Number);
+      const real = new Date(Date.UTC(y!, m! - 1, d!));
+      expect([real.getUTCFullYear(), real.getUTCMonth() + 1, real.getUTCDate()]).toEqual([y, m, d]);
+    }
+  });
 });
 
 describe('isDue', () => {
@@ -130,6 +166,23 @@ describe('parseAnnouncements', () => {
 
   it('drops a celebrate that is not literally true', () => {
     expect(parseAnnouncements([{ ...testfest, celebrate: 'ja' }])[0]?.celebrate).toBeUndefined();
+  });
+
+  it('never lets a stored entry come back carrying a version', () => {
+    // The one that bit: an entry with both fired on its `date` but presented itself as „Was ist
+    // neu", and confirming it posted `{ version }` instead of `{ id }` — so its id was never
+    // stamped and the card returned on every start for the whole catch-up window, while the
+    // version marker now held a string nothing would ever be newer than. „Stored ⇒ dated" is an
+    // invariant every client branch reads, so it is made true here rather than remembered there.
+    const both = parseAnnouncements([{ ...testfest, version: '9.9.9' }]);
+    expect(both).toHaveLength(1);
+    expect(both[0]?.version).toBeUndefined();
+    expect(both[0]?.date).toBe('03-14');
+    // …and one carrying only a version is still parsed, still triggers nothing, and is still
+    // not release notes.
+    const only = parseAnnouncements([{ id: 'nur-version', title: 'T', body: 'B', version: '9.9.9' }]);
+    expect(only[0]?.version).toBeUndefined();
+    expect(isDue(only[0]!, {}, '2027-03-14')).toBe(false);
   });
 
   it('drops an id that is not an ASCII slug', () => {
