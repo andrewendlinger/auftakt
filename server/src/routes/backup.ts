@@ -8,6 +8,7 @@ import {
   SCHEMA_VERSION,
   backupDirUnavailable,
   backupStamp,
+  dataDir,
   fileSchemaVersion,
   getBackupConfig,
   getDb,
@@ -15,6 +16,7 @@ import {
   registryPath,
   resolveDbPath,
   seasonFiles,
+  seasonTerms,
   setBackupDir,
   setBackupPrompted,
   snapshotDb,
@@ -140,7 +142,10 @@ export function runBackup(backupDir: string): { dir: string; files: string[] } {
   // Named from what was actually written, not from what was meant to be: the manifest is read
   // years later, next to the folder it describes, and a line for a file that is not in there
   // sends the reader looking for it.
-  writeDoc(join(target, 'MANIFEST.txt'), manifestText(at, appVersion(), labels, registryFile));
+  writeDoc(
+    join(target, 'MANIFEST.txt'),
+    manifestText({ at, version: appVersion(), seasons: labels, registryFile, terms: seasonTerms() }),
+  );
 
   // Before pruning, or the migrated folders would not be counted and an installation could
   // end up holding 30 in each place.
@@ -153,7 +158,22 @@ export function runBackup(backupDir: string): { dir: string; files: string[] } {
   // on their own count, so heavy importing cannot evict the dated restore points.
   pruneDatedFolders(preImportDir, 'pre-import');
 
-  writeDoc(join(backupDir, 'README.txt'), readmeText(hasLegacyFlatBackups(backupDir)));
+  // Written for the machine it runs on (WP-68). The restore happens at one keyboard, and the
+  // steps genuinely differ there — closing the last window quits on Windows and does not on
+  // macOS — so a text carrying both would make the reader pick a branch before step 1. The
+  // other platform's two differences follow at the end of the file.
+  writeDoc(
+    join(backupDir, 'README.txt'),
+    readmeText({
+      platform: process.platform === 'win32' ? 'windows' : 'mac',
+      dataDir: dataDir(),
+      terms: seasonTerms(),
+      keep: BACKUP_KEEP,
+      pointsDir: BACKUP_POINTS_DIR,
+      preImportDir: PRE_IMPORT_DIR,
+      hasLegacyFlatFiles: hasLegacyFlatBackups(backupDir),
+    }),
+  );
   return { dir: target, files };
 }
 

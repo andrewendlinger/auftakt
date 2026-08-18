@@ -91,6 +91,13 @@ check is whether they are understandable, which is the whole point.
 - [ ] **Windows: open `README.txt` in real Notepad.** Line breaks and umlauts are the two things
       that break. Then read it **without prior knowledge**: is it clear what the folder holds and
       how to restore?
+- [ ] **The steps are the ones for this machine** (WP-68): the Windows pass must find the Windows
+      instruction and the macOS pass the macOS one, each with the other platform's two differences
+      in the closing section. Step 5 names the **real** data directory — compare it with the folder
+      you actually land in.
+- [ ] Renamed the season term in Einstellungen? Then neither file says „Saison" any more — and no
+      sentence reads „einer einzelnen <Wort>": the word has no known gender, so nothing may be
+      declined in front of it.
 - [ ] `MANIFEST.txt` in a restore point names the timestamp, the app version and **each season by
       its label** (`auftakt.db = Festival 2026`) — the file names cannot carry it.
 - [ ] Upgrading an installation that already has dated folders at the *top* level: after the first

@@ -2429,3 +2429,50 @@ Es lügt genau in dem Zustand, für den es hier gebraucht würde.
 Zustand keine Information, und die einzige Stelle, an der es je gelesen wurde, hat den Fehler
 verursacht, den sie beheben sollte. Die Sonde selbst ist der Weg, solche Fragen an den
 Main-Prozess zu beantworten — das Rezept steht in `docs/VERIFYING.md`.
+
+## Die README im Backup-Ordner ist für einen Rechner geschrieben (2026-08-18, WP-68)
+
+Der macOS-Durchgang las die zwei Dateien kalt und befand sie als „zu kompliziert": „Eine Sicherung
+zurückspielen" ist kein Deutsch, das jemand spricht, „als Ordner mit Datum und Uhrzeit im Namen"
+meint ein Format und sagt es nicht, „sonst schreibt sie über das Zurückgespielte hinweg" ist
+unverständlich. Das ist keine Geschmacksfrage: `docs/BACKUP-TESTING.md` Fall 7 verlangt,
+beim Wiederherstellen **der README zu folgen statt der Checkliste**, weil das die Schritte sind,
+die der Kunde bekommt.
+
+**Eine Plattform, nicht beide nebeneinander.** Die Wiederherstellung passiert an *einer* Tastatur,
+und der erste Schritt unterscheidet sich dort wirklich: `window-all-closed` beendet die App auf
+Windows und kehrt auf darwin früh zurück (`electron/main.ts`), „Fenster schließen reicht nicht"
+ist also auf dem Mac wahr und auf Windows falsch. Ein Text mit beiden Zweigen zwingt den Leser,
+vor Schritt 1 eine Auswahl zu treffen — genau das, was ein Text für den Ernstfall nicht tun darf.
+`process.platform` entscheidet beim Schreiben; die zwei Unterschiede der anderen Plattform stehen
+als eigener Abschnitt am Ende, damit ein Wechsel auf einen neuen Rechner nicht in eine Sackgasse
+läuft. Der Preis, benannt: zwei Installationen, die in **denselben** Cloud-Ordner sichern,
+schreiben die Datei bei jedem Start gegenseitig um (`writeDoc` vergleicht Bytes). Für eine
+Installation je Ordner — der Fall, für den der Ordner gedacht ist — kostet es nichts.
+
+Der Nebenbefund des Durchgangs erledigt sich damit ohne Sonderregel: die Ordner heißen im Text
+schlicht `backups` und `pre-import` statt `backups\`, und nur *Pfade* tragen den Trenner der
+Plattform, für die der Text geschrieben ist.
+
+**Schritt 5 nennt den Pfad, statt ihn zu beschreiben.** Auftakt kennt sein Datenverzeichnis beim
+Schreiben (`dataDir()`), also steht es ausgeschrieben da; die portable Schreibweise
+(`%APPDATA%\auftakt`, `~/Library/Application Support/auftakt`) bleibt in der Zeile darunter, weil
+sie auf einem neuen Rechner die einzige ist, die noch stimmt — und weil `check:backup` seit WP-41
+auf `%APPDATA%` prüft.
+
+**Die Dateien benutzen das Wort des Kunden.** Wer die Saison in den Einstellungen umbenannt hat,
+soll sie nicht ausgerechnet in den zwei Dateien wiederfinden, die er liest, wenn nichts mehr da
+ist; `seasonTerms()` in `db.ts` ist die Leseseite von `setSeasonTerms` und wendet dieselben zwei
+Vorgaben an wie `useSeasonTerm` auf dem Client. **Damit fällt eine Falle an:** das Wort hat ein
+unbekanntes Geschlecht, ihm darf also nie ein Artikel oder ein flektiertes Determinativ vorangehen
+— „ein Backup einer einzelnen Festival" ist das Ergebnis. Der Text ist um das Wort herum
+formuliert (`je <Singular>`, `aller <Plural>`, `Diese <Plural>`), genau wie die Strings des
+Clients, und ein Test hält es fest.
+
+**Geprüft wird das Windows-Rendering im Unit-Test, nicht im Gate.** `npm run check:backup` fährt
+den echten Lauf und sieht deshalb immer nur die Fassung *dieser* Maschine — auf dem Entwicklungs-
+Mac und im Linux-CI also nie die, die der Kunde bekommt. `client/src/lib/backupDocs.test.ts`
+rendert beide (der gleiche Griff über die Paketgrenze, den `backupDir.test.ts` nach `electron/`
+macht); dafür importiert `backupDocs.ts` jetzt **nichts** außer `node:fs` und bekommt Ordnernamen,
+Aufbewahrungszahl und Saisonbegriff als Optionen. Was auch das nicht prüfen kann, ist
+Verständlichkeit — die bleibt bei Fall 3c und Fall 7, von Hand, kalt gelesen.

@@ -267,6 +267,11 @@ function windowsDoc(name, path) {
 const readme = windowsDoc('README.txt', join(backupDir, 'README.txt'));
 check('README explains the restore (data dir + the -wal trap)', /%APPDATA%/.test(readme) && /-wal/.test(readme));
 check('README does not mention flat backups it has none of', !readme.includes('auftakt-<Zeitstempel>.db'));
+// Since WP-68 step 5 names the data directory outright instead of describing where it usually
+// lives. It is the one line the reader has to act on with no app in front of him, and a wrong
+// path there sends him somewhere real and empty. Only *this* machine's rendering is reachable
+// from here — the other platform's is covered by client/src/lib/backupDocs.test.ts.
+check('README names this machine’s data directory', readme.includes(dataDir), dataDir);
 
 const manifest = windowsDoc('MANIFEST.txt', join(point, 'MANIFEST.txt'));
 // The whole point of the manifest: the season NAME, which the file names cannot carry.
@@ -516,7 +521,31 @@ writeFileSync(join(backupDir, 'auftakt-2020-01-33-00-00-00', 'seasons.json'), '{
 const legacy = join(backupDir, 'auftakt-2019-01-01-00-00-00.db');
 await import('node:fs').then((fs) => fs.writeFileSync(legacy, 'legacy flat backup'));
 
-await post('backup', { dir: backupDir });
+// The customer renamed „Saison" in Einstellungen, so the two files he reads when his data is
+// gone must not be the last place still calling it that (WP-68). Renamed before this run
+// because the README is rewritten on every one.
+await fetch(api('seasons/terms'), {
+  method: 'PATCH',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ season: 'Festival', seasonPlural: 'Festivals' }),
+});
+
+const renamedRun = await post('backup', { dir: backupDir });
+{
+  const renamed = readFileSync(join(backupDir, 'README.txt'), 'utf8');
+  check(
+    'the README uses the word the user picked for a season',
+    renamed.includes('je Festival') && !/Saison/.test(renamed),
+    renamed.match(/.*Saison.*/)?.[0],
+  );
+  const renamedManifest = readFileSync(join(renamedRun.body.dir, 'MANIFEST.txt'), 'utf8');
+  check(
+    '…and so does the MANIFEST',
+    renamedManifest.includes('Diese Festivals sind gesichert:'),
+    renamedManifest.split('\r\n')[4],
+  );
+}
+
 const preImport = folders('pre-import', join(backupDir, 'pre-import'));
 check('pruning caps pre-import snapshots at 30', preImport.length === 30, `${preImport.length} übrig`);
 check('pruning drops the oldest pre-import snapshot first', !preImport.includes('pre-import-2020-01-01-00-00-00'));

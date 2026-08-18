@@ -1,17 +1,26 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 
-import { BACKUP_KEEP, BACKUP_POINTS_DIR, PRE_IMPORT_DIR } from '../db';
-
 /**
- * The two files the backup folder explains itself with (WP-41): a README at its root and a
- * MANIFEST inside every restore point. They are the only things in there a customer ever
- * reads — the complaint that started this package was that the folder is unreadable — so the
- * text is German while the file names stay English, and both are written for someone opening
- * the folder in a panic, without the app and without prior knowledge.
+ * The two files the backup folder explains itself with (WP-41, rewritten in WP-68): a README at
+ * its root and a MANIFEST inside every restore point. They are the only things in there a
+ * customer ever reads, and he reads them on the day his data is gone — so the text is German,
+ * the file names stay English, and every sentence assumes no app, no prior knowledge and no
+ * patience.
  *
- * File names are deliberately NOT where the season name goes. Restoring is a hand copy (see
- * the README below and docs/BACKUP-TESTING.md case 7), which only works while the .db files
- * carry exactly the `file` values from seasons.json — so the label lives in the manifest.
+ * WP-68 rewrote both after the macOS pass read them cold (case 7, „zu kompliziert"). The
+ * instruction is now written for ONE machine — the one the app runs on — with the other
+ * platform's two differences in a closing section. That split is what lets step 1 be true:
+ * closing the last window quits on Windows and deliberately does not on macOS (the
+ * `window-all-closed` handler in electron/main.ts returns early on darwin).
+ *
+ * This module imports nothing but node:fs, on purpose. `client/src/lib/backupDocs.test.ts`
+ * renders both platforms, which is the only automated look at the Windows text from a Mac or
+ * from CI — and an import of ../db would drag better-sqlite3 into that run. Hence the folder
+ * names, the retention count and the season word all arrive as options.
+ *
+ * File names are deliberately NOT where the season name goes. Restoring is a hand copy (see the
+ * README below and docs/BACKUP-TESTING.md case 7), which only works while the .db files carry
+ * exactly the `file` values from seasons.json — so the label lives in the manifest.
  */
 
 /**
@@ -70,129 +79,275 @@ export function appVersion(): string {
 }
 
 /**
- * README.txt at the root of the backup folder.
- *
- * `hasLegacyFlatFiles` adds the paragraph about the flat `auftakt-<stamp>.db` files older
- * versions wrote. Conditional because most folders have none, and a paragraph about files that
- * are not there is exactly the kind of noise this file exists to remove.
+ * The word the customer chose for a season. He renamed it in Einstellungen because „Saison" is
+ * not what he calls the thing, so these two files — the ones he reads when nothing else is left
+ * — must not be the last place that keeps calling it that. Read from seasons.json by
+ * `seasonTerms()` in db.ts; the defaults there mirror `useSeasonTerm` on the client.
  */
-export function readmeText(hasLegacyFlatFiles: boolean): string {
+/**
+ * NOTE for anyone editing the prose: the customer's word has an unknowable grammatical gender,
+ * so it may never be preceded by an article or an inflected determiner — „einer einzelnen
+ * Festival" is what that produces. Safe: „je <singular>", „aller <plural>", „Diese <plural>",
+ * „„<singular> & Daten"". Everything else gets rephrased around the word, as the client's own
+ * strings do.
+ */
+export interface DocTerms {
+  singular: string;
+  plural: string;
+}
+
+export type DocPlatform = 'windows' | 'mac';
+
+/**
+ * Everything the two instructions do not share, in one table. The steps below are written once
+ * and read from here, so the two renderings cannot drift apart in structure — only in the
+ * handful of places that are meant to differ. The closing „if you are sitting at the other
+ * machine" section is built from the *other* entry, which is why each field has to read
+ * correctly in both positions.
+ */
+interface PlatformCopy {
+  /** after „Diese Anleitung ist …" */
+  dative: string;
+  /** after „Wenn du an … sitzt" */
+  atOne: string;
+  /** step 1 — the step that genuinely differs, in full */
+  quit: string[];
+  /** the same thing, short, for the other platform's section — already bulleted and wrapped */
+  quitShort: string[];
+  /** the spelling that works on any machine of this platform, incl. a brand-new one */
+  portablePath: string;
+  /** step 5, indented three spaces like the rest of a step body */
+  reachStep: string[];
+  /** the same route as a bullet's continuation, indented two */
+  reachOther: string[];
+  /** step 6 */
+  asks: string;
+}
+
+const PLATFORMS: Record<DocPlatform, PlatformCopy> = {
+  windows: {
+    dative: 'für Windows',
+    atOne: 'einem Windows-Rechner',
+    quit: [
+      '1. Beende Auftakt: Schließe alle Auftakt-Fenster. Erst dann ist Auftakt',
+      '   wirklich zu — sonst sind gleich wieder die alten Daten da.',
+    ],
+    quitShort: ['- Beenden: alle Auftakt-Fenster schließen, mehr ist nicht nötig.'],
+    portablePath: '%APPDATA%\\auftakt',
+    reachStep: [
+      '   So kommst du hin: im Explorer oben in die Adresszeile klicken, den',
+      '   Pfad eintippen, Enter drücken.',
+    ],
+    reachOther: ['  Diesen Text im Explorer oben in die Adresszeile tippen, Enter drücken.'],
+    asks: 'Windows fragt',
+  },
+  mac: {
+    dative: 'für den Mac',
+    atOne: 'einem Mac',
+    quit: [
+      '1. Beende Auftakt: Klicke oben links auf „Auftakt“ und dann auf',
+      '   „Auftakt beenden“. Nur das Fenster zu schließen reicht nicht — sonst',
+      '   sind gleich wieder die alten Daten da.',
+    ],
+    quitShort: [
+      '- Beenden: oben links „Auftakt“ → „Auftakt beenden“. Das Fenster zu',
+      '  schließen reicht dort nicht.',
+    ],
+    portablePath: '~/Library/Application Support/auftakt',
+    reachStep: [
+      '   So kommst du hin: im Finder oben im Menü „Gehe zu“ →',
+      '   „Gehe zum Ordner…“, den Pfad eintippen, Enter drücken.',
+    ],
+    reachOther: [
+      '  Diesen Pfad im Finder unter „Gehe zu“ → „Gehe zum Ordner…“ eintippen,',
+      '  Enter drücken.',
+    ],
+    asks: 'Der Mac fragt',
+  },
+};
+
+export interface ReadmeOptions {
+  /** which machine the reader is sitting at — the app runs on it, so it is the one that counts */
+  platform: DocPlatform;
+  /** this machine's data directory, absolute, so step 5 can name it instead of describing it */
+  dataDir: string;
+  terms: DocTerms;
+  /** BACKUP_KEEP */
+  keep: number;
+  /** BACKUP_POINTS_DIR */
+  pointsDir: string;
+  /** PRE_IMPORT_DIR */
+  preImportDir: string;
+  /**
+   * Adds the paragraph about the flat `auftakt-<stamp>.db` files older versions wrote.
+   * Conditional because most folders have none, and a paragraph about files that are not there
+   * is exactly the kind of noise this file exists to remove.
+   */
+  hasLegacyFlatFiles: boolean;
+}
+
+/** `Text` under a heading, underlined the way the rest of the file underlines headings. */
+function heading(text: string, rule: string): string[] {
+  return [text, rule.repeat(text.length), ''];
+}
+
+/**
+ * README.txt at the root of the backup folder — the restore instruction, for one platform.
+ *
+ * Written top to bottom for someone in a hurry: what is here, then the steps, then the other
+ * machine, then the small print. Nothing above the steps is needed to follow them.
+ */
+export function readmeText(o: ReadmeOptions): string {
+  const self = PLATFORMS[o.platform];
+  const other = PLATFORMS[o.platform === 'mac' ? 'windows' : 'mac'];
+  const t = o.terms;
+
+  // Padded so the three arrows line up whatever the customer calls a season.
+  const inside: Array<[string, string]> = [
+    [`eine .db-Datei je ${t.singular}`, 'deine Daten'],
+    ['seasons.json', `die Liste aller ${t.plural}`],
+    ['MANIFEST.txt', 'was in diesem Backup steckt'],
+  ];
+  const w = Math.max(...inside.map(([left]) => left.length));
+
   const lines = [
-    'Auftakt – Sicherungen',
-    '=====================',
+    ...heading('Auftakt – deine Backups', '='),
+    'Auftakt sichert deine Daten bei jedem Start in diesen Ordner. Du musst',
+    'dafür nichts tun.',
     '',
-    'In diesem Ordner legt Auftakt automatisch Sicherungen deiner Daten ab: bei jedem',
-    'Start der App eine vollständige Kopie aller Saisons. Von Hand ist hier nichts zu',
-    'tun. Diese Datei erklärt, was hier liegt und wie du eine Sicherung zurückspielst.',
-    '',
-    '',
-    'Was hier liegt',
-    '--------------',
-    '',
-    `${BACKUP_POINTS_DIR}\\`,
-    '    Eine Sicherung je App-Start, als Ordner mit Datum und Uhrzeit im Namen',
-    '    (auftakt-JAHR-MONAT-TAG-STUNDE-MINUTE-SEKUNDE-MILLISEKUNDE).',
-    '    In jedem dieser Ordner:',
-    '        eine .db-Datei je Saison   – die eigentlichen Daten',
-    '        seasons.json               – das Verzeichnis aller Saisons',
-    '        MANIFEST.txt               – welche Datei zu welcher Saison gehört',
-    `    Die ${BACKUP_KEEP} neuesten Sicherungen bleiben erhalten, ältere werden automatisch`,
-    '    gelöscht.',
-    '',
-    `${PRE_IMPORT_DIR}\\`,
-    '    Sicherheitskopien aus „Datenbank importieren“: der Stand unmittelbar VOR',
-    `    einem Import. Ebenfalls die ${BACKUP_KEEP} neuesten.`,
+    'Diese Datei erklärt, was hier liegt und wie du ein Backup lädst, wenn du',
+    'deine Daten zurückbrauchst.',
     '',
     '',
-    'Eine Sicherung zurückspielen',
-    '----------------------------',
+    ...heading('Was hier liegt', '-'),
+    o.pointsDir,
+    '    Ein Ordner je Backup. Die Namen haben dieses Format:',
     '',
-    '1. Auftakt beenden. Nicht nur das Fenster schließen – die App muss wirklich',
-    '   beendet sein, sonst schreibt sie über das Zurückgespielte hinweg.',
+    '        auftakt-JAHR-MONAT-TAG-STUNDE-MINUTE-SEKUNDE-MILLISEKUNDE',
     '',
-    `2. Unter ${BACKUP_POINTS_DIR}\\ den gewünschten Zeitpunkt heraussuchen. Die MANIFEST.txt`,
-    '   in dem Ordner nennt Zeitpunkt, App-Version und die enthaltenen Saisons.',
+    '    Also zum Beispiel: auftakt-2026-08-18-09-14-02-317',
     '',
-    '3. Aus diesem Ordner ALLE .db-Dateien und die seasons.json in das Datenverzeichnis',
-    '   von Auftakt kopieren und die Dateien dort ersetzen. Die MANIFEST.txt wird nicht',
-    '   mitkopiert – sie wird dort nicht gebraucht.',
+    '    In jedem dieser Ordner liegen:',
     '',
-    '   Das Datenverzeichnis ist',
-    '       unter Windows:   %APPDATA%\\auftakt',
-    '       unter macOS:     ~/Library/Application Support/auftakt',
-    '   Der Pfad lässt sich direkt eingeben: im Explorer in die Adresszeile, im Finder',
-    '   unter „Gehe zu“ → „Gehe zum Ordner…“.',
+    ...inside.map(([left, right]) => `        ${left.padEnd(w)}   – ${right}`),
     '',
-    '4. Falls im Datenverzeichnis noch Dateien liegen, die auf .db-wal oder .db-shm',
-    '   enden: diese löschen. Sie gehören zum vorherigen Stand und würden beim nächsten',
-    '   Start in die zurückgespielten Daten hineingeschrieben.',
+    `    Die ${o.keep} neuesten Backups bleiben liegen. Ältere löscht Auftakt selbst.`,
     '',
-    '5. Auftakt starten. Alle Saisons aus dieser Sicherung sind wieder da.',
+    o.preImportDir,
+    '    Dasselbe, aber angelegt kurz vor einem „Datenbank importieren…“: der',
+    `    Stand von direkt davor. Auch hier bleiben die ${o.keep} neuesten liegen.`,
+    '',
+    '',
+    ...heading('Ein Backup laden', '-'),
+    `Diese Anleitung ist ${self.dative}. Sitzt du an ${other.atOne}, lies den`,
+    'letzten Abschnitt.',
+    '',
+    ...self.quit,
+    '',
+    `2. Öffne hier den Ordner „${o.pointsDir}“. Jeder Ordner darin ist ein Backup,`,
+    '   und der Name sagt dir, von wann es ist.',
+    '',
+    '3. Du bist unsicher, welches das richtige ist? Öffne in dem Ordner die',
+    '   Datei MANIFEST.txt. Dort steht, wann das Backup entstanden ist und',
+    '   was darin steckt.',
+    '',
+    '4. Kopiere aus dem Ordner ALLE .db-Dateien und die Datei seasons.json.',
+    '   Die MANIFEST.txt brauchst du nicht.',
+    '',
+    '5. Öffne den Ordner mit deinen Auftakt-Daten. Auf diesem Rechner ist das:',
+    '',
+    `       ${o.dataDir}`,
+    '',
+    ...self.reachStep,
+    `   Auf einem anderen Rechner heißt er ${self.portablePath}.`,
+    '',
+    `6. Füge die kopierten Dateien dort ein. ${self.asks}, ob die vorhandenen`,
+    '   Dateien ersetzt werden sollen: ja, ersetzen.',
+    '',
+    '7. Sieh nach, ob in dem Ordner Dateien liegen, deren Name auf .db-wal oder',
+    '   .db-shm endet. Lösche sie. Wenn da keine sind, ist auch gut.',
+    '',
+    '8. Starte Auftakt. Deine Daten sind wieder so, wie sie zum Zeitpunkt des',
+    '   Backups waren.',
     '',
   ];
 
-  if (hasLegacyFlatFiles) {
+  if (o.hasLegacyFlatFiles) {
     lines.push(
       '',
-      'Einzelne .db-Dateien direkt in diesem Ordner',
-      '--------------------------------------------',
+      ...heading('Einzelne .db-Dateien direkt in diesem Ordner', '-'),
+      'Dateien wie auftakt-<Zeitstempel>.db, die direkt hier liegen und nicht in',
+      'einem Unterordner, sind älter. Sie stammen aus früheren Auftakt-Versionen',
+      'oder aus „Datenbank exportieren…“. Auftakt löscht sie nicht.',
       '',
-      'Die Dateien auftakt-<Zeitstempel>.db, die direkt hier liegen (nicht in einem',
-      'Unterordner), stammen aus früheren Auftakt-Versionen oder aus „Datenbank',
-      'exportieren…“. Sie sind gültige Sicherungen je einer einzelnen Saison und bleiben',
-      'unangetastet – Auftakt löscht sie nicht.',
-      'Zurückspielen lässt sich eine davon in der App: Einstellungen → „Saison & Daten“ →',
-      '„Datenbank importieren…“. Der Import ersetzt die gerade geöffnete Saison und legt',
-      `vorher eine Sicherheitskopie in ${PRE_IMPORT_DIR}\\ ab.`,
+      'Jede Datei ist ein Backup für sich. So lädst du eine: Auftakt öffnen,',
+      `Einstellungen → „${t.singular} & Daten“ → „Datenbank importieren…“. Das`,
+      'ersetzt, was gerade offen ist — Auftakt legt vorher selbst ein Backup',
+      `davon im Ordner „${o.preImportDir}“ ab.`,
       '',
     );
   }
 
   lines.push(
     '',
-    'Hinweise',
-    '--------',
+    ...heading(`Wenn du an ${other.atOne} sitzt`, '-'),
+    'Die Schritte sind dieselben. Zwei Dinge sind dort anders:',
     '',
-    '- Die Ordner- und Dateinamen hier nicht ändern: Auftakt erkennt am Namen, was eine',
-    '  Sicherung ist und welche die ältesten sind.',
-    '- Der Backup-Ordner darf in einer Cloud liegen (Google Drive, OneDrive, Dropbox),',
-    '  solange der Ordner auf diesem Rechner liegt. Netzwerkfreigaben (\\\\Server\\Freigabe)',
-    '  funktionieren nicht.',
-    '- Ändern lässt sich der Backup-Ordner in Auftakt unter Einstellungen →',
-    '  „Saison & Daten“ → „Backup-Ordner“.',
-    '- Diese Datei wird bei jeder Sicherung neu geschrieben. Eigene Notizen darin gehen',
-    '  verloren.',
+    ...other.quitShort,
+    '- Der Ordner mit deinen Auftakt-Daten heißt dort:',
+    '',
+    `      ${other.portablePath}`,
+    '',
+    ...other.reachOther,
+    '',
+    '',
+    ...heading('Gut zu wissen', '-'),
+    '- Ändere hier keine Ordner- oder Dateinamen. Auftakt erkennt am Namen, was',
+    '  ein Backup ist und welches das älteste ist.',
+    '- Dieser Ordner darf in der Cloud liegen (Google Drive, OneDrive, Dropbox),',
+    '  solange er auch auf diesem Rechner liegt. Ein Netzlaufwerk oder eine',
+    '  Server-Freigabe funktioniert nicht.',
+    '- Einen anderen Ordner wählst du in Auftakt unter Einstellungen →',
+    `  „${t.singular} & Daten“ → „Backup-Ordner“.`,
+    '- Auftakt schreibt diese Datei bei jedem Backup neu. Eigene Notizen darin',
+    '  gehen verloren.',
   );
 
   return windowsText(lines);
 }
 
+export interface ManifestOptions {
+  at: Date;
+  version: string;
+  seasons: Array<{ file: string; label: string }>;
+  /** null when the run found no registry to copy — the manifest must not name a file it has not got. */
+  registryFile: string | null;
+  terms: DocTerms;
+}
+
 /**
  * MANIFEST.txt inside one restore point — the place where the season NAME the customer asked
  * for actually arrives, since the file names cannot carry it (see the module comment).
+ *
+ * The `<file>  =  <label>` shape is asserted by `npm run check:backup`, and the label must stay
+ * the last thing on its line: nothing may be wrapped around it.
  */
-export function manifestText(
-  at: Date,
-  version: string,
-  seasons: Array<{ file: string; label: string }>,
-  /** null when the run found no registry to copy — the manifest must not name a file it has not got. */
-  registryFile: string | null,
-): string {
-  const width = Math.max(registryFile?.length ?? 0, ...seasons.map((s) => s.file.length));
+export function manifestText(o: ManifestOptions): string {
+  const width = Math.max(o.registryFile?.length ?? 0, ...o.seasons.map((s) => s.file.length));
   const pad = (name: string): string => name.padEnd(width);
-  const heading = `Auftakt – Sicherung vom ${germanStamp(at)}`;
+  const title = `Auftakt – Backup vom ${germanStamp(o.at)}`;
   return windowsText([
-    heading,
-    '='.repeat(heading.length),
+    ...heading(title, '='),
+    `App-Version: ${o.version}`,
     '',
-    `App-Version: ${version}`,
+    `Diese ${o.terms.plural} sind gesichert:`,
     '',
-    'Enthaltene Saisons:',
-    ...seasons.map((s) => `    ${pad(s.file)}  =  ${s.label}`),
-    ...(registryFile
-      ? ['', `    ${pad(registryFile)}  =  Verzeichnis aller Saisons (gehört mit zurückgespielt)`]
+    ...o.seasons.map((s) => `    ${pad(s.file)}  =  ${s.label}`),
+    ...(o.registryFile
+      ? ['', `    ${pad(o.registryFile)}  =  die Liste aller ${o.terms.plural}, gehört mit dazu`]
       : []),
     '',
-    'Zum Zurückspielen: siehe README.txt zwei Ebenen höher, im Backup-Ordner.',
+    'So lädst du dieses Backup: Die Datei README.txt im Backup-Ordner erklärt es',
+    'Schritt für Schritt.',
   ]);
 }

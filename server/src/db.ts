@@ -458,6 +458,17 @@ export function reorderSeasons(order: number[]): void {
   saveRegistry(reg); // activeId untouched
 }
 
+/**
+ * The word the customer chose for a season, with the defaults applied — the read side of
+ * `setSeasonTerms`. `listSeasons` hands the raw registry value to the client, which applies the
+ * same two fallbacks in `useSeasonTerm` (client/src/hooks.ts); the backup documents have no such
+ * hook, so they get the resolved pair from here. The defaults must stay in step with that hook.
+ */
+export function seasonTerms(): { singular: string; plural: string } {
+  const t = readRegistry().terms ?? {};
+  return { singular: t.season?.trim() || 'Saison', plural: t.seasonPlural?.trim() || 'Saisons' };
+}
+
 /** Empty/null deletes a key so the default term returns (mirrors subtitle/period). */
 export function setSeasonTerms(patch: { season?: string | null; seasonPlural?: string | null }): void {
   const reg = readRegistry();

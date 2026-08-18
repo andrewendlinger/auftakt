@@ -192,7 +192,10 @@ run and pruned to 30. The backup folder is split into `backups/` and `pre-import
 its own pool of 30; folders an older version left at the top level are moved down on the next run,
 best-effort and self-detecting, while flat `auftakt-<stamp>.db` files from before the folders are
 left alone. A German `README.txt` at the root and a `MANIFEST.txt` per restore point explain the
-folder — CRLF and a UTF-8 BOM, because it is read in Notepad out of Google Drive.
+folder — CRLF and a UTF-8 BOM, because it is read in Notepad out of Google Drive. The README is
+written for the platform it runs on and names that machine's data directory outright (WP-68); the
+other platform's two differences are a closing section, and both files use the word the user chose
+for a season.
 
 **The configured folder must already exist; everything below it is `mkdir -p`.** A run into a
 folder that is gone — renamed, deleted, on an ejected drive — is refused with a German message
