@@ -632,11 +632,19 @@ already on screen → do nothing, the convention Finder and Safari follow, becau
 other one was deliberate; everything minimized → `restore()` all of them. That last branch is the
 fix: on a Dock click one window comes back with no help from the app, and with two minimized the
 second was reachable only from the Fenster menu or Exposé. **What restores that one is left
-unnamed on purpose** — the app can observe neither which part of macOS does it nor whether it
-happens before the handler or after — so nothing depends on it: the set is filtered on
-`isMinimized()`, so a window already back is not in it and one still down is restored exactly
-once, either way round. Which window ends up frontmost afterwards is macOS's; the guarantee is
-only that none is left in the Dock.
+unnamed on purpose** — the app can observe neither which part of macOS does it nor exactly when —
+and nothing depends on it, because the plan is computed on the state at the moment of the click,
+which a probe measured as still fully minimized, with macOS' own restore landing ~650 ms later.
+Which window ends up frontmost afterwards is macOS's; the guarantee is only that none is left in
+the Dock.
+
+**Which of those three the click is, is read off the windows** — never from the `hasVisibleWindows`
+the `activate` event carries (WP-67b). On Electron 43.3.0 / macOS 15.6 that flag is `true` while
+*every* window is minimized, so the version of this handler that trusted it never reached the
+branch it had just been given, and the reported bug survived its own fix. „On screen" is therefore
+`some(w => !w.isMinimized())` over the live windows. `isMinimized()` and not `isVisible()`, which
+settles Cmd+H as well: a window hidden without being minimized counts as on screen, so unhiding the
+app brings back what was up and leaves what was in the Dock in the Dock.
 
 **The cross-window behaviour has a gate**, `npm run check:browser` (WP-R6): the season switch
 staying window-local, a UI write reaching the other window while a `curl` write deliberately does
