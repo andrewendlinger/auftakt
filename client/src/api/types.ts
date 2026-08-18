@@ -493,6 +493,32 @@ export interface LandingPatch {
   sections?: LandingSectionInput[];
 }
 
+/**
+ * One announcement — the „Was ist neu" card after an update, or a dated greeting (WP-63).
+ *
+ * Mirrors `Announcement` in `server/src/lib/announcements.ts`, and the client builds one of
+ * these itself out of `CHANGELOG.md` (`lib/changelog.ts`): two sources, one renderer. `id` is
+ * the dedupe key the „schon gesehen" marker is recorded against.
+ *
+ * `celebrate` hangs off the announcement and not off what triggered it — a release may set it
+ * just as a dated one may leave it off.
+ */
+export interface Announcement {
+  id: string;
+  title: string;
+  /** Markdown, rendered through `Markdown`. */
+  body: string;
+  celebrate?: boolean;
+  version?: string;
+  date?: string;
+}
+
+/** What `GET /api/announcements` answers. `version === null` means: no start has recorded one yet. */
+export interface AnnouncementFeed {
+  version: string | null;
+  dated: Announcement[];
+}
+
 /** One section's placement in a page layout: its key and how wide it renders. */
 export interface LayoutEntry {
   key: string;

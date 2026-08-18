@@ -141,6 +141,29 @@ body {
   margin: 1em 0;
 }
 
+/* Ankündigungs-Karte (WP-63). Two rules, because both are about *this* card and would be wrong
+   anywhere else `.prose-md` is used.
+
+   The message is read once, in the middle of the screen, with nothing else on it — so it carries
+   a little more air and a little more size than a note in a table cell does. And the last
+   paragraph of a hand-written announcement is a sign-off: set apart, smaller, in a warm gold that
+   reads as a signature rather than as another sentence. `lib/announcement.ts` decides which
+   paragraph that is (dated announcements only — a changelog entry ends in a bullet, not a name).
+
+   The gold is #8a7a52 from the agreed preview: 4.9:1 on white, so it stays legible rather than
+   decorative. */
+.announcement-body {
+  font-size: 0.95rem;
+  line-height: 1.62;
+}
+.announcement-signoff {
+  margin-top: 1rem;
+  font-size: 0.94rem;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+  color: #8a7a52;
+}
+
 /* Schriftfarbe im Text (WP-62). Eight tones, all ≥ 4.5:1 against white — the palette a user picks
    from, and the *only* place the colours are written down. `lib/textColor.ts` carries the ids and
    the labels, the mark stores `<span class="tc-rot">`, the sanitize schema admits exactly that

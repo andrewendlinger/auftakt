@@ -15,7 +15,7 @@
  * second boot's health check from the first run's process.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -447,6 +447,104 @@ try {
     check('…and left the standard alone', saved.artist_layout === undefined, JSON.stringify(saved.artist_layout));
     const savedScalar = await req('PATCH', '/settings', { project_layout_saved: 'nonsense' });
     check('a scalar saved layout is refused', savedScalar.status === 400, String(savedScalar.status));
+  }
+
+  // --------------------------------------------------------------- announcements (WP-63)
+  // Dated announcements are hand-installed into `seasons.json` and nothing writes them, so the
+  // invariants worth asserting are the two that make the mechanism safe to ship: it is silent
+  // on an installation that has no payload, and its state cannot be reached through the one
+  // endpoint that does take arbitrary keys.
+  //
+  // The registry lives *beside* the season databases on purpose — a value per season would be
+  // forgotten on the next season switch and every announcement would come back, which is WP-39
+  // one key over. That is also why the `settings` half below matters: a key that were writable
+  // there would be exactly the wrong storage, silently.
+  console.log('\n== announcements are registry-only and inert without a payload (WP-63)');
+  {
+    const registry = join(dataDir, 'seasons.json');
+    /** Hand-install into the registry, the way the one real payload is installed. */
+    const install = (announcements) => {
+      const reg = JSON.parse(readFileSync(registry, 'utf8'));
+      if (announcements === undefined) delete reg.announcements;
+      else reg.announcements = announcements;
+      writeFileSync(registry, JSON.stringify(reg, null, 2));
+    };
+    const pad = (n) => String(n).padStart(2, '0');
+    const day = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const today = day(new Date());
+    const inTwoMonths = new Date();
+    inTwoMonths.setDate(inTwoMonths.getDate() + 60);
+
+    const fresh = await ok('GET', '/announcements');
+    check('an installation with no payload has nothing to announce', fresh.dated.length === 0, JSON.stringify(fresh.dated));
+    check('…and no start has recorded a version yet', fresh.version === null, String(fresh.version));
+
+    // The allowlist. `crudRouter`'s silence is the hazard (CCL-24) and the settings table's is
+    // the same: assert the drop, and assert that the drop did not reach the registry either.
+    const dropped = await ok('PATCH', '/settings', {
+      announcements: [{ id: 'via-settings', title: 'Nein', body: 'Nein', date: today.slice(5) }],
+      announcementsSeen: { version: '9.9.9' },
+    });
+    check('an announcements key is dropped by PATCH /settings', dropped.announcements === undefined);
+    check('…and so is the seen marker', dropped.announcementsSeen === undefined);
+    const untouched = await ok('GET', '/announcements');
+    check('…and neither reached the registry', untouched.version === null && untouched.dated.length === 0, JSON.stringify(untouched));
+
+    // The first-start marker: written once, and it is what keeps the „Was ist neu" card quiet
+    // on a fresh install.
+    const marked = await ok('POST', '/announcements/seen', { version: '0.0.1' });
+    check('a version can be marked seen', marked.version === '0.0.1', String(marked.version));
+    check('…and it survives a re-read', (await ok('GET', '/announcements')).version === '0.0.1');
+    const badVersion = await req('POST', '/announcements/seen', { version: '' });
+    check('an empty version is refused', badVersion.status === 400, String(badVersion.status));
+
+    // A hand-installed payload, with a neutral name and a date that is simply today. The three
+    // rejects beside it are the shapes a hand-edited file really produces.
+    install([
+      { id: 'testfest', title: 'Testfest', body: 'Eine Zeile.\n\nGrüße', date: today.slice(5), celebrate: true, version: '9.9.9' },
+      { id: 'spaeter', title: 'Später', body: 'Noch nicht.', date: day(inTwoMonths).slice(5) },
+      { id: 'kaputt', title: 'Kaputt', body: 'x', date: 'irgendwann' },
+      // A day February does not have. Not a non-match: `Date.UTC(y, 1, 31)` rolls forward to
+      // 3 March, so before the calendar check this fired on a day the payload never named.
+      { id: 'unmoeglich', title: 'Unmöglich', body: 'x', date: '02-31' },
+      'gar kein Objekt',
+    ]);
+    const due = await ok('GET', '/announcements');
+    check('a payload dated today is due', due.dated.map((a) => a.id).join(',') === 'testfest', JSON.stringify(due.dated.map((a) => a.id)));
+    check('…and carries its celebrate flag', due.dated[0]?.celebrate === true);
+    // The invariant every client branch reads: a *stored* announcement is a dated one. Carrying a
+    // `version` would make it render as „Was ist neu" and confirm as a version — so its id would
+    // never be stamped and the card would come back on every start of the whole catch-up window.
+    check('…but never a version, whatever the file says', due.dated[0]?.version === undefined, JSON.stringify(due.dated[0]?.version));
+    // seasons.json is hand-edited by design, so a wrong shape is ordinary input: it has to drop
+    // out silently rather than take the route — and the app's start — down with it.
+    check('a malformed entry drops out instead of throwing', due.dated.length === 1);
+
+    // The day is stamped server-side (localDay), never sent: a client that could name the day
+    // could name yesterday and make a yearly announcement repeat on every start.
+    const confirmed = await ok('POST', '/announcements/seen', { id: 'testfest' });
+    check('confirming a dated announcement takes it out of the feed', confirmed.dated.length === 0, JSON.stringify(confirmed.dated));
+    const storedDay = JSON.parse(readFileSync(registry, 'utf8')).announcementsSeen?.ids?.testfest;
+    check('…and the day it was seen is stamped by the server', storedDay === today, String(storedDay));
+    const badId = await req('POST', '/announcements/seen', { id: 42 });
+    check('a non-string id is refused', badId.status === 400, String(badId.status));
+
+    // „Seen" is a map keyed by the id, so an id taken from the body would be a property name the
+    // caller chose. The route answers only for an id this installation's own seasons.json
+    // carries, and writes that spelling — so an unknown one is a 404 and stores nothing at all.
+    const unknown = await req('POST', '/announcements/seen', { id: 'gibt-es-nicht' });
+    check('an id no stored announcement carries is refused', unknown.status === 404, String(unknown.status));
+    const polluting = await req('POST', '/announcements/seen', { id: '__proto__' });
+    check('…and so is one that is not an ASCII slug', polluting.status === 404, String(polluting.status));
+    const ids = JSON.parse(readFileSync(registry, 'utf8')).announcementsSeen?.ids ?? {};
+    check(
+      '…neither of them reaches the registry',
+      Object.keys(ids).join(',') === 'testfest' && !Object.hasOwn(ids, '__proto__'),
+      Object.keys(ids).join(','),
+    );
+
+    install(undefined);
+    check('removing the key makes the feature inert again', (await ok('GET', '/announcements')).dated.length === 0);
   }
 
   // ------------------------------------------------------------- landing conflicts (WP-53)

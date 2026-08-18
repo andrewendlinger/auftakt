@@ -1,4 +1,5 @@
 import type {
+  AnnouncementFeed,
   Artist,
   ArtistCreate,
   ArtistUpdate,
@@ -290,5 +291,18 @@ export const api = {
      */
     patch: (patch: LandingPatch, rev?: number) =>
       http<LandingContent>('PATCH', '/landing', rev === undefined ? patch : { ...patch, rev }),
+  },
+
+  /**
+   * The announcement overlay's feed (WP-63). Read-only apart from „gesehen": announcements are
+   * hand-installed into `seasons.json`, so there is no create and nothing to patch.
+   *
+   * `seen` takes a version *or* an id, never a day — the server stamps that with `localDay()`,
+   * so the client keeps having no date logic at all.
+   */
+  announcements: {
+    get: () => http<AnnouncementFeed>('GET', '/announcements'),
+    seen: (what: { version?: string; id?: string }) =>
+      http<AnnouncementFeed>('POST', '/announcements/seen', what),
   },
 };
