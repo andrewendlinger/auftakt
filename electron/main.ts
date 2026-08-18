@@ -1075,8 +1075,13 @@ app.whenReady().then(async () => {
   // it is, including why it names nothing as the restorer of that one window; the loop is the
   // same shape notifyBackupConfigChanged uses, because `getAllWindows()` is the only list of
   // windows this app keeps (see liveWindow).
-  app.on('activate', (_event, hasVisibleWindows) => {
-    const plan = activatePlan(BrowserWindow.getAllWindows(), hasVisibleWindows);
+  //
+  // **The event's second argument is not read** (WP-67b). It is macOS' `hasVisibleWindows`, and it
+  // is `true` on this platform while every window is minimized — the state the fix above exists
+  // for — so the first version of this handler passed it in and never reached its own new branch.
+  // activatePlan derives „on screen" from the windows instead; the measurement is in that file.
+  app.on('activate', () => {
+    const plan = activatePlan(BrowserWindow.getAllWindows());
     if (plan.create) void createWindow();
     // All of them come back. Which one ends up frontmost is macOS's call, not this loop's.
     for (const w of plan.restore) w.restore();

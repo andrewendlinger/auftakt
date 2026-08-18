@@ -2376,3 +2376,56 @@ Zwei Nebenentscheidungen, die daran hängen:
   „Das Update wird bereits heruntergeladen." Der bewusst offene Rest: hängt `downloadUpdate()`
   wirklich für immer, bleibt die Sperre die Sitzung über stehen. Ein Timeout wäre eine Frist, die
   niemand gemessen hat; sie steht stattdessen auf der Windows-Liste zur Beobachtung.
+
+## `hasVisibleWindows` lügt, wenn alles minimiert ist — der Dock-Klick liest die Fensterliste (2026-08-18, WP-67b)
+
+WP-67 (PR #119) hat den Zweig gebaut, der beim Dock-Klick **alle** minimierten Fenster zurückholt,
+und ihn dann nie erreicht. Der macOS-Durchgang am Tag nach dem Merge fand denselben Fehler
+unverändert vor: zwei minimierte Fenster, es kommt eines zurück.
+
+Die Ursache ist gemessen, nicht geschlossen. Eine nackte Electron-Sonde — zwei Fenster, kein
+eigenes `restore()`, Electron 43.3.0 auf macOS 15.6 (Darwin 24.6.0) — protokolliert beim Klick auf
+das Dock-Icon mit **beiden** Fenstern im Dock:
+
+```
+ACTIVATE  hasVisibleWindows = true
+  state at event: #0 min=true vis=false | #1 min=true vis=false
+  state +400ms:   #0 min=true vis=false | #1 min=false vis=true
+```
+
+AppKit meldet also **`true`**, während jedes einzelne Fenster minimiert ist. Das Flag kommt aus
+`applicationShouldHandleReopen:hasVisibleWindows:` und Electron reicht es unverändert an das
+`activate`-Ereignis weiter; `activatePlan` las es als „etwas ist auf dem Schirm → nichts tun" und
+nahm damit genau den Zweig nie, für den das Paket geschrieben war. Der Kommentar dort („macOS'
+eigene Antwort") war eine Annahme, die niemand nachgemessen hatte.
+
+**Die Liste ist im selben Moment richtig.** Beide Fenster antworten auf `isMinimized()` mit `true`,
+und zwar *zum Ereigniszeitpunkt*; das Fenster, das macOS selbst zurückholt, taucht erst in der
+nächsten Stichprobe auf. **Deren Beschriftung im Protokoll oben ist irreführend**: der mit
+`+400ms` bezeichnete `setTimeout` feuerte tatsächlich 657 ms nach dem Ereignis (17:20:02.142 →
+17:20:02.799). Gemessen ist damit die **Reihenfolge**, nicht ein Abstand — wann genau macOS
+innerhalb dieser 657 ms zugreift, weiß niemand, und keine Entscheidung hier hängt daran. Also
+kommt der Zustand aus der Liste: „auf dem Schirm" ist `live.some(w => !w.isMinimized())`, das
+zweite Argument der Funktion entfällt ersatzlos, und der Handler nimmt es gar nicht mehr entgegen.
+
+**`isMinimized()`, nicht `isVisible()`** — das entscheidet einen weiteren Fall mit. Ein Fenster,
+das ausgeblendet ist, ohne minimiert zu sein (die App hinter Cmd+H; ein Fenster, das noch startet
+und mit `show: false` erzeugt wurde), zählt damit als „auf dem Schirm". Cmd+H mit einem minimierten
+Fenster beantwortet den nächsten Dock-Klick deshalb nur mit dem Fenster, das oben war — Finders
+Antwort, und die, die der Durchgang vom 2026-08-18 als offene Frage notiert und beantwortet hatte.
+Die Sonde zeigt, dass es ohnehin so ausgeht: macOS blendet **vor** dem Ereignis wieder ein, der
+Handler liest das Fenster also bereits als nicht-minimiert.
+
+**Die Reihenfolge ist die eine Annahme, die bleibt.** Der Plan entsteht auf dem Zustand beim Klick.
+Käme macOS' eigenes Zurückholen einmal *vorher*, sähe der Handler „eines ist oben" und täte nichts
+— dasselbe, was der zweite Klick tut, und was der Durchgang ausdrücklich als richtig eingestuft
+hat. In zwölf protokollierten Klicks — fünf davon mit ausschließlich minimierten Fenstern, zwei
+davon direkt hintereinander — kam die andere Reihenfolge kein einziges Mal vor.
+
+Nebenbefund, der die Diagnose stützt: **ohne jedes Fenster** meldet dasselbe Flag korrekt `false`.
+Es lügt genau in dem Zustand, für den es hier gebraucht würde.
+
+**Nicht erneut vorschlagen**, das Flag „nur als Hinweis" wieder mitzulesen: es trägt in diesem
+Zustand keine Information, und die einzige Stelle, an der es je gelesen wurde, hat den Fehler
+verursacht, den sie beheben sollte. Die Sonde selbst ist der Weg, solche Fragen an den
+Main-Prozess zu beantworten — das Rezept steht in `docs/VERIFYING.md`.

@@ -230,7 +230,13 @@ focused-window season resolution. Run with at least two seasons present.
       Fenster menu is the bug this replaced. Leave one window on screen and minimize the other,
       then click the icon → the visible window is raised and the minimized one stays where it
       is; that is the Finder/Safari convention, not an oversight. Close every window (the app
-      keeps running) and click the icon → one window opens, as before.
+      keeps running) and click the icon → one window opens, as before. **This one failed once
+      against a build that carried its own fix** (WP-67b): the handler read macOS' own
+      `hasVisibleWindows`, which is `true` even with everything in the Dock, so drive it against a
+      packed build rather than trusting the merge.
+- [ ] **macOS, Cmd+H with one window minimized** (WP-67b): leave A up, minimize B, hide the app,
+      then click the icon → **only A** comes back and B stays in the Dock. Hiding is not
+      minimizing, and the rule says so.
 - [ ] **macOS, right-click the Dock icon** → „Neues Fenster" above macOS's own entries, and it
       opens a cascaded window exactly like Cmd+N — including when no window is open at all.
 - [ ] Type into an inline editor in A, focus B, edit a different row there, focus A again → the

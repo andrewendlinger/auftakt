@@ -1304,6 +1304,39 @@ still by hand.
   those rather than „the menu fits", which is true on a short list whatever the CSS says: the demo
   has three seasons and a run's own fixtures only take it to eight.
 
+## Asking the main process a question (WP-67b)
+
+Some behaviour has no page to drive: a Dock click, what `activate` carries, what a window reports
+about itself. Playwright cannot reach it and the real app must not be launched for it — but a
+**bare Electron app in the scratchpad, started with the repository's own binary**, can:
+
+```sh
+mkdir -p "$SCRATCH/dockprobe"        # package.json: { "main": "main.cjs" }, plus main.cjs
+./node_modules/.bin/electron "$SCRATCH/dockprobe"
+```
+
+No install (the binary is already in `node_modules`), no data directory of the app's, nothing on
+the desktop but the probe's own windows. Put the **exact function that is going to ship** in the
+probe (WP-67b copied `activatePlan` into a `plan.cjs` it required), so what gets driven is the
+decision itself and not an approximation of it.
+
+The traps, each of which cost a wrong reading once:
+
+- **`hasVisibleWindows` is `true` while every window is minimized** (Electron 43.3.0, macOS 15.6).
+  The flag AppKit hands to `activate` cannot tell „one window up" from „all of them in the Dock";
+  it is honest only when there is no window at all. `DECISIONS.md` has the measurement. Nothing
+  should branch on it — and no other event argument should be trusted before a probe has shown it.
+- **Log the state at the event *and* again ~800 ms later.** macOS restores a window of its own
+  somewhere after the click — in that probe it was already back in a sample taken 657 ms on, and
+  when it happened inside that gap is not measured. A single snapshot shows macOS' work, not the
+  code's.
+- **`new Date().toISOString()` is UTC.** An hour off the wall clock is enough to read „nothing was
+  logged since" from a log that is up to date. Note the offset in the probe or print local time.
+- **Window `hide`/`show` fire on a Space switch too**, so a log full of them is usually the user
+  walking away from the probe, not the app hiding.
+- **`BrowserWindow.getAllWindows()` came back newest-first** in that probe. Nothing documents an
+  order; do not build one into an assertion.
+
 ## What is not verified this way
 
 The Electron half — dialogs, relaunch, the packaged app against a real data directory — has its own
