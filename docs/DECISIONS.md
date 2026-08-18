@@ -2400,7 +2400,11 @@ nahm damit genau den Zweig nie, für den das Paket geschrieben war. Der Kommenta
 eigene Antwort") war eine Annahme, die niemand nachgemessen hatte.
 
 **Die Liste ist im selben Moment richtig.** Beide Fenster antworten auf `isMinimized()` mit `true`,
-und zwar *zum Ereigniszeitpunkt* — was macOS selbst zurückholt, kommt rund 650 ms später. Also
+und zwar *zum Ereigniszeitpunkt*; das Fenster, das macOS selbst zurückholt, taucht erst in der
+nächsten Stichprobe auf. **Deren Beschriftung im Protokoll oben ist irreführend**: der mit
+`+400ms` bezeichnete `setTimeout` feuerte tatsächlich 657 ms nach dem Ereignis (17:20:02.142 →
+17:20:02.799). Gemessen ist damit die **Reihenfolge**, nicht ein Abstand — wann genau macOS
+innerhalb dieser 657 ms zugreift, weiß niemand, und keine Entscheidung hier hängt daran. Also
 kommt der Zustand aus der Liste: „auf dem Schirm" ist `live.some(w => !w.isMinimized())`, das
 zweite Argument der Funktion entfällt ersatzlos, und der Handler nimmt es gar nicht mehr entgegen.
 

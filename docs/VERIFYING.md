@@ -1327,7 +1327,9 @@ The traps, each of which cost a wrong reading once:
   it is honest only when there is no window at all. `DECISIONS.md` has the measurement. Nothing
   should branch on it — and no other event argument should be trusted before a probe has shown it.
 - **Log the state at the event *and* again ~800 ms later.** macOS restores a window of its own
-  about 650 ms after the click. A single snapshot shows that, not what the code did.
+  somewhere after the click — in that probe it was already back in a sample taken 657 ms on, and
+  when it happened inside that gap is not measured. A single snapshot shows macOS' work, not the
+  code's.
 - **`new Date().toISOString()` is UTC.** An hour off the wall clock is enough to read „nothing was
   logged since" from a log that is up to date. Note the offset in the probe or print local time.
 - **Window `hide`/`show` fire on a Space switch too**, so a log full of them is usually the user

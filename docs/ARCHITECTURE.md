@@ -634,7 +634,8 @@ fix: on a Dock click one window comes back with no help from the app, and with t
 second was reachable only from the Fenster menu or Exposé. **What restores that one is left
 unnamed on purpose** — the app can observe neither which part of macOS does it nor exactly when —
 and nothing depends on it, because the plan is computed on the state at the moment of the click,
-which a probe measured as still fully minimized, with macOS' own restore landing ~650 ms later.
+which a probe measured as still fully minimized; macOS' own restore first showed up in the next
+sample, 657 ms later.
 Which window ends up frontmost afterwards is macOS's; the guarantee is only that none is left in
 the Dock.
 

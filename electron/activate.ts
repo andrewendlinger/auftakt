@@ -54,9 +54,11 @@ export interface ActivatePlan<T> {
  * that window as un-minimized.
  *
  * Whatever macOS restores on its own is deliberately left unnamed: this code can observe neither
- * which part of it does that nor precisely when. What the probe does show is that it lands *after*
- * the event — ~650 ms after, on that machine — so the plan is computed on the state at the moment
- * of the click, and whatever macOS does next finds nothing left to do.
+ * which part of it does that nor precisely when. What the probe shows is the *order*, and only
+ * that: at the moment of the event every window was still minimized, and the window macOS brings
+ * back first appeared in the next sample, taken 657 ms later. The margin between the two is not
+ * measured — the plan is simply computed on the state at the click, and whatever macOS does next
+ * finds nothing left to do.
  *
  * Destroyed windows are dropped before the count rather than after, for the reason `liveWindow()`
  * in main.ts gives at length: `getAllWindows()` is Electron's registry, and a window on its way

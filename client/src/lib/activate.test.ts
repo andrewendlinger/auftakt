@@ -61,7 +61,7 @@ describe('activatePlan', () => {
     // brought one back, the app is in the „one on screen" case and the click is a no-op — which
     // is also what a second click does, and what the macOS pass judged correct. The probe of
     // 2026-08-18 measured the opposite order anyway: every window still minimized at the event,
-    // macOS' own restore landing ~650 ms later.
+    // macOS' own restore first visible in the next sample 657 ms on.
     const restored = win();
     const stillDown = win({ minimized: true });
     expect(activatePlan([restored, stillDown]).restore).toEqual([]);
