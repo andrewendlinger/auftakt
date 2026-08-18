@@ -60,13 +60,18 @@ export function topModalDepth(): number {
  * renders above every Modal.
  *
  * Depth is how this file decides who owns Escape and Tab, so it has to agree with the z-order or
- * the keyboard answers a layer the user cannot see. The overlay is `z-[60]` against `Modal`'s
- * `z-40`, and its feed is a round trip: the card can arrive *after* a dialog is already open, and
- * it then covers it completely. Registering below (this was 0) meant one Escape reached both —
- * neither layer marks the key — so the card went **and** the dialog closed underneath, or a dirty
- * form raised „Änderungen verwerfen?" at `z-40`, invisible under this backdrop, with the user
- * answering a question they could not see. A number rather than „highest wins" so nesting still
- * works normally underneath: `ModalDepthCtx` counts 1, 2, 3, and nothing gets near this.
+ * the keyboard answers a layer the user cannot act on. The overlay is `z-[60]` against `Modal`'s
+ * `z-40`, and its own `fixed inset-0` container takes every pointer event — so while a card is up
+ * it is the only layer anyone can reach. That is the reason, and it is deliberately not „the
+ * dialog is hidden": only a `celebrate` card darkens the screen that far, and an ordinary one
+ * dims by `bg-black/30`, under which a dialog stays perfectly legible and still cannot be
+ * touched. The arrangement happens by itself, because the feed is a round trip: the card can
+ * arrive *after* a dialog is already open. Registering below (this was 0) meant one Escape
+ * reached both handlers — neither layer marks the key — so the card went **and** the dialog
+ * closed behind it, or a dirty form raised „Änderungen verwerfen?" at `z-40`, behind a card the
+ * user was still reading and could not answer it from. A number rather than „highest wins" so
+ * nesting still works normally underneath: `ModalDepthCtx` counts 1, 2, 3, and nothing gets near
+ * this.
  */
 export const ANNOUNCEMENT_DEPTH = 1000;
 

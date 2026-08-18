@@ -3314,10 +3314,12 @@ try {
       .slice(0, 24);
   const entryLines = newest.split('\n').slice(1).filter((l) => l.trim());
   const notesProbe = strip(entryLines[0] ?? '');
-  // The *last* block, and it is the one that makes „ohne Signatur" bite: with the `version` guard
-  // gone from `splitSignoff`, this text would move out of `.announcement-body` into
-  // `.announcement-signoff`, so asserting where it landed is a discriminator where a bare
-  // count-on-absence is not.
+  // The newest entry's closing line — and deliberately labelled as the *weaker* half of the pair
+  // below. It is the card's last block only while the card carries a single entry; the marker is
+  // set to `0.0.1`, so the card carries every entry above that, and the block `splitSignoff`
+  // would set apart then belongs to the **oldest** one. The discriminator is therefore the count,
+  // and this says the newest entry's closing line arrived as flowing text rather than going
+  // missing.
   const lastProbe = strip(entryLines[entryLines.length - 1] ?? '');
   writeReg((reg) => {
     delete reg.announcements;
@@ -3333,14 +3335,16 @@ try {
   check('…als Markdown gerendert, nicht als Quelltext', (await v2.locator('.announcement-body li').count()) > 0);
   // The precondition of the assertion below, asserted rather than assumed. `splitSignoff` only
   // ever sets a paragraph apart when there are two or more, so „no signature" on a single-block
-  // entry is true whatever the code does. A changelog entry has always been an intro, a list and
-  // an „Außerdem" line — if that ever stops being so, this must say so out loud rather than let
-  // the next check pass for the wrong reason. It is a fixture fact, like the print case's row
-  // count, and it lives in docs/VERIFYING.md as one.
+  // card is true whatever the code does. Counted on the **card**, not on one entry — the marker
+  // sends every entry above `0.0.1` into it, which today is one and tomorrow may be three. A
+  // changelog entry has always been an intro, a list and an „Außerdem" line, so this holds either
+  // way; if that ever stops being so, this must say so out loud rather than let the next check
+  // pass for the wrong reason. A fixture fact, like the print case's row count, and it lives in
+  // docs/VERIFYING.md as one.
   const blocks = await v2.locator('.announcement-body > p, .announcement-body > ul, .announcement-body > ol').count();
-  check('der jüngste CHANGELOG-Eintrag hat mehrere Blöcke — sonst prüft der nächste Fall nichts', blocks >= 2, `${blocks} Blöcke`);
+  check('die Karte trägt mehrere Blöcke — sonst prüft der nächste Fall nichts', blocks >= 2, `${blocks} Blöcke`);
   check(
-    '…und trotzdem keine Signatur: der letzte Block bleibt im Fließtext',
+    '…und trotzdem keine Signatur: kein Absatz wird abgesetzt, und die Schlusszeile steht im Fließtext',
     (await v2.locator('.announcement-signoff').count()) === 0 && lastProbe.length > 8 && notes.includes(lastProbe),
     lastProbe,
   );

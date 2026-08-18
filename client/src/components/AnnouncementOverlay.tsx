@@ -136,12 +136,15 @@ export function AnnouncementOverlay() {
    * Escape closes the card — but only while this really is the top layer.
    *
    * The guard is not theoretical. The feed is a round trip, so the card can arrive *after* the
-   * user has opened a dialog, and it then covers it completely (`z-[60]` against `Modal`'s
-   * `z-40`). One keystroke used to reach both — the card went **and** the dialog closed
-   * underneath. `ANNOUNCEMENT_DEPTH` is what settles it: this layer is the top one, so `Modal`
-   * stands down and the key answers the thing on screen, which is the only layer the user can
-   * see. The `preventDefault` is the belt to that braces — the convention `Modal`'s own Escape
-   * comment describes, for any other window listener that does not consult depth at all.
+   * user has opened a dialog, and from that moment the overlay is the only layer anyone can act
+   * on: `z-[60]` against `Modal`'s `z-40`, and this `fixed inset-0` container takes every pointer
+   * event whether or not the scrim is dark enough to hide what is behind it (an ordinary card
+   * dims by `bg-black/30` and the dialog stays legible — it is unreachable, not invisible). One
+   * keystroke used to reach both handlers, so the card went **and** the dialog closed behind it.
+   * `ANNOUNCEMENT_DEPTH` settles it: this layer is the top one, `Modal` stands down, and the key
+   * answers the layer the user is actually able to answer. The `preventDefault` is the belt to
+   * that braces — the convention `Modal`'s own Escape comment describes, for any other window
+   * listener that does not consult depth at all.
    */
   useEffect(() => {
     if (!current) return;

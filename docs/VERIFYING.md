@@ -818,12 +818,16 @@ verified by hand, and the gate itself is written from this list.
   page of the app, and the assertion passes against a shortcut that walks straight through. Read
   `document.activeElement` instead: what `anyModalOpen()` prevents is the caret landing in that
   field behind a full-screen backdrop.
-- **The „Was ist neu" card is only a real test while the newest `CHANGELOG.md` entry has two or
-  more blocks.** `splitSignoff` sets a paragraph apart only when there are at least two, so „a
-  release card has no sign-off" is true on a single-block entry whatever the code does. The gate
-  asserts the block count as its own named check for that reason — a fixture fact, like the print
-  case's row count. If a release ever ships one paragraph, that check is what tells you, and the
-  answer is to strengthen the assertion, not to delete it.
+- **The „Was ist neu" card is only a real test while the card has two or more blocks — and the
+  block count is a property of the card, not of one entry.** `splitSignoff` sets a paragraph apart
+  only when there are at least two, so „a release card has no sign-off" is true on a single-block
+  card whatever the code does. The gate asserts the block count as its own named check for that
+  reason — a fixture fact, like the print case's row count. Driving the card from a marker below
+  every version puts **every** entry into it, so the block `splitSignoff` would set apart belongs
+  to the *oldest* entry: a probe derived from the newest one is the weaker half of the pair and
+  the `count() === 0` is the discriminator. Label both for what they are. If a release ever ships
+  one paragraph, that check is what tells you, and the answer is to strengthen the assertion, not
+  to delete it.
 - **The fireworks need `reducedMotion: 'no-preference'`.** Every other driving context here uses
   `reduce` — the boot gesture's documented escape hatch — and that is *also* the branch the overlay
   renders without a canvas, so the standard context gets the reduced-motion variant for free and can
