@@ -3192,7 +3192,19 @@ try {
     '…und der Fließtext trägt ihn nicht noch einmal',
     (await v1.locator('.announcement-body').textContent())?.trim() === 'Eine Zeile.',
   );
-  check('…ohne Feuerwerk, weil das Fenster reduzierte Bewegung meldet', (await v1.locator('[data-announcement] canvas').count()) === 0);
+  // The reduced-motion branch, asserted as a *pair* rather than as an absence: the same payload
+  // in the `no-preference` context below must produce a canvas, so a count of 0 here is only half
+  // the claim. The other half is the scrimAlphaOf — the two branches pick different colours, and without
+  // the fireworks the darker one reads as a defect (the agreed values are 0.80 against 0.86).
+  check('…ohne Feuerwerk, weil das Fenster reduzierte Bewegung meldet', !(await shown(v1.locator('[data-announcement] canvas'), 1000)));
+  const scrimAlphaOf = (page) =>
+    page.evaluate(() => {
+      const el = document.querySelector('[data-announcement] > [aria-hidden="true"]');
+      const m = el && getComputedStyle(el).backgroundColor.match(/rgba?\(([^)]+)\)/);
+      return m ? Number(m[1].split(',')[3] ?? 1) : 1;
+    });
+  const scrimReduced = await scrimAlphaOf(v1);
+  check('…und hinter dem helleren der beiden Schleier', scrimReduced === 0.8, String(scrimReduced));
   // A dialog layer without being a `Modal`: the search shortcut must not reach past it and put
   // the caret in a field behind a full-screen backdrop (`registerModalLayer` → `anyModalOpen()`).
   // `ControlOrMeta`, like case S — the browser job runs on Linux.
@@ -3228,6 +3240,62 @@ try {
   check('…ein Neustart holt sie nicht zurück', !(await shown(overlay(v1), 2000)));
   await v1.close();
 
+  // --- the marker is registry-wide, so confirming is a cross-window event ---
+  //
+  // Two windows both show the same dated card — the feed is one file, not one window's state —
+  // and without the broadcast the user confirms the same greeting twice. Two *pages in one
+  // context*, never two contexts: BroadcastChannel is partitioned per context, so a second
+  // context would make this pass vacuously with nothing delivered and nothing expected.
+  writeReg((reg) => {
+    reg.announcements = [
+      { id: 'zweifenster', title: 'Zweifenster', body: 'Eine Zeile.\n\nGrüße', date: TODAY.slice(5) },
+    ];
+  });
+  const [w1, w2] = await windows(context, 2);
+  check(
+    'beide Fenster zeigen dieselbe Ankündigung',
+    (await shown(overlay(w1).first())) && (await shown(overlay(w2).first())),
+  );
+  await overlay(w1).getByRole('button', { name: 'Danke!' }).click();
+  check('…und die Bestätigung im einen räumt sie im anderen weg', await gone(overlay(w2)));
+  await w1.close();
+  await w2.close();
+
+  // --- the card can arrive after a dialog is already open ---
+  //
+  // The feed is a round trip, so this is a real ordering and not a contrived one: the user opens
+  // „Neuer Künstler", the answer lands, and the card covers the dialog completely. One Escape has
+  // to close **one** thing — the one on screen. Before `ANNOUNCEMENT_DEPTH` neither layer marked
+  // the key and both acted, so the dialog closed underneath a card the user was still reading;
+  // on a dirty form it raised „Änderungen verwerfen?" at `z-40`, invisible under this backdrop.
+  writeReg((reg) => {
+    reg.announcements = [
+      { id: 'spaetstart', title: 'Spätstart', body: 'Eine Zeile.', date: TODAY.slice(5) },
+    ];
+  });
+  const slow = await context.newPage();
+  slow.on('pageerror', (e) => check('no page error (Ankündigung über Dialog)', false, e.message));
+  // Six seconds, not one: the ordering is the fixture here, and a card that arrived first would
+  // swallow the click on „+ Künstler" and fail as a 30 s actionability timeout rather than as
+  // anything readable. The pre-check below states the ordering instead of hoping for it.
+  await slow.route('**/api/announcements', async (route) => {
+    await sleep(6000);
+    await route.continue();
+  });
+  await slow.goto(`${UI}/#/dashboard`);
+  await ready(slow);
+  check('die Ankündigung ist noch unterwegs', !(await shown(overlay(slow), 500)));
+  await slow.getByRole('button', { name: '+ Künstler' }).click();
+  // „anlegen" rather than „Künstler": the heading is renameable (WP-F), and the card's own text
+  // must not match this locator.
+  const artistDialog = slow.locator('.fixed.inset-0').filter({ hasText: 'anlegen' }).first();
+  check('der Dialog steht, bevor die Ankündigung eintrifft', await shown(artistDialog));
+  check('…dann legt sich die Karte darüber', await shown(overlay(slow).first()));
+  await slow.keyboard.press('Escape');
+  check('Escape schließt die Karte…', await gone(overlay(slow)));
+  check('…und nicht den Dialog darunter', (await artistDialog.count()) === 1);
+  await slow.close();
+
   // The other trigger, driven the only way it can be without shipping a second build: put the
   // marker back to a version that predates every entry in CHANGELOG.md. What this really asserts
   // is the bundling — `__APP_VERSION__` and the `?raw` import of a file *above* the Vite root
@@ -3235,14 +3303,22 @@ try {
   // other gate.
   const APP_VERSION = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
   const newest = readFileSync(join(root, 'CHANGELOG.md'), 'utf8').split(/^## (?=\d+\.\d+\.\d+)/m)[1] ?? '';
-  // The entry's first line of prose, with the Markdown taken off — what the card must render as
-  // text. Derived from the file at run time, so writing the next release's notes cannot break it.
-  const notesProbe = (newest.split('\n').slice(1).find((l) => l.trim()) ?? '')
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/[*_`#]/g, '')
-    .replace(/^\s*[-–—]\s*/, '')
-    .trim()
-    .slice(0, 24);
+  // A line of the entry with the Markdown taken off — what the card has to render as text.
+  // Derived from the file at run time, so writing the next release's notes cannot break it.
+  const strip = (line) =>
+    line
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/[*_`#]/g, '')
+      .replace(/^\s*[-–—]\s*/, '')
+      .trim()
+      .slice(0, 24);
+  const entryLines = newest.split('\n').slice(1).filter((l) => l.trim());
+  const notesProbe = strip(entryLines[0] ?? '');
+  // The *last* block, and it is the one that makes „ohne Signatur" bite: with the `version` guard
+  // gone from `splitSignoff`, this text would move out of `.announcement-body` into
+  // `.announcement-signoff`, so asserting where it landed is a discriminator where a bare
+  // count-on-absence is not.
+  const lastProbe = strip(entryLines[entryLines.length - 1] ?? '');
   writeReg((reg) => {
     delete reg.announcements;
     reg.announcementsSeen = { version: '0.0.1' };
@@ -3255,7 +3331,19 @@ try {
   check('…und dem echten CHANGELOG.md aus dem Bundle', notesProbe.length > 8 && notes.includes(notesProbe), notesProbe);
   // Rendered as Markdown, not dumped as source: the entry is a list and has to arrive as one.
   check('…als Markdown gerendert, nicht als Quelltext', (await v2.locator('.announcement-body li').count()) > 0);
-  check('…und ohne Signatur, denn eine Release-Notiz endet in einer Aufzählung', (await v2.locator('.announcement-signoff').count()) === 0);
+  // The precondition of the assertion below, asserted rather than assumed. `splitSignoff` only
+  // ever sets a paragraph apart when there are two or more, so „no signature" on a single-block
+  // entry is true whatever the code does. A changelog entry has always been an intro, a list and
+  // an „Außerdem" line — if that ever stops being so, this must say so out loud rather than let
+  // the next check pass for the wrong reason. It is a fixture fact, like the print case's row
+  // count, and it lives in docs/VERIFYING.md as one.
+  const blocks = await v2.locator('.announcement-body > p, .announcement-body > ul, .announcement-body > ol').count();
+  check('der jüngste CHANGELOG-Eintrag hat mehrere Blöcke — sonst prüft der nächste Fall nichts', blocks >= 2, `${blocks} Blöcke`);
+  check(
+    '…und trotzdem keine Signatur: der letzte Block bleibt im Fließtext',
+    (await v2.locator('.announcement-signoff').count()) === 0 && lastProbe.length > 8 && notes.includes(lastProbe),
+    lastProbe,
+  );
   await overlay(v2).getByRole('button', { name: 'Alles klar' }).click();
   check('„Alles klar“ merkt sich die Version', await gone(overlay(v2)));
   const marked = await until(() => Promise.resolve(readReg().announcementsSeen?.version), (v) => v === APP_VERSION, 5000);
@@ -3290,12 +3378,14 @@ try {
     check('…und die Schleife malt wirklich', litPixels > 200, `${litPixels} Pixel`);
     // The scrim stays translucent — the app has to remain visible behind it, which is what rules
     // out the obvious trail trick (a half-transparent wash accumulates to opaque in a few frames).
-    const scrimAlpha = await v3.evaluate(() => {
-      const el = document.querySelector('[data-announcement] > [aria-hidden="true"]');
-      const m = el && getComputedStyle(el).backgroundColor.match(/rgba?\(([^)]+)\)/);
-      return m ? Number(m[1].split(',')[3] ?? 1) : 1;
-    });
-    check('…hinter einem durchscheinenden, nie deckenden Schleier', scrimAlpha > 0 && scrimAlpha < 0.95, String(scrimAlpha));
+    // Read through the same helper as the reduced-motion window above, so „the two branches pick
+    // different scrims" is one comparison rather than two unrelated numbers.
+    const scrimLively = await scrimAlphaOf(v3);
+    check(
+      '…hinter einem durchscheinenden, nie deckenden Schleier — und einem dunkleren als ohne Feuerwerk',
+      scrimLively > 0 && scrimLively < 0.95 && scrimLively > scrimReduced,
+      `${scrimLively} gegen ${scrimReduced}`,
+    );
     await v3.close();
   } finally {
     await lively.close();

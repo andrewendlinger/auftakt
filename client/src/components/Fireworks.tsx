@@ -149,7 +149,19 @@ export function Fireworks() {
       ctx.fillStyle = 'rgba(0, 0, 0, 0.17)';
       ctx.fillRect(0, 0, width, height);
 
-      // An opening volley, then a calmer rhythm — a constant rate reads as a screensaver.
+      /**
+       * An opening volley, then a calmer rhythm — a constant rate reads as a screensaver.
+       *
+       * **The floor is 0.38, not 0: the display never winds down on its own.** For as long as the
+       * card is up, rockets keep launching at roughly 1.6/s, so a card left open is a canvas
+       * animating indefinitely — real work on a laptop running on battery. That is a deliberate
+       * trade rather than an oversight: `0.38 + 0.62·e^(−t/5.5)` is one of the tuned values agreed
+       * from the preview, and a celebration that quietly stops while its message is still on
+       * screen reads as the animation having broken. The bound in practice is the card itself —
+       * it is dismissed by Escape, by the backdrop or by its one button, and `requestAnimationFrame`
+       * stops being scheduled while the window is hidden or occluded. Anyone changing the decay
+       * here is changing a look that was signed off, not tuning a constant.
+       */
       const intensity = 0.38 + 0.62 * Math.exp(-elapsed / 5.5);
       spawnAcc += dt * ROCKETS_PER_SEC * (0.7 + intensity);
       while (spawnAcc >= 1) {

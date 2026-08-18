@@ -525,6 +525,15 @@ yearly, `YYYY-MM-DD` once; due on its latest occurrence at or before `localDay()
 so `client/src/lib/announcement.test.ts` reaches it from the client Vitest suite. The client has
 **no date logic at all**: it asks `GET /api/announcements` and renders the answer.
 
+Two more things the parse makes true rather than asking everyone downstream to remember. A stored
+announcement **never carries `version`** — that field marks the card built from `CHANGELOG.md`, and
+every client branch reads it as „release notes", including which marker gets written on confirm; an
+entry with both fired on its date, confirmed as a *version*, and so came back every start while
+corrupting the version marker. And a `date` naming a day its month does not have (`02-31`, `04-31`)
+is **rejected, not normalised**: `Date.UTC` rolls it forward, so a typo used to fire three days late
+and look like a working announcement. A yearly `02-29` is deliberately kept and falls forward to
+1 March in a common year — a yearly date has to come round every year.
+
 An `id` is an **ASCII slug** (`isAnnouncementId`) and an entry carrying anything else drops out of
 the parse, because the id becomes a *property name* in the seen map. `POST /seen` looks the id up
 in the stored array and writes the spelling it found there — never the one from the body — and the
@@ -545,6 +554,11 @@ after it installs a payload of its own, and why there is deliberately **no fixtu
 `server/src/demo.ts`**. It is not a `Modal` (no title bar, a canvas behind it, above the toasts at
 `z-50`) but keeps `Modal`'s contract through `registerModalLayer`/`tabbables`/`topModalDepth` in
 `components/fields.tsx`, so „a dialog is open" has one definition and Tab cannot walk out the back.
+It registers at **`ANNOUNCEMENT_DEPTH` (1000), above every `Modal`**, because depth is how that
+file decides who owns Escape and Tab and it has to agree with the z-order: the feed is a round
+trip, so the card can arrive over an already-open dialog, and a layer registered underneath meant
+one Escape closed both. Confirming goes through `useInvalidateAll` — the marker is registry-wide,
+so a second window showing the same card has to lose it too (`lib/broadcast.ts`).
 
 ## Client contracts
 

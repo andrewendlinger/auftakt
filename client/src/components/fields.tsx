@@ -43,8 +43,7 @@ export function anyModalOpen(): boolean {
 }
 
 /**
- * The depth of the topmost open layer — 0 when nothing but the announcement overlay is up, since
- * that registers at 0 and every real `Modal` starts at 1.
+ * The depth of the topmost open layer — 0 when nothing is open at all.
  *
  * Escape and Tab are handled by whichever layer *is* the top, so this comparison is made in three
  * places (`Modal`'s two handlers and `AnnouncementOverlay`'s). One function rather than three
@@ -57,20 +56,31 @@ export function topModalDepth(): number {
 }
 
 /**
- * Register a layer that is *not* a `Modal` as „a dialog is open" — the announcement overlay
- * (WP-63), which needs its own markup (no title bar, a canvas behind the card, `z-[60]` above
- * the toasts) but is every bit as modal as the rest.
+ * The depth the announcement overlay registers at (WP-63) — **above every `Modal`**, because it
+ * renders above every Modal.
+ *
+ * Depth is how this file decides who owns Escape and Tab, so it has to agree with the z-order or
+ * the keyboard answers a layer the user cannot see. The overlay is `z-[60]` against `Modal`'s
+ * `z-40`, and its feed is a round trip: the card can arrive *after* a dialog is already open, and
+ * it then covers it completely. Registering below (this was 0) meant one Escape reached both —
+ * neither layer marks the key — so the card went **and** the dialog closed underneath, or a dirty
+ * form raised „Änderungen verwerfen?" at `z-40`, invisible under this backdrop, with the user
+ * answering a question they could not see. A number rather than „highest wins" so nesting still
+ * works normally underneath: `ModalDepthCtx` counts 1, 2, 3, and nothing gets near this.
+ */
+export const ANNOUNCEMENT_DEPTH = 1000;
+
+/**
+ * Register a layer as „a dialog is open" at a given depth. `Modal` calls it with its own nesting
+ * depth; the announcement overlay calls it with `ANNOUNCEMENT_DEPTH`, needing its own markup (no
+ * title bar, a canvas behind the card, above the toasts) but being every bit as modal as the rest.
  *
  * Without it, ⌘F/⌘K would move focus into the search field behind a full-screen backdrop, which
  * is exactly the state `anyModalOpen()` exists to prevent — and it would render *under* the
  * overlay, at `z-50`. Registering keeps „a dialog is open" with one definition instead of two
  * that can disagree.
- *
- * **Depth 0 on purpose.** `Modal`'s Escape and Tab handlers act only at `Math.max(…depths)`, and
- * every real `Modal` starts at 1, so a zero can never win that comparison and can never take a
- * dialog's Escape away from it. This layer handles its own Escape.
  */
-export function registerModalLayer(depth = 0): () => void {
+export function registerModalLayer(depth: number): () => void {
   const token = {};
   openModals.set(token, depth);
   return () => {

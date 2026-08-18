@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { useInvalidateAll } from '../hooks';
 import { announcementQueue, announcementTone, splitSignoff } from '../lib/announcement';
 import { APP_VERSION } from '../lib/changelog';
-import { registerModalLayer, tabbables, topModalDepth } from './fields';
+import { ANNOUNCEMENT_DEPTH, registerModalLayer, tabbables, topModalDepth } from './fields';
 import { Btn } from './ui';
 import { Fireworks } from './Fireworks';
 import { Markdown } from './Markdown';
@@ -97,24 +98,57 @@ export function AnnouncementOverlay() {
     if (data?.version === null) void api.announcements.seen({ version: APP_VERSION }).catch(() => {});
   }, [data]);
 
+  /**
+   * The marker is registry-wide, so confirming is a cross-window event.
+   *
+   * Two windows side by side both show the same dated card — the feed is one file, not one
+   * window's state — and without this, confirming in one left the other standing, so the user
+   * dismissed the same greeting twice. `useInvalidateAll` is the module every other write in the
+   * app reaches for: it posts the one versioned signal on the BroadcastChannel and invalidates
+   * locally, and the receiving window refetches rather than being told a value (`lib/broadcast.ts`,
+   * the listener in `main.tsx`). Its feed then answers „nothing due" and the card goes.
+   *
+   * **After the POST, never beside it.** A refetch racing the write reads the state from before
+   * the marker was stamped, and the other window would put the card straight back up.
+   */
+  const invalidateAll = useInvalidateAll();
+
   const dismiss = useCallback(() => {
     if (!current) return;
     setDismissed((prev) => new Set(prev).add(current.id));
     // A version confirms a version; anything else confirms its id, and the server stamps the day.
     const what = current.version !== undefined ? { version: current.version } : { id: current.id };
-    void api.announcements.seen(what).catch(() => {});
-  }, [current]);
+    void api.announcements
+      .seen(what)
+      .then(() => invalidateAll())
+      // Silent by design, as above: this is a marker, and a German toast at the moment the app
+      // opens would be worse than the thing it reports. The local card is already gone either way.
+      .catch(() => {});
+  }, [current, invalidateAll]);
 
-  // A dialog layer for as long as a card is up — see `registerModalLayer`.
+  // A dialog layer for as long as a card is up, and the topmost one — see `ANNOUNCEMENT_DEPTH`.
   useEffect(() => {
     if (!current) return;
-    return registerModalLayer();
+    return registerModalLayer(ANNOUNCEMENT_DEPTH);
   }, [current]);
 
+  /**
+   * Escape closes the card — but only while this really is the top layer.
+   *
+   * The guard is not theoretical. The feed is a round trip, so the card can arrive *after* the
+   * user has opened a dialog, and it then covers it completely (`z-[60]` against `Modal`'s
+   * `z-40`). One keystroke used to reach both — the card went **and** the dialog closed
+   * underneath. `ANNOUNCEMENT_DEPTH` is what settles it: this layer is the top one, so `Modal`
+   * stands down and the key answers the thing on screen, which is the only layer the user can
+   * see. The `preventDefault` is the belt to that braces — the convention `Modal`'s own Escape
+   * comment describes, for any other window listener that does not consult depth at all.
+   */
   useEffect(() => {
     if (!current) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !e.defaultPrevented) dismiss();
+      if (e.key !== 'Escape' || e.defaultPrevented || topModalDepth() !== ANNOUNCEMENT_DEPTH) return;
+      e.preventDefault();
+      dismiss();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -129,15 +163,14 @@ export function AnnouncementOverlay() {
    * to prevent, and the body here is Markdown — a link in an announcement is one keystroke away
    * from being the thing focus escapes through.
    *
-   * `tabbables` is `Modal`'s, not a second copy. The guard is the same shape too: nothing else
-   * can be open above this layer (the shortcuts that open dialogs are gated by `anyModalOpen()`,
-   * which this registers with), so a non-zero top means some dialog owns the key and this must
-   * keep its hands off.
+   * `tabbables` is `Modal`'s, not a second copy, and the depth comparison is the same one Escape
+   * makes above: while this card is up it is the topmost layer, so a dialog underneath stands
+   * down and Tab cycles here rather than in something the backdrop is hiding.
    */
   useEffect(() => {
     if (!current) return;
     const onTab = (e: KeyboardEvent) => {
-      if (e.key !== 'Tab' || e.defaultPrevented || topModalDepth() !== 0) return;
+      if (e.key !== 'Tab' || e.defaultPrevented || topModalDepth() !== ANNOUNCEMENT_DEPTH) return;
       const card = cardRef.current;
       const active = document.activeElement as HTMLElement | null;
       const loose = !active || active === document.body;
