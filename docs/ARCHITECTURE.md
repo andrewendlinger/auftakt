@@ -192,7 +192,13 @@ run and pruned to 30. The backup folder is split into `backups/` and `pre-import
 its own pool of 30; folders an older version left at the top level are moved down on the next run,
 best-effort and self-detecting, while flat `auftakt-<stamp>.db` files from before the folders are
 left alone. A German `README.txt` at the root and a `MANIFEST.txt` per restore point explain the
-folder — CRLF and a UTF-8 BOM, because it is read in Notepad out of Google Drive.
+folder — CRLF and a UTF-8 BOM, because it is read in Notepad out of Google Drive. The README is
+written for the platform it runs on and names that machine's data directory outright (WP-68); the
+other platform's two differences are a closing section, and both files use the word the user chose
+for a season. The three main-process backup dialogs use it too, through `electron/seasonTerms.ts`
+— a `node:fs` read of `seasons.json`, because importing `db.ts` would drag better-sqlite3 into the
+Electron bundle; it is the third copy of the `Saison`/`Saisons` defaults after `seasonTerms()` and
+`useSeasonTerm()`, and all three have to move together.
 
 **The configured folder must already exist; everything below it is `mkdir -p`.** A run into a
 folder that is gone — renamed, deleted, on an ejected drive — is refused with a German message
@@ -211,6 +217,14 @@ safety copy beside the database (`<season>.db.pre-import-<stamp>.bak`, pruned in
 like every other folder-less pre-import copy). Refusing the import would take the rescue away at
 the moment it is wanted; the Electron confirmation names the path this function returns, so it
 stays true about where the copy actually went.
+
+**A pre-import folder is a restore point and carries what one carries**: the single `.db` the
+import replaces, plus a copy of `seasons.json` and its own `MANIFEST.txt` naming that one file
+and its label (`writePreImportDocs` in `db.ts`, found by the WP-68 review). One database, not
+one per season — an import replaces exactly one — but otherwise the same contents, so the
+README's restore steps work out of either pool. Only for the backup folder: the folder-less
+fallback above is a bare `.bak` file with nowhere to put documents, and the README describes the
+backup folder, not the data directory.
 
 **Inside** a restore point everything stays flat and keeps the `file` names from `seasons.json`:
 restoring is a hand copy over the data directory, so the season *label* goes into the manifest and

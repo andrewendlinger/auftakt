@@ -439,7 +439,7 @@ export function SettingsDataTab() {
       <Card className="p-5">
         <SectionTitle>Datenbank & Backups</SectionTitle>
         <p className="mt-1 mb-3 text-xs text-neutral-400">
-          Automatische Sicherung aller {term.plural} sowie Export und Import der Datenbank.
+          Automatische Backups aller {term.plural} sowie Export und Import der Datenbank.
         </p>
         <div className="space-y-3 text-sm">
           <div>
@@ -454,11 +454,11 @@ export function SettingsDataTab() {
               Beim App-Start wird eine datierte Kopie <strong>aller {term.plural}</strong> in den
               Unterordner „backups“ gesichert (die letzten 30 Stände bleiben erhalten). In einen
               Cloud-Ordner (z. B. Google Drive) legen. Die Datei „README.txt“ im Backup-Ordner erklärt
-              den Aufbau und wie sich eine Sicherung zurückspielen lässt.
+              den Aufbau und Schritt für Schritt, wie sich ein Backup laden lässt.
             </p>
             {hasElectron && !settings.backup_dir && (
               <p className="mt-1 text-xs text-amber-600">
-                Ohne Backup-Ordner werden keine Sicherungen angelegt.
+                Ohne Backup-Ordner werden keine Backups angelegt.
               </p>
             )}
           </div>

@@ -267,6 +267,11 @@ function windowsDoc(name, path) {
 const readme = windowsDoc('README.txt', join(backupDir, 'README.txt'));
 check('README explains the restore (data dir + the -wal trap)', /%APPDATA%/.test(readme) && /-wal/.test(readme));
 check('README does not mention flat backups it has none of', !readme.includes('auftakt-<Zeitstempel>.db'));
+// Since WP-68 step 5 names the data directory outright instead of describing where it usually
+// lives. It is the one line the reader has to act on with no app in front of him, and a wrong
+// path there sends him somewhere real and empty. Only *this* machine's rendering is reachable
+// from here — the other platform's is covered by client/src/lib/backupDocs.test.ts.
+check('README names this machine’s data directory', readme.includes(dataDir), dataDir);
 
 const manifest = windowsDoc('MANIFEST.txt', join(point, 'MANIFEST.txt'));
 // The whole point of the manifest: the season NAME, which the file names cannot carry.
@@ -414,6 +419,31 @@ check(
   imported.body.backup,
 );
 
+// A pre-import folder is a restore point, so it carries what the README promises a restore
+// point carries. It held the .db alone until the WP-68 review: the customer whose data an
+// import had just wrecked — the one case this pool exists for — was sent by step 3 to a
+// MANIFEST.txt and by step 4 to a seasons.json that were not there. Asserted on the folder the
+// import actually reported, not on a rebuilt path, so a change to the layout fails here.
+{
+  const preDir = dirname(imported.body.backup ?? '');
+  check('a pre-import folder carries seasons.json', existsSync(join(preDir, 'seasons.json')));
+  const manifest = join(preDir, 'MANIFEST.txt');
+  check('a pre-import folder carries MANIFEST.txt', existsSync(manifest));
+  if (existsSync(manifest)) {
+    const text = readFileSync(manifest, 'utf8');
+    // The label is what the .db file names cannot carry — it is the whole reason the manifest
+    // exists — and exactly one season is in there, because an import replaces exactly one.
+    const dbLines = text.split('\r\n').filter((l) => /\.db\s+=\s+/.test(l));
+    check('…naming the one database the import replaced', dbLines.length === 1, dbLines.join(' | '));
+    check(
+      '…with the season label, not just the file name',
+      dbLines.length === 1 && /=\s+\S/.test(dbLines[0]),
+      dbLines[0],
+    );
+    check('…and the registry line, since seasons.json is in there', /seasons\.json\s+=/.test(text));
+  }
+}
+
 // --- [2c] the first request after an import must not purge the imported trash ---
 // getDb() sweeps a season's expired soft-deleted rows on its first request-context open
 // (PR50-07) and the import evicts the pooled handle, so the very next request re-opened the
@@ -516,7 +546,34 @@ writeFileSync(join(backupDir, 'auftakt-2020-01-33-00-00-00', 'seasons.json'), '{
 const legacy = join(backupDir, 'auftakt-2019-01-01-00-00-00.db');
 await import('node:fs').then((fs) => fs.writeFileSync(legacy, 'legacy flat backup'));
 
-await post('backup', { dir: backupDir });
+// The customer renamed „Saison" in Einstellungen, so the two files he reads when his data is
+// gone must not be the last place still calling it that (WP-68). Renamed before this run
+// because the README is rewritten on every one.
+await fetch(api('seasons/terms'), {
+  method: 'PATCH',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ season: 'Festival', seasonPlural: 'Festivals' }),
+});
+
+const renamedRun = await post('backup', { dir: backupDir });
+{
+  const renamed = readFileSync(join(backupDir, 'README.txt'), 'utf8');
+  check(
+    'the README uses the word the user picked for a season',
+    renamed.includes('je Festival') && !/Saison/.test(renamed),
+    renamed.match(/.*Saison.*/)?.[0],
+  );
+  const renamedManifest = readFileSync(join(renamedRun.body.dir, 'MANIFEST.txt'), 'utf8');
+  check(
+    '…and so does the MANIFEST',
+    renamedManifest.includes('Diese Festivals sind gesichert:'),
+    // Index 5, not 4: `heading()` emits title + rule + blank, so the lines are
+    // 0 title, 1 rule, 2 blank, 3 App-Version, 4 blank, 5 „Diese … sind gesichert:".
+    // At 4 the only thing this ever printed — on the one run where it matters — was ''.
+    renamedManifest.split('\r\n')[5],
+  );
+}
+
 const preImport = folders('pre-import', join(backupDir, 'pre-import'));
 check('pruning caps pre-import snapshots at 30', preImport.length === 30, `${preImport.length} übrig`);
 check('pruning drops the oldest pre-import snapshot first', !preImport.includes('pre-import-2020-01-01-00-00-00'));

@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { fileStamp, localStamp } from '../../shared/time';
 import { isAnnouncementId } from './lib/announcements';
 import { CHILD_EDGES, DELETE_ORDER } from './lib/cascade';
+import { appVersion, manifestText, writeDoc } from './lib/backupDocs';
 import { currentSeasonId, currentSeasonRef } from './seasonContext';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -456,6 +457,17 @@ export function reorderSeasons(order: number[]): void {
   }
   reg.seasons.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
   saveRegistry(reg); // activeId untouched
+}
+
+/**
+ * The word the customer chose for a season, with the defaults applied — the read side of
+ * `setSeasonTerms`. `listSeasons` hands the raw registry value to the client, which applies the
+ * same two fallbacks in `useSeasonTerm` (client/src/hooks.ts); the backup documents have no such
+ * hook, so they get the resolved pair from here. The defaults must stay in step with that hook.
+ */
+export function seasonTerms(): { singular: string; plural: string } {
+  const t = readRegistry().terms ?? {};
+  return { singular: t.season?.trim() || 'Saison', plural: t.seasonPlural?.trim() || 'Saisons' };
 }
 
 /** Empty/null deletes a key so the default term returns (mirrors subtitle/period). */
@@ -1845,7 +1857,8 @@ export function importIntoCurrentSeason(candidatePath: string, backupDir: string
     snapshotDb(dest, backup);
     // The backup folder's own pre-import-* snapshots are pruned by the backup run; these
     // sit in the data dir, which nothing else sweeps.
-    if (!usableBackupDir) prunePreImportFiles(dest);
+    if (usableBackupDir) writePreImportDocs(dirname(backup), season);
+    else prunePreImportFiles(dest);
   }
 
   const staged = `${dest}.import-tmp`;
@@ -1951,6 +1964,50 @@ function preImportBackupPath(dbPath: string, backupDir: string): string {
   return backupDir
     ? join(backupDir, PRE_IMPORT_DIR, `pre-import-${backupStamp()}`, name)
     : `${dbPath}.pre-import-${backupStamp()}.bak`;
+}
+
+/**
+ * A pre-import snapshot is a restore point, so it carries what a restore point carries.
+ *
+ * The README describes both pools under one „Was hier liegt", and its restore steps send the
+ * reader to MANIFEST.txt (step 3) and then to „ALLE .db-Dateien und die Datei seasons.json"
+ * (step 4). This folder used to hold the one .db and nothing else — so the customer whose data
+ * an import had just wrecked, the single case this pool exists for, followed those steps into
+ * two files that were not there. Found in the WP-68 review.
+ *
+ * What is *not* changed: only the one season an import replaces is snapshotted. That is the
+ * point of the pool. Added is the registry and a manifest naming exactly that one file, so the
+ * folder can answer „which database is this, and what was it called" with no app running, and a
+ * hand restore works identically out of either pool.
+ *
+ * Only for the backup folder. Without one the copy is a bare `.bak` file beside the live
+ * database (see `preImportBackupPath`) — there is no folder to put documents in, and the README
+ * describes the backup folder, not the data dir.
+ *
+ * Swallow-on-failure, like every other doc write (`writeDoc`): the .db is the substance and is
+ * already on disk. Losing the prose must never turn a good safety copy into a failed import.
+ */
+function writePreImportDocs(dir: string, season: Season): void {
+  try {
+    const registry = registryPath();
+    let registryFile: string | null = null;
+    if (existsSync(registry)) {
+      registryFile = basename(registry);
+      copyFileSync(registry, join(dir, registryFile));
+    }
+    writeDoc(
+      join(dir, 'MANIFEST.txt'),
+      manifestText({
+        at: new Date(),
+        version: appVersion(),
+        seasons: [{ file: season.file, label: season.label }],
+        registryFile,
+        terms: seasonTerms(),
+      }),
+    );
+  } catch {
+    /* the snapshot is written; the prose is not the contract */
+  }
 }
 
 /**

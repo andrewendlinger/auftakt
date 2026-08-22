@@ -2429,3 +2429,131 @@ Es lügt genau in dem Zustand, für den es hier gebraucht würde.
 Zustand keine Information, und die einzige Stelle, an der es je gelesen wurde, hat den Fehler
 verursacht, den sie beheben sollte. Die Sonde selbst ist der Weg, solche Fragen an den
 Main-Prozess zu beantworten — das Rezept steht in `docs/VERIFYING.md`.
+
+## Die README im Backup-Ordner ist für einen Rechner geschrieben (2026-08-18, WP-68)
+
+Der macOS-Durchgang las die zwei Dateien kalt und befand sie als „zu kompliziert": „Eine Sicherung
+zurückspielen" ist kein Deutsch, das jemand spricht, „als Ordner mit Datum und Uhrzeit im Namen"
+meint ein Format und sagt es nicht, „sonst schreibt sie über das Zurückgespielte hinweg" ist
+unverständlich. Das ist keine Geschmacksfrage: `docs/BACKUP-TESTING.md` Fall 7 verlangt,
+beim Wiederherstellen **der README zu folgen statt der Checkliste**, weil das die Schritte sind,
+die der Kunde bekommt.
+
+**Eine Plattform, nicht beide nebeneinander.** Die Wiederherstellung passiert an *einer* Tastatur,
+und der erste Schritt unterscheidet sich dort wirklich: `window-all-closed` beendet die App auf
+Windows und kehrt auf darwin früh zurück (`electron/main.ts`), „Fenster schließen reicht nicht"
+ist also auf dem Mac wahr und auf Windows falsch. Ein Text mit beiden Zweigen zwingt den Leser,
+vor Schritt 1 eine Auswahl zu treffen — genau das, was ein Text für den Ernstfall nicht tun darf.
+`process.platform` entscheidet beim Schreiben; die zwei Unterschiede der anderen Plattform stehen
+als eigener Abschnitt am Ende, damit ein Wechsel auf einen neuen Rechner nicht in eine Sackgasse
+läuft. Der Preis, benannt: zwei Installationen, die in **denselben** Cloud-Ordner sichern,
+schreiben die Datei bei jedem Start gegenseitig um (`writeDoc` vergleicht Bytes). Für eine
+Installation je Ordner — der Fall, für den der Ordner gedacht ist — kostet es nichts.
+
+Der Nebenbefund des Durchgangs erledigt sich damit ohne Sonderregel: die Ordner heißen im Text
+schlicht `backups` und `pre-import` statt `backups\`, und nur *Pfade* tragen den Trenner der
+Plattform, für die der Text geschrieben ist.
+
+**Schritt 5 nennt den Pfad, statt ihn zu beschreiben.** Auftakt kennt sein Datenverzeichnis beim
+Schreiben (`dataDir()`), also steht es ausgeschrieben da; die portable Schreibweise
+(`%APPDATA%\auftakt`, `~/Library/Application Support/auftakt`) bleibt in der Zeile darunter, weil
+sie auf einem neuen Rechner die einzige ist, die noch stimmt — und weil `check:backup` seit WP-41
+auf `%APPDATA%` prüft.
+
+**Die Dateien benutzen das Wort des Kunden.** Wer die Saison in den Einstellungen umbenannt hat,
+soll sie nicht ausgerechnet in den zwei Dateien wiederfinden, die er liest, wenn nichts mehr da
+ist; `seasonTerms()` in `db.ts` ist die Leseseite von `setSeasonTerms` und wendet dieselben zwei
+Vorgaben an wie `useSeasonTerm` auf dem Client. **Damit fällt eine Falle an:** das Wort hat ein
+unbekanntes Geschlecht, ihm darf also nie ein Artikel oder ein flektiertes Determinativ vorangehen
+— „ein Backup einer einzelnen Festival" ist das Ergebnis. Der Text ist um das Wort herum
+formuliert (`je <Singular>`, `aller <Plural>`, `Diese <Plural>`), genau wie die Strings des
+Clients, und ein Test hält es fest.
+
+**Geprüft wird das Windows-Rendering im Unit-Test, nicht im Gate.** `npm run check:backup` fährt
+den echten Lauf und sieht deshalb immer nur die Fassung *dieser* Maschine — auf dem Entwicklungs-
+Mac und im Linux-CI also nie die, die der Kunde bekommt. `client/src/lib/backupDocs.test.ts`
+rendert beide (der gleiche Griff über die Paketgrenze, den `backupDir.test.ts` nach `electron/`
+macht); dafür importiert `backupDocs.ts` jetzt **nichts** außer `node:fs` und bekommt Ordnernamen,
+Aufbewahrungszahl und Saisonbegriff als Optionen. Was auch das nicht prüfen kann, ist
+Verständlichkeit — die bleibt bei Fall 3c und Fall 7, von Hand, kalt gelesen.
+
+---
+
+## Ein pre-import-Ordner trägt, was ein Wiederherstellungspunkt trägt (2026-08-21, WP-68-Review)
+
+Aus dem unabhängigen Review von PR #123. Die README beschreibt beide Vorräte unter *einem*
+„Was hier liegt", und der pre-import-Absatz sagte „Dasselbe" — womit er die Aufzählung darüber
+erbte: eine `.db` je Saison, `seasons.json`, `MANIFEST.txt`. Im Ordner lag aber die eine `.db`
+und sonst nichts: `preImportBackupPath` schreibt genau eine Datei, ohne Registry und ohne
+Manifest. Schritt 3 („Öffne die Datei MANIFEST.txt") und Schritt 4 („ALLE .db-Dateien **und die
+Datei seasons.json**") schickten den Leser also in zwei Dateien, die es nicht gab — und zwar
+genau den Kunden, dem ein Import gerade die Daten zerlegt hat, also den einzigen Fall, für den
+dieser Vorrat überhaupt existiert. Das ist die Sackgasse, die WP-68 beseitigen sollte.
+
+**Entschieden wurde die teurere Richtung: nicht den Text ehrlich machen, sondern den Ordner
+vollständig.** Der Text hätte gereicht („hier liegt nur die eine .db") und wäre eine Zeile
+gewesen. Dagegen steht, dass der Kunde dann *zwei* Wiederherstellungswege im Kopf behalten muss,
+je nachdem, aus welchem Ordner er kommt — in einem Dokument, dessen einziger Fehler bisher war,
+zu kompliziert zu sein. `writePreImportDocs` (`db.ts`) legt jetzt die Registry-Kopie und ein
+`MANIFEST.txt` daneben, das die eine Datei mit ihrer Bezeichnung nennt. Ein Handgriff, beide
+Vorräte, dieselben Schritte.
+
+**Was ausdrücklich nicht mitgewandert ist:** es bleibt bei *einer* Datenbank je pre-import-Ordner.
+Ein Import ersetzt genau eine, und alle Saisons zu sichern wäre ein zweiter vollständiger Backup-
+Lauf vor jedem Import. Die README sagt den Unterschied jetzt hin („nur liegt hier immer genau eine
+.db-Datei, weil ein Import immer nur eine Datenbank ersetzt"), statt ihn hinter „Dasselbe" zu
+verstecken.
+
+**Nur für den Backup-Ordner.** Ohne konfigurierten Ordner ist die Sicherheitskopie eine nackte
+`.bak`-Datei neben der Datenbank (WP-65) — dort gibt es keinen Ordner für Dokumente, und die
+README beschreibt den Backup-Ordner, nicht das Datenverzeichnis. `writeDoc`s Schluck-bei-Fehler
+gilt weiter: die `.db` ist die Zusage, die Prosa nicht, und ein gescheiterter Dateischreibvorgang
+darf aus einer guten Sicherheitskopie keinen gescheiterten Import machen.
+
+**Der zweite Fund derselben Runde, gleicher Absatz:** der ausgerichtete Block rechnet seine
+Spaltenbreite zur Laufzeit aus dem Kundenwort und sprengte damit den 76-Spalten-Umbruch, an den
+der Rest der Datei von Hand gehalten ist — mit „Veranstaltungsreihe" 86 Spalten, also seitliches
+Scrollen in Notepad, dessen Zeilenumbruch standardmäßig aus ist. Die Breite ist jetzt an der
+längsten *rechten* Seite gedeckelt; greift der Deckel, bleibt die längste linke Seite ungepolstert
+und ihr Pfeil rückt eine Stufe heraus. **Das ist keine absolute Zusage** — die Länge des Begriffs
+ist nirgends begrenzt, und „die Liste aller <Plural>" überschreitet 76 irgendwann von allein.
+Behoben ist, dass die *Polsterung* den Überlauf erzeugt.
+
+---
+
+## Der Hauptprozess liest den Saisonbegriff selbst — die dritte Kopie der Vorgaben (2026-08-21, WP-68-Nachzug)
+
+Ebenfalls aus dem Review von PR #123, aber außerhalb seines Diffs: WP-68 hat README, Manifest und
+die Einstellungskarte auf „Backup" und das Kundenwort umgestellt und `electron/main.ts` übersehen.
+Dort standen „Sicherung"/„Sicherungen" fest verdrahtet — und schlimmer, der Verweis
+„Einstellungen → „Saison & Daten"" auf einen Reiter, der auf dem Gerät des Kunden „Festival &
+Daten" heißt. Drei Dialoge: die Erstsart-Aufforderung und die zwei Backup-Fehler, also genau die
+Texte, die er liest, weil etwas nicht funktioniert.
+
+**Nicht per Import und nicht per HTTP geholt.** `seasonTerms()` liegt in `server/src/db.ts`, und
+das Modul öffnet SQLite — ein Import zöge `better-sqlite3` als natives Modul in das
+esbuild-Bundle des Hauptprozesses. Ein `fetch` gegen den eigenen Server verbietet sich für einen
+Dialog, der gemeldet wird, *weil* serverseitig gerade etwas schiefging, und `reportBackupProblem`
+läuft auch auf dem Beendigungsweg, auf dem der Server schon weg sein kann. Die Registry ist
+schlichtes JSON; `electron/seasonTerms.ts` liest sie mit `node:fs` und importiert nichts aus
+`electron` und nichts aus `server/` — dieselbe Regel wie `backup.ts`, `bootLog.ts`, `cascade.ts`
+und `windowBounds.ts`, und aus demselben Grund: nur so erreicht `check:unit` sie.
+
+**Der bewusst getragene Preis: die Vorgaben `Saison`/`Saisons` stehen jetzt an drei Stellen** —
+`seasonTerms()` (Server), `useSeasonTerm()` (Client) und hier. Eine gemeinsame Quelle hätte ein
+viertes Paket über die Bundle-Grenze bedeutet, für zwei Zeichenketten. Wer eine ändert, ändert
+alle drei; das steht in allen dreien.
+
+**Nie zwischengespeichert**, obwohl die Datei bei jedem Dialog neu gelesen wird: ein Cache
+antwortete den Rest der Sitzung mit dem alten Wort — und das ist genau die Sitzung, in der der
+Kunde es gerade umbenannt hat. Und `readSeasonTerms` wirft für **keine** Eingabe: fehlende,
+halb geschriebene oder von Hand zerlegte `seasons.json` fallen auf die Vorgaben zurück, beide
+Begriffe unabhängig voneinander. Ein Dialog, der beim Melden eines gescheiterten Backups selbst
+abstürzt, ist schlimmer als das gescheiterte Backup.
+
+**Was nicht mitgemacht wurde:** die verbliebenen „Saison"-Zeichenketten im Client
+(`lib/labels.ts`, `CustomColumnManager.tsx`, `ui.tsx`, `Dashboard.tsx`, `LandingPage.tsx`) und in
+Server-Fehlermeldungen (`index.ts`, `db.ts`). Mehrere davon brauchen eine Umformulierung, nicht
+eine Ersetzung, weil sie einen flektierten Artikel vor dem Wort tragen („Die Saison „…""). Eigenes
+Paket, nicht dieses.
+
