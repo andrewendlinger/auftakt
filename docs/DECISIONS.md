@@ -2476,3 +2476,45 @@ rendert beide (der gleiche Griff über die Paketgrenze, den `backupDir.test.ts` 
 macht); dafür importiert `backupDocs.ts` jetzt **nichts** außer `node:fs` und bekommt Ordnernamen,
 Aufbewahrungszahl und Saisonbegriff als Optionen. Was auch das nicht prüfen kann, ist
 Verständlichkeit — die bleibt bei Fall 3c und Fall 7, von Hand, kalt gelesen.
+
+---
+
+## Ein pre-import-Ordner trägt, was ein Wiederherstellungspunkt trägt (2026-08-21, WP-68-Review)
+
+Aus dem unabhängigen Review von PR #123. Die README beschreibt beide Vorräte unter *einem*
+„Was hier liegt", und der pre-import-Absatz sagte „Dasselbe" — womit er die Aufzählung darüber
+erbte: eine `.db` je Saison, `seasons.json`, `MANIFEST.txt`. Im Ordner lag aber die eine `.db`
+und sonst nichts: `preImportBackupPath` schreibt genau eine Datei, ohne Registry und ohne
+Manifest. Schritt 3 („Öffne die Datei MANIFEST.txt") und Schritt 4 („ALLE .db-Dateien **und die
+Datei seasons.json**") schickten den Leser also in zwei Dateien, die es nicht gab — und zwar
+genau den Kunden, dem ein Import gerade die Daten zerlegt hat, also den einzigen Fall, für den
+dieser Vorrat überhaupt existiert. Das ist die Sackgasse, die WP-68 beseitigen sollte.
+
+**Entschieden wurde die teurere Richtung: nicht den Text ehrlich machen, sondern den Ordner
+vollständig.** Der Text hätte gereicht („hier liegt nur die eine .db") und wäre eine Zeile
+gewesen. Dagegen steht, dass der Kunde dann *zwei* Wiederherstellungswege im Kopf behalten muss,
+je nachdem, aus welchem Ordner er kommt — in einem Dokument, dessen einziger Fehler bisher war,
+zu kompliziert zu sein. `writePreImportDocs` (`db.ts`) legt jetzt die Registry-Kopie und ein
+`MANIFEST.txt` daneben, das die eine Datei mit ihrer Bezeichnung nennt. Ein Handgriff, beide
+Vorräte, dieselben Schritte.
+
+**Was ausdrücklich nicht mitgewandert ist:** es bleibt bei *einer* Datenbank je pre-import-Ordner.
+Ein Import ersetzt genau eine, und alle Saisons zu sichern wäre ein zweiter vollständiger Backup-
+Lauf vor jedem Import. Die README sagt den Unterschied jetzt hin („nur liegt hier immer genau eine
+.db-Datei, weil ein Import immer nur eine Datenbank ersetzt"), statt ihn hinter „Dasselbe" zu
+verstecken.
+
+**Nur für den Backup-Ordner.** Ohne konfigurierten Ordner ist die Sicherheitskopie eine nackte
+`.bak`-Datei neben der Datenbank (WP-65) — dort gibt es keinen Ordner für Dokumente, und die
+README beschreibt den Backup-Ordner, nicht das Datenverzeichnis. `writeDoc`s Schluck-bei-Fehler
+gilt weiter: die `.db` ist die Zusage, die Prosa nicht, und ein gescheiterter Dateischreibvorgang
+darf aus einer guten Sicherheitskopie keinen gescheiterten Import machen.
+
+**Der zweite Fund derselben Runde, gleicher Absatz:** der ausgerichtete Block rechnet seine
+Spaltenbreite zur Laufzeit aus dem Kundenwort und sprengte damit den 76-Spalten-Umbruch, an den
+der Rest der Datei von Hand gehalten ist — mit „Veranstaltungsreihe" 86 Spalten, also seitliches
+Scrollen in Notepad, dessen Zeilenumbruch standardmäßig aus ist. Die Breite ist jetzt an der
+längsten *rechten* Seite gedeckelt; greift der Deckel, bleibt die längste linke Seite ungepolstert
+und ihr Pfeil rückt eine Stufe heraus. **Das ist keine absolute Zusage** — die Länge des Begriffs
+ist nirgends begrenzt, und „die Liste aller <Plural>" überschreitet 76 irgendwann von allein.
+Behoben ist, dass die *Polsterung* den Überlauf erzeugt.

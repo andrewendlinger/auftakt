@@ -419,6 +419,31 @@ check(
   imported.body.backup,
 );
 
+// A pre-import folder is a restore point, so it carries what the README promises a restore
+// point carries. It held the .db alone until the WP-68 review: the customer whose data an
+// import had just wrecked — the one case this pool exists for — was sent by step 3 to a
+// MANIFEST.txt and by step 4 to a seasons.json that were not there. Asserted on the folder the
+// import actually reported, not on a rebuilt path, so a change to the layout fails here.
+{
+  const preDir = dirname(imported.body.backup ?? '');
+  check('a pre-import folder carries seasons.json', existsSync(join(preDir, 'seasons.json')));
+  const manifest = join(preDir, 'MANIFEST.txt');
+  check('a pre-import folder carries MANIFEST.txt', existsSync(manifest));
+  if (existsSync(manifest)) {
+    const text = readFileSync(manifest, 'utf8');
+    // The label is what the .db file names cannot carry — it is the whole reason the manifest
+    // exists — and exactly one season is in there, because an import replaces exactly one.
+    const dbLines = text.split('\r\n').filter((l) => /\.db\s+=\s+/.test(l));
+    check('…naming the one database the import replaced', dbLines.length === 1, dbLines.join(' | '));
+    check(
+      '…with the season label, not just the file name',
+      dbLines.length === 1 && /=\s+\S/.test(dbLines[0]),
+      dbLines[0],
+    );
+    check('…and the registry line, since seasons.json is in there', /seasons\.json\s+=/.test(text));
+  }
+}
+
 // --- [2c] the first request after an import must not purge the imported trash ---
 // getDb() sweeps a season's expired soft-deleted rows on its first request-context open
 // (PR50-07) and the import evicts the pooled handle, so the very next request re-opened the
@@ -542,7 +567,10 @@ const renamedRun = await post('backup', { dir: backupDir });
   check(
     '…and so does the MANIFEST',
     renamedManifest.includes('Diese Festivals sind gesichert:'),
-    renamedManifest.split('\r\n')[4],
+    // Index 5, not 4: `heading()` emits title + rule + blank, so the lines are
+    // 0 title, 1 rule, 2 blank, 3 App-Version, 4 blank, 5 „Diese … sind gesichert:".
+    // At 4 the only thing this ever printed — on the one run where it matters — was ''.
+    renamedManifest.split('\r\n')[5],
   );
 }
 

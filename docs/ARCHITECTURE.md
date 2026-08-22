@@ -215,6 +215,14 @@ like every other folder-less pre-import copy). Refusing the import would take th
 the moment it is wanted; the Electron confirmation names the path this function returns, so it
 stays true about where the copy actually went.
 
+**A pre-import folder is a restore point and carries what one carries**: the single `.db` the
+import replaces, plus a copy of `seasons.json` and its own `MANIFEST.txt` naming that one file
+and its label (`writePreImportDocs` in `db.ts`, found by the WP-68 review). One database, not
+one per season — an import replaces exactly one — but otherwise the same contents, so the
+README's restore steps work out of either pool. Only for the backup folder: the folder-less
+fallback above is a bare `.bak` file with nowhere to put documents, and the README describes the
+backup folder, not the data directory.
+
 **Inside** a restore point everything stays flat and keeps the `file` names from `seasons.json`:
 restoring is a hand copy over the data directory, so the season *label* goes into the manifest and
 never into a file name. Two things are therefore fixed: the dated folder names must keep matching

@@ -39,7 +39,7 @@ npm run dist:mac    # or dist:win
 ### 2 · The prompt arrives once there is data
 
 - [ ] Add an artist, quit, relaunch → an **explanation dialog** appears now — „Automatische
-      Sicherungen einrichten?", attached to the Auftakt window, with „Backup-Ordner wählen…"
+      Backups einrichten?", attached to the Auftakt window, with „Backup-Ordner wählen…"
       and „Später". **A bare folder picker with no explanation is the old bug**: macOS does not
       display an open-dialog's title, so it read as a stray Finder window.
 - [ ] „Backup-Ordner wählen…" → the folder picker opens (as a sheet on the window).
@@ -135,6 +135,9 @@ that season's settings.
       quitting (`window-all-closed` only calls `quit()` off darwin), so confirm with
       `lsof -ti tcp:4317` before believing the result.
 - [ ] Open the named pre-import backup → it contains the *previous* data and is not empty.
+- [ ] The pre-import **folder** also holds `seasons.json` and a `MANIFEST.txt` naming that one
+      database and its label. It used to hold the `.db` alone, so README steps 3 and 4 sent the
+      reader to two files that were not there — in the one case this pool exists for.
 - [ ] **With the backup folder renamed away** (case 3): import anyway. It runs, the confirmation
       names a copy **next to the database** (`…\auftakt.db.pre-import-<stamp>.bak` in the data
       dir) instead of one in the backup folder, and the renamed folder is **still not** recreated.

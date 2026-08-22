@@ -32,6 +32,17 @@ import { readFileSync, writeFileSync } from 'node:fs';
 const BOM = '\uFEFF';
 
 /**
+ * The wrap both files are hand-written to. It was an unstated habit until WP-68's review found
+ * the one block that computes its width at runtime and could therefore exceed it (see
+ * `readmeText`); named here so the next generated block has something to check itself against.
+ *
+ * 76 rather than 80: Notepad on Windows has word wrap off by default, and the reader is opening
+ * this file on the day his data is gone. A line he has to scroll sideways for is a line he does
+ * not read.
+ */
+const MAX_COLUMNS = 76;
+
+/**
  * The backup folder typically sits on a Windows machine inside Google Drive, and both halves
  * of this are load-bearing there: without CRLF, Notepad renders the whole file as one line;
  * without the BOM it guesses ANSI and every umlaut turns to mojibake.
@@ -202,13 +213,30 @@ export function readmeText(o: ReadmeOptions): string {
   const other = PLATFORMS[o.platform === 'mac' ? 'windows' : 'mac'];
   const t = o.terms;
 
-  // Padded so the three arrows line up whatever the customer calls a season.
+  // Padded so the three arrows line up whatever the customer calls a season — but never past
+  // the 76 columns the rest of this file is hand-wrapped to. Notepad has word wrap off by
+  // default, so a line beyond that is one the reader has to scroll sideways for, and the
+  // customer who renamed the season is exactly the reader this text was rewritten for. With
+  // „Veranstaltungsreihe" the padded seasons.json line reached 86 columns.
+  //
+  // The cap is computed from the widest *right*-hand side rather than fixed, because both
+  // halves grow with the term. When it bites, the longest left-hand side simply goes unpadded
+  // and its arrow sits one stop further out: alignment degrades, the line fits.
+  //
+  // What this fixes is the padding *adding* overflow. It cannot bound the block absolutely —
+  // nothing caps the term's length (neither `PATCH /api/seasons/terms` nor the Einstellungen
+  // field), and „die Liste aller <plural>" alone passes 76 columns somewhere around a 60-letter
+  // word. At that point the text is as short as it can be said and the wrap is the term's
+  // problem, not the padding's.
   const inside: Array<[string, string]> = [
     [`eine .db-Datei je ${t.singular}`, 'deine Daten'],
     ['seasons.json', `die Liste aller ${t.plural}`],
     ['MANIFEST.txt', 'was in diesem Backup steckt'],
   ];
-  const w = Math.max(...inside.map(([left]) => left.length));
+  const INDENT = 8; // the leading spaces below
+  const ARROW = 5; // '   – '
+  const room = MAX_COLUMNS - INDENT - ARROW - Math.max(...inside.map(([, right]) => right.length));
+  const w = Math.min(Math.max(...inside.map(([left]) => left.length)), Math.max(0, room));
 
   const lines = [
     ...heading('Auftakt – deine Backups', '='),
@@ -234,8 +262,10 @@ export function readmeText(o: ReadmeOptions): string {
     `    Die ${o.keep} neuesten Backups bleiben liegen. Ältere löscht Auftakt selbst.`,
     '',
     o.preImportDir,
-    '    Dasselbe, aber angelegt kurz vor einem „Datenbank importieren…“: der',
-    `    Stand von direkt davor. Auch hier bleiben die ${o.keep} neuesten liegen.`,
+    '    Angelegt kurz vor einem „Datenbank importieren…“: der Stand von direkt',
+    '    davor. Dieselben Dateien wie oben — nur liegt hier immer genau eine',
+    '    .db-Datei, weil ein Import immer nur eine Datenbank ersetzt.',
+    `    Auch hier bleiben die ${o.keep} neuesten liegen.`,
     '',
     '',
     ...heading('Ein Backup laden', '-'),

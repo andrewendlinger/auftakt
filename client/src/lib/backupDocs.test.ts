@@ -172,3 +172,46 @@ describe('manifestText', () => {
     expect(m).not.toContain('seasons.json');
   });
 });
+
+/**
+ * Both findings the WP-68 review turned up in this file, kept as assertions.
+ */
+describe.each(PLATFORMS)('the shape of „Was hier liegt" — %s', (platform) => {
+  const base = platform === 'windows' ? WIN : OPTS;
+
+  /**
+   * The pre-import paragraph used to say „Dasselbe" and mean it literally, while the folder
+   * held one .db and nothing else — no seasons.json, no MANIFEST.txt. Steps 3 and 4 then sent
+   * the reader to two files that were not there, in the one situation this pool exists for.
+   * `writePreImportDocs` (server/src/db.ts) now puts them in; this is the text half.
+   */
+  it('says a pre-import folder holds exactly one database', () => {
+    const text = readmeText(base);
+    const para = text.slice(text.indexOf('pre-import\r\n'), text.indexOf('Ein Backup laden'));
+    expect(para).toMatch(/genau eine/);
+    expect(para).toMatch(/\.db-Datei/);
+    // „Dasselbe" alone is what made it wrong: it inherited „eine .db-Datei je <Saison>" above.
+    expect(para).not.toMatch(/Dasselbe/);
+  });
+
+  /**
+   * The file is hand-wrapped so Notepad — word wrap off by default — never asks the reader to
+   * scroll sideways on the day his data is gone. One block computes its width at runtime from
+   * the customer's own word, and with „Veranstaltungsreihe" it used to reach 86 columns.
+   *
+   * A long-but-real term, not a pathological one: nothing caps the term's length, and past
+   * roughly 60 letters „die Liste aller <plural>" exceeds the wrap on its own, with no padding
+   * involved. What is asserted here is that the padding never *adds* overflow.
+   */
+  it.each(['Saison', 'Festival', 'Veranstaltungsreihe'])(
+    'never wraps past 76 columns with „%s"',
+    (singular) => {
+      const text = readmeText({ ...base, terms: { singular, plural: `${singular}n` } });
+      const over = text
+        .replace(/^\uFEFF/, '')
+        .split('\r\n')
+        .filter((l) => l.length > 76);
+      expect(over).toEqual([]);
+    },
+  );
+});
