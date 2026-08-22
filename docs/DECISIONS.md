@@ -2557,3 +2557,66 @@ Server-Fehlermeldungen (`index.ts`, `db.ts`). Mehrere davon brauchen eine Umform
 eine Ersetzung, weil sie einen flektierten Artikel vor dem Wort tragen („Die Saison „…""). Eigenes
 Paket, nicht dieses.
 
+## The three CodeQL alerts are dismissed, not fixed (2026-08-22, Issue #121)
+
+Three code scanning alerts stood open against `main`. All three were triaged from their SARIF data
+flows rather than from the alert titles, and all three are dismissed on GitHub as *false positive*.
+No code changed. The reasoning is here because a dismissal on GitHub is a sentence in a text box
+that nobody reads back, and the next person to see these rules fire deserves the argument.
+
+| # | Severity | Rule | Location |
+|---|---|---|---|
+| 20, 21 | high | `js/file-system-race` | `electron/bootLog.ts:66` |
+| 19 | medium | `js/http-to-file-access` | `server/src/db.ts:235` |
+
+**`js/file-system-race` — there is only ever one writer, and it does not yield.** The flagged
+sequence is the rotation in `writeBootReport`: `appendFileSync` → `statSync` (line 65) →
+`readFileSync`/`writeFileSync` (line 66). Two alerts for one line, because both calls on it race
+the same `statSync`; CodeQL points at columns 7 and 39.
+
+The TOCTOU it describes cannot occur. `writeBootReport` is called from three places, all in
+`electron/main.ts` (the `boot-settled` handler, the 8 s fallback, `writeAbandonedBootLine` on
+`before-quit`) — so the only writer is the Electron main process, and there is exactly one of
+those: `app.requestSingleInstanceLock()` (`main.ts:918`) sends a second launch to `app.exit(0)`,
+which by contract emits neither `before-quit` nor `will-quit`, so a losing instance never reaches
+a write at all. Within the one process the three calls are *synchronous* on one thread with no
+`await` between them: nothing else in this program can run in that gap.
+
+Nor is there a boundary to cross even in the counterfactual. The target is `boot-log.jsonl` in the
+app's own `userData`, a diagnostic ring buffer that discards its oldest lines by design, and the
+whole block sits in a `catch {}` that exists precisely so a diagnostic cannot break the boot it
+diagnoses. A hypothetical interleaving costs a few lines of a file whose contract is already to
+throw lines away. Making it atomic would mean a lock file or an `O_EXCL` dance on the startup
+path — new failure modes on the one code path that must never acquire any, in exchange for
+nothing.
+
+**`js/http-to-file-access` — request data becomes a JSON *value*, never a path and never bytes.**
+The sink is `writeFileSync(tmp, JSON.stringify(reg, null, 2))` in `saveRegistry`. The rule's
+threat model is arbitrary file upload or a backdoor, which needs the caller to control the
+destination or the payload. Neither is available:
+
+- **The path is fixed.** `tmp` is `` `${registryPath()}.tmp` ``, and `registryPath()` takes no
+  argument. The season filenames that registry *holds* are `season-<id>.db` from the monotonic
+  `nextSeasonId` counter — never a label, so there is no traversal through the data either.
+- **The payload is a serialisation, not a stream.** `JSON.stringify` of a typed `Registry`. The
+  four flows CodeQL traced carry a string into a named field of that object: the announcement
+  version (`routes/announcements.ts:72`), the backup folder (`routes/backup.ts:259`), the landing
+  notes (`routes/landing.ts:33`) and a season term (`routes/seasons.ts:91`). Writing exactly those
+  values into the registry is what the endpoints are *for*.
+- **Two guards sit in front of it anyway.** `server/src/index.ts` binds `127.0.0.1` and the X-01
+  middleware 403s any off-loopback `Host` or off-allowlist `Origin`; `express.json({limit:'4mb'})`
+  bounds the body. The one flow that carries something genuinely privileged — a host path, in
+  `POST /backup/dir` — is additionally refused for *any* request carrying an `Origin` header at
+  all, so a renderer, including an XSS, cannot reach it.
+
+**The triage was the point, not the outcome.** Issue #121 sat before the v1.0 freeze rather than
+after it on the standing rule that a finding which turns out to be real becomes a fix. None did.
+Same treatment as the exceljs/uuid moderates above, and the same asymmetry with
+`js/missing-rate-limiting`: that one is *excluded in `codeql-config.yml`*, because it re-reports
+per handler on every PR that edits one. These three are dismissed individually instead — they are
+two real code sites, they will not re-fire on unrelated changes, and a config exclusion would also
+hide the next `writeFileSync` that genuinely does take a caller's path.
+
+**Revisit when** either site stops being what it is: if `writeBootReport` ever gains a second
+writer (a helper process, a worker), or if `saveRegistry` ever derives its path from anything a
+request carries. Both are the kind of change that should reopen the alert on its own.
