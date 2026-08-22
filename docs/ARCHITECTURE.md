@@ -195,7 +195,10 @@ left alone. A German `README.txt` at the root and a `MANIFEST.txt` per restore p
 folder — CRLF and a UTF-8 BOM, because it is read in Notepad out of Google Drive. The README is
 written for the platform it runs on and names that machine's data directory outright (WP-68); the
 other platform's two differences are a closing section, and both files use the word the user chose
-for a season.
+for a season. The three main-process backup dialogs use it too, through `electron/seasonTerms.ts`
+— a `node:fs` read of `seasons.json`, because importing `db.ts` would drag better-sqlite3 into the
+Electron bundle; it is the third copy of the `Saison`/`Saisons` defaults after `seasonTerms()` and
+`useSeasonTerm()`, and all three have to move together.
 
 **The configured folder must already exist; everything below it is `mkdir -p`.** A run into a
 folder that is gone — renamed, deleted, on an ejected drive — is refused with a German message

@@ -2518,3 +2518,42 @@ längsten *rechten* Seite gedeckelt; greift der Deckel, bleibt die längste link
 und ihr Pfeil rückt eine Stufe heraus. **Das ist keine absolute Zusage** — die Länge des Begriffs
 ist nirgends begrenzt, und „die Liste aller <Plural>" überschreitet 76 irgendwann von allein.
 Behoben ist, dass die *Polsterung* den Überlauf erzeugt.
+
+---
+
+## Der Hauptprozess liest den Saisonbegriff selbst — die dritte Kopie der Vorgaben (2026-08-21, WP-68-Nachzug)
+
+Ebenfalls aus dem Review von PR #123, aber außerhalb seines Diffs: WP-68 hat README, Manifest und
+die Einstellungskarte auf „Backup" und das Kundenwort umgestellt und `electron/main.ts` übersehen.
+Dort standen „Sicherung"/„Sicherungen" fest verdrahtet — und schlimmer, der Verweis
+„Einstellungen → „Saison & Daten"" auf einen Reiter, der auf dem Gerät des Kunden „Festival &
+Daten" heißt. Drei Dialoge: die Erstsart-Aufforderung und die zwei Backup-Fehler, also genau die
+Texte, die er liest, weil etwas nicht funktioniert.
+
+**Nicht per Import und nicht per HTTP geholt.** `seasonTerms()` liegt in `server/src/db.ts`, und
+das Modul öffnet SQLite — ein Import zöge `better-sqlite3` als natives Modul in das
+esbuild-Bundle des Hauptprozesses. Ein `fetch` gegen den eigenen Server verbietet sich für einen
+Dialog, der gemeldet wird, *weil* serverseitig gerade etwas schiefging, und `reportBackupProblem`
+läuft auch auf dem Beendigungsweg, auf dem der Server schon weg sein kann. Die Registry ist
+schlichtes JSON; `electron/seasonTerms.ts` liest sie mit `node:fs` und importiert nichts aus
+`electron` und nichts aus `server/` — dieselbe Regel wie `backup.ts`, `bootLog.ts`, `cascade.ts`
+und `windowBounds.ts`, und aus demselben Grund: nur so erreicht `check:unit` sie.
+
+**Der bewusst getragene Preis: die Vorgaben `Saison`/`Saisons` stehen jetzt an drei Stellen** —
+`seasonTerms()` (Server), `useSeasonTerm()` (Client) und hier. Eine gemeinsame Quelle hätte ein
+viertes Paket über die Bundle-Grenze bedeutet, für zwei Zeichenketten. Wer eine ändert, ändert
+alle drei; das steht in allen dreien.
+
+**Nie zwischengespeichert**, obwohl die Datei bei jedem Dialog neu gelesen wird: ein Cache
+antwortete den Rest der Sitzung mit dem alten Wort — und das ist genau die Sitzung, in der der
+Kunde es gerade umbenannt hat. Und `readSeasonTerms` wirft für **keine** Eingabe: fehlende,
+halb geschriebene oder von Hand zerlegte `seasons.json` fallen auf die Vorgaben zurück, beide
+Begriffe unabhängig voneinander. Ein Dialog, der beim Melden eines gescheiterten Backups selbst
+abstürzt, ist schlimmer als das gescheiterte Backup.
+
+**Was nicht mitgemacht wurde:** die verbliebenen „Saison"-Zeichenketten im Client
+(`lib/labels.ts`, `CustomColumnManager.tsx`, `ui.tsx`, `Dashboard.tsx`, `LandingPage.tsx`) und in
+Server-Fehlermeldungen (`index.ts`, `db.ts`). Mehrere davon brauchen eine Umformulierung, nicht
+eine Ersetzung, weil sie einen flektierten Artikel vor dem Wort tragen („Die Saison „…""). Eigenes
+Paket, nicht dieses.
+

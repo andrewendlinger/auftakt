@@ -19,6 +19,7 @@ import { activatePlan } from './activate';
 import { backupDirProblem, runStartupBackup } from './backup';
 import { WINDOW_MINIMUM, WINDOW_PREFERRED, cascadeBounds, fittedSize } from './cascade';
 import { exportFileName } from './exportName';
+import { readSeasonTerms } from './seasonTerms';
 import { readWindowBounds, usableBounds, writeWindowBounds } from './windowBounds';
 import {
   BOOT_LOG_NAME,
@@ -388,10 +389,11 @@ async function reportBackupProblem(err: unknown): Promise<void> {
   console.error('Backup übersprungen:', err);
   const win = liveWindow();
   if (!win) return;
+  const { singular } = readSeasonTerms(dataDir());
   await messageBox(win, {
     type: 'error',
-    message: 'Es wurde keine Sicherung angelegt.',
-    detail: `${(err as Error).message}\n\nEinstellungen → „Saison & Daten“ → „Backup-Ordner“ prüfen. Ohne funktionierenden Backup-Ordner werden beim Start keine Sicherungen erstellt.`,
+    message: 'Es wurde kein Backup angelegt.',
+    detail: `${(err as Error).message}\n\nEinstellungen → „${singular} & Daten“ → „Backup-Ordner“ prüfen. Ohne funktionierenden Backup-Ordner werden beim Start keine Backups erstellt.`,
   });
 }
 
@@ -434,7 +436,7 @@ async function chooseBackupDir(win: BrowserWindow | null): Promise<void> {
     await messageBox(win, {
       type: 'error',
       message: 'Der Backup-Ordner konnte nicht gespeichert werden.',
-      detail: `${(err as Error).message}\n\nEs werden weiterhin keine automatischen Sicherungen angelegt. Bitte erneut versuchen.`,
+      detail: `${(err as Error).message}\n\nEs werden weiterhin keine automatischen Backups angelegt. Bitte erneut versuchen.`,
     });
     return;
   }
@@ -826,11 +828,12 @@ async function ensureBackupDir(): Promise<string> {
   // explicit „Später": that path leaves `prompted` unset on purpose, so the next launch
   // asks again until a folder is actually saved (ELP-05) while the amber hint in
   // Einstellungen keeps carrying the state.
+  const terms = readSeasonTerms(dataDir());
   const intro = await dialog.showMessageBox(win, {
     type: 'info',
-    message: 'Automatische Sicherungen einrichten?',
+    message: 'Automatische Backups einrichten?',
     detail:
-      'Auftakt kann bei jedem Start eine Sicherung aller Saisons in einem Ordner deiner Wahl anlegen — z. B. in Google Drive oder OneDrive.\n\nDer Ordner lässt sich auch später unter Einstellungen → „Saison & Daten“ festlegen.',
+      `Auftakt kann bei jedem Start ein Backup aller ${terms.plural} in einem Ordner deiner Wahl anlegen — z. B. in Google Drive oder OneDrive.\n\nDer Ordner lässt sich auch später unter Einstellungen → „${terms.singular} & Daten“ festlegen.`,
     buttons: ['Backup-Ordner wählen…', 'Später'],
     defaultId: 0,
     cancelId: 1,
