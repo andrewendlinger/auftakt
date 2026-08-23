@@ -5096,7 +5096,8 @@ try {
     );
 
   /**
-   * The dashboard's „Fortschritt" tile as one line („16% 8/51 FORTSCHRITT").
+   * The dashboard's „Fortschritt" tile as one line — „<pct>% <done>/<total> FORTSCHRITT", the
+   * label CSS-uppercased like every other one.
    *
    * The *innermost* `div.rounded-2xl` whose last child is the label: `Card` carries that class too,
    * and so does every artist card, several of which say „… erledigt" in their chips.
@@ -5119,8 +5120,9 @@ try {
   // ======================================================================== AH · what the lists drop
   //
   // Read-only, against the demo's own season: the five archived rows are `demo.ts`'s and nothing
-  // here writes. Three surfaces stop showing an aged task — a project's table, the Übersicht's
-  // season-wide list, and (as the pair) „Fortschritt", which must *not* stop at that edge (CCL-04).
+  // here writes. Two surfaces stop showing an aged task — a project's table and the Übersicht's
+  // season-wide list — and „Fortschritt" is the pair, the one number that must *not* stop at that
+  // edge (CCL-04).
   console.log('\nAH · Was die Listen verschweigen und was das Archiv zeigt');
   const arc = await open(context, '/dashboard');
   await pin(arc, HOME, '/project/1');
@@ -5188,7 +5190,8 @@ try {
   // …and the one number that must see *past* the edge. Fed the page's own `scope: 'live'` list,
   // „Fortschritt" falls as work is finished and ages out — 0 %, 0/0 for a project that is finished
   // (CCL-04). Both counts are read here, because comparing against only one of them passes either
-  // way: on the demo they are 8/51 and 3/46.
+  // way: on a freshly seeded demo they are 8/51 and 3/46, and inside this run — case F has added a
+  // task by now — 9/52 and 4/47.
   const cnt = (rows) => ({ done: rows.filter((t) => t.status === archDone).length, total: rows.length });
   const allCount = cnt(allSeason);
   const liveCount = cnt(liveSeason);
@@ -5259,6 +5262,10 @@ try {
   // relies on — and nothing here re-asserts that mechanism. What is asserted is this page's own
   // markup: four `<td>`s, three of them struck, and a `prose-md--done` of its own.
   console.log('\nAI · Was eine archivierte Zeile hergibt und was nicht');
+  // An invariant guard rather than a regression detector, and worth knowing before writing a canary
+  // for it: what this line forbids is a control being *added* to the archive table, and no plausible
+  // revert of an existing fix takes it red on its own (the `scope: 'all'` canary does, but for the
+  // row count). What bites AI is the strike, the Zitat's colour, the search box and the badge's link.
   const bare = await until(() => archiveRows(arc), (r) => r.length === agedRows.length, 8000);
   check(
     'keine der Zeilen trägt ein Bedienelement — keinen Knopf, kein Feld, keinen Kommentarkasten',
