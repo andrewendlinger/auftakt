@@ -852,9 +852,11 @@ verified by hand, and the gate itself is written from this list.
   `<tbody>` per *top-level* task, holding that task and everything folded under it, so „does this
   subtask sit under that parent" is a containment question and not a distance in row indices. Two
   riders. `data-depth` is a **render position**, not `parent_id` — an orphan (below) is `0` while
-  its `parent_id` is still set — and a project or artist page has a `<tbody>` before any of them:
-  the Besetzung grid, which carries neither attribute. `document.querySelectorAll('tbody')` is
-  therefore off by one against the task table, exactly as `document.querySelector('table')` is.
+  its `parent_id` is still set — and a bare `tbody` is not the task table's: the Besetzung grid is
+  one, and on `#/project/1` the description's Markdown table is another, both *before* the first
+  group. Neither carries the attribute, which is what makes it the handle;
+  `document.querySelectorAll('tbody')` is ahead of the task table by however many that page
+  happens to have, exactly as `document.querySelector('table')` is.
 - **A folded subtask has no row at all.** `buildTaskRows` simply does not emit it — nothing is
   hidden, nothing is `display: none` — so an assertion phrased as „the row is invisible" matches
   nothing and reads as a broken selector rather than as a fold. Count the rows inside the group,
@@ -863,8 +865,10 @@ verified by hand, and the gate itself is written from this list.
   exactly „Einklappen"/„Ausklappen"; the counter pill beside the title is
   „1 von 3 Unteraufgaben erledigt — einklappen" — the same word, lower case, *inside* a longer
   string. So `[title*="klappen"]`, `getByTitle(/klappen/i)` and an accessible-name regex are all
-  ambiguous on any row that has children. Anchor the chevron on the exact title and the pill on
-  „Unteraufgaben erledigt".
+  ambiguous on any row that has children. Anchor the pill on „Unteraufgaben erledigt" — and the
+  chevron on **neither** title, because both of them *are* the state under test: it is the only
+  `<button>` in the row's first cell (`tr[data-task-id="…"] td:first-child button`, the ⠿ beside it
+  being a `<span>`), and that handle stays the same handle across the click.
 - **Read the fold from `aria-expanded` — and if you must read the rotation, read `rotate`, not
   `transform`.** Tailwind v4 compiles `rotate-90` to the standalone `rotate` property, so
   `getComputedStyle(chevron).transform` is `none` in **both** states and „the chevron turned"

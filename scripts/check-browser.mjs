@@ -3173,12 +3173,19 @@ try {
    * the run's whole fixture set, that window is wide enough to hit — once in six runs here, as a
    * burst of 410s in the case *after* this one, every copied season of the run gone with it. The
    * rename is the only part of this the filesystem promises to do in one step.
+   *
+   * The suffix is **not** the server's. `saveRegistry` stages through `seasons.json.tmp`, and this
+   * case's own clicks make the server write that file (the „Alles klar" marker) while these writes
+   * are going on — two writers sharing one staging path either promote interleaved bytes or lose
+   * the race to the other's rename with an ENOENT out of the try. A private name is the whole cost
+   * of not having to reason about that.
    */
   const writeReg = (fn) => {
     const reg = readReg();
     fn(reg);
-    writeFileSync(`${registryPath}.tmp`, JSON.stringify(reg, null, 2));
-    renameSync(`${registryPath}.tmp`, registryPath);
+    const staged = `${registryPath}.tmp-check`;
+    writeFileSync(staged, JSON.stringify(reg, null, 2));
+    renameSync(staged, registryPath);
   };
   const pad = (n) => String(n).padStart(2, '0');
   const now = new Date();
@@ -3498,10 +3505,14 @@ try {
   const w = await open(context, '/dashboard');
   await pin(w, HOME, '/project/1');
 
+  // Every first read of a table is polled, never sampled: `ready()` also resolves from
+  // `BootReady`'s unconditional 700 ms budget, so a one-shot `count()` taken there reads an empty
+  // table on a loaded runner — and „no rows" satisfies half the assertions in this file.
+  const plantedTree = await until(() => treeRows(w, 1), (r) => r.length === 4, 8000);
   check(
     'die Demo pflanzt einen Baum: der Elterntask und seine drei lebenden Kinder',
-    (await treeRows(w, 1)).join(' ') === '1@0 2@1 3@1 4@1',
-    (await treeRows(w, 1)).join(' '),
+    plantedTree.join(' ') === '1@0 2@1 3@1 4@1',
+    plantedTree.join(' '),
   );
   check('…und die Zählerpille daneben sagt, wie viele davon erledigt sind', (await textOf(counter(w, 1))) === '1/3', await textOf(counter(w, 1)));
   check(
@@ -3512,6 +3523,9 @@ try {
   );
   const turnedOpen = await spun(w, 1, 'turned');
   check('…und das Chevron steht wirklich gedreht', turnedOpen === '90deg', turnedOpen);
+  // Both sides of `aria-expanded`, like both sides of the rotation: a chevron hardwired to „true"
+  // satisfies the folded assertion's opposite and nothing else here would notice.
+  check('…und meldet sich als aufgeklappt', (await chevron(w, 1).getAttribute('aria-expanded').catch(() => null)) === 'true');
 
   const groupsBefore = (await treeGroups(w)).join(' ');
   const rowsBefore = await treeRowCount(w);
@@ -3570,7 +3584,11 @@ try {
   await pin(x, subtree.id, '/project/8');
   const composer = x.locator('input[placeholder^="Neue Unteraufgabe"]');
 
-  check('Aufgabe 31 ist ein Blatt: kein Chevron, keine Zählerpille', (await chevron(x, 31).count()) === 0 && (await counter(x, 31).count()) === 0);
+  // The row first, then what it does *not* carry: `ready()` also resolves from `BootReady`'s
+  // unconditional 700 ms budget, so „no chevron, no counter" counted straight after it is 0 and 0
+  // on a table that has not rendered a single row yet — the emptiest possible pass.
+  const leafRow = await shown(x.locator('tr[data-task-id="31"]'));
+  check('Aufgabe 31 ist ein Blatt: kein Chevron, keine Zählerpille', leafRow && (await chevron(x, 31).count()) === 0 && (await counter(x, 31).count()) === 0);
   check('…und bietet trotzdem „Unteraufgabe hinzufügen" an', await shown(rowButton(x, 31, 'Unteraufgabe hinzufügen')));
 
   await rowButton(x, 31, 'Unteraufgabe hinzufügen').click();
@@ -3578,10 +3596,19 @@ try {
   check('der Eingabefeld-Platzhalter steht als letzte Zeile der Gruppe', composerOpen && (await treeRows(x, 31)).join(' ') === '31@0 +@', (await treeRows(x, 31)).join(' '));
   check('…und hat den Fokus, ohne dass jemand hineinklicken müsste', (await x.evaluate(() => document.activeElement?.getAttribute('placeholder') ?? '')).startsWith('Neue Unteraufgabe'));
 
+  // Typed *first*: an Escape on an empty composer is discarded by every conceivable build, so the
+  // assertion that it writes nothing would hold against one that commits on close as well.
   const beforeAdd = (await api(SUB('/tasks?project_id=8'))).length;
+  const abandoned = `Verworfen ${RUN}`;
+  await composer.fill(abandoned);
   await x.keyboard.press('Escape');
   check('Escape schließt ihn wieder', await gone(composer));
-  check('…und legt nichts an', (await api(SUB('/tasks?project_id=8'))).length === beforeAdd);
+  const afterEscape = await api(SUB('/tasks?project_id=8'));
+  check(
+    '…und wirft weg, was darin stand, statt es anzulegen',
+    afterEscape.length === beforeAdd && !afterEscape.some((t) => t.title === abandoned),
+    `${afterEscape.length} statt ${beforeAdd} Aufgaben`,
+  );
 
   const kidTitle = `Unteraufgabe ${RUN}`;
   await rowButton(x, 31, 'Unteraufgabe hinzufügen').click();
@@ -3648,7 +3675,8 @@ try {
   await x.goto(`${UI}/#/project/1`);
   await x.reload(); // a `goto` to another hash keeps data-app-ready — it says nothing about the route
   await ready(x);
-  check('die Kopie trägt denselben Baum', (await treeRows(x, 1)).join(' ') === '1@0 2@1 3@1 4@1', (await treeRows(x, 1)).join(' '));
+  const copiedTree = await until(() => treeRows(x, 1), (r) => r.length === 4, 8000);
+  check('die Kopie trägt denselben Baum', copiedTree.join(' ') === '1@0 2@1 3@1 4@1', copiedTree.join(' '));
 
   await setStatus(x, 2, subDone);
   const kidsDone = await until(() => textOf(counter(x, 1)), (t) => t === '2/3', 8000);
@@ -3658,9 +3686,14 @@ try {
   // sibling" vacuously.
   const insideGroup = await treeRows(x, 1);
   check('…bleibt aber eingerückt bei seinem Elterntask', insideGroup.includes('2@1'), insideGroup.join(' '));
+  // Both positions have to be *found* before one can be behind the other: a missing „3@1" is -1,
+  // and -1 is below every index there is — the comparison would pass on a group that lost the row
+  // the assertion is about.
+  const openSister = insideGroup.indexOf('3@1');
+  const doneSister = insideGroup.indexOf('2@1');
   check(
     '…und sinkt innerhalb der Gruppe unter die offene Schwester',
-    insideGroup.indexOf('3@1') < insideGroup.indexOf('2@1'),
+    openSister >= 0 && doneSister >= 0 && openSister < doneSister,
     insideGroup.join(' '),
   );
   const parentAfterKid = await api(SUB('/tasks/1'));
@@ -3697,7 +3730,8 @@ try {
   await w.reload();
   await ready(w);
 
-  check('die Waise steht als eigene Gruppe auf oberster Ebene', (await treeRows(w, 12)).join(' ') === '12@0', (await treeRows(w, 12)).join(' '));
+  const waise = await until(() => treeRows(w, 12), (r) => r.length === 1, 8000);
+  check('die Waise steht als eigene Gruppe auf oberster Ebene', waise.join(' ') === '12@0', waise.join(' '));
   // „It renders flat" is the absence of the elbow — and alone that passes on a build that draws
   // no connectors at all, so a real child of the same table is measured in the same breath.
   check(
@@ -3714,8 +3748,10 @@ try {
   check(
     '…und ein echtes Kind hat beides nicht, ein echter Elterntask beides',
     (await rowButton(w, 46, 'Verschieben').count()) === 0 &&
+      (await rowButton(w, 46, 'Unteraufgabe hinzufügen').count()) === 0 &&
       (await rowButton(w, 41, 'Verschieben').count()) === 1 &&
       (await rowButton(w, 41, 'Unteraufgabe hinzufügen').count()) === 1,
+    `Kind ${await rowButton(w, 46, 'Verschieben').count()}/${await rowButton(w, 46, 'Unteraufgabe hinzufügen').count()}, Elterntask ${await rowButton(w, 41, 'Verschieben').count()}/${await rowButton(w, 41, 'Unteraufgabe hinzufügen').count()}`,
   );
 
   // Why the pair survives at all: the parent cannot be purged while a live child references it
@@ -3732,29 +3768,41 @@ try {
 
   // The other half, in the copy: how the app *makes* one. The count in the dialog is the TTU-05
   // assertion — it comes from the `scope: 'all'` list, so it sees the archived child 53 that the
-  // table does not, and a count taken from the rendered rows would say three. That query lands
-  // after the page, so it is waited for: the number is frozen into the dialog's state at click
-  // time, and a 🗑 pressed too early says „3" for ever.
+  // table does not, and a count taken from the rendered rows would say three.
   const allTasks = x.waitForResponse((r) => r.url().includes('tasks?scope=all'), { timeout: 20_000 }).catch(() => null);
   await x.goto(`${UI}/#/project/1`);
   await x.reload();
   await ready(x);
   await allTasks;
-  check('die Tabelle zeigt drei Unteraufgaben', (await treeRows(x, 1)).filter((r) => r.endsWith('@1')).length === 3, (await treeRows(x, 1)).join(' '));
+  const shownKids = await until(() => treeRows(x, 1), (r) => r.length === 4, 8000);
+  check('die Tabelle zeigt drei Unteraufgaben', shownKids.filter((r) => r.endsWith('@1')).length === 3, shownKids.join(' '));
 
-  await rowButton(x, 1, 'Löschen').click();
-  const askedKids = await shown(x.getByRole('heading', { name: 'Aufgabe löschen' }));
-  check('das Löschen eines Elterntasks fragt nach den Kindern', askedKids);
-  if (askedKids) {
-    const ask = topDialog(x);
-    const askText = await ask.innerText();
-    check(
-      '…und zählt die archivierte vierte mit, die auf dem Schirm gar nicht steht (TTU-05)',
-      /4 Unteraufgaben/.test(askText),
-      askText.replace(/\n/g, ' | '),
-    );
-    await ask.getByRole('button', { name: 'Nur diese Aufgabe' }).click();
+  // The number is frozen into the dialog when the 🗑 is pressed, so the response wait above is
+  // necessary and not sufficient: React still has to commit the query before the click handler
+  // reads it. Asking again is the only correct fix — nothing about the tree changes while the
+  // dialog is up, and a build that counts from the rendered rows answers „3" at every attempt.
+  const askHeading = x.getByRole('heading', { name: 'Aufgabe löschen' });
+  const ask = topDialog(x);
+  let askedKids = false;
+  let askText = '';
+  for (let attempt = 0; attempt < 4 && !/4 Unteraufgaben/.test(askText); attempt++) {
+    if (attempt) {
+      await x.keyboard.press('Escape');
+      await gone(askHeading);
+      await sleep(250);
+    }
+    await rowButton(x, 1, 'Löschen').click();
+    askedKids = await shown(askHeading);
+    if (!askedKids) break;
+    askText = await ask.innerText();
   }
+  check('das Löschen eines Elterntasks fragt nach den Kindern', askedKids);
+  check(
+    '…und zählt die archivierte vierte mit, die auf dem Schirm gar nicht steht (TTU-05)',
+    askedKids && /4 Unteraufgaben/.test(askText),
+    askText.replace(/\n/g, ' | '),
+  );
+  if (askedKids) await ask.getByRole('button', { name: 'Nur diese Aufgabe' }).click();
   const orphaned = await until(() => treeRows(x, 2), (r) => r.length > 0, 8000);
   check('„Nur diese Aufgabe" nimmt allein den Elterntask mit', (await send('GET', SUB('/tasks/1'))).status === 404 && (await send('GET', SUB('/tasks/2'))).status === 200);
   check('…seine Kinder bleiben und stehen als eigene Gruppen da', orphaned.join(' ') === '2@0' && (await treeRows(x, 3)).join(' ') === '3@0', `${orphaned.join(' ')} / ${(await treeRows(x, 3)).join(' ')}`);
@@ -3765,15 +3813,19 @@ try {
   await x.reload();
   await ready(x);
   const binnedParent = x.locator('div.divide-y > div').filter({ hasText: 'Instrumente – Anmietung und Transport' });
-  if (await shown(binnedParent)) await binnedParent.getByRole('button', { name: 'Wiederherstellen' }).first().click();
+  // Asserted rather than merely guarded: without this the missing row is silent here and surfaces
+  // ten seconds later as „the children were not re-nested", which is a different bug.
+  const parentInBin = check('der gelöschte Elterntask liegt im Papierkorb', await shown(binnedParent));
+  if (parentInBin) await binnedParent.getByRole('button', { name: 'Wiederherstellen' }).first().click();
   await until(() => send('GET', SUB('/tasks/1')).then((r) => r.status), (s) => s === 200);
   await x.goto(`${UI}/#/project/1`);
   await x.reload();
   await ready(x);
+  const renested = await until(() => treeRows(x, 1), (r) => r.length === 4, 8000);
   check(
     'wird der Elterntask wiederhergestellt, hängen die Kinder wieder unter ihm',
-    (await treeRows(x, 1)).filter((r) => r.endsWith('@1')).length === 3,
-    (await treeRows(x, 1)).join(' '),
+    renested.filter((r) => r.endsWith('@1')).length === 3,
+    renested.join(' '),
   );
 
   console.log(`\n${failures ? `✗ ${failures} Fehler` : '✓ alles ok'} (${checks} Prüfungen)`);
