@@ -4343,12 +4343,15 @@ try {
   // Nothing drove the near end: the button that puts one in, the clipboard that must not, the note
   // that has to give both back unchanged, and the Papierkorb that has to leave the bytes alone.
   //
-  // **The decision table is not re-asserted here.** `npm run check:markdown` runs the same
-  // `parseHTML` rules over nine clipboard payloads in jsdom, which is where „is this `<img>`
-  // admitted" belongs. What is asserted below is what jsdom has no opinion about: which HTML the
-  // *real* clipboard hands over — three routes, three different answers, all in
-  // `docs/VERIFYING.md` — whether the bytes come back, and whether the picture on screen is still
-  // the same picture after a save.
+  // **The decision table stays with `npm run check:markdown`**, which runs the same `parseHTML`
+  // rules over nine clipboard payloads in jsdom and is where „is this `<img>` admitted" is settled.
+  // AE's three foreign payloads *are* three of those nine rows, deliberately: what it adds is the
+  // half jsdom cannot have an opinion about — that the rule is reached at all when the HTML comes
+  // off the real clipboard through a real keystroke, over routes that hand the editor different
+  // HTML than `insertContent` does (three of them, three different answers, all in
+  // `docs/VERIFYING.md`), and that the text beside the refused picture lands, which is what tells
+  // „refused" from „the keystroke reached nothing". Everything else below has no counterpart there
+  // at all: whether the bytes come back, and whether the picture on screen survives a save.
   //
   // In a copy from the first line: three of the four write.
 
@@ -4450,19 +4453,31 @@ try {
       .catch(() => {});
   }
 
-  const arrived = await until(() => picEditorImg.count(), (n) => n === 1, 15_000);
+  /** The inserted node, and whether its bytes have arrived — the assertions below need both. */
+  const insertedImage = () =>
+    pic
+      .evaluate(() => {
+        const all = document.querySelectorAll('.rte-content img:not(.ProseMirror-separator)');
+        const i = /** @type {HTMLImageElement | null} */ (all[0] ?? null);
+        return {
+          n: all.length,
+          src: i?.getAttribute('src') ?? null,
+          width: i?.getAttribute('width') ?? null,
+          natural: i?.naturalWidth ?? 0,
+        };
+      })
+      .catch(() => ({ n: -1, src: null, width: null, natural: 0 }));
+
+  // The node **and** its bytes. The upload resolves a tick before the `<img>` reaches the document,
+  // and the browser has never seen this URL, so a poll that stops at „one image is there" is a round
+  // trip ahead of `naturalWidth` — the two assertions below would then read 0 px on a good build.
+  const placed = await until(insertedImage, (p) => p.n === 1 && p.natural > 0, 15_000);
+  const arrived = placed.n;
   check(
     'die gewählte Datei geht hoch und steht als Bild im Text',
     arrived === 1 && uploads.join('|') === '201',
     `${arrived} Bild(er), POST /api/images → ${uploads.join('|') || 'keiner'}`,
   );
-
-  const placed = await pic.evaluate(() => {
-    const i = /** @type {HTMLImageElement | null} */ (
-      document.querySelector('.rte-content img:not(.ProseMirror-separator)')
-    );
-    return i ? { src: i.getAttribute('src'), width: i.getAttribute('width'), natural: i.naturalWidth } : null;
-  });
   // A 1200 px plan at full column width shoves everything under it out of view, so a fresh insert
   // starts at „Mittel" — unless the picture is naturally smaller, which this one is not.
   check('…in der Größe „Mittel“, nicht in voller Spaltenbreite', placed?.width === '384', JSON.stringify(placed));
@@ -4496,7 +4511,9 @@ try {
     storedPic.slice(PIC_NOTE.length).trim() || storedPic,
   );
 
-  const drawn = await until(() => notePictures(pic), (p) => p.length === 1, 8000);
+  // Loaded, not merely present: this is the one URL in the run the browser has never fetched, so the
+  // reader's `<img>` is a round trip behind the element the count sees.
+  const drawn = await until(() => notePictures(pic), (p) => p.length === 1 && p.every((x) => x.loaded), 8000);
   check(
     'der Lesezustand zeichnet es in 384 px, aus denselben Bytes',
     drawn.length === 1 && drawn[0]?.width === '384' && drawn[0]?.loaded === true,
@@ -4669,19 +4686,28 @@ try {
   }
 
   const beforeShot = uploads.length;
-  await pic
+  // Reported like `pasteHtml`'s, and for the same reason: a rejected write leaves whatever the run
+  // copied earlier lying on the clipboard, the ⌘V then pastes *that*, and „no picture arrived" is
+  // true for a reason that has nothing to do with the promise under test.
+  const wroteShot = await pic
     .evaluate(async () => {
       const c = document.createElement('canvas');
       c.width = 8;
       c.height = 8;
       const ctx = c.getContext('2d');
-      if (!ctx) return;
+      if (!ctx) return 'kein Canvas';
       ctx.fillStyle = '#b91c1c';
       ctx.fillRect(0, 0, 8, 8);
       const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
-      if (blob) await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      if (!blob) return 'kein Blob';
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        return '';
+      } catch (err) {
+        return String(err).slice(0, 90);
+      }
     })
-    .catch(() => {});
+    .catch((err) => String(err).slice(0, 90));
   await pic.keyboard.press('ControlOrMeta+v');
   await sleep(700);
   // „Paste and drag-and-drop are deliberately not wired" (DECISIONS.md) — an accidentally pasted
@@ -4689,8 +4715,8 @@ try {
   const afterShot = await picEditorImg.count();
   check(
     'ein eingefügter Screenshot landet weder im Text noch in der Datenbank',
-    afterShot === 2 && uploads.length === beforeShot,
-    `${afterShot} Bilder, ${uploads.length - beforeShot} Uploads`,
+    afterShot === 2 && uploads.length === beforeShot && wroteShot === '',
+    `${afterShot} Bilder, ${uploads.length - beforeShot} Uploads${wroteShot ? `, Zwischenablage: ${wroteShot}` : ''}`,
   );
 
   /**
@@ -4858,7 +4884,10 @@ try {
           .filter((t) => t.startsWith('Bild nicht gefunden')),
       };
     });
-  const mixed = await until(noteState, (m) => m.missing.length > 0, 8000);
+  // Both halves in the predicate. „A message is on screen" becomes true the instant the stale
+  // reference's 404 re-renders, which is concurrent with the good picture's own load — so a poll on
+  // the message alone hands the pair assertion below a picture that has not arrived yet.
+  const mixed = await until(noteState, (m) => m.missing.length > 0 && m.drawn.every((d) => d), 8000);
   check(
     'eine Referenz ohne Bild sagt es im Text, mit ihrem Alt-Text',
     mixed.missing.join(' | ') === 'Bild nicht gefunden: Verlorener Plan',
@@ -4975,6 +5004,10 @@ try {
     trashed.status === 200 && (await send('GET', PIC('/projects/3'))).status === 404,
     `HTTP ${trashed.status}`,
   );
+  // An invariant guard rather than a regression detector, and worth knowing before writing a canary
+  // for it: the change this line forbids is putting `images` into `DELETE_ORDER`, and a *soft* delete
+  // never walks that list — so no plausible revert takes it red on its own. What bites AG is the
+  // season pin (the cell, and the restored note) and the width the cell has to give back.
   const stillServed = (await fetch(`${imageUrl}?season=${pictures.id}`)).status;
   check(
     '…und seine Bytes werden weiter ausgeliefert: Bilder hängen nicht an der Kaskade',
@@ -4986,8 +5019,16 @@ try {
   await pic.goto(`${UI}/#/project/3`);
   await pic.reload();
   await ready(pic);
-  // One `<img>`, not two: the stale reference beside it renders as the „Bild nicht gefunden" span.
-  const afterRestore = await until(() => notePictures(pic), (p) => p.length === 1, 10_000);
+  // One `<img>`: the IMG-05 step above patched this description down to a single reference, so the
+  // stale one is long gone — the count is right for that reason and not because a second picture is
+  // failing somewhere. And the wait is on **loaded**, not on the element: a `reload()` revalidates
+  // every `<img>` over the network (see the 304 above), so „the node is there" resolves a round trip
+  // before the bytes do, and the assertion under it would read `loaded: false` on a good build.
+  const afterRestore = await until(
+    () => notePictures(pic),
+    (p) => p.length === 1 && p.every((x) => x.loaded),
+    10_000,
+  );
   check(
     '…und die Notiz zeichnet ihr Bild wieder, aus derselben URL',
     afterRestore.length === 1 &&
