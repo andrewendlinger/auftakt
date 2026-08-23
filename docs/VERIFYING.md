@@ -771,6 +771,34 @@ verified by hand, and the gate itself is written from this list.
   `.prose-md` lands at the element's center, and the demo notes put links and a linked image
   there — the click then navigates (or selects the image) and `.rte-content` never mounts, which
   reads as „the editor is broken". `getByText('Streichquartett')` opens the artist note reliably.
+- **⌘↵ saves only while the caret is still in the text, and the failure is silent.** It is the
+  editor's own keymap, so a chord pressed while focus sits on a toolbar control — or on
+  `<body>`, after a control unmounted under it — reaches nothing, the note is never committed and
+  the API keeps the old row: „the editor does not persist" for what is really a lost caret. What
+  keeps focus where it belongs is `Btn`'s `onMouseDown={(e) => e.preventDefault()}`, on every
+  toolbar button *and* on each colour swatch. Taking it off a **swatch** is worth knowing about
+  before writing a canary for it: the app recovers on its own most of the time, because `pick`
+  ends in `editor.chain().focus()` and usually wins the race against the menu unmounting — it
+  showed up in one run of three, and only as the four „was it stored" assertions. Taking it off
+  `Btn` reproduces every time. Either way, assert the stored value rather than the screen: the
+  marks all land correctly in the DOM in exactly the runs where nothing is saved.
+- **`.prose-md` is *both* surfaces, so „wait for the reader to come back" is not a wait at all.**
+  The editable node's own class list is `prose-md ${roomy}rte-content …` (`RichTextEditor`), so
+  while a note is being edited `page.locator('.prose-md').first()` **is the editor** — a
+  `waitFor()` on it after ⌘↵ is satisfied by the surface that is already on screen, and an API read
+  taken straight afterwards races a PATCH that has not been sent yet. What really says the commit
+  landed is the editor **going away**: `InlineNotes` leaves edit mode only once the write resolved
+  (RTE-01), so `.rte-root` detaching is the signal, and `gone(page.locator('.rte-root'))` is the
+  wait. **`CommentCell` is the exception and the rule inverts there**: its `onBlur` runs
+  `setEditing(false)` *before* `onCommit`, so a task comment's editor is gone while the PATCH is
+  still in flight and „the editor went away" says nothing about the write at all. For a comment,
+  poll the API for a value only the write can produce — and make that predicate discriminate,
+  because the demo seeds task 30's comment with a `tc-rot` run, so a poll for a bare `tc-` is
+  satisfied by the row as it already stands and resolves on its first read.
+  Getting this wrong is not merely a race — a re-open that runs inside the gap clicks the
+  *editor's* own paragraph, watches it re-focus, and is then unmounted underneath the next
+  keystroke, which reads as „the note cannot be opened a second time". Address the reading view as
+  `.prose-md:not(.rte-content)` when the distinction matters.
 - **Opening and closing a note stores nothing — a serializer change needs a real keystroke.**
   `InlineNotes.commit` compares the draft against the prop and returns early when they are equal,
   and the draft only moves when `RichTextEditor` fires `onChange`. So the obvious repro for „what
@@ -1185,6 +1213,15 @@ verified by hand, and the gate itself is written from this list.
   the toolbar's „Tabelle einfügen" (via its `aria-label`) as well as the link bar's „Einfügen".
   Use `{ exact: true }`. Every toolbar button carries `title` *and* `aria-label`, so accessible
   names there are substrings of one another far more often than the markup suggests.
+- **`aria-pressed` exists only on the toolbar buttons that *have* a state.** `Btn` renders
+  `aria-pressed={on}`, and `on` is simply not passed for „Einrücken", „Ausrücken",
+  „Tabelle einfügen" and „Bild einfügen" — React then omits the attribute, so
+  `getAttribute('aria-pressed')` is `null` there. A check written as „not pressed" (`!== 'true'`)
+  is therefore satisfied by a button that can never be pressed at all, and by a typo in the
+  selector. Read it only on B/I/U, the two lists, „Überschrift 1/2/3", „Zitat", „Link …",
+  „Schriftfarbe" and „Emoji" —
+  and assert **both** sides, `'false'` before the click and `'true'` after: the attribute is the
+  only thing that distinguishes „the toolbar noticed" from „the toolbar drew a dark button".
 - **The rich-text toolbar is not the same on every field.** `RichTextEditor`'s `compact` trims it
   to B/I/U, Schriftfarbe, bullet, link and emoji — headings, ordered list, quote and the table
   button are simply absent. Only the contact-row note and the task-comment cell are compact;
@@ -1199,6 +1236,35 @@ verified by hand, and the gate itself is written from this list.
   „Standard" removes the colour. There is **no backdrop**, deliberately: a click outside closes the
   menu *and* does what it was aimed at, so a script must not wait for a `.fixed.inset-0` to appear
   or expect one to swallow its next click.
+- **…which makes „the palette adds no click-away layer" an assertion, and one worth writing.**
+  Every *other* popover in the app hangs one off `document.body` — `PillSelect`,
+  `ColorSwatchPicker` (the task row's „Farbe wählen"), `SeasonSwitcher`, `SectionArranger` all
+  render `<div className="fixed inset-0 z-30">` — so „a colour picker's click-away layer is a
+  second `.fixed.inset-0`" is true of that one and false of this one, and the two are easy to
+  confuse by name. Measured on `#/project/2`: `.fixed.inset-0` counts **0 before and 0 after** the
+  palette opens, and the menu's `closest('.rte-root')` is the editor. `topDialog(page)` therefore
+  never becomes the palette and stays usable for a real dialog behind it (the Termin editor's
+  Notizen). The discriminator for the missing backdrop is not the count, though — a build that
+  added one would still close the menu on an outside click. It is that **the click also does what
+  it was aimed at**: read `document.querySelector('.rte-content').editor.state.selection.from`
+  before and after clicking into the text, and require it to have *moved*. Poll it — the DOM
+  selection reaches ProseMirror through `DOMObserver`'s ~20 ms flush, so a value read in the same
+  tick is still the old one.
+- **„Standard" needs a *selection*; a caret inside the coloured run is not enough.** `pick(null)`
+  is `unsetMark('textColor')` on whatever the selection is, and over an **empty** selection
+  ProseMirror only drops the *stored* mark — the run on screen keeps its colour, and the change
+  shows up on the next character typed instead. Everything about the state says otherwise while it
+  happens: with the caret inside `<span class="tc-blau">` the trigger previews blue and the „Blau"
+  swatch reads `aria-pressed="true"`, so a script that clicks „Standard" there and asserts the span
+  is gone fails against working code. Applying has the same shape. Select the run first (`End`,
+  then Shift+←). `unsetLink` is the counter-example and the reason this reads as a defect at first:
+  the link bar *does* `extendMarkRange` before it unsets.
+- **The trigger drops its colour preview while the menu is open, on purpose**, so read the preview
+  with the menu **closed**. A #1d4ed8 „A" on the #262626 the open trigger paints is not a preview
+  of anything, so the inner `<span>`'s class list carries `tc-…` only when `!open && color` — a
+  check that samples it with the palette up reads „no colour" whatever the code does, and passes
+  against a build that previews nothing at all. The pair is: unstyled while open, `tc-blau` once
+  it has closed on a caret sitting in a blue run.
 - **⌘⇧F is the keyboard route into it**, and it is the only way in without a mouse: every toolbar
   button is `tabIndex={-1}` (WP-43). Focus lands on the *current* colour, the arrows walk the grid
   (`useRovingFocus`), Enter applies, Escape closes — and **a second ⌘⇧F closes it too**, from
@@ -1262,6 +1328,13 @@ verified by hand, and the gate itself is written from this list.
   reads „the comment editor never opens". `scrollIntoView({ block: 'center' })` first, then
   measure. The demo's one comment worth clicking into is task 5's („… — Monitorwege."), and
   `document.querySelector('table')` is the Besetzung grid, not the task table.
+- **…and it opens on a *double* click, where a note opens on a single one.** `CommentCell` binds
+  `onDoubleClick` (plus „+ Kommentar" on an empty cell and the row's „bearbeiten" button);
+  `InlineNotes` binds `onClick`. So the recipe that opens a project description silently opens
+  nothing on a comment, and the run reads „the compact toolbar does not exist" — which is also
+  what a real `compact` regression would look like. `mouse.dblclick` at a measured point, never
+  `locator.click()` twice: two clicks at the same coordinates are a double click *and* a
+  paragraph-wide selection, which is a different starting state.
 - **A key pressed right after a click acts on the *previous* caret.** ProseMirror syncs the DOM
   selection into its own state through `DOMObserver`, which flushes on a ~20 ms timer, so
   `click(); press('Tab')` runs the keymap against the selection the editor had *before* the
@@ -1272,6 +1345,16 @@ verified by hand, and the gate itself is written from this list.
   since the autofocus itself lands a frame late. Two clicks at the same coordinates also count as
   a double-click and select the whole paragraph, so place the caret with
   `mouse.click(box.x + 12, …)` rather than clicking the same element twice.
+- **A selection built out of counted keystrokes has to be *asserted*, not assumed** — the same
+  ~20 ms flush, one step further. `End` pressed straight after a click runs against the caret the
+  editor had before it, so the arrows that follow start from the wrong place: measured on
+  `#/project/2`, click → `End` → nine `Shift+ArrowLeft` left the editor with a **five**-character
+  selection, and „Standard" then un-coloured half the run, which reads as „removing a colour is
+  broken". A mark applied to an *empty* selection is worse, because it changes nothing at all and
+  every assertion after it fails for a reason that is not the one under test. Wait for
+  `.rte-content.ProseMirror-focused`, give it a ~150 ms beat, and read the range back before
+  touching the toolbar:
+  `editor.state.doc.textBetween(selection.from, selection.to, ' ')` must equal the run.
 - **`npm run demo:seed` while the dev server is running changes nothing it can see.** The rebuild
   replaces the file; the server keeps its handle on the deleted inode and answers from it, so a
   „fresh" fixture check reads the previous run's edits. Stop the server first (sweep by process),
