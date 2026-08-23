@@ -1260,9 +1260,13 @@ try {
   // ⌘↵ / Ctrl+↵ is the editor's own save: it blurs itself, and blur is what commits (WP-49).
   // Clicking some neutral spot instead would make the case depend on what that spot is.
   await d.keyboard.press('ControlOrMeta+Enter');
-  // The commit is asynchronous — the reader comes back only once the write resolved, so waiting
-  // for it is what makes the API read below meaningful.
-  await d.locator('.prose-md').first().waitFor({ timeout: 8000 });
+  // The commit is asynchronous, and the wait has to be on the **editor going away** — the
+  // editable node's own class list carries `prose-md`, so waiting for that is satisfied by the
+  // surface already on screen and the read below races a PATCH that has not been sent yet.
+  // `InlineNotes` leaves edit mode only once the write resolved (RTE-01), which is what makes
+  // `.rte-root` detaching the honest signal here. The comment half below cannot use it:
+  // `CommentCell` unmounts first and commits afterwards.
+  await gone(d.locator('.rte-root'), 10_000);
   check(
     'a typed note is persisted on blur',
     String((await api('/projects/2')).description ?? '').includes(suffix.trim()),
@@ -3956,6 +3960,12 @@ try {
    * write resolved (RTE-01), which is what makes `.rte-root` detaching the signal — and a
    * `openNote` that runs into the gap clicks the editor's own paragraph, sees it re-focus, and is
    * then unmounted mid-case. It cost this case's first run.
+   *
+   * **`CommentCell` is the exception, so this says „the editor is gone" and not „the write
+   * landed".** Its `onBlur` runs `setEditing(false)` *before* `onCommit`, where `InlineNotes`
+   * awaits — so for a comment the detach happens while the PATCH is still in flight, and the
+   * caller has to poll the API for a value only the write can produce (AC does; a predicate the
+   * pre-write row already satisfies is a coin toss).
    */
   const saveNote = async (page, reader) => {
     await page.keyboard.press('ControlOrMeta+Enter');
@@ -4121,8 +4131,6 @@ try {
     swatches.join(' ') === PALETTE.join(' ') && (await colorMenu.getByRole('button', { name: 'Standard', exact: true }).count()) === 1,
     swatches.join(' ') || 'keine Felder',
   );
-  const glyphOpen = await glyph();
-  check('…und der Knopf lässt seine Vorschau fallen, solange sie offen steht', !/\btc-/.test(glyphOpen), glyphOpen);
 
   await clickIfThere(colorMenu.getByRole('button', { name: 'Blau', exact: true }));
   check('ein Griff in die Palette schließt sie wieder', await gone(colorMenu, 4000));
@@ -4148,6 +4156,14 @@ try {
     .evaluateAll((els) => els.filter((e) => e.getAttribute('aria-pressed') === 'true').map((e) => e.getAttribute('data-color')))
     .catch(() => []);
   check('wieder geöffnet ist genau der eine Ton markiert', active.join(' ') === 'blau', active.join(' ') || 'keiner');
+  // The other half of the preview, and it belongs **here** rather than at the first open: with no
+  // colour applied yet `color` is null, so the class is absent whatever `open` does and the
+  // assertion is satisfied by a build that previews while open as well as by one that never
+  // previews at all. The caret is in the blue run now, so the line above holds `tc-blau` on a
+  // closed trigger and this one requires it gone while the menu is up — a #1d4ed8 „A" on the
+  // #262626 the open trigger paints is not a preview of anything.
+  const glyphOpen = await glyph();
+  check('…und der Knopf lässt seine Vorschau fallen, solange sie offen steht', !/\btc-/.test(glyphOpen), glyphOpen);
 
   const caretBefore = await caretIn(t);
   const paraBox = await boxOf(t.locator('.rte-content p'));
@@ -4263,7 +4279,7 @@ try {
     (await shown(commentReader)) && (await commentReader.locator('span[class^="tc-"]').count()) === 1,
     await textOf(commentReader),
   );
-  await commented.scrollIntoViewIfNeeded();
+  await commented.scrollIntoViewIfNeeded().catch(() => {}); // a missing row must report AC, not abort the run
 
   // A *double* click: `CommentCell` binds `onDoubleClick` where `InlineNotes` binds `onClick`, so
   // the recipe that opens a description opens nothing here — and „no compact toolbar" is what a
@@ -4302,9 +4318,14 @@ try {
     (await until(() => t.locator('.rte-content span.tc-gruen').count(), (n) => n === 1, 4000)) === 1,
   );
   await saveNote(t, commentReader);
+  // `tc-gruen`, never a bare `tc-` — the demo seeds this very comment with a `tc-rot` run, so the
+  // loose predicate resolves on the *pre-write* value on its first read and the assertions below
+  // are then a coin toss against the PATCH. Doubly so here: `saveNote`'s „the editor is gone" is
+  // not a write-resolved signal for a comment, since `CommentCell.onBlur` unmounts first and
+  // commits afterwards, where `InlineNotes.commit` awaits the write before it leaves edit mode.
   const storedComment = await until(
     () => api(BOX('/tasks/30')).then((r) => String(r.comment ?? '')),
-    (c) => c.includes('tc-'),
+    (c) => c.includes('tc-gruen'),
     8000,
   );
   check('…und die Zelle speichert, was sie geschrieben hat', storedComment.includes('<span class="tc-gruen">'), storedComment);

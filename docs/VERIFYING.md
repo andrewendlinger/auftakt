@@ -789,7 +789,13 @@ verified by hand, and the gate itself is written from this list.
   taken straight afterwards races a PATCH that has not been sent yet. What really says the commit
   landed is the editor **going away**: `InlineNotes` leaves edit mode only once the write resolved
   (RTE-01), so `.rte-root` detaching is the signal, and `gone(page.locator('.rte-root'))` is the
-  wait. Getting this wrong is not merely a race — a re-open that runs inside the gap clicks the
+  wait. **`CommentCell` is the exception and the rule inverts there**: its `onBlur` runs
+  `setEditing(false)` *before* `onCommit`, so a task comment's editor is gone while the PATCH is
+  still in flight and „the editor went away" says nothing about the write at all. For a comment,
+  poll the API for a value only the write can produce — and make that predicate discriminate,
+  because the demo seeds task 30's comment with a `tc-rot` run, so a poll for a bare `tc-` is
+  satisfied by the row as it already stands and resolves on its first read.
+  Getting this wrong is not merely a race — a re-open that runs inside the gap clicks the
   *editor's* own paragraph, watches it re-focus, and is then unmounted underneath the next
   keystroke, which reads as „the note cannot be opened a second time". Address the reading view as
   `.prose-md:not(.rte-content)` when the distinction matters.
@@ -1212,7 +1218,8 @@ verified by hand, and the gate itself is written from this list.
   „Tabelle einfügen" and „Bild einfügen" — React then omits the attribute, so
   `getAttribute('aria-pressed')` is `null` there. A check written as „not pressed" (`!== 'true'`)
   is therefore satisfied by a button that can never be pressed at all, and by a typo in the
-  selector. Read it only on B/I/U, the two lists, „Zitat", „Link …", „Schriftfarbe" and „Emoji" —
+  selector. Read it only on B/I/U, the two lists, „Überschrift 1/2/3", „Zitat", „Link …",
+  „Schriftfarbe" and „Emoji" —
   and assert **both** sides, `'false'` before the click and `'true'` after: the attribute is the
   only thing that distinguishes „the toolbar noticed" from „the toolbar drew a dark button".
 - **The rich-text toolbar is not the same on every field.** `RichTextEditor`'s `compact` trims it
