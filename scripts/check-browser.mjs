@@ -5327,22 +5327,27 @@ try {
   // The box above both lists is labelled for the whole Archiv, so it has to narrow both (PGS-22) —
   // and „Keine Treffer." is a different empty state from „Noch nichts archiviert", which case AK
   // reads. Only the `<h2>` above one of them tells the two apart, hence `archiveSections`.
+  //
+  // Every `fill` here is bounded and swallowed for the reason `clickIfThere` exists: a build that
+  // has lost the box would otherwise wait out the default 30 s actionability timeout and then
+  // **throw**, taking the rest of the run down instead of letting three assertions report.
   const archSearch = arc.locator('input[placeholder="Archiv durchsuchen…"]');
-  await archSearch.fill('Probenraum');
+  const search = (text) => archSearch.fill(text, { timeout: 5000 }).catch(() => {});
+  await search('Probenraum');
   const narrowed = await until(() => archiveSections(arc), (s) => s[0]?.tasks === 1, 5000);
   check(
     'die Suche über dem Archiv verengt auch den Papierkorb (PGS-22)',
     narrowed[0]?.tasks === 1 && narrowed[1]?.trash === 0 && narrowed[1]?.empty === 'Keine Treffer.',
     JSON.stringify(narrowed),
   );
-  await archSearch.fill('Gelöschter');
+  await search('Gelöschter');
   const other = await until(() => archiveSections(arc), (s) => s[1]?.trash === 1, 5000);
   check(
     '…und in der anderen Richtung ebenso',
     other[0]?.tasks === 0 && other[0]?.empty === 'Keine Treffer.' && other[1]?.trash === 1,
     JSON.stringify(other),
   );
-  await archSearch.fill('');
+  await search('');
   const cleared = await until(() => archiveSections(arc), (s) => s[0]?.tasks === agedRows.length, 5000);
   check(
     '…geleert stehen beide Listen wieder vollständig da',
@@ -5353,14 +5358,20 @@ try {
   // What the row *can* do. The Zuordnung cell is where the task came from, and its badge is the way
   // back — to the page, not to the row: the archive edge is one-way from here, exactly as it is
   // from the search hit above.
-  await clickIfThere(arc.locator('table tbody tr').first().locator('a[href="#/project/1"]'));
-  await arc.waitForURL(/#\/project\/1$/, { timeout: 15_000 });
+  const badge = await clickIfThere(arc.locator('table tbody tr').first().locator('a[href="#/project/1"]'));
+  // Guarded, and the fallback is a plain `goto`: a build whose badge is not a link at all must take
+  // the line below red and still let the *pair* underneath report, which is about what the project
+  // page holds and not about how it was reached. An unguarded `waitForURL` throws there and ends
+  // the run — measured, in the canary for exactly this link.
+  if (badge) await arc.waitForURL(/#\/project\/1$/, { timeout: 15_000 }).catch(() => {});
+  else await arc.goto(`${UI}/#/project/1`);
+  await arc.reload();
   await ready(arc);
   const backHome = await until(() => rowIds(arc), (r) => r.length === p1Live.length, 8000);
   check(
     'die Projektmarke der Zeile führt dorthin zurück, wo die Aufgabe herkam',
-    (await arc.evaluate(() => location.hash)) === '#/project/1' && backHome.length === p1Live.length,
-    `${await arc.evaluate(() => location.hash)}, ${backHome.length} Zeilen`,
+    badge && (await arc.evaluate(() => location.hash)) === '#/project/1' && backHome.length === p1Live.length,
+    `${badge ? 'geklickt' : 'keine Verknüpfung'}, ${await arc.evaluate(() => location.hash)}, ${backHome.length} Zeilen`,
   );
   const liveShape = await arc.evaluate(
     (title) => {
