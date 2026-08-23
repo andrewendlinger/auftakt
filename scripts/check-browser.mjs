@@ -4820,10 +4820,14 @@ try {
     (n) => n.includes(`Nachtrag ${RUN}`),
     8000,
   );
+  // The reader has to be showing the **saved** note before its pictures are read: the API answering
+  // is one thing and the re-render another, and in that gap the old elements are still on screen —
+  // so a save that ate both images would be compared against the version that still had them.
+  const readerSaved = await until(() => textOf(picReader), (t) => t.includes(`Nachtrag ${RUN}`), 8000);
   const afterSave = await until(() => notePictures(pic), (p) => p.length === 2 && p.every((x) => x.loaded), 10_000);
   check(
     'nach dem Speichern zeichnet der Leser genau dieselben Bilder — Größe, Ausrichtung, Zitat, Link',
-    JSON.stringify(afterSave) === JSON.stringify(beforeSave),
+    readerSaved.includes(`Nachtrag ${RUN}`) && JSON.stringify(afterSave) === JSON.stringify(beforeSave),
     JSON.stringify(afterSave),
   );
   const tokensIn = (s) => (s.match(/\/api\/images\/[0-9a-f]{32}/g) ?? []).join(' ');
@@ -4971,9 +4975,11 @@ try {
     trashed.status === 200 && (await send('GET', PIC('/projects/3'))).status === 404,
     `HTTP ${trashed.status}`,
   );
+  const stillServed = (await fetch(`${imageUrl}?season=${pictures.id}`)).status;
   check(
     '…und seine Bytes werden weiter ausgeliefert: Bilder hängen nicht an der Kaskade',
-    (await fetch(`${imageUrl}?season=${pictures.id}`)).status === 200,
+    stillServed === 200,
+    `HTTP ${stillServed}`,
   );
   const restored = await send('POST', PIC('/deleted/project/3/restore'));
   check('das Wiederherstellen holt den Eintrag zurück', restored.status === 200 && (await send('GET', PIC('/projects/3'))).status === 200, `HTTP ${restored.status}`);
