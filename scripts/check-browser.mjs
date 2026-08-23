@@ -33,7 +33,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -3157,11 +3157,23 @@ try {
   console.log('\nV · Ankündigungen (WP-63)');
   const registryPath = join(root, '.demo', 'seasons.json');
   const readReg = () => JSON.parse(readFileSync(registryPath, 'utf8'));
-  /** Hand-install into the registry, the way the one real payload is installed. */
+  /**
+   * Hand-install into the registry, the way the one real payload is installed — and **atomically**,
+   * the way the server writes the same file (`saveRegistry`, tmp + rename).
+   *
+   * A plain `writeFileSync` truncates the file before it fills it, so there is a window in which
+   * `seasons.json` is empty on disk. The server re-reads it on *every* request, and `readRegistry`
+   * treats a parse failure as corruption: it renames the file aside and bootstraps a fresh
+   * registry holding one season. With four pages refetching against a demo whose season list is
+   * the run's whole fixture set, that window is wide enough to hit — once in six runs here, as a
+   * burst of 410s in the case *after* this one, every copied season of the run gone with it. The
+   * rename is the only part of this the filesystem promises to do in one step.
+   */
   const writeReg = (fn) => {
     const reg = readReg();
     fn(reg);
-    writeFileSync(registryPath, JSON.stringify(reg, null, 2));
+    writeFileSync(`${registryPath}.tmp`, JSON.stringify(reg, null, 2));
+    renameSync(`${registryPath}.tmp`, registryPath);
   };
   const pad = (n) => String(n).padStart(2, '0');
   const now = new Date();

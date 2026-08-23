@@ -804,6 +804,16 @@ verified by hand, and the gate itself is written from this list.
   (gitignored), the way the real one is installed:
   `announcements: [{ id, title, body, date: 'MM-DD', celebrate: true }]`. The registry is re-read
   from disk on every request, so the next `reload()` picks it up — no server restart.
+- **…but write that file the way the server does: to a `.tmp` and `renameSync` over it.** „Re-read
+  on every request" is the other half of a trap. A plain `writeFileSync` truncates before it
+  fills, so the file is briefly **empty** on disk — measured at 67 070 empty reads in 278 650
+  against a hot writer, and **0 in 380 952** through tmp + rename — and `readRegistry` treats a
+  parse failure as corruption: it renames `seasons.json` aside as `seasons.json.corrupt-<ts>` and
+  bootstraps a fresh registry holding **one** season. Confirmed end to end by truncating the file
+  under a running server: five seasons became one, with the corrupt file beside it. What that
+  looks like from a driving script is a burst of „Saison existiert nicht mehr" a case or two
+  later, with every fixture season of the run gone; `check:browser`'s `writeReg` is atomic for
+  exactly this reason, and it cost one aborted run to find out.
 - **„Was ist neu" is driven from the marker, not from a second build.** Set
   `announcementsSeen: { version: '0.9.0' }` in the same file and reload: anything in `CHANGELOG.md`
   above that version is what the card shows. Setting it to a version *above* the running one is how
