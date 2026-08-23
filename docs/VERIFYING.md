@@ -846,6 +846,87 @@ verified by hand, and the gate itself is written from this list.
   (`getImageData(…).data`, count alpha > 8) — headless Chromium runs `requestAnimationFrame` and the
   canvas is same-origin, so it is not tainted.
 
+### Der Aufgabenbaum (#112)
+
+- **The tree's handles are `tbody[data-group-id]` and `tr[data-task-id][data-depth]`.** One
+  `<tbody>` per *top-level* task, holding that task and everything folded under it, so „does this
+  subtask sit under that parent" is a containment question and not a distance in row indices. Two
+  riders. `data-depth` is a **render position**, not `parent_id` — an orphan (below) is `0` while
+  its `parent_id` is still set — and a project or artist page has a `<tbody>` before any of them:
+  the Besetzung grid, which carries neither attribute. `document.querySelectorAll('tbody')` is
+  therefore off by one against the task table, exactly as `document.querySelector('table')` is.
+- **A folded subtask has no row at all.** `buildTaskRows` simply does not emit it — nothing is
+  hidden, nothing is `display: none` — so an assertion phrased as „the row is invisible" matches
+  nothing and reads as a broken selector rather than as a fold. Count the rows inside the group,
+  or wait for `detached`.
+- **A parent carries two disclosure controls, and their titles overlap.** The gutter chevron's is
+  exactly „Einklappen"/„Ausklappen"; the counter pill beside the title is
+  „1 von 3 Unteraufgaben erledigt — einklappen" — the same word, lower case, *inside* a longer
+  string. So `[title*="klappen"]`, `getByTitle(/klappen/i)` and an accessible-name regex are all
+  ambiguous on any row that has children. Anchor the chevron on the exact title and the pill on
+  „Unteraufgaben erledigt".
+- **Read the fold from `aria-expanded` — and if you must read the rotation, read `rotate`, not
+  `transform`.** Tailwind v4 compiles `rotate-90` to the standalone `rotate` property, so
+  `getComputedStyle(chevron).transform` is `none` in **both** states and „the chevron turned"
+  fails against working code; `rotate` is `90deg` open and `none` folded. It is also a 150 ms
+  `transition-transform` (which in v4 covers `rotate`), and `reducedMotion: 'reduce'` touches
+  animations, not transitions — so a value sampled straight after the click is mid-flight and
+  neither state. Both `TreeGutterCell` chevrons (`parent` and the small `branch` one) carry
+  `aria-expanded`, which is the handle that needs no polling.
+- **Folding writes nothing, and that is assertable.** `collapsed` is `useState` inside
+  `TaskTable`, so the toggle issues **no request at all** and does not survive a reload — „the
+  fold persisted" fails against working code, and „the fold happened" must be read from the DOM,
+  never from the API. Watching `page.on('request')` across the click is the honest form of the
+  first half.
+- **The counter pill's progress is a background image, and only while folded.** Expanded it
+  recedes to `backgroundImage: none`; folded it carries the ratio as its own fill
+  (`linear-gradient(to right, rgb(229, 229, 229) 33%, rgb(245, 245, 245) 33%)` for „1/3"). It is
+  the one place the fold changes something other than the row count, so a case that only counts
+  rows passes against a pill that has stopped standing in for anything.
+- **„It renders flat" is the absence of the elbow, and it needs the pair to mean anything.** The
+  gutter's connectors are inline-styled `<span>`s in the row's first `<td>`: a child row has a
+  1 px rail at `left: 36px` (`span.w-px`) *and* a 12 px elbow (`span.h-px`), a parent has the rail
+  only, and a leaf — or an orphan — has neither. Asserting „no elbow on this row" alone passes on
+  a build that draws no connectors anywhere; assert an elbow on a real child of the same table in
+  the same breath.
+- **The orphan does not survive a season copy.** `createSeason` nulls a `parent_id` whose parent
+  stayed behind (`db.ts`, „a subtask whose parent stayed behind becomes a root task, not a
+  dangling FK"), and the soft-deleted parent is dropped — so the demo's planted orphan (task 12
+  under the trashed task 11) exists **only in the demo's own season**, and a case that takes a
+  copy first is asserting against a plain root task that looks identical on screen. To get one
+  inside a copy, make it the way the app does: delete a parent and answer „Nur diese Aufgabe".
+- **The delete dialog's count comes from a *second* query, which lands after the page.**
+  `requestDelete` prefers `descendantsOf(useAllTasks())` — `scope: 'all'`, so it sees archived
+  children the table does not — and falls back to the one-level live map until that query
+  resolves. The count is frozen into the dialog's state at click time, so a 🗑 clicked too early
+  says „3 Unteraufgaben" for ever and reads exactly like TTU-05 back again. Wait for
+  `**/tasks?scope=all` (attach the `waitForResponse` before the navigation) rather than for
+  `data-app-ready`, which says nothing about a query a table mounts for itself.
+- **The subtask composer stays open after Enter.** It is the „add several" affordance, so a script
+  that waits for `input[placeholder^="Neue Unteraufgabe"]` to disappear as its proof of creation
+  waits for ever; wait for the new row instead. It closes on Escape and on a blur with an empty
+  box — and clicking „Unteraufgabe hinzufügen" on a *folded* parent unfolds it first
+  (`startSubtask`), so the composer is never opened into a group nobody can see.
+- **…and the new row lands a query after the API knows about it.** `onAdded` invalidates and the
+  table re-renders on the refetch, so a `treeRows`-style read taken the moment
+  `GET /tasks?project_id=…` first returns the child shows the group *without* it — and the very
+  next line, reading the same DOM for its failure detail, shows the counter already at „0/1". The
+  two disagreeing inside one `check()` is the tell; wait for the row, then assert.
+- **„Unteraufgabe hinzufügen" is keyed on `parent_id`, „Verschieben" on the render depth**, and
+  the orphan is the row where those two disagree: it has the move button (TTU-30 — moving it is
+  how the user repairs it) and not the add button (TTU-15 — offering it there is how a
+  three-level tree gets built). Asserting one without the other misses whichever way the test was
+  swapped.
+- **Completing a child sinks it *inside* its group; completing the parent moves the whole
+  `<tbody>`.** `sortTasks` runs once over the top-level list and once per sibling list, so a done
+  subtask stays under its parent (it does not leave for the bottom of the table) while a done
+  parent takes its children with it. Read the group's rows and the order of the `data-group-id`
+  attributes — never a row index into the table, which both halves change.
+- **Neither direction cascades.** A done child leaves the parent's `status` alone and a done
+  parent leaves its children's alone; the counter pill is the only thing that moves. Assert both
+  server-side, because on screen a greyed parent above three greyed children is what a cascade
+  would look like too.
+
 ## Print and PDF
 
 - **`page.pdf()`'s default `printBackground: false` *is* the SHL-11 repro** — and a screenshot can
@@ -1006,6 +1087,18 @@ verified by hand, and the gate itself is written from this list.
 - **Under the default `[status]`, any two open rows of the same status are draggable.** The tuned
   same-rank block in `demo.ts` (tasks 41–45) is no longer the only place a drop is accepted; task 45
   is the odd rank there, and it is odd by *status* now, not by priority.
+- **The subtask trees, and which one answers which question.** The showcase is task 1
+  („Instrumente – Anmietung und Transport", `#/project/1`): three *live* children — 2, 3 (coloured)
+  and 4 (done three days ago, so still in the live list) — which is why its counter reads **„1/3"**,
+  plus an **archived** fourth (task 53, done past `ARCHIVE_AFTER_DAYS`) that the table does not
+  render. That gap is the fixture: its delete dialog says „4 Unteraufgaben" over a group of three,
+  which is TTU-05 asserted rather than argued, and both numbers change together if a child is added
+  here. Task 31 (`#/project/8`) is the childless row to grow a *first* subtask on — a leaf with no
+  chevron and no counter until then — and task 32 beside it already has one (33), which is the
+  folded-parent case. Task 12 („Verwaiste Unteraufgabe", `#/project/5`) is the orphan: its parent
+  (task 11) is soft-deleted, so it renders at depth 0 with no connector while `parent_id` still
+  says 11, and the pair survives every purge (SDL-01) — the Papierkorb row for the parent says so,
+  „bleibt, bis abhängige Einträge entfernt sind".
 - **The dashboard's „Nächste Termine" has three blocks, and which one a row is in is the
   assertion**: event 8 under „Datum offen", then 2/5/1/10/11 inside the 14 days, then 4/3/7 under
   „Danach". Event 10 is the one to check after touching the split: it starts at 23:00 on day 14
