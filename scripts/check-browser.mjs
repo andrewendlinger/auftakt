@@ -3939,9 +3939,11 @@ try {
     const reader = page.locator('.prose-md:not(.rte-content)').first();
     if (!(await shown(reader, 8000))) return false;
     await clickIfThere(reader.locator('p'));
-    const open = await shown(page.locator('.rte-content.ProseMirror-focused'), 8000);
+    // Not `open`: that is this file's „open a page" helper, and shadowing it here would be a trap
+    // of its own the next time somebody needs a second page inside this block.
+    const editing = await shown(page.locator('.rte-content.ProseMirror-focused'), 8000);
     await sleep(150); // TipTap's focus lands a frame late, and `End` would run against the old caret
-    return open;
+    return editing;
   };
 
   /**
@@ -3976,8 +3978,8 @@ try {
   // is also true of a page whose card has not rendered yet, which is the emptiest possible pass.
   check(
     'im Lesezustand steht die Notiz da und keine Leiste darüber',
-    (await shown(noteReader)) && (await toolbarBtn(t, 'Fett').count()) === 0,
-    PLAIN_NOTE,
+    PLAIN_NOTE.length > 0 && (await shown(noteReader)) && (await toolbarBtn(t, 'Fett').count()) === 0,
+    PLAIN_NOTE || 'leere Notiz',
   );
 
   await openNote(t);
