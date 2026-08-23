@@ -4868,19 +4868,32 @@ try {
     JSON.stringify(mixed.drawn),
   );
 
-  // …and the *next* note gets its picture. React reuses this component across notes — same route,
-  // same position in the tree, and `Markdown`'s `useMemo` rebuilds the elements without
-  // remounting — so a boolean „it failed" latched on the first 404 drew „Bild nicht gefunden" over
-  // the next good picture until the window was reloaded (IMG-05). Which is why the note is left
-  // through a **hash navigation**: a `reload()` remounts everything and could never see it.
-  await send('PATCH', PIC('/projects/4'), { description: `![Anderer Plan](/api/images/${token}?w=128)` });
-  await pic.evaluate(() => {
-    location.hash = '#/project/4';
-  });
-  await pic.waitForURL(/#\/project\/4$/, { timeout: 8000 });
-  const next = await until(noteState, (m) => m.drawn.length + m.missing.length > 0, 8000);
+  // …and the *next* note in that place gets its picture. React reuses this component — same route,
+  // same position in the tree, `Markdown`'s `useMemo` rebuilding the elements without remounting —
+  // so a boolean „it failed" latched on the first 404 drew „Bild nicht gefunden" over the next good
+  // picture until the window was reloaded (IMG-05).
+  //
+  // **A navigation cannot show that and a reload certainly cannot**: both remount the note, the
+  // second one through the loading state a fetch for another row goes through. Measured against the
+  // reverted fix, a hash navigation to a second project draws the picture perfectly while this does
+  // not. So the note is replaced *under* the component: the row is patched out of band and the
+  // window is asked to refresh itself, which keeps the tree standing.
+  //
+  // Focus is dispatched from inside the poll rather than once: `staleTime` is 5 s, so a focus
+  // sooner than that refetches nothing at all, and the wait then ends as early as it can instead of
+  // on a fixed sleep. The predicate counts *nodes* — the note above renders two, a picture and a
+  // message, and the one below renders one — so it cannot resolve on the pre-write note.
+  await send('PATCH', PIC('/projects/3'), { description: `![Anderer Plan](/api/images/${token}?w=128)` });
+  const next = await until(
+    async () => {
+      await pic.evaluate(() => window.dispatchEvent(new Event('focus'))).catch(() => {});
+      return noteState();
+    },
+    (m) => m.drawn.length + m.missing.length === 1,
+    12_000,
+  );
   check(
-    '…und die nächste Notiz zeigt ihres, statt die Meldung zu erben (IMG-05)',
+    '…und die nächste Notiz an derselben Stelle zeigt ihres, statt die Meldung zu erben (IMG-05)',
     next.drawn.length === 1 && next.drawn[0] === true && next.missing.length === 0,
     JSON.stringify(next),
   );

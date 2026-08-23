@@ -1031,6 +1031,17 @@ playwright-core 1.62.1.
   **not a section** either — it lives in the header `Card` (`ArtistPage.tsx`, „the one general
   free-text field lives inside the header"), so there is no `[data-section="notizen"]` and a
   selector built on one matches nothing. It is the *first* `.prose-md:not(.rte-content)` on the page.
+- **„Bild nicht gefunden" latching onto the *next* note (IMG-05) is not reachable through a
+  navigation.** The bug needs one `MdImage` instance to render two different notes, and every route
+  change remounts the note — the fetch for the other row goes through a loading state, so the
+  component the latch lives on is gone before the second note arrives. Measured against the reverted
+  fix: a hash navigation from a note whose picture 404s to one whose picture is fine draws that
+  picture perfectly, and a `reload()` even more so. What reproduces it every time is replacing the
+  note **under** the component: patch the row out of band, then make the window refresh itself
+  (`window.dispatchEvent(new Event('focus'))`) — react-query keeps the previous data during a
+  background refetch, so nothing unmounts and `Markdown`'s `useMemo` hands the same instance a new
+  `src`. Mind `staleTime: 5_000`: a focus sooner than that refetches nothing, which reads as „the
+  latch is fixed".
 - **Opening and saving a note rewrites a raw `<img>` into the Markdown spelling, and that is not a
   loss.** Measured on artist 1: `> <img src="…" alt="Saalplan aus dem Export" width="120"
   align="right">` comes back as `> ![Saalplan aus dem Export](…?w=120&a=right)` (and the quote line
