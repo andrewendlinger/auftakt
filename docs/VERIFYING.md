@@ -959,6 +959,100 @@ verified by hand, and the gate itself is written from this list.
   server-side, because on screen a greyed parent above three greyed children is what a cascade
   would look like too.
 
+### Bilder im Text (#108)
+
+The entry under „Before believing any result" above still holds — a paste *is* a `parseHTML` rule,
+so `check-markdown.ts` reaches the gate's decision table without a browser, and nothing below
+re-asserts it. What only a browser can answer is which HTML the **clipboard** hands over in the
+first place, and the answer differs per route. All of it is measured on Chromium 1234 /
+playwright-core 1.62.1.
+
+- **`navigator.clipboard.write` absolutizes a relative `src`, so it cannot express „our own
+  reference is on the clipboard".** Write
+  `<img src="/api/images/<token>?season=1">` as a `text/html` `ClipboardItem`, press ⌘V, and what
+  arrives in the paste event is `src="http://localhost:5317/api/images/<token>?season=1"` — the
+  fragment is round-tripped through the system clipboard, which resolves every URL against the
+  document. `isImageRef` tests `startsWith('/api/images/')`, so the gate refuses it and the picture
+  is dropped while the surrounding text lands: from a driving script that reads exactly like „the
+  paste gate rejects our own images". It does not. Use this recipe for the **foreign** half only,
+  where the URL is absolute anyway (`https:`, `data:`, `file:`) and the rewrite changes nothing.
+- **A real in-editor ⌘C does *not* absolutize, which is what makes the „copy a picture inside a
+  note" case drivable.** ProseMirror writes the clipboard synchronously from the `copy` event
+  (`clipboardData.setData`), and that path is not the async API's — the HTML keeps
+  `src="/api/images/<token>?season=1"` verbatim, `getAttrs` accepts it, and `canonicalImageSrc`
+  strips the pin on the way into the document. The recipe: select the image *node*
+  (`editor.commands.setNodeSelection(pos)` — walk `doc.descendants` for `node.type.name ===
+  'image'`), ⌘C, collapse the caret, ⌘V.
+- **…and „collapse the caret" is the step that is silently missing.** ⌘A then ⌘C then `End` leaves
+  the selection where it was — `End` runs against the pre-⌘A caret through `DOMObserver`'s ~20 ms
+  flush — so the paste *replaces* the whole note with itself: the image count does not move, which
+  reads as „the paste inserted nothing" on a build that pasted perfectly. `editor.commands.focus('end')`
+  is the honest collapse, and the assertion is a count that went **up**.
+- **A synthetic `ClipboardEvent` reaches ProseMirror, and it does not absolutize either.**
+  `new ClipboardEvent('paste', { clipboardData: new DataTransfer(), bubbles, cancelable })`
+  dispatched on `.rte-content` is handled (`editHandlers.paste` does not test `isTrusted`), so a
+  relative `<img src>` *is* admitted this way. That makes it the wrong instrument for a rule the
+  real clipboard would never present: it can only ever prove what `insertContent` already proves in
+  jsdom. Prefer the two routes above; if you use it, say in the assertion that it is synthetic.
+- **A pasted screenshot inserts nothing and uploads nothing, and that is the shipped promise**
+  („Paste and drag-and-drop are deliberately not wired", DECISIONS.md). Both flavours behave the
+  same — `ClipboardItem({ 'image/png': blob })` through the real clipboard, and a `DataTransfer`
+  holding a `File` — and neither produces a `POST /api/images`. Assert the request count beside the
+  image count: „nothing was inserted" is also true of a paste that never arrived.
+- **A *dropped* file is refused and the event says so, but only the pair proves it.**
+  Dispatching `dragenter`/`dragover`/`drop` with a `DataTransfer` on `.rte-content` gives
+  `dispatchEvent → true` (nobody called `preventDefault`) for a file and `false` for HTML
+  ProseMirror handles — and a drop carrying our own `<img>` as `text/html` **is** inserted. So the
+  control for „a dropped screenshot lands nothing" is a dropped reference landing something, in the
+  same case; without it the assertion passes on a drop that never reached the editor at all. (This
+  is not the internal ⠿ drag, which is documented above as not delivering a `drop` at all.)
+- **The season pin is what finds the picture, and only a *fresh* token can show that.** An image
+  POSTed into a fixture season answers **404** on `/api/images/<token>` and **200** on
+  `/api/images/<token>?season=<id>`; a wrong season is 404 as well. The demo's own hall plan cannot
+  test any of this — it exists in the demo season *and* in every copy, so a request with no pin
+  resolves the registry default and finds it anyway. Upload one for the case.
+- **Read the bytes back as pixels, not as a status code.** The served image is same-origin (Vite
+  proxies `/api`), so a canvas drawn from it is not tainted: `img.decode()`, `drawImage`,
+  `getImageData`. That is also the only way to see the **white fill** — JPEG has no alpha, so a
+  transparent source must come back white and not black (CCL-10), and a 200 with the right byte
+  count says nothing about it. Build the source file in the page as well
+  (`canvas.toDataURL('image/png')` handed back to Node as a `Buffer`): no dependency, no binary in
+  the repository, and the dimensions are whatever the case needs — 1400×900 makes the client's
+  1200 px resize do something visible.
+- **Drive „Bild einfügen" through the button and intercept the panel**, never by feeding the hidden
+  `<input type="file">`: the button sets `pickingImage` *before* it opens the panel, which is what
+  stops the editor's blur guard committing the note mid-insert (RTE-02), and going around it tests a
+  path the user does not have. `page.waitForEvent('filechooser')` alongside the click, then
+  `chooser.setFiles({ name, mimeType, buffer })`.
+- **A conditional request needs `'cache-control': ''`** — the undici entry at the top of this file,
+  and `/api/images/:token` is the route it was found on. Without it a 304 reads as a 200.
+- **`.prose-md img` on an artist page is not the note's image.** Every project card renders its own
+  description, so `#/artist/1` has four `<img>` page-wide where the note has two. The artist note is
+  **not a section** either — it lives in the header `Card` (`ArtistPage.tsx`, „the one general
+  free-text field lives inside the header"), so there is no `[data-section="notizen"]` and a
+  selector built on one matches nothing. It is the *first* `.prose-md:not(.rte-content)` on the page.
+- **„Bild nicht gefunden" latching onto the *next* note (IMG-05) is not reachable through a
+  navigation.** The bug needs one `MdImage` instance to render two different notes, and every route
+  change remounts the note — the fetch for the other row goes through a loading state, so the
+  component the latch lives on is gone before the second note arrives. Measured against the reverted
+  fix: a hash navigation from a note whose picture 404s to one whose picture is fine draws that
+  picture perfectly, and a `reload()` even more so. What reproduces it every time is replacing the
+  note **under** the component: patch the row out of band, then make the window refresh itself
+  (`window.dispatchEvent(new Event('focus'))`) — react-query keeps the previous data during a
+  background refetch, so nothing unmounts and `Markdown`'s `useMemo` hands the same instance a new
+  `src`. Mind `staleTime: 5_000`: a focus sooner than that refetches nothing, which reads as „the
+  latch is fixed".
+- **Opening and saving a note rewrites a raw `<img>` into the Markdown spelling, and that is not a
+  loss.** Measured on artist 1: `> <img src="…" alt="Saalplan aus dem Export" width="120"
+  align="right">` comes back as `> ![Saalplan aus dem Export](…?w=120&a=right)` (and the quote line
+  above it gains two trailing spaces). `check:markdown` guarantees **render**-equality, not
+  byte-identity, and `rehypeImgQuery` turns the query back into `width`/`align` attributes — so the
+  reader draws the identical picture, 120 px, floated right, still inside the quote. Assert the
+  *picture list* across a save (`src`, `width`, `align`, computed `float`, „is it in a link", „is it
+  in a quote"), never the stored string; a diff of the stored text reports „the editor rewrote my
+  note" against working code. What must be asserted on the stored side is narrower and does hold
+  byte-for-byte: the same tokens, the same number of them, and **no `?season=`**.
+
 ## Print and PDF
 
 - **`page.pdf()`'s default `printBackground: false` *is* the SHL-11 repro** — and a screenshot can
