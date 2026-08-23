@@ -3856,10 +3856,43 @@ try {
   const BLAU = 'rgb(29, 78, 216)';
   const TUERKIS = 'rgb(15, 118, 110)';
 
+  /**
+   * Click something a broken build may simply not have.
+   *
+   * Every button below is one a reverted fix can delete, and an unguarded `click()` on a locator
+   * that matches nothing waits out its timeout and then **throws** — which takes the whole run
+   * down at the first red instead of letting the assertions after it report. A canary has to go
+   * red by assertion, and a canary that removes one button should not hide what the other
+   * fourteen still do.
+   */
+  const clickIfThere = (locator, timeout = 5000) =>
+    locator
+      .first()
+      .click({ timeout })
+      .then(() => true)
+      .catch(() => false);
+
+  /** A box, or `null` — `boundingBox()` on a locator that matches nothing throws like the rest. */
+  const boxOf = (locator) =>
+    locator
+      .first()
+      .boundingBox()
+      .catch(() => null);
+
   const toolbarBtn = (page, title) => page.locator(`.rte-root button[title="${title}"]`);
   /** The trigger's tooltip carries the platform's own spelling of the chord — anchor with `^=`. */
   const colorTrigger = (page) => page.locator('.rte-root button[title^="Schriftfarbe"]');
   const palette = (page) => page.locator('[role="dialog"][aria-label="Schriftfarbe"]');
+  /**
+   * Leave nothing open behind a failed assertion. The palette has no backdrop, so an open one does
+   * not block a click — but it does own the ⌘⇧F chord and it does sit over the text, and a case
+   * that fails halfway through a pick would otherwise hand the next one a menu it never opened.
+   */
+  const closePalette = async (page) => {
+    if ((await palette(page).count()) === 0) return;
+    await page.keyboard.press('Escape');
+    await gone(palette(page), 4000);
+  };
 
   /**
    * The editor's own selection, straight off the view's DOM node.
@@ -3904,10 +3937,11 @@ try {
    */
   const openNote = async (page) => {
     const reader = page.locator('.prose-md:not(.rte-content)').first();
-    await reader.waitFor({ timeout: 8000 });
-    await reader.locator('p').first().click();
-    await page.locator('.rte-content.ProseMirror-focused').waitFor({ timeout: 8000 });
+    if (!(await shown(reader, 8000))) return false;
+    await clickIfThere(reader.locator('p'));
+    const open = await shown(page.locator('.rte-content.ProseMirror-focused'), 8000);
     await sleep(150); // TipTap's focus lands a frame late, and `End` would run against the old caret
+    return open;
   };
 
   /**
@@ -3924,7 +3958,7 @@ try {
   const saveNote = async (page, reader) => {
     await page.keyboard.press('ControlOrMeta+Enter');
     await gone(page.locator('.rte-root'), 10_000);
-    await reader.first().waitFor({ timeout: 8000 });
+    return shown(reader, 8000);
   };
 
   // ======================================================================== AA · marks
@@ -3964,7 +3998,7 @@ try {
   /** `aria-pressed` is the only thing that says „the toolbar noticed", so it is read on both sides. */
   const pressed = (title) => toolbarBtn(t, title).getAttribute('aria-pressed').catch(() => null);
   check('„Fett“ meldet sich vorher als nicht gesetzt', (await pressed('Fett')) === 'false', String(await pressed('Fett')));
-  await toolbarBtn(t, 'Fett').click();
+  await clickIfThere(toolbarBtn(t, 'Fett'));
   const boldOn = await until(() => pressed('Fett'), (v) => v === 'true', 4000);
   check('…und nach dem Klick als gesetzt', boldOn === 'true', String(boldOn));
 
@@ -3977,8 +4011,8 @@ try {
     `${await strong.count()}× fett: „${await textOf(strong)}“`,
   );
 
-  await toolbarBtn(t, 'Unterstrichen').click();
-  await toolbarBtn(t, 'Kursiv').click();
+  await clickIfThere(toolbarBtn(t, 'Unterstrichen'));
+  await clickIfThere(toolbarBtn(t, 'Kursiv'));
   const italicOn = await until(() => pressed('Kursiv'), (v) => v === 'true', 4000);
   check(
     'drei Auszeichnungen stapeln sich auf demselben Lauf',
@@ -3986,7 +4020,7 @@ try {
     `${await em.count()}× kursiv, ${await underlined.count()}× unterstrichen`,
   );
 
-  await toolbarBtn(t, 'Kursiv').click();
+  await clickIfThere(toolbarBtn(t, 'Kursiv'));
   const italicOff = await until(() => pressed('Kursiv'), (v) => v === 'false', 4000);
   check('ein zweiter Klick nimmt genau eine davon zurück', italicOff === 'false' && (await em.count()) === 0, `${italicOff}, ${await em.count()}× kursiv`);
   check(
@@ -4017,7 +4051,7 @@ try {
   check('der gespeicherte Lauf lässt sich wieder auswählen', reselected?.text === MARK_WORD, reselected ? `„${reselected.text}“` : 'keine Auswahl');
   const boldRead = await until(() => pressed('Fett'), (v) => v === 'true', 4000);
   check('…und die Leiste liest ab, was auf ihm liegt', boldRead === 'true', String(boldRead));
-  await toolbarBtn(t, 'Fett').click();
+  await clickIfThere(toolbarBtn(t, 'Fett'));
   await saveNote(t, noteReader);
   const clearedMarks = await until(
     () => api(BOX('/projects/2')).then((p) => String(p.description ?? '')),
@@ -4054,7 +4088,7 @@ try {
     String(await trigger.getAttribute('aria-expanded').catch(() => null)),
   );
 
-  await trigger.click();
+  await clickIfThere(trigger);
   const openedByClick = await shown(colorMenu, 4000);
   check(
     'der Schriftfarben-Knopf öffnet sie',
@@ -4082,14 +4116,15 @@ try {
     .catch(() => []);
   check(
     'die Palette ist geschlossen: acht Töne und „Standard“',
-    swatches.join(' ') === PALETTE.join(' ') && (await colorMenu.getByRole('button', { name: 'Standard' }).count()) === 1,
+    swatches.join(' ') === PALETTE.join(' ') && (await colorMenu.getByRole('button', { name: 'Standard', exact: true }).count()) === 1,
     swatches.join(' ') || 'keine Felder',
   );
   const glyphOpen = await glyph();
   check('…und der Knopf lässt seine Vorschau fallen, solange sie offen steht', !/\btc-/.test(glyphOpen), glyphOpen);
 
-  await colorMenu.getByRole('button', { name: 'Blau' }).click();
+  await clickIfThere(colorMenu.getByRole('button', { name: 'Blau', exact: true }));
   check('ein Griff in die Palette schließt sie wieder', await gone(colorMenu, 4000));
+  await closePalette(t);
   const blau = t.locator('.rte-content span.tc-blau');
   const paintedColor = await blau.first().evaluate((el) => getComputedStyle(el).color).catch(() => 'kein Lauf');
   const plainColor = await t.locator('.rte-content p').first().evaluate((el) => getComputedStyle(el).color).catch(() => 'kein Absatz');
@@ -4104,7 +4139,7 @@ try {
   const glyphShut = await until(glyph, (c) => /\btc-/.test(c), 4000);
   check('der Knopf zeigt danach die Farbe, in der der Cursor steht', /\btc-blau\b/.test(glyphShut), glyphShut);
 
-  await trigger.click();
+  await clickIfThere(trigger);
   await shown(colorMenu, 4000);
   const active = await colorMenu
     .locator('[data-roving]')
@@ -4113,8 +4148,8 @@ try {
   check('wieder geöffnet ist genau der eine Ton markiert', active.join(' ') === 'blau', active.join(' ') || 'keiner');
 
   const caretBefore = await caretIn(t);
-  const paraBox = await t.locator('.rte-content p').first().boundingBox();
-  await t.mouse.click(paraBox.x + 12, paraBox.y + paraBox.height / 2);
+  const paraBox = await boxOf(t.locator('.rte-content p'));
+  if (paraBox) await t.mouse.click(paraBox.x + 12, paraBox.y + paraBox.height / 2);
   check('ein Klick in den Text schließt die Palette', await gone(colorMenu, 4000));
   // …and the same click *lands*, which is the whole reason there is no backdrop — and the only
   // thing that tells the two designs apart, since a swallowed click closes the colorMenu just as well.
@@ -4127,6 +4162,11 @@ try {
   check('…während die Notiz im Bearbeitungsmodus bleibt', (await t.locator('.rte-content').count()) === 1);
   const glyphMoved = await until(glyph, (c) => !/\btc-/.test(c), 4000);
   check('…was der Knopf mitbekommt: dort, wo er jetzt steht, ist keine Farbe', !/\btc-/.test(glyphMoved), glyphMoved);
+
+  // Whatever the click-away did, the chord below has to start from a closed palette — otherwise
+  // a broken click-away turns „⌘⇧F opens it“ into „⌘⇧F closes it“ and the case reports the
+  // wrong defect.
+  await closePalette(t);
 
   // The keyboard route, and why it exists at all: every toolbar button is `tabIndex={-1}` (WP-43),
   // so this is the only way in without a mouse. It used to reach `GlobalSearch`'s ⌘F listener
@@ -4147,6 +4187,7 @@ try {
       .then(() => true)
       .catch(() => false),
   );
+  await closePalette(t);
 
   // „Standard" needs the run *selected*: over an empty selection `unsetMark` only drops the stored
   // mark and the span on screen keeps its colour — while the trigger previews it and the swatch
@@ -4157,20 +4198,22 @@ try {
     toClear?.text === COLOR_WORD && (await blau.count()) === 1,
     `„${toClear?.text ?? ''}“, ${await blau.count()}× gefärbt`,
   );
-  await trigger.click();
+  await clickIfThere(trigger);
   await shown(colorMenu, 4000);
-  await colorMenu.getByRole('button', { name: 'Standard' }).click();
+  await clickIfThere(colorMenu.getByRole('button', { name: 'Standard', exact: true }));
   await gone(colorMenu, 4000);
+  await closePalette(t);
   check('„Standard“ nimmt die Farbe zurück', (await until(() => blau.count(), (n) => n === 0, 4000)) === 0);
   check('…und lässt den Text stehen, statt ihn mitzunehmen', (await textOf(t.locator('.rte-content p'))).includes(COLOR_WORD));
 
   // Both directions through the save, because a colour that lives only until the note is closed
   // is not a colour the customer has.
   await selectTail(t, COLOR_WORD.length);
-  await trigger.click();
+  await clickIfThere(trigger);
   await shown(colorMenu, 4000);
-  await colorMenu.getByRole('button', { name: 'Türkis' }).click();
+  await clickIfThere(colorMenu.getByRole('button', { name: 'Türkis', exact: true }));
   await gone(colorMenu, 4000);
+  await closePalette(t);
   await saveNote(t, noteReader);
   const storedColor = await until(
     () => api(BOX('/projects/2')).then((p) => String(p.description ?? '')),
@@ -4186,10 +4229,11 @@ try {
 
   await openNote(t);
   await selectTail(t, COLOR_WORD.length);
-  await trigger.click();
+  await clickIfThere(trigger);
   await shown(colorMenu, 4000);
-  await colorMenu.getByRole('button', { name: 'Standard' }).click();
+  await clickIfThere(colorMenu.getByRole('button', { name: 'Standard', exact: true }));
   await gone(colorMenu, 4000);
+  await closePalette(t);
   await saveNote(t, noteReader);
   const clearedColor = await until(
     () => api(BOX('/projects/2')).then((p) => String(p.description ?? '')),
@@ -4222,8 +4266,8 @@ try {
   // A *double* click: `CommentCell` binds `onDoubleClick` where `InlineNotes` binds `onClick`, so
   // the recipe that opens a description opens nothing here — and „no compact toolbar" is what a
   // real `compact` regression would look like too.
-  const commentBox = await commentReader.boundingBox();
-  await t.mouse.dblclick(commentBox.x + 20, commentBox.y + 8);
+  const commentBox = await boxOf(commentReader);
+  if (commentBox) await t.mouse.dblclick(commentBox.x + 20, commentBox.y + 8);
   const compactOpen = await shown(t.locator('.rte-content.ProseMirror-focused'), 8000);
   const bar = await t
     .locator('.rte-root button[title]')
@@ -4246,10 +4290,11 @@ try {
   await t.keyboard.press('ControlOrMeta+a');
   const wholeComment = await until(() => caretIn(t), (s) => !!s && s.text.includes('Absprache'), 4000);
   check('der ganze Kommentar ist ausgewählt', !!wholeComment && wholeComment.text.includes('Reihe 1'), wholeComment?.text ?? 'keine Auswahl');
-  await colorTrigger(t).click();
+  await clickIfThere(colorTrigger(t));
   await shown(palette(t), 4000);
-  await palette(t).getByRole('button', { name: 'Grün' }).click();
+  await clickIfThere(palette(t).getByRole('button', { name: 'Grün', exact: true }));
   await gone(palette(t), 4000);
+  await closePalette(t);
   check(
     'auch die schmale Leiste färbt',
     (await until(() => t.locator('.rte-content span.tc-gruen').count(), (n) => n === 1, 4000)) === 1,
