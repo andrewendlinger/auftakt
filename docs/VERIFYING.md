@@ -1053,6 +1053,80 @@ playwright-core 1.62.1.
   note" against working code. What must be asserted on the stored side is narrower and does hold
   byte-for-byte: the same tokens, the same number of them, and **no `?season=`**.
 
+### Das Archiv (#113)
+
+Two different mechanisms share `#/archiv`, and only one of them is this section's. The **age-based
+task archive** is a task in the „erledigt" category whose `erledigt_am` has aged past
+`ARCHIVE_AFTER_DAYS`: it leaves every live list and appears in the upper table. The **Papierkorb**
+below it — soft-deleted records, their dependency counts, „Wiederherstellen" and „Endgültig
+löschen" — is unrelated, and its traps are in „Playwright traps" and „Fixture facts" above.
+
+- **The archived-task rows carry no `data-task-id`, and there is no `tbody[data-group-id]`.** The
+  upper table is a plain `<table>` + `.map()` in `ArchivePage`, not `TaskTable`, so every handle
+  from „Der Aufgabenbaum" matches nothing here — which reads as „the archive is empty". Address
+  the rows as `table tbody tr` and their four cells by `td` index (Aufgabe · Zuordnung · Erledigt
+  am · Kommentar). It is also the page's **only** `<table>`, which makes
+  `document.querySelectorAll('table').length` the honest „is the list on screen" reading: the
+  `EmptyState` replaces the whole table, so a filtered-to-nothing archive is 0 tables and not 0
+  rows.
+- **An archived row has no control at all** — no `<button>`, no `<input>`, no `div.cursor-text`,
+  no `[contenteditable]` — so „it cannot be edited from here" also passes on a table that never
+  rendered. Pair it; both pairs are within reach. The Papierkorb rows on the *same page* carry two
+  buttons each, and a live done row on `#/project/1` carries eight plus a comment box. Assert the
+  *behaviour* beside the markup: a click on the title and a double click on the Kommentar cell
+  mount nothing, because a missing button is not a missing handler.
+- **Three of the four cells are struck and the Zuordnung cell deliberately is not** (`ArchivePage`
+  — it is where the row came from and how to get back to it). The **grey** is inherited by all
+  four, the links included, so „this cell is not treated as done" has to be read off
+  `textDecorationLine`; the colour is `oklch(0.708 0 none)` everywhere in the row and says nothing.
+- **The Zitat inside an archived comment is the one node that paints a colour of its own**, exactly
+  as in the task table: `.prose-md blockquote` sets `#6b7280` and `.prose-md--done` hands it back
+  to the row. That makes the assertion self-pairing with no second fixture — the quote's computed
+  colour must equal the row's **and** differ from `rgb(107, 114, 128)`, which is what it would be
+  without the modifier.
+- **The retention number in „Erledigte Aufgaben (älter als 30 Tage)" comes from the server**
+  (`/api/settings.archive_after_days`, PGS-24), and so does the empty state's „… wandern 30 Tage
+  nach Abschluss hierher". Build the expectation from that field: a hardcoded „30" passes against
+  a build that has stopped reading it. Both headings are `<h2>` and CSS-uppercased, so take
+  `textContent`; the page has exactly two of them and `h2.closest('.space-y-3')` is that heading's
+  section, which is how the two „Keine Treffer." are told apart.
+- **The search box narrows *both* lists (PGS-22)**, and „Keine Treffer." is a different empty state
+  from „Noch nichts archiviert": a needle that matches only an archived task leaves the Papierkorb
+  saying „Keine Treffer.", and one that matches only a trashed record does the same to the task
+  table. The box is `input[placeholder="Archiv durchsuchen…"]`, with a real ellipsis.
+- **To put a task at a chosen distance from the boundary, go through the undo door.** `erledigt_am`
+  is server-derived and the only body that may set it is the pair `acceptsErledigtAm` takes:
+  `PATCH /api/tasks/:id {status: <the done value>, erledigt_am: 'YYYY-MM-DD HH:MM:SS'}` (SDL-02).
+  A lone `erledigt_am`, or one beside an *open* status, is dropped and the transform stamps today
+  instead — which reads as „the archive query is broken". Compute the stamp from
+  `/api/settings.archive_after_days`, never from a calendar date: two tasks ten minutes either side
+  of `now − N days` land on opposite sides, which is also the proof that the cutoff is a timestamp
+  and not a calendar day.
+- **The archive is the pair `(status = the done option) AND (erledigt_am <= cutoff)`, so moving the
+  „erledigt" flag to another category empties it.** That is the only path in the UI that takes a
+  task back *out* of the archive, and it is a definition change rather than a write: `erledigt_am`
+  is untouched and the rows simply reappear in the live tables. The door is
+  `#/einstellungen/aufgaben` → „Verwalten" → the Status row's ✎ — **not** the Kategorien tab, which
+  holds the other three option lists (Termin-Typen, Projekt-Status, Link-Kategorien) and not this
+  one. „erledigt" there is a **radio**, not a checkbox: picking one clears the others
+  (`OptionsEditor.update`), so there is nothing to untick first. And „Spalten verwalten" stays open
+  behind the editor after it saves — Escape it before navigating, or its backdrop eats the next
+  click.
+- **„Fortschritt" is the one number that must see past the edge (CCL-04)**, and the demo makes the
+  difference visible: on a freshly seeded demo `scope: 'all'` is 8/51 where `scope: 'live'` is
+  3/46, so the dashboard tile reads „8/51". A check that compares against only one of the two
+  passes either way — assert the tile against `all` and assert in the same breath that the two
+  really differ.
+- **The global search is not scoped to the live window.** `/api/search` filters `deleted_at` and
+  the live parents and nothing else, so an archived task is a hit (`gs-hit-t24` for „Probenraum
+  gebucht"). Following it — like following the Archiv's own Zuordnung link — lands on the page the
+  task belongs to, where the row is not in the table. Both are the behaviour as it stands, and
+  worth knowing before reading either as a bug.
+- **Neither print sheet can show the edge**: `PrintArtist` and `PrintProject` filter out *every*
+  done task, so an archived one is missing there for a reason that has nothing to do with its age.
+  The `.xlsx` export can — `ExcelButton` sends no `scope`, so the sheet is the live list — but
+  reading one means unzipping a workbook, and `check:browser` does not.
+
 ## Print and PDF
 
 - **`page.pdf()`'s default `printBackground: false` *is* the SHL-11 repro** — and a screenshot can
@@ -1225,6 +1299,16 @@ playwright-core 1.62.1.
   (task 11) is soft-deleted, so it renders at depth 0 with no connector while `parent_id` still
   says 11, and the pair survives every purge (SDL-01) — the Papierkorb row for the parent says so,
   „bleibt, bis abhängige Einträge entfernt sind".
+- **Five archived tasks, one per shape of Zuordnung.** `demo.ts` stamps them at
+  `ARCHIVED = -(ARCHIVE_AFTER_DAYS + 15)` and later, so they are always comfortably past the cutoff
+  and no case ever needs an absolute date. **24** („Probenraum gebucht") and **53** („Angebot
+  Backline eingeholt") sit on project 1 — 53 is task 1's fourth child, the one the tree never
+  renders (above) — **25** („Technikrider geprüft") on project 3 is the only archived row with a
+  comment and carries the only Zitat in the Archiv, **26** („Vorvertrag unterschrieben") hangs off
+  artist 3 with no project, so its Zuordnung cell is an artist link alone, and **27**
+  („Save-the-Date verschickt") is season-wide, so that cell is **empty**. The pair that makes the
+  boundary visible without naming a date is **4 against 53**: both are done children of task 1, 4
+  finished three days ago and is rendered, 53 finished past the cutoff and is not.
 - **The dashboard's „Nächste Termine" has three blocks, and which one a row is in is the
   assertion**: event 8 under „Datum offen", then 2/5/1/10/11 inside the 14 days, then 4/3/7 under
   „Danach". Event 10 is the one to check after touching the split: it starts at 23:00 on day 14
