@@ -771,6 +771,17 @@ verified by hand, and the gate itself is written from this list.
   `.prose-md` lands at the element's center, and the demo notes put links and a linked image
   there — the click then navigates (or selects the image) and `.rte-content` never mounts, which
   reads as „the editor is broken". `getByText('Streichquartett')` opens the artist note reliably.
+- **⌘↵ saves only while the caret is still in the text, and the failure is silent.** It is the
+  editor's own keymap, so a chord pressed while focus sits on a toolbar control — or on
+  `<body>`, after a control unmounted under it — reaches nothing, the note is never committed and
+  the API keeps the old row: „the editor does not persist" for what is really a lost caret. What
+  keeps focus where it belongs is `Btn`'s `onMouseDown={(e) => e.preventDefault()}`, on every
+  toolbar button *and* on each colour swatch. Taking it off a **swatch** is worth knowing about
+  before writing a canary for it: the app recovers on its own most of the time, because `pick`
+  ends in `editor.chain().focus()` and usually wins the race against the menu unmounting — it
+  showed up in one run of three, and only as the four „was it stored" assertions. Taking it off
+  `Btn` reproduces every time. Either way, assert the stored value rather than the screen: the
+  marks all land correctly in the DOM in exactly the runs where nothing is saved.
 - **`.prose-md` is *both* surfaces, so „wait for the reader to come back" is not a wait at all.**
   The editable node's own class list is `prose-md ${roomy}rte-content …` (`RichTextEditor`), so
   while a note is being edited `page.locator('.prose-md').first()` **is the editor** — a
