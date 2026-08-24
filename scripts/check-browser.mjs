@@ -6964,6 +6964,33 @@ try {
   const lqGot = () => lqLog.filter((e) => e.status !== undefined);
 
   /**
+   * Remember every toast this page ever showed, rather than reading the stack at the end.
+   *
+   * „The conflict was re-applied and said nothing" is an assertion about the whole round, and the
+   * end of the round is exactly where it cannot be made: toasts dismiss themselves after six
+   * seconds, and a round that goes wrong is a round that spends its time in poll timeouts — so a
+   * complaint really was raised, and it had expired by the time anyone looked. An observer records
+   * it while it is up. Installed after the page is open, which a `MutationObserver` allows and an
+   * init script does not.
+   */
+  const lqWatchToasts = (page) =>
+    page.evaluate(() => {
+      const w = /** @type {any} */ (window);
+      w.__toasts = [];
+      const sweep = () => {
+        for (const el of document.querySelectorAll('.pointer-events-auto')) {
+          const text = (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+          if (text && !w.__toasts.includes(text)) w.__toasts.push(text);
+        }
+      };
+      new MutationObserver(sweep).observe(document.body, { childList: true, subtree: true });
+      sweep();
+    });
+  const lqToastsSeen = (page) => page.evaluate(() => /** @type {any} */ (window).__toasts ?? []);
+  await lqWatchToasts(lq1);
+  await lqWatchToasts(lq2);
+
+  /**
    * Park the next landing PATCH from `page` until the returned `release()` is called. One shot:
    * the retry has to run at full speed, or the case measures its own hold twice and reports a
    * timeout for a mechanism that worked.
@@ -7064,15 +7091,13 @@ try {
     lqOnScreen.some((r) => r.text.includes(lqA)) && lqOnScreen.some((r) => r.text.includes(lqB)),
     lqOnScreen.map((r) => r.text).join(' | ') || 'keine Zeile',
   );
-  // „Nothing was said" cannot be waited *for*, so it is a beat and then a read — and it is only
-  // worth asserting because case AR shows this very locator catching a sentence.
+  // „Nothing was said" cannot be waited *for*, so it is a beat and then a read — of the recorder
+  // above, which has been watching since before the first click. Case AR shows the same wording
+  // being raised for real when the budget runs out.
   await sleep(700);
-  const lqToasts = [
-    ...(await lq1.locator('.pointer-events-auto').allInnerTexts()),
-    ...(await lq2.locator('.pointer-events-auto').allInnerTexts()),
-  ];
+  const lqToasts = [...(await lqToastsSeen(lq1)), ...(await lqToastsSeen(lq2))];
   check(
-    'ein nachgerechneter Konflikt sagt dem Benutzer nichts',
+    'ein nachgerechneter Konflikt sagt dem Benutzer in keinem der beiden Fenster etwas',
     lqToasts.length === 0,
     lqToasts.join(' | ') || 'kein Hinweis',
   );
@@ -7118,7 +7143,11 @@ try {
   );
 
   const lqBefore2 = await lpBlob();
+  // Two offsets, not one: the requests and the answers are counted separately, so a round that
+  // sends more than it is answered — or the other way round — is read as what it is instead of
+  // silently shifting one of the two slices below.
   const lqSentBefore2 = lqSent().length;
+  const lqGotBefore2 = lqGot().length;
   const lqHold2 = await lqHoldPatch(lq1, '**/api/landing');
   const lqWidthClicked = await clickIfThere(
     lq1.locator('[data-section="notizen"] button[title="Breite umschalten"]'),
@@ -7132,7 +7161,7 @@ try {
   await lq1.unroute('**/api/landing');
 
   const lqSent2 = lqSent().slice(lqSentBefore2);
-  const lqGot2 = lqGot().slice(lqSentBefore2);
+  const lqGot2 = lqGot().slice(lqGotBefore2);
   check(
     'auch die Anordnung wird abgelehnt und ein zweites Mal geschickt',
     lqWidthClicked &&
