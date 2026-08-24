@@ -90,6 +90,23 @@ async function api(path, init) {
  */
 const scoped = (id) => (path) => `${path}${path.includes('?') ? '&' : '?'}season=${id}`;
 
+/**
+ * A request body as JSON, or `{}` for anything that is not.
+ *
+ * The `page.on('request')` listeners below run **outside** this file's `try`, so a `JSON.parse`
+ * that throws in one is an unhandled rejection that ends the process instead of failing a line —
+ * the same class the route handlers' `catch` closes. Nothing on these pages sends a non-JSON
+ * PATCH body today; this is what keeps that from being load-bearing.
+ * @returns {any}
+ */
+const jsonOr = (raw) => {
+  try {
+    return JSON.parse(raw ?? '{}');
+  } catch {
+    return {};
+  }
+};
+
 /** @returns {Promise<{ status: number, body: any }>} */
 async function send(method, path, body) {
   const res = await fetch(`${API}${path}`, {
@@ -6854,9 +6871,10 @@ try {
     lpBareClicked && lpOpened.length === 1 && lpOpened[0] === `https://${lpBare.url}`,
     `geklickt ${lpBareClicked}, ${JSON.stringify(lpOpened)} bei gespeichertem „${lpBare.url}“`,
   );
-  // The pair, and an invariant guard: it forbids a click target being *added* to a row that has
-  // nowhere to go. Clicking the *label* of the row that has no URL, not the row — the ✎ and 🗑 sit
-  // at the row's right edge and `click()` aims at its centre.
+  // The other half of the pair. Clicking the *label* of the row that has no URL, not the row —
+  // the ✎ and 🗑 sit at the row's right edge and `click()` aims at its centre, and a row whose
+  // label really did become a button has no `span.font-medium` left to aim at either, which is
+  // what canary 19 reads back as `geklickt false`.
   const lpNoUrl = lpStart.documents.find((d) => d.url === null);
   const lpBlankClicked = await clickIfThere(
     lp
@@ -6867,10 +6885,14 @@ try {
   );
   await sleep(500); // „nothing was handed over" cannot be waited *for*; a beat and then a read
   const lpStillOpened = await lpRecorded();
+  // The count is asserted as **one**, not as „unchanged": `0 === 0` is what the poll above leaves
+  // behind when the row with an address handed over nothing either, and a pair that compares the
+  // two readings to each other is then green in exactly the state its partner is red in. Canary 10
+  // is that state, and this line stayed green through it.
   check(
     '…und die Zeile ohne Adresse reicht nichts weiter, weil dort kein Knopf ist',
-    lpBlankClicked && lpStillOpened.length === lpOpened.length,
-    `geklickt ${lpBlankClicked}, ${JSON.stringify(lpStillOpened)}`,
+    lpBlankClicked && lpOpened.length === 1 && lpStillOpened.length === 1,
+    `geklickt ${lpBlankClicked}, ${JSON.stringify(lpStillOpened)} (vorher ${lpOpened.length})`,
   );
 
   // The card's own editors. `EditableFallbackText` shows the automatic line until an override is
@@ -6966,7 +6988,7 @@ try {
   lq1.on('request', (r) => {
     if (r.url().includes('/api/landing') && r.method() === 'PATCH') {
       const body = r.postData() ?? '{}';
-      lqLog.push({ rev: JSON.parse(body).rev, body });
+      lqLog.push({ rev: jsonOr(body).rev, body });
     }
   });
   lq1.on('response', (r) => {
@@ -7083,8 +7105,8 @@ try {
   // none": the two request bodies. An intent recomputed over the winner's list carries the
   // winner's row; a snapshot replayed would be the first body again (which is what case AQ's
   // second half asserts of the one landing write that really is a snapshot).
-  const lqFirstDocs = JSON.parse(lqSent()[0]?.body ?? '{}').documents?.map((d) => d.label) ?? [];
-  const lqRetryDocs = JSON.parse(lqSent()[1]?.body ?? '{}').documents?.map((d) => d.label) ?? [];
+  const lqFirstDocs = jsonOr(lqSent()[0]?.body).documents?.map((d) => d.label) ?? [];
+  const lqRetryDocs = jsonOr(lqSent()[1]?.body).documents?.map((d) => d.label) ?? [];
   check(
     'der zweite Rumpf ist nicht der erste noch einmal: die Absicht wurde auf die Liste des Gewinners neu angewandt',
     !lqFirstDocs.includes(lqB) &&
@@ -7132,32 +7154,49 @@ try {
   // Scoped to the strip itself — the grey control row the arranger puts *above* each section while
   // it is arranging — and not to the section. `saisons` contains the whole card grid, so a
   // `[data-section] button` read there is fifty pencils long and answers the wrong question.
+  // `disabled` is read with the name, because on this page the ▲▼ are *present and dead*: the
+  // season grid is `toolbarAfterKey`, so `anchorIdx` is its index and both arrows fall into
+  // `SectionArranger`'s anchor rule. A check that only asks whether the button exists says the
+  // opposite of what is true.
   const lqStrip = await until(
     () =>
       lq1.locator('[data-section]').evaluateAll((els) =>
         els.map((el) => ({
           key: el.getAttribute('data-section'),
           btns: [...(el.querySelector(':scope > div.rounded-lg.bg-neutral-100')?.querySelectorAll('button') ?? [])].map(
-            (b) => b.getAttribute('title') ?? b.getAttribute('aria-label') ?? '',
+            (b) => ({
+              name: b.getAttribute('title') ?? b.getAttribute('aria-label') ?? '',
+              disabled: /** @type {HTMLButtonElement} */ (b).disabled,
+            }),
           ),
         })),
       ),
-    (s) => s.some((x) => x.btns.includes('Breite umschalten')),
+    (s) => s.some((x) => x.btns.some((b) => b.name === 'Breite umschalten')),
     8000,
   );
   const lqSaisonsStrip = lqStrip.find((x) => x.key === 'saisons');
   const lqNotizenStrip = lqStrip.find((x) => x.key === 'notizen');
+  /** One strip's controls as „Name" / „Name (aus)" — short enough to read on a failure line. */
+  const lqStripText = (s) =>
+    (s?.btns ?? []).map((b) => `${b.name}${b.disabled ? ' (aus)' : ''}`).join(' · ') || 'keine';
+  const lqCtl = (s, name) => (s?.btns ?? []).find((b) => b.name === name);
+  // The whole anchor rule in one line, and the Notizen half is what makes it discriminate: the
+  // section directly below the anchor cannot go *up* either („nothing may pass it"), while
+  // everything else it offers is live.
   check(
-    'die Saison-Kachel lässt sich weder schmal machen noch entfernen, ihre Nachbarin schon',
+    'die Saison-Kachel ist der feste Anker: nicht verschiebbar, nicht schmal, nicht zu entfernen',
     lqArrangeOpen &&
       !!lqSaisonsStrip &&
-      !lqSaisonsStrip.btns.includes('Breite umschalten') &&
-      !lqSaisonsStrip.btns.includes('Bereich entfernen') &&
-      lqSaisonsStrip.btns.includes('Nach unten') &&
+      lqCtl(lqSaisonsStrip, 'Nach oben')?.disabled === true &&
+      lqCtl(lqSaisonsStrip, 'Nach unten')?.disabled === true &&
+      !lqCtl(lqSaisonsStrip, 'Breite umschalten') &&
+      !lqCtl(lqSaisonsStrip, 'Bereich entfernen') &&
       !!lqNotizenStrip &&
-      lqNotizenStrip.btns.includes('Breite umschalten') &&
-      lqNotizenStrip.btns.includes('Bereich entfernen'),
-    `saisons ${JSON.stringify(lqSaisonsStrip?.btns)} / notizen ${JSON.stringify(lqNotizenStrip?.btns)}`,
+      lqCtl(lqNotizenStrip, 'Nach oben')?.disabled === true &&
+      lqCtl(lqNotizenStrip, 'Nach unten')?.disabled === false &&
+      lqCtl(lqNotizenStrip, 'Breite umschalten')?.disabled === false &&
+      lqCtl(lqNotizenStrip, 'Bereich entfernen')?.disabled === false,
+    `saisons: ${lqStripText(lqSaisonsStrip)} / notizen: ${lqStripText(lqNotizenStrip)}`,
   );
 
   const lqBefore2 = await lpBlob();
@@ -7191,15 +7230,15 @@ try {
       lqSent2[1]?.rev === lqAfterC.rev,
     `${lqSent2.map((s) => s.rev).join(' → ')} beantwortet mit ${lqGot2.map((g) => g.status).join('/')}`,
   );
-  const lqLayout1 = JSON.parse(lqSent2[0]?.body ?? '{}').layout;
-  const lqLayout2 = JSON.parse(lqSent2[1]?.body ?? '{}').layout;
+  const lqLayout1 = jsonOr(lqSent2[0]?.body).layout;
+  const lqLayout2 = jsonOr(lqSent2[1]?.body).layout;
   check(
     '…aber hier ist der zweite Rumpf der erste noch einmal: eine Momentaufnahme wird nicht nachgerechnet',
     Array.isArray(lqLayout1) &&
       JSON.stringify(lqLayout1) === JSON.stringify(lqLayout2) &&
       // …and it names `layout` alone. That is the whole reason a snapshot is safe here: the
       // documents the other window added are not in this request at all.
-      JSON.parse(lqSent2[1]?.body ?? '{}').documents === undefined,
+      jsonOr(lqSent2[1]?.body).documents === undefined,
     `${JSON.stringify(lqLayout1)} / ${JSON.stringify(lqLayout2)}`,
   );
   check(
@@ -7235,7 +7274,7 @@ try {
     if (r.method() === 'GET') lrLog.push({ get: true });
     if (r.method() === 'PATCH') {
       const body = r.postData() ?? '{}';
-      lrLog.push({ rev: JSON.parse(body).rev, body });
+      lrLog.push({ rev: jsonOr(body).rev, body });
     }
   });
   lr.on('response', (r) => {
@@ -7371,7 +7410,7 @@ try {
   ls1.on('request', (r) => {
     if (r.url().includes('/api/settings') && r.method() === 'PATCH') {
       const body = r.postData() ?? '{}';
-      lsLog.push({ rev: JSON.parse(body).rev, body });
+      lsLog.push({ rev: jsonOr(body).rev, body });
     }
   });
   ls1.on('response', (r) => {
@@ -7442,8 +7481,8 @@ try {
       lsGot[1]?.status === 200,
     `${lsSent.map((s) => s.rev).join(' → ')} beantwortet mit ${lsGot.map((g) => g.status).join('/') || 'keine'}`,
   );
-  const lsFirst = JSON.parse(lsSent[0]?.body ?? '{}').labels ?? [];
-  const lsRetry = JSON.parse(lsSent[1]?.body ?? '{}').labels ?? [];
+  const lsFirst = jsonOr(lsSent[0]?.body).labels ?? [];
+  const lsRetry = jsonOr(lsSent[1]?.body).labels ?? [];
   check(
     'auch hier wird die Absicht neu angewandt: „dieser Schlüssel, dieser Text, alles andere wie es steht“',
     lsFirst.length === 1 &&
