@@ -604,30 +604,49 @@ try {
   );
 
   /**
-   * The cadence this machine actually delivers, and the shapes derived from it.
+   * The cadence this machine actually delivers, and the two gap sizes derived from it.
    *
-   * `GAP_A` is a gap that is late but tolerable at any cadence this runs on; `GAP_B` a shorter
-   * one, so that the pair reproduces the customer's aborted window (WP-61b) rather than two equal
-   * blocks. `TOLERATED` aims at the top of the tolerated band — one quantization step under
-   * `HITCH_MS` — with three milliseconds of margin, and the margin is the point: **the constant's
-   * own value is not behaviourally canaryable and is not meant to be.** WP-61 placed 58 at the
-   * *midpoint between two steps the panel can produce* (50.1 and 66.8 at 60 Hz; 49.8 and 58.1 at
-   * 120), so a delta between the top tolerated step and the constant is not reliably producible at
-   * any refresh rate — aiming at it buys a case that oscillates between „one step lower" and „just
-   * over, stood down". `assertBundle` therefore declares `HITCH_MS` outright, which catches the
-   * 58 → 50 revert deterministically and by name, and the invariant above catches any change to
-   * the *judge* that quotes it. What E3 is for is the WP-61b cap: a lone gap this size bills five
-   * lost slots uncapped at an 8.3 ms median and one capped.
+   * A block of `b` ms inside an rAF callback produces a delta of `floor(b / med) * med` — the
+   * frame it started in is lost and the panel presents the next one on its own grid — so a gap of
+   * `k` intervals is asked for as `k * med + 1`. Measured at both cadences this gate has run on:
+   * 45 ms gives 41.7 at an 8.3 ms median (five intervals) and 33.3 at 16.7 (two).
+   *
+   * `STEPS` is the top of the tolerated band: the most intervals that still fit under `HITCH_MS`,
+   * which is **three** at 60 Hz and **six** at 120. `GAP_A` asks for exactly that — at 60 Hz it is
+   * the customer's 50.1 ms gap — and `GAP_B` for about half, so the pair re-enacts his aborted
+   * window (50.1 + 33.3) rather than two equal blocks. That pairing is what makes case E
+   * discriminate the WP-61b cap at *both* refresh rates; a lone gap cannot at 60 Hz, where capped
+   * and uncapped differ by one lost slot and no bound has room for both that and the runner's own
+   * noise. Hardcoded sizes cannot do it either: 45 ms is five intervals at 120 Hz and two at 60.
+   *
+   * The constant `HITCH_MS` itself is deliberately **not** canaryable this way — WP-61 placed 58
+   * at the midpoint *between* two steps a panel can produce (50.1 and 66.8 at 60 Hz, 49.8 and 58.1
+   * at 120), so no injected block lands between the top step and the constant at any refresh rate.
+   * `assertBundle` declares it outright instead, which fails by name, and the `abort:hitch`
+   * invariant catches any change to the judge that quotes it.
    */
   const med = first.r?.frames?.med ?? 0;
-  const TOLERATED = Math.round(Math.floor((HITCH_MS - 0.1) / med) * med) - 3;
-  const GAP_A = 45;
-  const GAP_B = 28;
-  // At a median past ~20 ms a 45 ms block lands on the far side of HITCH_MS instead of just under
-  // it, and the drops shapes stop discriminating. Measured, not assumed: the cases below say so
-  // and do not run rather than producing a red that means „slow panel".
-  const gapsUsable = played && med > 0 && med <= 20;
-  console.log(`\n  Kadenz: med ${med} ms → Lücken ${GAP_A}/${GAP_B} ms, gerade noch toleriert ${TOLERATED} ms\n`);
+  const STEPS = med > 0 ? Math.floor((HITCH_MS - 0.1) / med) : 0;
+  const GAP_A = Math.round(STEPS * med) + 1;
+  const GAP_B = Math.round(Math.ceil(STEPS / 2) * med) + 1;
+  // Below two intervals a gap cannot be billed as a lost slot at all, so the drops shapes would
+  // assert nothing. Stated as the arithmetic rather than as a millisecond threshold, and the cases
+  // stand down on it with the number rather than producing a red that means „slow panel".
+  const gapsUsable = played && STEPS >= 2;
+  console.log(
+    `\n  Kadenz: med ${med} ms — die tolerierte Bandbreite fasst ${STEPS} Bilder;` +
+      ` Lücken ${GAP_A}/${GAP_B} ms\n`,
+  );
+
+  /**
+   * Did an injected gap land on the far side of `HITCH_MS` after all?
+   *
+   * The runner adding a frame on top of the block is the one thing that can turn a shape about the
+   * drops arithmetic into a shape about the hitch test, and the cases below stand down on it with
+   * the measured number rather than reporting a defect. The `abort:hitch` invariant still holds
+   * over such a run, so nothing goes unchecked — only the claim that needed a tolerated gap.
+   */
+  const overshot = (g) => (g.r?.frames?.worst ?? 0) >= HITCH_MS;
 
   // ---- B: `.boot-show` — visible while every clock but the bail still sits at zero -------------
   {
@@ -682,7 +701,7 @@ try {
   }
 
   // ---- E: the customer's window, re-enacted (WP-61b) --------------------------------------------
-  if (!gapsUsable) skipCase('E', `Kadenz med ${med} ms`);
+  if (!gapsUsable) skipCase('E', `die tolerierte Bandbreite fasst nur ${STEPS} Bilder (med ${med} ms)`);
   else {
     const g = await boot({
       plan: [
@@ -691,45 +710,51 @@ try {
       ],
     });
     invariants('E', g);
-    check(
-      'E: two tolerated gaps in one window play through to `done`',
-      g.r?.outcome === 'play' && g.r?.why === 'done',
-      `${g.r?.outcome}/${g.r?.why}`,
-    );
-    check(
-      'E: …because neither reached HITCH_MS',
-      (g.r?.frames?.worst ?? 999) < HITCH_MS && (g.r?.frames?.worst ?? 0) >= 2 * med,
-      `worst ${g.r?.frames?.worst}`,
-    );
-    // Uncapped, a gap of this size bills `round(gap/med) - 1` lost slots — 5 at an 8.3 ms median.
-    // Capped it bills one, and the whole run may add a stray late frame of its own; anything at or
-    // below four is the cap in force, anything near ten is not.
-    check('E: each of them was billed once, not per slot', (g.r?.frames?.drops ?? 99) <= 4, `drops ${g.r?.frames?.drops}`);
+    if (overshot(g)) skipCase('E', `die eingespielte Lücke ist übergelaufen (${g.r?.frames?.worst} ≥ ${HITCH_MS})`);
+    else {
+      check(
+        'E: two tolerated gaps in one window play through to `done`',
+        g.r?.outcome === 'play' && g.r?.why === 'done',
+        `${g.r?.outcome}/${g.r?.why}, worst ${g.r?.frames?.worst}`,
+      );
+      // Both bounds are exact arithmetic rather than a product of the *rounded* median: `2 * med`
+      // against a `med` reported to one decimal is how this line first went red on a 60 Hz runner,
+      // at 33.3 against a bound of 33.4. Below: each injected gap must have been billed as a lost
+      // slot at all (the judge saw them), and capped it bills exactly one — two frames of room for
+      // a stray late one of the runner's own. Uncapped the pair bills three at 60 Hz and seven at
+      // 120, which is what makes this the WP-61b canary at either rate.
+      check(
+        'E: both gaps were late enough to be billed, and each was billed once',
+        (g.r?.frames?.drops ?? 0) >= 2 && (g.r?.frames?.drops ?? 99) <= 4,
+        `drops ${g.r?.frames?.drops}, worst ${g.r?.frames?.worst}, med ${g.r?.frames?.med}`,
+      );
+    }
   }
 
   // ---- E2: a fourth late frame in the same window still crosses ---------------------------------
-  if (!gapsUsable) skipCase('E2', `Kadenz med ${med} ms`);
+  if (!gapsUsable) skipCase('E2', `die tolerierte Bandbreite fasst nur ${STEPS} Bilder (med ${med} ms)`);
   else {
     const g = await boot({ plan: [5, 7, 9, 11].map((slot) => ({ slot, ms: GAP_A })) });
-    check(
-      'E2: four late frames in one window cross anyway (drops or starved)',
-      g.r?.outcome === 'cross' && /^abort:(drops|starved)$/.test(g.r?.why),
-      `${g.r?.outcome}/${g.r?.why}, drops ${g.r?.frames?.drops}`,
-    );
     invariants('E2', g);
+    // Four rather than three: three sits exactly on `drops >= n / 4` at an 8.3 ms median — the
+    // window needs `c >= 9.03` clean frames to close and the abort needs `c <= 9` — and was flaky
+    // two runs in six. docs/VERIFYING.md carries the arithmetic.
+    if (overshot(g)) skipCase('E2', `die eingespielte Lücke ist übergelaufen (${g.r?.frames?.worst} ≥ ${HITCH_MS})`);
+    else
+      check(
+        'E2: four late frames in one window cross anyway (drops or starved)',
+        g.r?.outcome === 'cross' && /^abort:(drops|starved)$/.test(g.r?.why),
+        `${g.r?.outcome}/${g.r?.why}, drops ${g.r?.frames?.drops}`,
+      );
   }
 
   // ---- E3: the largest gap HITCH_MS still calls noise --------------------------------------------
-  if (!gapsUsable) skipCase('E3', `Kadenz med ${med} ms`);
+  if (!gapsUsable) skipCase('E3', `die tolerierte Bandbreite fasst nur ${STEPS} Bilder (med ${med} ms)`);
   else {
-    const g = await boot({ plan: [{ slot: 6, ms: TOLERATED }] });
+    const g = await boot({ plan: [{ slot: 6, ms: GAP_A }] });
     invariants('E3', g);
     const worst = g.r?.frames?.worst ?? 0;
-    // The one place a case may stand down, and only on evidence: the runner added a frame on top
-    // of the injected block, so what was measured is no longer the shape the case is about. The
-    // invariant above still holds it to `abort:hitch ⟺ worst ≥ HITCH_MS`, which is what would
-    // catch the constant having moved.
-    if (worst >= HITCH_MS) skipCase('E3', `die eingespielte Lücke ist übergelaufen (${worst} ≥ ${HITCH_MS})`);
+    if (overshot(g)) skipCase('E3', `die eingespielte Lücke ist übergelaufen (${worst} ≥ ${HITCH_MS})`);
     else {
       check(
         `E3: a lone ${worst} ms gap inside the tolerated band plays on`,
