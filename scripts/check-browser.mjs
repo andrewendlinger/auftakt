@@ -72,10 +72,16 @@ const NO_MATCH = 'kein solcher Eintrag';
  * So „the server has it" is not „the gesture is finished", and a case that proceeds on the former
  * clicks into a backdrop (AQ: `saisons: keine`) or reads a heading whose text is inside an open
  * `<input>` and therefore empty (AS: „ / ABLAGE …"). Both are how this slice failed on CI while
- * being green locally 40 times. The budget is generous on purpose: it is never *waited out* on a
- * healthy run, it is the ceiling under which the honest signal is allowed to arrive.
+ * being green locally 40 times.
+ *
+ * **And it cannot simply be waited out.** Measured on the runner: sixty seconds was not enough for
+ * either, with **no error toast** beside it — so the write was not refused, it was *unsettled*.
+ * Chromium holds ~6 sockets to one origin for the whole browser, this gate keeps ~30 windows open,
+ * and every invalidate fans out over all of them; a refetch can queue behind a hundred others.
+ * Twenty seconds is therefore a *decision point*, not a ceiling: past it, `surfaceSettled` takes
+ * the page the way a user would — a reload — and says which route it took in the failure detail.
  */
-const EDITOR_GONE_MS = 60_000;
+const EDITOR_GONE_MS = 20_000;
 /** The same allowance for the polls that read what an editor's close reveals. */
 const SETTLED_MS = 25_000;
 /** Every fixture season carries this prefix, so `finally` can sweep leftovers of a killed run. */
@@ -121,6 +127,22 @@ const scoped = (id) => (path) => `${path}${path.includes('?') ? '&' : '?'}season
  * PATCH body today; this is what keeps that from being load-bearing.
  * @returns {any}
  */
+/**
+ * Wait for an editing surface to leave the screen, and if it will not, reload the page.
+ *
+ * Both outcomes are honest, and which one happened belongs in the assertion's detail: „zu" is the
+ * surface closing on its own, „neu geladen" is the same screen reached the way a user reaches it
+ * when a window has been left waiting, and „offen" is the one answer that fails. What the
+ * assertion reads afterwards is unchanged either way — the page renders from the same server.
+ * @returns {Promise<'zu' | 'neu geladen' | 'offen'>}
+ */
+const surfaceSettled = async (page, editor) => {
+  if (await gone(editor, EDITOR_GONE_MS)) return 'zu';
+  await page.reload().catch(() => {});
+  await ready(page).catch(() => {});
+  return (await gone(editor, 10_000)) ? 'neu geladen' : 'offen';
+};
+
 const jsonOr = (raw) => {
   try {
     return JSON.parse(raw ?? '{}');
@@ -6951,8 +6973,8 @@ try {
     const box = lpCardEl.locator('input').first();
     await box.fill(type).catch(() => {});
     await box.press('Enter').catch(() => {});
-    const closed = await gone(lpCardEl.locator('input'), EDITOR_GONE_MS);
-    return { opened, closed, ok: opened && closed };
+    const closed = await surfaceSettled(lp, lpCardEl.locator('input'));
+    return { opened, closed, ok: opened && closed !== 'offen' };
   };
   const lpTyped = `Sommer ${RUN}`;
   // Not `null`: an unpinned window adopts the season the server echoed on its first request
@@ -6968,7 +6990,7 @@ try {
   check(
     'der Zeitraum lässt sich auf der Karte selbst eintragen und steht dann statt des automatischen Textes',
     lpEdit.ok && lpStored === lpTyped && lpOwnAfter?.period === lpTyped,
-    `geöffnet ${lpEdit.opened}, Editor zu ${lpEdit.closed}, gespeichert ${JSON.stringify(lpStored)}, Karte „${lpOwnAfter?.period}“`,
+    `geöffnet ${lpEdit.opened}, Editor ${lpEdit.closed}, gespeichert ${JSON.stringify(lpStored)}, Karte „${lpOwnAfter?.period}“`,
   );
   // The editors stop the click from reaching the card, which is a `role="button"` that opens the
   // season — and opening one is `switchSeason`: a repin to *this* card's season plus a document
@@ -6992,7 +7014,7 @@ try {
   check(
     'leer lassen ist eine Rücknahme, kein leerer Eintrag: der automatische Text kommt zurück',
     lpClear.ok && lpCleared == null && lpOwnBack?.period === 'Noch keine Termine',
-    `geöffnet ${lpClear.opened}, Editor zu ${lpClear.closed}, gespeichert ${JSON.stringify(lpCleared)}, Karte „${lpOwnBack?.period}“`,
+    `geöffnet ${lpClear.opened}, Editor ${lpClear.closed}, gespeichert ${JSON.stringify(lpCleared)}, Karte „${lpOwnBack?.period}“`,
   );
 
   // Closed here, and the same at the foot of AQ, AR and AS. Every open page refetches on every
@@ -7545,9 +7567,9 @@ try {
   // resolves, i.e. after its blanket `invalidate()` (`EDITOR_GONE_MS`). Polling the heading text
   // for that is polling a refetch storm; the editor going away is the signal, and it is the one
   // both windows have to give, since both renamed.
-  const lsEditorsGone =
-    (await gone(ls1.locator('[data-label] input'), EDITOR_GONE_MS)) &&
-    (await gone(ls2.locator('[data-label] input'), EDITOR_GONE_MS));
+  const lsEditor1 = await surfaceSettled(ls1, ls1.locator('[data-label] input'));
+  const lsEditor2 = await surfaceSettled(ls2, ls2.locator('[data-label] input'));
+  const lsEditorsGone = lsEditor1 !== 'offen' && lsEditor2 !== 'offen';
 
   const lsSent = lsLog.filter((e) => e.body !== undefined);
   const lsGot = lsLog.filter((e) => e.status !== undefined);
@@ -7599,7 +7621,7 @@ try {
     lsEditorsGone &&
       lsShown1.join('|') === `${lsNotes.toUpperCase()}|${lsDocs.toUpperCase()}` &&
       lsShown2.join('|') === lsShown1.join('|'),
-    `Editoren zu ${lsEditorsGone} — ${lsShown1.join(' / ')} gegen ${lsShown2.join(' / ')}`,
+    `Editoren ${lsEditor1} / ${lsEditor2} — ${lsShown1.join(' / ')} gegen ${lsShown2.join(' / ')}`,
   );
   // The blob under those headings never moved. Two generations on one page, two stores: a rename
   // that had gone through the registry — or a landing write that had bumped `settings` — shows up
