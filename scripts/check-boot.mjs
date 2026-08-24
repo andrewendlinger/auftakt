@@ -1,0 +1,866 @@
+/**
+ * Regression guard for the boot gesture — the one surface `npm run check:browser` deliberately
+ * cannot reach.
+ *
+ *   npm run check:boot
+ *
+ * Three properties make this its own gate rather than a handful of cases over there (issue #115):
+ *
+ * 1. **The overlay only exists in a built bundle.** `#boot-overlay` in `client/index.html` is
+ *    gated on `'%PROD%' !== 'true'`, and the dev server the browser gate drives reads `false`, so
+ *    the node is removed before React mounts. This one therefore builds the client and serves it
+ *    the way the packaged app does — from the real Express server, on its own port.
+ * 2. **Its outcome is measured at runtime.** The frame watchdog decides per launch whether the
+ *    gesture survives, so an outcome is not a property of the build. What this gate does about
+ *    that is the whole design, below.
+ * 3. **`reducedMotion: 'reduce'` removes it outright**, and that escape hatch is what every other
+ *    driving script in `docs/VERIFYING.md` — all 627 assertions of `check:browser` among them —
+ *    relies on to get past the overlay. A gate for the gesture cannot use it, and case L is here
+ *    to make sure nobody breaks it for the others.
+ *
+ * **What is asserted, in three tiers.**
+ *
+ * (a) *Invariants*, on every single boot: the legal outcome/why sets, `v: 3`, the clocks in order
+ *     and inside `endMs`, `frames` present exactly when the gesture started, `abort:hitch` if and
+ *     only if a judged delta reached `HITCH_MS`, `drops <= n` (the WP-61b cap, as arithmetic), the
+ *     reveal beating bootBail, the report fitting the cap `electron/bootLog.ts` applies to it, and
+ *     the two channels — `localStorage` and the `bootSettled` bridge — carrying the same object.
+ * (b) *State*: `.boot-show` observed as „svg visible while every clock but the dead man's switch
+ *     still sits paused", and the phase-A invariant that a cross which never played shows nothing.
+ * (c) *Caused outcomes only*: an outcome is asserted where — and only where — this file injected
+ *     the cause (a slot-addressed main-thread block, a delayed asset, a dispatched pointerdown).
+ *
+ * **Nothing here asserts an uncaused timing.** No bound on `readyMs`, `med` or `p95`; no „must not
+ * abort" without an injected reason. A red therefore means the accounting changed, never that the
+ * runner was busy. The two things that *are* wall-clock — that a cold boot reaches `play`, and
+ * that a played gesture runs its ~2.6 s — were measured against 20× CPU throttling and moved by
+ * 2 % and 14 ms respectively; the cache, not the machine, is what decides the first (see
+ * `docs/VERIFYING.md`), which is why case L2 runs first and leaves the caches warm.
+ *
+ * **Injected shapes are sized from the cadence the run itself reports**, never absolutely: 50 ms
+ * is a tolerated gap at 120 Hz and a `hitch` at 60. And every shape clears its threshold by a
+ * computed margin — a shape sitting *on* `drops >= n/4` is flaky by construction, which cost four
+ * reds in six runs before it was understood (docs/VERIFYING.md).
+ *
+ * **What it does not touch.** The animation itself, aesthetics, exact durations, anything that
+ * needs the packaged app (the `boot-log.jsonl` writer, its fallback lines and the German digest
+ * are `check:unit`'s), and the open WP-61b question of whether pre-rastering also makes the
+ * following frames cheap — that is a trace pair on real hardware, not something a headless browser
+ * can answer. This gate asserts the mechanism, never the benefit.
+ *
+ * It runs on :4327 with a throwaway data dir and needs neither :5317 nor `.demo`, so unlike
+ * `check:browser` it can run beside a live `npm run demo`. It does rebuild `client/dist`.
+ */
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createServer } from 'node:net';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { chromium } from 'playwright-core';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+// 4317 is the dev server; 4319/4321/4323/4325 belong to check-backup/dates/api/browser. Unlike
+// the browser gate there is no second port: the built client is served by this very server, which
+// is what the packaged app does — `AUFTAKT_CLIENT_DIST` also flips `isPackaged`, dropping the two
+// :5317 entries from ALLOWED_ORIGINS, so the origin under test is the production one.
+const PORT = 4327;
+const BASE = `http://localhost:${PORT}`;
+
+/**
+ * The two constants this file computes its injected shapes against.
+ *
+ * A second copy, deliberately. They belong to `client/index.html`; keeping them here as well means
+ * that moving one and not the other is a red (`assertBundle` below), rather than a gate that
+ * quietly re-derives its own shapes from the changed value and goes on passing — which is exactly
+ * how the `HITCH_MS` 50 → 58 revert would otherwise slip through case E3.
+ */
+const HITCH_MS = 58;
+const WARM_FRAMES = 2;
+
+/** Every door the report may name. An unknown one is a report this gate has not been taught. */
+const WHYS = new Set([
+  'done',
+  'deadline',
+  'click',
+  'app-failed',
+  'hold-max',
+  'gesture-max',
+  'warm',
+  'secondary',
+  'reduced-motion',
+  'no-prod',
+  'abort:hitch',
+  'abort:slow',
+  'abort:drops',
+  'abort:starved',
+]);
+
+let failures = 0;
+let checks = 0;
+function check(name, ok, detail = '') {
+  checks++;
+  console.log(`${ok ? '  ok  ' : ' FAIL '} ${name}${detail ? ` — ${detail}` : ''}`);
+  if (!ok) failures++;
+  return ok;
+}
+
+/**
+ * A case that could not be exercised, with the evidence for why.
+ *
+ * There are exactly two reasons and both are measurements, never a guess: a cadence too slow for
+ * the shape the case needs, or an injected gap that overshot `HITCH_MS` because the runner added a
+ * frame on top of it. Counted and printed twice — as it happens and in the summary — for the same
+ * reason `check:browser` counts its reloads: „this run skipped its way to green" must never be
+ * readable as „this run was green".
+ */
+let notExercised = 0;
+function skipCase(name, why) {
+  notExercised++;
+  console.log(`  --    ${name} — nicht ausgeführt: ${why}`);
+}
+
+// ---------------------------------------------------------------------------- the stack
+
+/**
+ * Is anything listening there? Asked per address family, because that is where the trap is —
+ * `EADDRNOTAVAIL` means the family is not configured (a runner without IPv6), which is a free
+ * port and not a busy one. Ported from `check-browser.mjs`; see the note at the foot of this file.
+ */
+async function busy(port, host) {
+  const probe = createServer();
+  try {
+    await /** @type {Promise<void>} */ (
+      new Promise((res, rej) => {
+        probe.once('error', rej);
+        probe.listen(port, host, () => res());
+      })
+    );
+  } catch (err) {
+    if (err?.code === 'EADDRINUSE') return true;
+    if (err?.code === 'EADDRNOTAVAIL' || err?.code === 'EAFNOSUPPORT') return false;
+    throw err;
+  }
+  await new Promise((res) => probe.close(res));
+  return false;
+}
+
+/**
+ * Refuse to run while anything holds :4327 — before the build, because a run that talks to a
+ * stranger's server measures a bundle nobody built here.
+ */
+async function requireFreePort() {
+  for (const host of ['127.0.0.1', '::1']) {
+    if (!(await busy(PORT, host))) continue;
+    console.error(
+      `FAIL  Port ${PORT} ist belegt (${host}) — vermutlich ein übrig gebliebener Server aus einem\n` +
+        `      früheren Lauf. Dieser Lauf würde gegen dessen Bundle prüfen.\n` +
+        `      Beenden mit:  lsof -ti tcp:${PORT} | xargs kill`,
+    );
+    process.exit(1);
+  }
+}
+
+/**
+ * Build the client here rather than requiring one.
+ *
+ * `vite build` is 0.4 s of rolldown; a stale `client/dist` is a silent false green, which is the
+ * one failure mode a gate may not have. Announced because it overwrites whatever `npm run build`
+ * left there.
+ */
+function buildClient() {
+  console.log('client wird gebaut (überschreibt client/dist) …');
+  const t = Date.now();
+  // Output captured rather than inherited: a successful build's only message is rolldown's
+  // chunk-size advice, which is not this gate's news. A failed one prints everything it had.
+  const built = spawnSync('npm', ['--prefix', 'client', 'run', 'build'], {
+    cwd: root,
+    encoding: 'utf8',
+    shell: true,
+  });
+  if (built.status !== 0) {
+    console.error(`FAIL  vite build ist fehlgeschlagen (Code ${built.status})\n${built.stdout}\n${built.stderr}`);
+    process.exit(1);
+  }
+  console.log(`… gebaut in ${Date.now() - t} ms`);
+}
+
+const dataDir = mkdtempSync(join(tmpdir(), 'auftakt-boot-'));
+
+/** @type {import('node:child_process').ChildProcess | null} */
+let server = null;
+/** Last ~8 KB of the server's output, dumped when it fails to come up. */
+let serverLog = '';
+
+function startServer() {
+  server = spawn('npm', ['--prefix', 'server', 'run', 'start'], {
+    cwd: root,
+    env: {
+      ...process.env,
+      AUFTAKT_DATA_DIR: dataDir,
+      AUFTAKT_PORT: String(PORT),
+      // The whole point: with this set the server serves `client/dist` at its own origin, exactly
+      // as the packaged app does, and `isPackaged` drops the dev origins from ALLOWED_ORIGINS.
+      AUFTAKT_CLIENT_DIST: join(root, 'client', 'dist'),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    shell: true,
+    // Own process group, so the whole tree goes down at once. `shell: true` means the pid held
+    // here belongs to the shell, with npm and tsx bound to :4327 underneath it (DBW-10).
+    detached: process.platform !== 'win32',
+  });
+  for (const s of [server.stdout, server.stderr]) {
+    s?.setEncoding('utf8');
+    s?.on('data', (chunk) => {
+      serverLog = (serverLog + chunk).slice(-8000);
+    });
+  }
+}
+
+function killServer() {
+  if (!server?.pid) return;
+  try {
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/pid', String(server.pid), '/t', '/f'], { stdio: 'ignore' });
+    } else {
+      process.kill(-server.pid, 'SIGTERM'); // negative pid = the whole process group
+    }
+  } catch {
+    /* already gone */
+  }
+}
+
+let cleanedUp = false;
+function cleanup() {
+  if (cleanedUp) return;
+  cleanedUp = true;
+  killServer();
+  try {
+    rmSync(dataDir, { recursive: true, force: true });
+  } catch {
+    /* a temp dir that outlives the run is not worth failing over */
+  }
+}
+process.on('exit', cleanup);
+
+async function shutdown(code) {
+  killServer();
+  if (server) await Promise.race([once(server, 'exit'), new Promise((r) => setTimeout(r, 3000))]);
+  cleanup();
+  process.exit(code);
+}
+
+// A run takes half a minute, so Ctrl-C during it is normal. Without a listener Node terminates via
+// the default signal action, never emits 'exit', and leaves the server tree behind.
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    void shutdown(130);
+  });
+}
+
+async function waitForServer() {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    if (server?.exitCode != null) {
+      throw new Error(`Server ist beendet (Code ${server.exitCode})\n${serverLog}`);
+    }
+    try {
+      if ((await fetch(`${BASE}/api/health`)).ok) return;
+    } catch {
+      /* not up yet */
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  throw new Error(`Server kam nicht hoch\n${serverLog}`);
+}
+
+/**
+ * Believe nothing until the served document is the production overlay.
+ *
+ * Every case below is vacuous against a bundle whose `%PROD%` never got replaced — the overlay
+ * would remove itself before React mounts and each report would read `skip / no-prod`, which is a
+ * green-looking nothing. This is the cheap guard against that, and against the two constants the
+ * injected shapes are computed from moving underneath this file.
+ *
+ * @returns {Promise<string>} the served index.html
+ */
+async function assertBundle() {
+  const html = await (await fetch(`${BASE}/`)).text();
+  check('the served document carries the overlay', html.includes('id="boot-overlay"'));
+  check(
+    "…and it is a production build ('%PROD%' replaced)",
+    html.includes("'true' !== 'true'"),
+    html.includes('%PROD%') ? 'unersetzt' : '',
+  );
+  check(
+    `…and still declares HITCH_MS ${HITCH_MS} / WARM_FRAMES ${WARM_FRAMES}, which this gate's shapes are derived from`,
+    html.includes(`var HITCH_MS = ${HITCH_MS};`) && html.includes(`var WARM_FRAMES = ${WARM_FRAMES};`),
+  );
+  return html;
+}
+
+/**
+ * The cap the main process applies to a report before it reaches `boot-log.jsonl`, read out of
+ * `electron/bootLog.ts` so the two cannot drift.
+ *
+ * A renderer report that outgrows this is not a smaller diagnostic, it is *no* diagnostic: main
+ * writes `{"outcome":"invalid-report"}` instead. Nothing else in the repository checks that the
+ * report the overlay actually produces fits — `check:unit` exercises the writer against fixtures.
+ * A regex that stops matching fails the case rather than passing it, which is why it is read here
+ * and not defaulted.
+ */
+function reportCap() {
+  const src = readFileSync(join(root, 'electron', 'bootLog.ts'), 'utf8');
+  const m = /BOOT_REPORT_MAX_CHARS\s*=\s*(\d+)/.exec(src);
+  return m ? Number(m[1]) : NaN;
+}
+
+// ---------------------------------------------------------------------------- the browser
+
+/**
+ * Everything this gate observes from inside the page, installed with `addInitScript` — the only
+ * moment early enough, since `data-boot` gets its first value while the document is parsed.
+ *
+ * Four jobs, all of them recorders rather than drivers except where a case asks for a cause:
+ *
+ * - the **bridge stub**, which is how the report is captured. `bootSettled` is the channel the
+ *   Electron main process reads and `boot-log.jsonl` is written from, so recording it is the
+ *   faithful route; the `localStorage` copy is read afterwards and compared against it. The stub
+ *   is omitted entirely for case M, which is what a plain browser looks like.
+ * - the **phase log** (`data-boot`) and the **overlay's class log**, each sampled with the svg's
+ *   computed visibility and the play state of every animation — that pair is what makes
+ *   `.boot-show` assertable as a state instead of as a timestamp.
+ * - **slot-addressable injection**: a `MutationObserver` callback is a microtask, so an observer
+ *   registered here runs after the watchdog's own rAF in every frame from `data-boot="play"`
+ *   onwards, and blocking inside our rAF callback *k* inflates measured delta *k*, where delta 1
+ *   is `warm` (docs/VERIFYING.md).
+ * - the two **dispatched pointerdowns**, which are the only way to hit the hold and the show
+ *   frames without racing them.
+ *
+ * `observe(document, { subtree: true })` and not `observe(document.documentElement, …)`: there is
+ * no `documentElement` yet when an init script runs, and the throw would take the rest of this
+ * function with it — silently, since the overlay would still behave perfectly.
+ */
+function pageHarness(opts) {
+  const w = /** @type {any} */ (window);
+  w.__boot = [];
+  w.__phase = [];
+  w.__marks = [];
+  if (opts.bridge) {
+    // Only `bootSettled` is a recorder; the rest is what the app touches during a boot, so that
+    // the presence of a bridge does not itself change the run under test.
+    w.auftakt = {
+      bootSettled: (r) => {
+        w.__boot.push(r);
+        return Promise.resolve();
+      },
+      getVersion: () => Promise.resolve('0.0.0-test'),
+      onBackupConfigChanged: () => () => {},
+      platform: 'darwin',
+    };
+  }
+  if (opts.mode === 'throw') {
+    // `window.onerror` → `signalFailed()` → `html[data-app-failed]`, which `start()` reads. The
+    // listener is on `auftakt:mounted` because that fires before readiness is announced.
+    document.addEventListener('auftakt:mounted', () => {
+      throw new Error('boom (injected by check:boot)');
+    });
+  }
+  const plan = opts.plan ?? [];
+  const obs = new MutationObserver((records) => {
+    for (const rec of records) {
+      const el = /** @type {any} */ (rec.target);
+      if (rec.attributeName === 'data-boot') {
+        const phase = document.documentElement.dataset.boot;
+        w.__phase.push({ phase, inert: !!(/** @type {any} */ (document.getElementById('root'))?.inert) });
+        if (phase === 'hold' && opts.mode === 'hold-click') {
+          document.getElementById('boot-overlay')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        }
+        if (phase === 'play' && plan.length > 0) {
+          const last = plan[plan.length - 1].slot;
+          let k = 0;
+          const step = () => {
+            k++;
+            for (const p of plan) {
+              if (p.slot !== k) continue;
+              const until = performance.now() + p.ms;
+              while (performance.now() < until) {
+                /* block the main thread, which is what the watchdog measures */
+              }
+            }
+            if (k <= last) requestAnimationFrame(step);
+          };
+          requestAnimationFrame(step);
+        }
+      }
+      if (rec.attributeName === 'class' && el?.id === 'boot-overlay') {
+        const svg = el.querySelector('svg');
+        const anims = document.getAnimations();
+        w.__marks.push({
+          cls: el.className,
+          phase: document.documentElement.dataset.boot,
+          vis: svg ? getComputedStyle(svg).visibility : 'weg',
+          paused: anims.filter((a) => a.playState === 'paused').length,
+          running: anims
+            .filter((a) => a.playState === 'running')
+            .map((a) => /** @type {any} */ (a).animationName ?? '?'),
+        });
+        if (opts.mode === 'show-click' && el.className.includes('boot-show')) {
+          el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        }
+      }
+    }
+  });
+  obs.observe(document, { attributes: true, subtree: true, attributeFilter: ['data-boot', 'class'] });
+}
+
+/** @type {import('playwright-core').Browser | null} */
+let browser = null;
+/** @type {import('playwright-core').BrowserContext | null} */
+let ctx = null;
+/** @type {import('playwright-core').BrowserContext | null} */
+let reduceCtx = null;
+
+/**
+ * One cold boot, harvested.
+ *
+ * A fresh page per case rather than a reload, because sessionStorage is per tab: a new page in the
+ * same context is a cold start that still shares the context's HTTP and code caches, which is what
+ * an installed app's second launch onwards looks like — and what keeps `readyMs` two orders of
+ * magnitude clear of the 1200 ms deadline (docs/VERIFYING.md).
+ */
+async function boot({ plan = [], mode = null, delayMs = 0, reduce = false, bridge = true, noboot = false } = {}) {
+  const page = await /** @type {import('playwright-core').BrowserContext} */ (reduce ? reduceCtx : ctx).newPage();
+  /** @type {string[]} */
+  const errs = [];
+  page.on('pageerror', (e) => errs.push(e.message));
+  await page.addInitScript(pageHarness, { plan, mode, bridge });
+  if (delayMs > 0) {
+    // The bundle, held back — the only honest way to reach the deadline, the hold's failsafe and a
+    // hold long enough to click into. The emoji chunk and the stylesheet do not match this glob.
+    await page.route('**/assets/index-*.js', async (route) => {
+      await new Promise((r) => setTimeout(r, delayMs));
+      await route.continue();
+    });
+  }
+  await page.goto(`${BASE}/${noboot ? '?noboot=1' : ''}`);
+  const settled = await page
+    .waitForSelector('html[data-boot="done"]', { timeout: 30_000 })
+    .then(() => true)
+    .catch(() => false);
+  const got = await page.evaluate(() => {
+    const w = /** @type {any} */ (window);
+    let ls = null;
+    try {
+      ls = JSON.parse(localStorage.getItem('auftakt-boot-report') ?? 'null');
+    } catch {
+      ls = 'unparsbar';
+    }
+    return {
+      bridge: w.__boot ?? [],
+      phase: w.__phase ?? [],
+      marks: w.__marks ?? [],
+      ls,
+      overlay: !!document.getElementById('boot-overlay'),
+      rootInert: !!(/** @type {any} */ (document.getElementById('root'))?.inert),
+    };
+  });
+  await page.close();
+  const r = got.bridge[0] ?? got.ls ?? null;
+  console.log(
+    `  ·     ${r?.outcome ?? '?'}/${r?.why ?? '?'} · bereit ${r?.readyMs} · show ${r?.showMs} · start ${r?.startMs} · ende ${r?.endMs}` +
+      (r?.frames
+        ? ` · lead ${r.frames.lead} warm ${r.frames.warm}/${r.frames.warm2} · n ${r.frames.n} med ${r.frames.med} p95 ${r.frames.p95} worst ${r.frames.worst} drops ${r.frames.drops}`
+        : ''),
+  );
+  return { settled, errs, ...got, r };
+}
+
+/** The `.boot-show` samples that precede `.boot-play` — the two paused, visible frames (WP-61b). */
+const showFrames = (g) =>
+  g.marks.filter((m) => m.cls.includes('boot-show') && !m.cls.includes('boot-play') && !m.cls.includes('boot-cross'));
+
+const CAP = reportCap();
+
+/**
+ * Tier (a): what every boot must satisfy, whatever door it left by.
+ *
+ * All of it is internal consistency or field discipline — nothing here reads a wall clock except
+ * `endMs < 7000`, which is not a timing bound but the statement that a live reveal always beats
+ * bootBail's dead man's switch (that delay moved 6000 → 7000 in WP-61b for exactly this reason).
+ */
+function invariants(tag, g) {
+  const r = g.r;
+  check(`${tag}: settled, the node is gone and #root is live`, g.settled && !g.overlay && !g.rootInert);
+  check(`${tag}: no page error`, g.errs.length === 0, g.errs[0] ?? '');
+  check(`${tag}: the report is v:3`, r?.v === 3, `v=${r?.v}`);
+  check(`${tag}: the outcome is one of play/cross/skip`, ['play', 'cross', 'skip'].includes(r?.outcome), String(r?.outcome));
+  check(`${tag}: the door has a name this gate knows`, WHYS.has(r?.why), String(r?.why));
+  const clocks = ['readyMs', 'showMs', 'startMs'].map((k) => r?.[k]).filter((v) => typeof v === 'number');
+  check(
+    `${tag}: ready → show → start → end, in order and all inside endMs`,
+    clocks.every((v, i) => v >= 0 && (i === 0 || v >= clocks[i - 1])) && clocks.every((v) => v <= r?.endMs),
+    `${r?.readyMs} / ${r?.showMs} / ${r?.startMs} / ${r?.endMs}`,
+  );
+  check(
+    `${tag}: a gesture that started was shown first (startMs ⇒ showMs)`,
+    r?.startMs === null || typeof r?.showMs === 'number',
+    `show ${r?.showMs}, start ${r?.startMs}`,
+  );
+  check(
+    `${tag}: frames are recorded exactly when the gesture started`,
+    (typeof r?.startMs === 'number') === (r?.frames !== null && r?.frames !== undefined),
+    `start ${r?.startMs}, frames ${r?.frames ? 'ja' : 'nein'}`,
+  );
+  check(`${tag}: the reveal beat bootBail (endMs < 7000)`, r?.endMs < 7000, `${r?.endMs}`);
+  const len = JSON.stringify(r ?? null).length;
+  check(
+    `${tag}: the report fits the cap main applies to it (${CAP})`,
+    Number.isFinite(CAP) && len <= CAP,
+    Number.isFinite(CAP) ? `${len} Zeichen` : 'BOOT_REPORT_MAX_CHARS nicht gefunden',
+  );
+  if (r?.frames) {
+    const f = r.frames;
+    check(
+      `${tag}: abort:hitch if and only if a judged delta reached ${HITCH_MS}`,
+      (r.why === 'abort:hitch') === (f.worst >= HITCH_MS),
+      `why ${r.why}, worst ${f.worst}`,
+    );
+    check(`${tag}: every late delta was billed once (drops ≤ n)`, f.drops <= f.n, `${f.drops} / ${f.n}`);
+    check(
+      `${tag}: lead and both exempt head frames are recorded`,
+      [f.lead, f.warm, f.warm2].every((v) => typeof v === 'number'),
+      `lead ${f.lead}, warm ${f.warm}, warm2 ${f.warm2}`,
+    );
+  }
+  if (g.bridge.length > 0) {
+    check(
+      `${tag}: the bridge and localStorage carry the same report`,
+      JSON.stringify(g.bridge[0]) === JSON.stringify(g.ls),
+      JSON.stringify(g.ls)?.slice(0, 120),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------- the run
+
+await requireFreePort();
+buildClient();
+startServer();
+await waitForServer();
+console.log(`\nBundle auf ${BASE} (Datenverzeichnis ${dataDir})\n`);
+
+try {
+  await assertBundle();
+  browser = await chromium.launch();
+  ctx = await browser.newContext({ reducedMotion: 'no-preference', viewport: { width: 1400, height: 1000 } });
+  // Its own context, because `reducedMotion` is a context property — and contexts do not share a
+  // cache, which is why L runs last rather than as the warm-up.
+  reduceCtx = await browser.newContext({ reducedMotion: 'reduce', viewport: { width: 1400, height: 1000 } });
+
+  // ---- L2: a secondary window skips — and warms the caches for everything below ----------------
+  {
+    const g = await boot({ noboot: true });
+    check(
+      'L2: ?noboot skips the gesture as `secondary`',
+      g.r?.outcome === 'skip' && g.r?.why === 'secondary',
+      `${g.r?.outcome}/${g.r?.why}`,
+    );
+    check('L2: …and never holds', g.phase.map((p) => p.phase).join('→') === 'done', g.phase.map((p) => p.phase).join('→'));
+    invariants('L2', g);
+  }
+
+  // ---- A: a cold boot of the built bundle plays the gesture to its end -------------------------
+  const first = await boot();
+  invariants('A', first);
+  const played = check(
+    'A: a cold boot plays the gesture through to `done`',
+    first.r?.outcome === 'play' && first.r?.why === 'done',
+    `${first.r?.outcome}/${first.r?.why}, bereit ${first.r?.readyMs} ms` +
+      (first.r?.why === 'deadline' ? ' — die App war nicht binnen GESTURE_DEADLINE bereit' : ''),
+  );
+  check(
+    'A: the phases walk hold → play → done',
+    first.phase.map((p) => p.phase).join('→') === 'hold→play→done',
+    first.phase.map((p) => p.phase).join('→'),
+  );
+  check(
+    'A: #root is inert while the overlay holds and free once it is gone',
+    first.phase.some((p) => p.phase === 'hold' && p.inert) && first.rootInert === false,
+    JSON.stringify(first.phase),
+  );
+  const span = (first.r?.endMs ?? 0) - (first.r?.startMs ?? 0);
+  check(
+    'A: the reveal came from the gesture’s own fade, not a failsafe (2500 < endMs − startMs < 2800)',
+    played && span > 2500 && span < 2800,
+    `${Math.round(span)} ms`,
+  );
+  check(
+    'A: the watchdog judged well past its first window',
+    (first.r?.frames?.n ?? 0) > 20,
+    `n ${first.r?.frames?.n}, med ${first.r?.frames?.med}`,
+  );
+
+  /**
+   * The cadence this machine actually delivers, and the shapes derived from it.
+   *
+   * `GAP_A` is a gap that is late but tolerable at any cadence this runs on; `GAP_B` a shorter
+   * one, so that the pair reproduces the customer's aborted window (WP-61b) rather than two equal
+   * blocks. `TOLERATED` targets the largest gap `HITCH_MS` still calls noise — the top step below
+   * the constant — which is what makes case E3 the 58 → 50 revert's canary.
+   */
+  const med = first.r?.frames?.med ?? 0;
+  const TOLERATED = Math.round(Math.floor((HITCH_MS - 0.1) / med) * med) - 3;
+  const GAP_A = 45;
+  const GAP_B = 28;
+  // At a median past ~20 ms a 45 ms block lands on the far side of HITCH_MS instead of just under
+  // it, and the drops shapes stop discriminating. Measured, not assumed: the cases below say so
+  // and do not run rather than producing a red that means „slow panel".
+  const gapsUsable = played && med > 0 && med <= 20;
+  console.log(`\n  Kadenz: med ${med} ms → Lücken ${GAP_A}/${GAP_B} ms, gerade noch toleriert ${TOLERATED} ms\n`);
+
+  // ---- B: `.boot-show` — visible while every clock but the bail still sits at zero -------------
+  {
+    const g = await boot();
+    const s = showFrames(g);
+    check('B: .boot-show lands before .boot-play, once', s.length === 1, JSON.stringify(g.marks.map((m) => m.cls)));
+    check(
+      'B: the svg is visible while the overlay is still holding',
+      s[0]?.vis === 'visible' && s[0]?.phase === 'hold',
+      JSON.stringify(s[0] ?? null),
+    );
+    check(
+      'B: …and nothing but the dead man’s switch is running',
+      s[0]?.paused === 11 && s[0]?.running.join() === 'bootBail',
+      `${s[0]?.paused} pausiert, laufend: ${s[0]?.running.join() || 'nichts'}`,
+    );
+    check(
+      'B: the raster is paid between showMs and startMs',
+      typeof g.r?.showMs === 'number' && typeof g.r?.startMs === 'number' && g.r.showMs <= g.r.startMs,
+      `${g.r?.showMs} → ${g.r?.startMs}`,
+    );
+  }
+
+  // ---- C / C2: the two exempt head frames (WP-61) ----------------------------------------------
+  for (const slot of [2, 1]) {
+    const tag = slot === 2 ? 'C' : 'C2';
+    const field = slot === 2 ? 'warm2' : 'warm';
+    const g = await boot({ plan: [{ slot, ms: 150 }] });
+    invariants(tag, g);
+    check(
+      `${tag}: a 150 ms block in slot ${slot} is recorded as ${field}`,
+      (g.r?.frames?.[field] ?? 0) >= 140,
+      `${field} ${g.r?.frames?.[field]}`,
+    );
+    check(
+      `${tag}: …and judged by nobody`,
+      g.r?.why !== 'abort:hitch' && (g.r?.frames?.worst ?? 999) < HITCH_MS,
+      `why ${g.r?.why}, worst ${g.r?.frames?.worst}`,
+    );
+  }
+
+  // ---- D: past the exemption a real hitch still aborts ------------------------------------------
+  {
+    const g = await boot({ plan: [{ slot: WARM_FRAMES + 1, ms: 150 }] });
+    invariants('D', g);
+    check(
+      `D: the same 150 ms in slot ${WARM_FRAMES + 1} — the first judged delta — crosses as abort:hitch`,
+      g.r?.outcome === 'cross' && g.r?.why === 'abort:hitch',
+      `${g.r?.outcome}/${g.r?.why}`,
+    );
+    check('D: …on the injected delta itself', (g.r?.frames?.worst ?? 0) >= 140, `worst ${g.r?.frames?.worst}`);
+  }
+
+  // ---- E: the customer's window, re-enacted (WP-61b) --------------------------------------------
+  if (!gapsUsable) skipCase('E', `Kadenz med ${med} ms`);
+  else {
+    const g = await boot({
+      plan: [
+        { slot: 5, ms: GAP_A },
+        { slot: 7, ms: GAP_B },
+      ],
+    });
+    invariants('E', g);
+    check(
+      'E: two tolerated gaps in one window play through to `done`',
+      g.r?.outcome === 'play' && g.r?.why === 'done',
+      `${g.r?.outcome}/${g.r?.why}`,
+    );
+    check(
+      'E: …because neither reached HITCH_MS',
+      (g.r?.frames?.worst ?? 999) < HITCH_MS && (g.r?.frames?.worst ?? 0) >= 2 * med,
+      `worst ${g.r?.frames?.worst}`,
+    );
+    // Uncapped, a gap of this size bills `round(gap/med) - 1` lost slots — 5 at an 8.3 ms median.
+    // Capped it bills one, and the whole run may add a stray late frame of its own; anything at or
+    // below four is the cap in force, anything near ten is not.
+    check('E: each of them was billed once, not per slot', (g.r?.frames?.drops ?? 99) <= 4, `drops ${g.r?.frames?.drops}`);
+  }
+
+  // ---- E2: a fourth late frame in the same window still crosses ---------------------------------
+  if (!gapsUsable) skipCase('E2', `Kadenz med ${med} ms`);
+  else {
+    const g = await boot({ plan: [5, 7, 9, 11].map((slot) => ({ slot, ms: GAP_A })) });
+    check(
+      'E2: four late frames in one window cross anyway (drops or starved)',
+      g.r?.outcome === 'cross' && /^abort:(drops|starved)$/.test(g.r?.why),
+      `${g.r?.outcome}/${g.r?.why}, drops ${g.r?.frames?.drops}`,
+    );
+    invariants('E2', g);
+  }
+
+  // ---- E3: the largest gap HITCH_MS still calls noise --------------------------------------------
+  if (!gapsUsable) skipCase('E3', `Kadenz med ${med} ms`);
+  else {
+    const g = await boot({ plan: [{ slot: 6, ms: TOLERATED }] });
+    invariants('E3', g);
+    const worst = g.r?.frames?.worst ?? 0;
+    // The one place a case may stand down, and only on evidence: the runner added a frame on top
+    // of the injected block, so what was measured is no longer the shape the case is about. The
+    // invariant above still holds it to `abort:hitch ⟺ worst ≥ HITCH_MS`, which is what would
+    // catch the constant having moved.
+    if (worst >= HITCH_MS) skipCase('E3', `die eingespielte Lücke ist übergelaufen (${worst} ≥ ${HITCH_MS})`);
+    else {
+      check(
+        `E3: a ${worst} ms gap — one step under HITCH_MS — plays on`,
+        g.r?.outcome === 'play' && g.r?.why === 'done',
+        `${g.r?.outcome}/${g.r?.why}, worst ${worst}`,
+      );
+      check('E3: …billed once, at any refresh rate', (g.r?.frames?.drops ?? 99) <= 3, `drops ${g.r?.frames?.drops}`);
+    }
+  }
+
+  // ---- F: cadence that degrades after two clean windows aborts ----------------------------------
+  {
+    // From slot 30, so `quick` has a low tenth percentile behind it before the median flips —
+    // uniform slowness from the first frame is the watchdog's documented blind spot, not a defect.
+    const g = await boot({ plan: Array.from({ length: 60 }, (_, i) => ({ slot: i + 30, ms: 30 })) });
+    invariants('F', g);
+    check(
+      'F: a cadence that degrades mid-gesture aborts (slow or drops — the door is not fixed)',
+      g.r?.outcome === 'cross' && /^abort:(slow|drops)$/.test(g.r?.why),
+      `${g.r?.outcome}/${g.r?.why}, med ${g.r?.frames?.med}, quick ${g.r?.frames?.quick}`,
+    );
+    check('F: …and does not play to the end', (g.r?.endMs ?? 9999) < 2000, `${g.r?.endMs} ms`);
+  }
+
+  // ---- G: a click during the hold forfeits the gesture and shows nothing -------------------------
+  {
+    const g = await boot({ mode: 'hold-click', delayMs: 900 });
+    invariants('G', g);
+    check(
+      'G: a pointerdown in the hold crosses as `click`, with the gesture never started',
+      g.r?.outcome === 'cross' && g.r?.why === 'click' && g.r?.startMs === null && g.r?.showMs === null,
+      `${g.r?.outcome}/${g.r?.why}, show ${g.r?.showMs}, start ${g.r?.startMs}`,
+    );
+    check(
+      'G: the phase-A promise holds — nothing was ever drawn',
+      g.marks.every((m) => m.vis !== 'visible'),
+      JSON.stringify(g.marks.map((m) => [m.cls, m.vis])),
+    );
+  }
+
+  // ---- H: a click inside the show frames — the v:3 signature -------------------------------------
+  {
+    const g = await boot({ mode: 'show-click' });
+    invariants('H', g);
+    check(
+      'H: a cross inside the show frames files showMs with startMs null',
+      typeof g.r?.showMs === 'number' && g.r?.startMs === null && g.r?.why === 'click',
+      `show ${g.r?.showMs}, start ${g.r?.startMs}, why ${g.r?.why}`,
+    );
+    check(
+      'H: the parked hand does not ride the fade — .boot-show is stripped',
+      g.marks.filter((m) => m.cls.includes('boot-cross')).every((m) => m.vis === 'hidden'),
+      JSON.stringify(g.marks.map((m) => [m.cls, m.vis])),
+    );
+  }
+
+  // ---- I: past the deadline the gesture is forfeit ------------------------------------------------
+  {
+    const g = await boot({ delayMs: 1500 });
+    invariants('I', g);
+    check(
+      'I: readiness past GESTURE_DEADLINE crosses as `deadline`',
+      g.r?.outcome === 'cross' && g.r?.why === 'deadline' && (g.r?.readyMs ?? 0) > 1200,
+      `${g.r?.outcome}/${g.r?.why}, bereit ${g.r?.readyMs}`,
+    );
+    check('I: …showing nothing on the way out', g.marks.every((m) => m.vis !== 'visible'));
+  }
+
+  // ---- J: the hold has a floor -------------------------------------------------------------------
+  {
+    const g = await boot({ delayMs: 4200 });
+    invariants('J', g);
+    check(
+      'J: an app that never signals is revealed by hold-max',
+      g.r?.why === 'hold-max' && g.r?.outcome === 'cross',
+      `${g.r?.outcome}/${g.r?.why}`,
+    );
+    check(
+      'J: …at HOLD_MAX plus its cross-fade, far short of the bail',
+      (g.r?.endMs ?? 0) > 3400 && (g.r?.endMs ?? 9999) < 4200,
+      `${g.r?.endMs} ms`,
+    );
+  }
+
+  // ---- K: an app that collapsed reveals without celebrating ---------------------------------------
+  {
+    const g = await boot({ mode: 'throw' });
+    check(
+      'K: a throw before readiness crosses as `app-failed`',
+      g.r?.outcome === 'cross' && g.r?.why === 'app-failed',
+      `${g.r?.outcome}/${g.r?.why}`,
+    );
+  }
+
+  // ---- M: without a bridge the report still files --------------------------------------------------
+  {
+    const g = await boot({ bridge: false });
+    check('M: a page with no window.auftakt throws nothing', g.errs.length === 0 && g.bridge.length === 0, g.errs[0] ?? '');
+    check(
+      'M: …and localStorage still carries the report',
+      g.ls?.v === 3 && g.ls?.outcome === 'play',
+      `${g.ls?.outcome}/${g.ls?.why}`,
+    );
+  }
+
+  // ---- L: reduced motion removes it outright — the hatch the whole suite depends on ----------------
+  {
+    const g = await boot({ reduce: true });
+    check(
+      'L: prefers-reduced-motion skips the gesture outright',
+      g.r?.outcome === 'skip' && g.r?.why === 'reduced-motion',
+      `${g.r?.outcome}/${g.r?.why}`,
+    );
+    check(
+      'L: …without ever holding, so no driving script waits for a phase',
+      g.phase.map((p) => p.phase).join('→') === 'done',
+      g.phase.map((p) => p.phase).join('→'),
+    );
+    check('L: …and #root is never inert', g.phase.every((p) => !p.inert) && !g.rootInert);
+    check('L: the overlay node is gone', !g.overlay);
+  }
+
+  console.log(
+    `\n${failures ? `✗ ${failures} Fehler` : '✓ alles ok'} (${checks} Prüfungen)` +
+      (notExercised ? ` — ${notExercised}× nicht ausgeführt (siehe -- oben)` : ''),
+  );
+} catch (err) {
+  check('run completed', false, err instanceof Error ? err.message : String(err));
+  if (serverLog) console.error(`\n--- Server-Ausgabe (Ende) ---\n${serverLog.slice(-2000)}`);
+} finally {
+  if (browser) await browser.close();
+}
+
+await shutdown(failures === 0 ? 0 : 1);
+
+/*
+ * Four helpers here — `check`, `busy`, `requireFreePort` and the process-group spawn/kill pair —
+ * are minimal copies of the ones in `check-browser.mjs` and `check-backup.mjs`. Left as copies on
+ * purpose: a `scripts/lib/` extraction is a separate piece of work that should move all four gates
+ * at once, and importing one gate's internals from another would make this file fail for reasons
+ * that have nothing to do with the boot gesture. When that extraction happens, these are the four.
+ */
