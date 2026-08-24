@@ -19,15 +19,12 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createCheck, MARKERS } from './lib/check.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const releaseDir = join(root, 'release');
 
-let failures = 0;
-function check(name, ok, detail = '') {
-  console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`);
-  if (!ok) failures++;
-}
+const { check, count } = createCheck(MARKERS.narrow);
 
 /**
  * The unpacked app directory electron-builder leaves next to the installer. Named per platform,
@@ -133,8 +130,8 @@ check(
 );
 
 console.log(
-  failures === 0
+  count.failures === 0
     ? '\nPaket-Struktur: alles vorhanden\n'
-    : `\n${failures} Prüfung(en) fehlgeschlagen\n`,
+    : `\n${count.failures} Prüfung(en) fehlgeschlagen\n`,
 );
-process.exit(failures === 0 ? 0 : 1);
+process.exit(count.failures === 0 ? 0 : 1);

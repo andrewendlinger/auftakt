@@ -24,12 +24,16 @@
  *   node scripts/check-dates.mjs <TZ>       # one zone (child mode, also usable directly)
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { createConnection } from 'node:net';
 import { mkdirSync, mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { createCheck, MARKERS } from './lib/check.mjs';
+import { request } from './lib/http.mjs';
+import { requireFreePorts } from './lib/ports.mjs';
+import { tailLog } from './lib/server.mjs';
+import { waitUntil } from './lib/wait.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ZONES = ['Pacific/Kiritimati', 'Pacific/Midway'];
@@ -57,11 +61,7 @@ if (!process.env.TZ_CHECK_CHILD) {
 const require = createRequire(join(REPO, 'server/package.json'));
 const Database = require('better-sqlite3');
 
-let failures = 0;
-function check(name, ok, detail = '') {
-  console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`);
-  if (!ok) failures++;
-}
+const { check, count } = createCheck(MARKERS.narrow);
 
 const pad = (n, w = 2) => String(n).padStart(w, '0');
 const localDay = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -202,18 +202,33 @@ function localStampOf(iso) {
 /* ---------- 3. the live API ---------- */
 
 const dataDir = mkdtempSync(join(tmpdir(), 'auftakt-tz-api-'));
-await assertPortFree(PORT);
+/**
+ * Refuse to run when something already holds the port — same guard, same reasoning as
+ * `check-backup.mjs`: a leaked server from an earlier run answers happily against its own
+ * (long-deleted) data dir, and the failures that follow read as product bugs.
+ */
+await requireFreePorts(
+  [PORT],
+  (port) =>
+    `Port ${port} ist belegt — vermutlich ein übrig gebliebener Server aus einem ` +
+    `früheren Lauf. Beenden mit:  lsof -ti tcp:${port} | xargs kill`,
+  { hosts: ['127.0.0.1'] },
+);
+
 const server = spawn(join(REPO, 'server/node_modules/.bin/tsx'), [join(REPO, 'server/src/index.ts')], {
   env: { ...process.env, AUFTAKT_DATA_DIR: dataDir, AUFTAKT_PORT: String(PORT) },
   cwd: join(REPO, 'server'),
   stdio: ['ignore', 'pipe', 'pipe'],
 });
-let serverLog = '';
-server.stdout.on('data', (b) => (serverLog += b));
-server.stderr.on('data', (b) => (serverLog += b));
+const serverLog = tailLog();
+serverLog.attach(server);
 
 try {
-  await waitForServer();
+  await waitUntil(() => fetch(`http://localhost:${PORT}/api/health`).then((r) => r.ok), {
+    timeoutMs: 20_000,
+    intervalMs: 150,
+    onTimeout: () => `Server-Start Zeitüberschreitung\n${serverLog.read().slice(-600)}`,
+  });
 
   /**
    * `Response.json()` is typed `Promise<unknown>` and every assertion below reads a field off the
@@ -222,14 +237,9 @@ try {
    * @returns {Promise<any>}
    */
   const api = async (method, path, body) => {
-    const r = await fetch(`http://localhost:${PORT}/api${path}`, {
-      method,
-      headers: body ? { 'content-type': 'application/json' } : {},
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const json = await r.json().catch(() => null);
-    if (!r.ok) throw new Error(`${method} ${path} → ${r.status} ${JSON.stringify(json)}`);
-    return json;
+    const r = await request(`http://localhost:${PORT}/api${path}`, { method, body, empty: null });
+    if (!r.ok) throw new Error(`${method} ${path} → ${r.status} ${JSON.stringify(r.body)}`);
+    return r.body;
   };
 
   // the editable "done" value, read the way the server does
@@ -300,45 +310,11 @@ try {
   check('two backups in a row are two folders (DBW-09)', b1.dir !== b2.dir, `${b1.dir} / ${b2.dir}`);
 } catch (err) {
   check('API run', false, String(err));
-  if (serverLog) console.log(serverLog.slice(-800));
+  if (serverLog.read()) console.log(serverLog.read().slice(-800));
 } finally {
   server.kill();
   rmSync(dataDir, { recursive: true, force: true });
 }
 
-console.log(failures === 0 ? '  → alles ok' : `  → ${failures} Fehler`);
-process.exit(failures === 0 ? 0 : 1);
-
-/**
- * Refuse to run when something already holds the port — same guard, same reasoning as
- * `check-backup.mjs`: a leaked server from an earlier run answers happily against its own
- * (long-deleted) data dir, and the failures that follow read as product bugs.
- */
-/** @returns {Promise<void>} */
-function assertPortFree(port) {
-  return new Promise((res, rej) => {
-    const s = createConnection({ port, host: '127.0.0.1' });
-    s.on('connect', () => {
-      s.destroy();
-      rej(
-        new Error(
-          `Port ${port} ist belegt — vermutlich ein übrig gebliebener Server aus einem ` +
-            `früheren Lauf. Beenden mit:  lsof -ti tcp:${port} | xargs kill`,
-        ),
-      );
-    });
-    s.on('error', () => res());
-  });
-}
-
-async function waitForServer(timeoutMs = 20000) {
-  const start = Date.now();
-  for (;;) {
-    try {
-      const r = await fetch(`http://localhost:${PORT}/api/health`);
-      if (r.ok) return;
-    } catch { /* not up yet */ }
-    if (Date.now() - start > timeoutMs) throw new Error(`Server-Start Zeitüberschreitung\n${serverLog.slice(-600)}`);
-    await new Promise((r) => setTimeout(r, 150));
-  }
-}
+console.log(count.failures === 0 ? '  → alles ok' : `  → ${count.failures} Fehler`);
+process.exit(count.failures === 0 ? 0 : 1);

@@ -31,14 +31,17 @@
  * you were looking at is gone), and it refuses to start while :5317 or :4325 are taken, since a
  * running `npm run demo` would otherwise have its database replaced underneath it.
  */
-import { spawn, spawnSync } from 'node:child_process';
-import { once } from 'node:events';
+import { spawn } from 'node:child_process';
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inflateSync } from 'node:zlib';
 import { chromium } from 'playwright-core';
+import { createCheck } from './lib/check.mjs';
+import { request } from './lib/http.mjs';
+import { requireFreePorts } from './lib/ports.mjs';
+import { group, tailLog } from './lib/server.mjs';
+import { sleep, waitUntil } from './lib/wait.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -87,14 +90,7 @@ const SETTLED_MS = 25_000;
 /** Every fixture season carries this prefix, so `finally` can sweep leftovers of a killed run. */
 const FIXTURE = 'check:browser';
 
-let failures = 0;
-let checks = 0;
-function check(name, ok, detail = '') {
-  checks++;
-  console.log(`${ok ? '  ok  ' : ' FAIL '} ${name}${detail ? ` — ${detail}` : ''}`);
-  if (!ok) failures++;
-  return ok;
-}
+const { check, count } = createCheck();
 
 // ---------------------------------------------------------------------------- the server
 
@@ -170,65 +166,7 @@ const surfaceSettled = async (page, editor) => {
 
 /** @returns {Promise<{ status: number, body: any }>} */
 async function send(method, path, body) {
-  const res = await fetch(`${API}${path}`, {
-    method,
-    headers: body === undefined ? undefined : { 'content-type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  return { status: res.status, body: await res.json().catch(() => ({})) };
-}
-
-/**
- * Is anything listening there? Asked per address, because that is where the trap is.
- *
- * Express binds `127.0.0.1` explicitly, but **Vite binds `[::1]` and only that** — it passes the
- * bare hostname `localhost` to `listen`, and on macOS Node resolves that to `::1` first. A probe
- * on `127.0.0.1:5317` therefore binds happily *while a dev server is running on the same port*
- * and reports it free, which is the one answer this guard must never give. `EADDRNOTAVAIL` means
- * the family is not configured (a runner without IPv6) — that is a free port, not a busy one.
- */
-async function busy(port, host) {
-  const probe = createServer();
-  try {
-    await /** @type {Promise<void>} */ (
-      new Promise((res, rej) => {
-        probe.once('error', rej);
-        probe.listen(port, host, () => res());
-      })
-    );
-  } catch (err) {
-    if (err?.code === 'EADDRINUSE') return true;
-    if (err?.code === 'EADDRNOTAVAIL' || err?.code === 'EAFNOSUPPORT') return false;
-    throw err;
-  }
-  await new Promise((res) => probe.close(res));
-  return false;
-}
-
-/**
- * Refuse to run while anything holds either port — **before the stack is spawned**, because
- * spawning it is already the destructive act: `demo.mjs`'s first move is `demo:seed`, which
- * `rmSync`s `.demo`. A guard that runs afterwards only races the rebuild it exists to prevent.
- *
- * Not politeness: this rebuilds `.demo` from nothing, so starting beside a running `npm run demo`
- * would leave that session's server answering from a deleted inode — the trap `docs/VERIFYING.md`
- * records as costing a full verification run. And the second stack would not even be the one under
- * test: Vite's port is `strictPort`, so it exits rather than sliding to 5318 where every write
- * would 403 on the origin check.
- */
-async function requireFreePorts() {
-  for (const port of [PORT, 5317]) {
-    for (const host of ['127.0.0.1', '::1']) {
-      if (!(await busy(port, host))) continue;
-      console.error(
-        `FAIL  Port ${port} ist belegt (${host}) — vermutlich ein laufendes \`npm run demo\` oder\n` +
-          `      ein übrig gebliebener Server. Dieser Lauf würde dessen Datenbank neu aufbauen.\n` +
-          `      Beenden mit:  lsof -ti tcp:4325 -ti tcp:5317 | xargs kill\n` +
-          `      (das -i muss wiederholt werden — macOS' lsof liest das zweite tcp: sonst als Datei)`,
-      );
-      process.exit(1);
-    }
-  }
+  return request(`${API}${path}`, { method, body });
 }
 
 /**
@@ -241,57 +179,22 @@ async function requireFreePorts() {
 /** @type {import('node:child_process').ChildProcess | null} */
 let stack = null;
 /** Last ~8 KB of the stack's output, dumped when it fails to come up or a case explodes. */
-let stackLog = '';
+const stackLog = tailLog(8000);
+
+// No temp dir to drop: `demo.mjs` owns `<repo>/.demo` and leaves it behind on purpose, so what
+// the next `npm run demo` starts against is exactly what this run drove.
+const { adopt, shutdown } = group({ graceMs: 3000 });
 
 function startStack() {
-  stack = spawn(process.execPath, [join(root, 'scripts', 'demo.mjs')], {
-    cwd: root,
-    env: { ...process.env, AUFTAKT_PORT: String(PORT) },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: process.platform !== 'win32',
-  });
-  for (const s of [stack.stdout, stack.stderr]) {
-    s.setEncoding('utf8');
-    s.on('data', (chunk) => {
-      stackLog = (stackLog + chunk).slice(-8000);
-    });
-  }
-}
-
-function killStack() {
-  if (!stack?.pid) return;
-  try {
-    if (process.platform === 'win32') {
-      spawnSync('taskkill', ['/pid', String(stack.pid), '/t', '/f'], { stdio: 'ignore' });
-    } else {
-      process.kill(-stack.pid, 'SIGTERM'); // negative pid = the whole process group
-    }
-  } catch {
-    /* already gone */
-  }
-}
-
-let cleanedUp = false;
-function cleanup() {
-  if (cleanedUp) return;
-  cleanedUp = true;
-  killStack();
-}
-process.on('exit', cleanup);
-
-async function shutdown(code) {
-  killStack();
-  if (stack) await Promise.race([once(stack, 'exit'), new Promise((r) => setTimeout(r, 3000))]);
-  cleanup();
-  process.exit(code);
-}
-
-// A run takes a minute, so Ctrl-C during it is normal. Without a listener Node terminates via
-// the default signal action, never emits 'exit', and leaves the whole dev tree behind.
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => {
-    void shutdown(130);
-  });
+  stack = adopt(
+    spawn(process.execPath, [join(root, 'scripts', 'demo.mjs')], {
+      cwd: root,
+      env: { ...process.env, AUFTAKT_PORT: String(PORT) },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    }),
+  );
+  stackLog.attach(stack);
 }
 
 /**
@@ -302,21 +205,19 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
  * hoch" for what is really a seeding error sitting in `stackLog`.
  */
 async function waitForStack() {
-  const deadline = Date.now() + 120_000;
   let apiUp = false;
-  while (Date.now() < deadline) {
-    if (stack?.exitCode != null) {
-      throw new Error(`Stack ist beendet (Code ${stack.exitCode})\n${stackLog}`);
-    }
-    try {
+  await waitUntil(
+    async () => {
       if (!apiUp) apiUp = (await fetch(`${API}/health`)).ok;
-      if (apiUp && (await fetch(UI)).ok) return;
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 400));
-  }
-  throw new Error(`Stack kam nicht hoch (API ${apiUp ? 'ok' : 'stumm'})\n${stackLog}`);
+      return apiUp && (await fetch(UI)).ok;
+    },
+    {
+      timeoutMs: 120_000,
+      intervalMs: 400,
+      dead: () => (stack?.exitCode == null ? null : `Stack ist beendet (Code ${stack.exitCode})\n${stackLog.read()}`),
+      onTimeout: () => `Stack kam nicht hoch (API ${apiUp ? 'ok' : 'stumm'})\n${stackLog.read()}`,
+    },
+  );
 }
 
 /**
@@ -449,8 +350,6 @@ const cardWith = (page, text) => page.locator('div.rounded-2xl').filter({ hasTex
  * „Löschen" addressable inside *two stacked* dialogs.
  */
 const topDialog = (page) => page.locator('.fixed.inset-0').last();
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * „It is there" — and the reason it is a wait rather than a `count()`.
@@ -1003,7 +902,28 @@ async function withoutPrintRule(page, css) {
 
 // ---------------------------------------------------------------------------- the run
 
-await requireFreePorts();
+/*
+ * Refuse to run while anything holds either port — **before the stack is spawned**, because
+ * spawning it is already the destructive act: `demo.mjs`'s first move is `demo:seed`, which
+ * `rmSync`s `.demo`. A guard that runs afterwards only races the rebuild it exists to prevent.
+ *
+ * Not politeness: this rebuilds `.demo` from nothing, so starting beside a running `npm run demo`
+ * would leave that session's server answering from a deleted inode — the trap `docs/VERIFYING.md`
+ * records as costing a full verification run. And the second stack would not even be the one under
+ * test: Vite's port is `strictPort`, so it exits rather than sliding to 5318 where every write
+ * would 403 on the origin check.
+ *
+ * Both address families, because that is where the trap is: Vite binds `[::1]` and only that, so
+ * an IPv4-only probe reports :5317 free while a dev server is running on it (see `lib/ports.mjs`).
+ */
+await requireFreePorts(
+  [PORT, 5317],
+  (port, host) =>
+    `FAIL  Port ${port} ist belegt (${host}) — vermutlich ein laufendes \`npm run demo\` oder\n` +
+    `      ein übrig gebliebener Server. Dieser Lauf würde dessen Datenbank neu aufbauen.\n` +
+    `      Beenden mit:  lsof -ti tcp:4325 -ti tcp:5317 | xargs kill\n` +
+    `      (das -i muss wiederholt werden — macOS' lsof liest das zweite tcp: sonst als Datei)`,
+);
 startStack();
 await waitForStack();
 const registry = await assertDemo();
@@ -8583,14 +8503,14 @@ try {
   await ar.close().catch(() => {});
 
   console.log(
-    `\n${failures ? `✗ ${failures} Fehler` : '✓ alles ok'} (${checks} Prüfungen)` +
+    `\n${count.failures ? `✗ ${count.failures} Fehler` : '✓ alles ok'} (${count.checks} Prüfungen)` +
       (reloadedSurfaces
         ? ` — ${reloadedSurfaces}× neu geladen, weil ein Editor nicht zuging (siehe ⚠ oben)`
         : ''),
   );
 } catch (err) {
   check('run completed', false, err instanceof Error ? err.message : String(err));
-  if (stackLog) console.error(`\n--- Stack-Ausgabe (Ende) ---\n${stackLog.slice(-2000)}`);
+  if (stackLog.read()) console.error(`\n--- Stack-Ausgabe (Ende) ---\n${stackLog.read().slice(-2000)}`);
 } finally {
   for (const held of heldRoutes) held.release();
   if (browser) await browser.close();
@@ -8603,4 +8523,4 @@ try {
   }
 }
 
-await shutdown(failures === 0 ? 0 : 1);
+await shutdown(count.failures === 0 ? 0 : 1);

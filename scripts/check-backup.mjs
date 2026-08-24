@@ -15,7 +15,6 @@
  *   npm run check:backup
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { once } from 'node:events';
 import {
   chmodSync,
   existsSync,
@@ -27,11 +26,15 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createCheck } from './lib/check.mjs';
+import { request } from './lib/http.mjs';
+import { requireFreePorts } from './lib/ports.mjs';
+import { group } from './lib/server.mjs';
+import { waitUntil } from './lib/wait.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(join(root, 'server', 'package.json'));
@@ -48,40 +51,24 @@ const api = (p) => `http://localhost:${PORT}/api/${p}`;
  * temp data dir. The run then fails at the second-season fixture with `no such table: artists`,
  * which reads as a product bug and is not one. Fail here instead, naming the real problem.
  */
-async function requireFreePort() {
-  const probe = createServer();
-  try {
-    await /** @type {Promise<void>} */ (
-      new Promise((res, rej) => {
-        probe.once('error', rej);
-        probe.listen(PORT, '127.0.0.1', () => res());
-      })
-    );
-  } catch (err) {
-    if (err?.code !== 'EADDRINUSE') throw err;
-    console.error(
-      `FAIL  Port ${PORT} ist belegt — vermutlich ein übrig gebliebener Server aus einem\n` +
-        `      früheren Lauf. Dieser Lauf würde gegen dessen (gelöschtes) Datenverzeichnis\n` +
-        `      prüfen und mit „no such table“ scheitern.\n` +
-        `      Beenden mit:  lsof -ti tcp:${PORT} | xargs kill`,
-    );
-    process.exit(1);
-  }
-  await new Promise((res) => probe.close(res));
-}
-
-await requireFreePort();
+await requireFreePorts(
+  [PORT],
+  (port) =>
+    `FAIL  Port ${port} ist belegt — vermutlich ein übrig gebliebener Server aus einem\n` +
+    `      früheren Lauf. Dieser Lauf würde gegen dessen (gelöschtes) Datenverzeichnis\n` +
+    `      prüfen und mit „no such table“ scheitern.\n` +
+    `      Beenden mit:  lsof -ti tcp:${port} | xargs kill`,
+  // Only IPv4: what answers on :4319 is an Express, which binds `127.0.0.1` explicitly. The
+  // `::1` probe `check-browser` also runs is there for Vite, which binds that and only that.
+  { hosts: ['127.0.0.1'] },
+);
 
 const dataDir = mkdtempSync(join(tmpdir(), 'auftakt-check-'));
 const workDir = mkdtempSync(join(tmpdir(), 'auftakt-work-'));
 const backupDir = join(workDir, 'backups');
 mkdirSync(backupDir, { recursive: true });
 
-let failures = 0;
-function check(name, ok, detail = '') {
-  console.log(`${ok ? '  ok  ' : ' FAIL '} ${name}${detail ? ` — ${detail}` : ''}`);
-  if (!ok) failures++;
-}
+const { check, count } = createCheck();
 
 /**
  * `Response.json()` is typed `Promise<unknown>` and every assertion below reads a field off the
@@ -90,90 +77,30 @@ function check(name, ok, detail = '') {
  * @returns {Promise<{ status: number, body: any }>}
  */
 async function post(path, body) {
-  const r = await fetch(api(path), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body ?? {}),
-  });
-  return { status: r.status, body: await r.json().catch(() => ({})) };
+  return request(api(path), { method: 'POST', body: body ?? {} });
 }
 
-const server = spawn('npm', ['--prefix', 'server', 'run', 'dev'], {
-  cwd: root,
-  env: { ...process.env, AUFTAKT_DATA_DIR: dataDir, AUFTAKT_PORT: String(PORT) },
-  stdio: 'ignore',
-  shell: true,
-  // Own process group, so killServer() can signal the whole tree at once. Windows has no
-  // groups — it gets the taskkill branch instead, and `detached` there opens a console window.
-  detached: process.platform !== 'win32',
+// The temp dirs go with the group: the server re-creates its data dir on the next registry
+// write (saveRegistry mkdirs it), which is why `shutdown` waits for it to be gone first.
+const { adopt, shutdown } = group({
+  graceMs: 2000,
+  cleanup: () => {
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(workDir, { recursive: true, force: true });
+  },
 });
 
-/**
- * Stop the server AND everything it spawned. `shell: true` means the pid we hold belongs to
- * the shell, with npm and the tsx/node process actually bound to :4319 underneath it, so
- * server.kill() only ever signalled the top of that chain and left reaping the rest to
- * whatever the shell and npm happen to forward — nothing on Windows, where kill() cannot
- * reach a grandchild at all. A survivor makes the next run either talk to a stale server
- * pointing at this run's deleted temp dir, or wait out 30s of EADDRINUSE and fail with
- * "Server kam nicht hoch" though nothing is broken (DBW-10).
- */
-function killServer() {
-  if (!server.pid) return;
-  try {
-    if (process.platform === 'win32') {
-      spawnSync('taskkill', ['/pid', String(server.pid), '/t', '/f'], { stdio: 'ignore' });
-    } else {
-      process.kill(-server.pid, 'SIGTERM'); // negative pid = the whole process group
-    }
-  } catch {
-    /* already gone */
-  }
-}
-
-let cleanedUp = false;
-/** Last-ditch cleanup for the 'exit' handler, where nothing may be awaited. */
-function cleanup() {
-  if (cleanedUp) return;
-  cleanedUp = true;
-  killServer();
-  rmSync(dataDir, { recursive: true, force: true });
-  rmSync(workDir, { recursive: true, force: true });
-}
-process.on('exit', cleanup);
-
-/**
- * Stop the server, wait for it to actually be gone, then drop the temp dirs. The order matters
- * when a request is still in flight: the server re-creates its data dir on the next registry
- * write (saveRegistry mkdirs it), so removing the dir first leaves it behind.
- */
-async function shutdown(code) {
-  killServer();
-  await Promise.race([once(server, 'exit'), new Promise((r) => setTimeout(r, 2000))]);
-  cleanup();
-  process.exit(code);
-}
-
-// The run stays alive for seconds (dozens of awaited round-trips and 250ms polls), so Ctrl-C
-// during it is normal. Without a listener Node terminates via the default signal action and
-// never emits 'exit', so cleanup() never ran: the server kept :4319 and both temp dirs stayed
-// behind, once per interrupted run (DBW-11).
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => {
-    void shutdown(130);
-  });
-}
-
-async function waitForServer() {
-  for (let i = 0; i < 120; i++) {
-    try {
-      if ((await fetch(api('health'))).ok) return;
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  throw new Error('Server kam nicht hoch');
-}
+const server = adopt(
+  spawn('npm', ['--prefix', 'server', 'run', 'dev'], {
+    cwd: root,
+    env: { ...process.env, AUFTAKT_DATA_DIR: dataDir, AUFTAKT_PORT: String(PORT) },
+    stdio: 'ignore',
+    shell: true,
+    // Own process group, so the kill can signal the whole tree at once. Windows has no
+    // groups — it gets the taskkill branch instead, and `detached` there opens a console window.
+    detached: process.platform !== 'win32',
+  }),
+);
 
 /** Count rows in a snapshot on disk — the whole point is that copies are not empty. */
 function rows(path, table, where = '') {
@@ -185,7 +112,11 @@ function rows(path, table, where = '') {
   }
 }
 
-await waitForServer();
+await waitUntil(() => fetch(api('health')).then((r) => r.ok), {
+  timeoutMs: 30_000,
+  intervalMs: 250,
+  onTimeout: () => 'Server kam nicht hoch',
+});
 console.log('\nBackup & Import\n');
 
 // --- fixtures: two seasons, both with data, the active one written via the API ---
@@ -682,5 +613,5 @@ function runAgainstDb(body) {
   }
 }
 
-console.log(`\n${failures === 0 ? 'alles ok' : `${failures} fehlgeschlagen`}\n`);
-await shutdown(failures === 0 ? 0 : 1);
+console.log(`\n${count.failures === 0 ? 'alles ok' : `${count.failures} fehlgeschlagen`}\n`);
+await shutdown(count.failures === 0 ? 0 : 1);

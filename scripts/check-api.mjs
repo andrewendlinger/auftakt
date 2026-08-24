@@ -24,11 +24,15 @@
  */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createCheck, MARKERS } from './lib/check.mjs';
+import { request } from './lib/http.mjs';
+import { requireFreePorts } from './lib/ports.mjs';
+import { tailLog } from './lib/server.mjs';
+import { waitUntil } from './lib/wait.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(join(REPO, 'server', 'package.json'));
@@ -40,69 +44,43 @@ const ExcelJS = require('exceljs');
 const PORT = 4323; // not 4317/4319/4321: dev server, check:backup and check:dates own those
 const API = `http://localhost:${PORT}/api`;
 
-let failures = 0;
-function check(name, ok, detail = '') {
-  console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`);
-  if (!ok) failures++;
-}
+const { check, count } = createCheck(MARKERS.narrow);
 
 /**
  * Refuse to run when something already holds the port — same guard and same reasoning as
  * `check-backup.mjs`: a leaked server from an earlier run answers against its own (deleted)
  * data dir, and every failure that follows reads as a product bug.
  */
-async function requireFreePort() {
-  const probe = createServer();
-  try {
-    await /** @type {Promise<void>} */ (
-      new Promise((res, rej) => {
-        probe.once('error', rej);
-        probe.listen(PORT, '127.0.0.1', () => res());
-      })
-    );
-  } catch (err) {
-    if (err?.code !== 'EADDRINUSE') throw err;
-    console.error(
-      `FAIL  Port ${PORT} ist belegt — vermutlich ein übrig gebliebener Server aus einem\n` +
-        `      früheren Lauf. Beenden mit:  lsof -ti tcp:${PORT} | xargs kill`,
-    );
-    process.exit(1);
-  }
-  await new Promise((res) => probe.close(res));
-}
-
-await requireFreePort();
+await requireFreePorts(
+  [PORT],
+  (port) =>
+    `FAIL  Port ${port} ist belegt — vermutlich ein übrig gebliebener Server aus einem\n` +
+    `      früheren Lauf. Beenden mit:  lsof -ti tcp:${port} | xargs kill`,
+  { hosts: ['127.0.0.1'] },
+);
 
 const dataDir = mkdtempSync(join(tmpdir(), 'auftakt-check-api-'));
 
+/** @type {import('node:child_process').ChildProcess | null} */
 let server = null;
-let serverLog = '';
+const serverLog = tailLog();
 
+// Not a process group like `check-backup`'s: this spawns `tsx` directly rather than through a
+// shell, so the pid held here is the server itself and there are no grandchildren to reap. The
+// purge cases stop and start it around a backdating step, which is what `reset()` is for.
 function startServer() {
-  serverLog = '';
+  serverLog.reset();
   server = spawn(join(REPO, 'server/node_modules/.bin/tsx'), [join(REPO, 'server/src/index.ts')], {
     env: { ...process.env, AUFTAKT_DATA_DIR: dataDir, AUFTAKT_PORT: String(PORT) },
     cwd: join(REPO, 'server'),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  server.stdout.on('data', (b) => (serverLog += b));
-  server.stderr.on('data', (b) => (serverLog += b));
-  return waitForServer();
-}
-
-async function waitForServer(timeoutMs = 20000) {
-  const start = Date.now();
-  for (;;) {
-    try {
-      if ((await fetch(`${API}/health`)).ok) return;
-    } catch {
-      /* not up yet */
-    }
-    if (Date.now() - start > timeoutMs) {
-      throw new Error(`Server-Start Zeitüberschreitung\n${serverLog.slice(-600)}`);
-    }
-    await new Promise((r) => setTimeout(r, 150));
-  }
+  serverLog.attach(server);
+  return waitUntil(() => fetch(`${API}/health`).then((r) => r.ok), {
+    timeoutMs: 20_000,
+    intervalMs: 150,
+    onTimeout: () => `Server-Start Zeitüberschreitung\n${serverLog.read().slice(-600)}`,
+  });
 }
 
 async function stopServer() {
@@ -122,12 +100,7 @@ async function stopServer() {
  * @returns {Promise<{ status: number, body: any }>}
  */
 async function req(method, path, body, headers = {}) {
-  const r = await fetch(API + path, {
-    method,
-    headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...headers },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  return { status: r.status, body: await r.json().catch(() => null) };
+  return request(API + path, { method, body, headers, empty: null });
 }
 
 /**
@@ -2101,9 +2074,9 @@ try {
   }
 } catch (err) {
   check('run completed', false, String(err));
-  if (serverLog) console.log(serverLog.slice(-900));
+  if (serverLog.read()) console.log(serverLog.read().slice(-900));
   await stopServer();
 }
 
-console.log(failures === 0 ? '\n✓ alles ok' : `\n✗ ${failures} Fehler`);
-process.exit(failures === 0 ? 0 : 1);
+console.log(count.failures === 0 ? '\n✓ alles ok' : `\n✗ ${count.failures} Fehler`);
+process.exit(count.failures === 0 ? 0 : 1);

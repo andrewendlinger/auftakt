@@ -61,13 +61,15 @@
  * `check:browser` it can run beside a live `npm run demo`. It does rebuild `client/dist`.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { once } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { createCheck } from './lib/check.mjs';
+import { requireFreePorts } from './lib/ports.mjs';
+import { group, tailLog } from './lib/server.mjs';
+import { waitUntil } from './lib/wait.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -109,14 +111,7 @@ const WHYS = new Set([
   'abort:starved',
 ]);
 
-let failures = 0;
-let checks = 0;
-function check(name, ok, detail = '') {
-  checks++;
-  console.log(`${ok ? '  ok  ' : ' FAIL '} ${name}${detail ? ` — ${detail}` : ''}`);
-  if (!ok) failures++;
-  return ok;
-}
+const { check, count } = createCheck();
 
 /**
  * A case that could not be exercised, with the evidence for why.
@@ -151,45 +146,6 @@ const DROPS_CASES = ['E', 'E2', 'E3'];
 // ---------------------------------------------------------------------------- the stack
 
 /**
- * Is anything listening there? Asked per address family, because that is where the trap is —
- * `EADDRNOTAVAIL` means the family is not configured (a runner without IPv6), which is a free
- * port and not a busy one. Ported from `check-browser.mjs`; see the note at the foot of this file.
- */
-async function busy(port, host) {
-  const probe = createServer();
-  try {
-    await /** @type {Promise<void>} */ (
-      new Promise((res, rej) => {
-        probe.once('error', rej);
-        probe.listen(port, host, () => res());
-      })
-    );
-  } catch (err) {
-    if (err?.code === 'EADDRINUSE') return true;
-    if (err?.code === 'EADDRNOTAVAIL' || err?.code === 'EAFNOSUPPORT') return false;
-    throw err;
-  }
-  await new Promise((res) => probe.close(res));
-  return false;
-}
-
-/**
- * Refuse to run while anything holds :4327 — before the build, because a run that talks to a
- * stranger's server measures a bundle nobody built here.
- */
-async function requireFreePort() {
-  for (const host of ['127.0.0.1', '::1']) {
-    if (!(await busy(PORT, host))) continue;
-    console.error(
-      `FAIL  Port ${PORT} ist belegt (${host}) — vermutlich ein übrig gebliebener Server aus einem\n` +
-        `      früheren Lauf. Dieser Lauf würde gegen dessen Bundle prüfen.\n` +
-        `      Beenden mit:  lsof -ti tcp:${PORT} | xargs kill`,
-    );
-    process.exit(1);
-  }
-}
-
-/**
  * Build the client here rather than requiring one.
  *
  * `vite build` is 0.4 s of rolldown; a stale `client/dist` is a silent false green, which is the
@@ -218,89 +174,48 @@ const dataDir = mkdtempSync(join(tmpdir(), 'auftakt-boot-'));
 /** @type {import('node:child_process').ChildProcess | null} */
 let server = null;
 /** Last ~8 KB of the server's output, dumped when it fails to come up. */
-let serverLog = '';
+const serverLog = tailLog(8000);
+
+const { adopt, shutdown } = group({
+  graceMs: 3000,
+  cleanup: () => {
+    try {
+      rmSync(dataDir, { recursive: true, force: true });
+    } catch {
+      /* a temp dir that outlives the run is not worth failing over */
+    }
+  },
+});
 
 function startServer() {
-  server = spawn('npm', ['--prefix', 'server', 'run', 'start'], {
-    cwd: root,
-    env: {
-      ...process.env,
-      AUFTAKT_DATA_DIR: dataDir,
-      AUFTAKT_PORT: String(PORT),
-      // The whole point: with this set the server serves `client/dist` at its own origin, exactly
-      // as the packaged app does, and `isPackaged` drops the dev origins from ALLOWED_ORIGINS.
-      AUFTAKT_CLIENT_DIST: join(root, 'client', 'dist'),
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    shell: true,
-    // Own process group, so the whole tree goes down at once. `shell: true` means the pid held
-    // here belongs to the shell, with npm and tsx bound to :4327 underneath it (DBW-10).
-    detached: process.platform !== 'win32',
+  server = adopt(
+    spawn('npm', ['--prefix', 'server', 'run', 'start'], {
+      cwd: root,
+      env: {
+        ...process.env,
+        AUFTAKT_DATA_DIR: dataDir,
+        AUFTAKT_PORT: String(PORT),
+        // The whole point: with this set the server serves `client/dist` at its own origin, exactly
+        // as the packaged app does, and `isPackaged` drops the dev origins from ALLOWED_ORIGINS.
+        AUFTAKT_CLIENT_DIST: join(root, 'client', 'dist'),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: true,
+      // Own process group, so the whole tree goes down at once. `shell: true` means the pid held
+      // here belongs to the shell, with npm and tsx bound to :4327 underneath it (DBW-10).
+      detached: process.platform !== 'win32',
+    }),
+  );
+  serverLog.attach(server);
+}
+
+const waitForServer = () =>
+  waitUntil(() => fetch(`${BASE}/api/health`).then((r) => r.ok), {
+    timeoutMs: 60_000,
+    intervalMs: 200,
+    dead: () => (server?.exitCode == null ? null : `Server ist beendet (Code ${server.exitCode})\n${serverLog.read()}`),
+    onTimeout: () => `Server kam nicht hoch\n${serverLog.read()}`,
   });
-  for (const s of [server.stdout, server.stderr]) {
-    s?.setEncoding('utf8');
-    s?.on('data', (chunk) => {
-      serverLog = (serverLog + chunk).slice(-8000);
-    });
-  }
-}
-
-function killServer() {
-  if (!server?.pid) return;
-  try {
-    if (process.platform === 'win32') {
-      spawnSync('taskkill', ['/pid', String(server.pid), '/t', '/f'], { stdio: 'ignore' });
-    } else {
-      process.kill(-server.pid, 'SIGTERM'); // negative pid = the whole process group
-    }
-  } catch {
-    /* already gone */
-  }
-}
-
-let cleanedUp = false;
-function cleanup() {
-  if (cleanedUp) return;
-  cleanedUp = true;
-  killServer();
-  try {
-    rmSync(dataDir, { recursive: true, force: true });
-  } catch {
-    /* a temp dir that outlives the run is not worth failing over */
-  }
-}
-process.on('exit', cleanup);
-
-async function shutdown(code) {
-  killServer();
-  if (server) await Promise.race([once(server, 'exit'), new Promise((r) => setTimeout(r, 3000))]);
-  cleanup();
-  process.exit(code);
-}
-
-// A run takes half a minute, so Ctrl-C during it is normal. Without a listener Node terminates via
-// the default signal action, never emits 'exit', and leaves the server tree behind.
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => {
-    void shutdown(130);
-  });
-}
-
-async function waitForServer() {
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
-    if (server?.exitCode != null) {
-      throw new Error(`Server ist beendet (Code ${server.exitCode})\n${serverLog}`);
-    }
-    try {
-      if ((await fetch(`${BASE}/api/health`)).ok) return;
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  throw new Error(`Server kam nicht hoch\n${serverLog}`);
-}
 
 /**
  * Believe nothing until the served document is the production overlay.
@@ -579,7 +494,17 @@ function invariants(tag, g) {
 
 // ---------------------------------------------------------------------------- the run
 
-await requireFreePort();
+/*
+ * Refuse to run while anything holds :4327 — before the build, because a run that talks to a
+ * stranger's server measures a bundle nobody built here.
+ */
+await requireFreePorts(
+  [PORT],
+  (port, host) =>
+    `FAIL  Port ${port} ist belegt (${host}) — vermutlich ein übrig gebliebener Server aus einem\n` +
+    `      früheren Lauf. Dieser Lauf würde gegen dessen Bundle prüfen.\n` +
+    `      Beenden mit:  lsof -ti tcp:${port} | xargs kill`,
+);
 buildClient();
 startServer();
 await waitForServer();
@@ -1006,22 +931,14 @@ try {
   );
 
   console.log(
-    `\n${failures ? `✗ ${failures} Fehler` : '✓ alles ok'} (${checks} Prüfungen)` +
+    `\n${count.failures ? `✗ ${count.failures} Fehler` : '✓ alles ok'} (${count.checks} Prüfungen)` +
       (notExercised ? ` — ${notExercised}× nicht ausgeführt (siehe -- oben)` : ''),
   );
 } catch (err) {
   check('run completed', false, err instanceof Error ? err.message : String(err));
-  if (serverLog) console.error(`\n--- Server-Ausgabe (Ende) ---\n${serverLog.slice(-2000)}`);
+  if (serverLog.read()) console.error(`\n--- Server-Ausgabe (Ende) ---\n${serverLog.read().slice(-2000)}`);
 } finally {
   if (browser) await browser.close();
 }
 
-await shutdown(failures === 0 ? 0 : 1);
-
-/*
- * Four helpers here — `check`, `busy`, `requireFreePort` and the process-group spawn/kill pair —
- * are minimal copies of the ones in `check-browser.mjs` and `check-backup.mjs`. Left as copies on
- * purpose: a `scripts/lib/` extraction is a separate piece of work that should move all four gates
- * at once, and importing one gate's internals from another would make this file fail for reasons
- * that have nothing to do with the boot gesture. When that extraction happens, these are the four.
- */
+await shutdown(count.failures === 0 ? 0 : 1);
