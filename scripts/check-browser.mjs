@@ -6406,7 +6406,14 @@ try {
   );
   await cc.keyboard.press('Escape');
   await gone(cc.getByRole('heading', { name: 'Spalten verwalten' }), 5000);
-  ccHeadRow = await until(ccHeads, (h) => !h.some((x) => x.includes('Bereich')), 8000);
+  // The predicate carries everything the assertion below reads, all three names and not just the
+  // first: a canary that hid only one of them satisfied a poll keyed on „Bereich" while the other
+  // two were still on screen, which is the assertion passing or failing on a coin toss.
+  ccHeadRow = await until(
+    ccHeads,
+    (h) => CC_GLOBALS.every((n) => !h.some((x) => x.includes(n))),
+    8000,
+  );
   check(
     'die drei Köpfe sind von dieser Seite weg, die vier eigenen stehen weiter da',
     CC_GLOBALS.every((n) => !ccHeadRow.some((h) => h.includes(n))) &&
@@ -6419,7 +6426,11 @@ try {
   await cc.goto(`${UI}/#/project/3`);
   await cc.reload();
   await ready(cc);
-  const ccNeighbour = await until(ccHeads, (h) => h.includes('Aufgabe'), 8000);
+  const ccNeighbour = await until(
+    ccHeads,
+    (h) => h.includes('Aufgabe') && CC_GLOBALS.every((n) => h.some((x) => x.includes(n))),
+    8000,
+  );
   check(
     'die Nachbarseite zeigt alle drei weiterhin — und keine der vier fremden',
     CC_GLOBALS.every((n) => ccNeighbour.some((h) => h.includes(n))) &&
@@ -6442,7 +6453,11 @@ try {
   );
   await cc.keyboard.press('Escape');
   await gone(cc.getByRole('heading', { name: 'Spalten verwalten' }), 5000);
-  ccHeadRow = await until(ccHeads, (h) => h.some((x) => x.includes('Bereich')), 8000);
+  ccHeadRow = await until(
+    ccHeads,
+    (h) => CC_GLOBALS.every((n) => h.some((x) => x.includes(n))),
+    8000,
+  );
   check(
     '…und alle drei Köpfe stehen wieder da',
     CC_GLOBALS.every((n) => ccHeadRow.some((h) => h.includes(n))),
