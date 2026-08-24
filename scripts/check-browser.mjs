@@ -424,6 +424,28 @@ const gone = (locator, timeout = 10_000) =>
     .catch(() => false);
 
 /**
+ * Click something a broken build may simply not have.
+ *
+ * Every button a case addresses is one a reverted fix can delete, and an unguarded `click()` on a
+ * locator that matches nothing waits out its timeout and then **throws** — which takes the whole
+ * run down at the first red instead of letting the assertions after it report. A canary has to go
+ * red by assertion, and a canary that removes one button should not hide what the other fourteen
+ * still do.
+ *
+ * Up here beside `shown` and `gone` rather than inside the run: the cases are one `const` scope,
+ * so a helper declared among them is in its own temporal dead zone for every case *above* it —
+ * and U2, four hundred lines earlier, needs this one too. That reads as
+ * „Cannot access 'clickIfThere' before initialization" and ends the run at the case that reached
+ * for it.
+ */
+const clickIfThere = (locator, timeout = 5000) =>
+  locator
+    .first()
+    .click({ timeout })
+    .then(() => true)
+    .catch(() => false);
+
+/**
  * Poll `read()` until `ok` accepts the answer, then hand the last value back — the *caller* still
  * makes the assertion, so a run that never reaches the expected state fails with the value that
  * was really there instead of with a bare timeout.
@@ -3109,9 +3131,20 @@ try {
   // `click()` returns when the event was dispatched, not when the handler's `writeText` settled,
   // so every read is a `until` on a shape the *previous* content does not have. Reading once
   // straight after the click passes or fails on timing.
+  //
+  // Bounded and swallowed, like `clickIfThere`: the labels swap to „Kopiert ✓" for 2.5 s after a
+  // successful copy, so a slow runner can be looking for a button that is wearing another name —
+  // and an unguarded `click()` there ends the *run* 30 s later instead of reddening this line.
+  // It has happened once. The sentinel below fails every `shape` and names the stage it failed at.
   const copy = async (name, shape) => {
-    await topDialog(u).getByRole('button', { name }).click();
-    return until(() => u.evaluate(() => navigator.clipboard.readText()), shape, 5000);
+    if (!(await clickIfThere(topDialog(u).getByRole('button', { name }), 8000))) {
+      return `„${name}“ war nicht anklickbar`;
+    }
+    return until(
+      () => u.evaluate(() => navigator.clipboard.readText()).catch(() => ''),
+      shape,
+      5000,
+    );
   };
   const address = await copy('Adresse kopieren', (t) => t === 'auftakt@e-mail.de');
   check('„Adresse kopieren“ legt die Support-Adresse in die Zwischenablage', address === 'auftakt@e-mail.de', address);
@@ -3965,22 +3998,6 @@ try {
   /** What `.tc-blau` and `.tc-tuerkis` paint — hand-written hex in `index.css`, so a plain `rgb()`. */
   const BLAU = 'rgb(29, 78, 216)';
   const TUERKIS = 'rgb(15, 118, 110)';
-
-  /**
-   * Click something a broken build may simply not have.
-   *
-   * Every button below is one a reverted fix can delete, and an unguarded `click()` on a locator
-   * that matches nothing waits out its timeout and then **throws** — which takes the whole run
-   * down at the first red instead of letting the assertions after it report. A canary has to go
-   * red by assertion, and a canary that removes one button should not hide what the other
-   * fourteen still do.
-   */
-  const clickIfThere = (locator, timeout = 5000) =>
-    locator
-      .first()
-      .click({ timeout })
-      .then(() => true)
-      .catch(() => false);
 
   /** A box, or `null` — `boundingBox()` on a locator that matches nothing throws like the rest. */
   const boxOf = (locator) =>
