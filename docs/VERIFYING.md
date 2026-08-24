@@ -1381,6 +1381,19 @@ are not — they are `labels` in the window's own season `settings`, with a gene
   („what really says the commit landed is the editor going away"); what is new is that the wait
   has to be generous, because its length is a property of how many windows are open, not of the
   page under test.
+- **`check:browser`'s landing cases reload rather than fail when a surface will not settle — and
+  „neu geladen" is a *passing* verdict.** `surfaceSettled` waits `EDITOR_GONE_MS` (20 s) for the
+  dialog or the inline input to leave; past that it reloads the page and the assertion reads the
+  same screen rendered from the same server. Two things follow, and both matter before trusting a
+  green landing line or copying this as the house pattern. **Its „offen" verdict is nearly
+  unreachable**: editing state is component-local `useState`, so a reload destroys it by
+  definition — after the fallback the editor is gone because the document is new, not because the
+  write finished, and „offen" therefore reports a *failed reload*, never the wedged editor it
+  reads as guarding. And **on the reload path the case stops witnessing the broadcast**: the merge
+  is proved to have reached a screen, but no longer to have reached it *without* a reload. So the
+  fallback announces itself — a `⚠` line where it happens and a count on the summary line — and a
+  run that reloaded its way to green must be read as a run with something wrong in it, not as a
+  green run.
 - **A window left open costs every later case.** The gate opens ~30 pages and closes almost none,
   so a broadcast fans out to all of them. Closing a case's windows when it is done is not tidiness
   here: it is what keeps the *next* case's writes fast enough to drive.

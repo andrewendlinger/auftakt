@@ -127,28 +127,45 @@ const scoped = (id) => (path) => `${path}${path.includes('?') ? '&' : '?'}season
  * PATCH body today; this is what keeps that from being load-bearing.
  * @returns {any}
  */
-/**
- * Wait for an editing surface to leave the screen, and if it will not, reload the page.
- *
- * Both outcomes are honest, and which one happened belongs in the assertion's detail: „zu" is the
- * surface closing on its own, „neu geladen" is the same screen reached the way a user reaches it
- * when a window has been left waiting, and „offen" is the one answer that fails. What the
- * assertion reads afterwards is unchanged either way — the page renders from the same server.
- * @returns {Promise<'zu' | 'neu geladen' | 'offen'>}
- */
-const surfaceSettled = async (page, editor) => {
-  if (await gone(editor, EDITOR_GONE_MS)) return 'zu';
-  await page.reload().catch(() => {});
-  await ready(page).catch(() => {});
-  return (await gone(editor, 10_000)) ? 'neu geladen' : 'offen';
-};
-
 const jsonOr = (raw) => {
   try {
     return JSON.parse(raw ?? '{}');
   } catch {
     return {};
   }
+};
+
+/**
+ * How often `surfaceSettled` had to fall back to a reload. Printed with the summary, because the
+ * fallback is the one path here that cannot fail: see there.
+ */
+let reloadedSurfaces = 0;
+
+/**
+ * Wait for an editing surface to leave the screen, and if it will not, reload the page.
+ *
+ * „zu" is the surface closing on its own; „neu geladen" is the same screen reached the way a user
+ * reaches a window that has been left waiting. What the assertion reads afterwards is the same
+ * either way — the page renders from the same server — which is what makes the fallback sound.
+ *
+ * **„offen" is nearly unreachable, and that is the honest limit of this helper.** Editing state is
+ * component-local `useState`, so a reload destroys it by definition: past the fallback `gone()` is
+ * true because the whole document is new, not because the editor gave up its write. „offen"
+ * therefore reports a *reload that failed*, never the stuck editor it nominally guards — so a
+ * genuinely wedged editor would ride through as a green line whose only trace is a word in the
+ * detail. Hence the counter: every fallback says so on its own line as it happens and again in the
+ * summary, so „this run reloaded its way to green" can never be read as „this run was green".
+ */
+const surfaceSettled = async (page, editor) => {
+  if (await gone(editor, EDITOR_GONE_MS)) return 'zu';
+  reloadedSurfaces++;
+  console.log(
+    `  ⚠     ein Editor ging ${EDITOR_GONE_MS / 1000} s lang nicht zu — Seite neu geladen ` +
+      `(${page.url().replace(UI, '') || '?'})`,
+  );
+  await page.reload().catch(() => {});
+  await ready(page).catch(() => {});
+  return (await gone(editor, 10_000)) ? 'neu geladen' : 'offen';
 };
 
 /** @returns {Promise<{ status: number, body: any }>} */
@@ -7220,6 +7237,17 @@ try {
   // and the whole second half then fails for a reason that has nothing to do with it — which is
   // exactly how this case failed on `main`. A conflict between two windows does not care *which*
   // two, so it gets a pair with nothing in flight instead of a longer wait.
+  //
+  // Closed **before** the new pair opens, not after the case: this file's own rule is that a window
+  // left open costs every later case, and `lq1` is precisely the window holding a pending blanket
+  // `invalidate()` at this moment — the starvation the round below is being protected from. Nothing
+  // reads either of them after the toast line above.
+  //
+  // Closing a page mid-flight aborts its in-flight refetches, and `page.on('pageerror')` is still
+  // attached: believed silent, because an aborted fetch surfaces inside React Query's own retry
+  // path and, for the write, inside `useGuardedAction`'s catch — neither reaches `window.onerror`.
+  // Written down rather than assumed, so a future teardown flake finds its diagnosis here.
+  for (const page of [lq1, lq2]) await page.close().catch(() => {});
   const [lq3, lq4] = await windows(context, 2, '/');
   /** @type {Array<{ rev?: number, body?: string, status?: number }>} */
   const lqLog2 = [];
@@ -7336,7 +7364,7 @@ try {
     `${JSON.stringify(lqArranged.layout.map((e) => `${e.key}:${e.width}`))} bei ${lqArranged.documents.length} Dokumenten`,
   );
 
-  for (const page of [lq1, lq2, lq3, lq4]) await page.close().catch(() => {});
+  for (const page of [lq3, lq4]) await page.close().catch(() => {});
 
   // ======================================================================== AR · the budget spent
   //
@@ -7636,7 +7664,12 @@ try {
   await ls1.close().catch(() => {});
   await ls2.close().catch(() => {});
 
-  console.log(`\n${failures ? `✗ ${failures} Fehler` : '✓ alles ok'} (${checks} Prüfungen)`);
+  console.log(
+    `\n${failures ? `✗ ${failures} Fehler` : '✓ alles ok'} (${checks} Prüfungen)` +
+      (reloadedSurfaces
+        ? ` — ${reloadedSurfaces}× neu geladen, weil ein Editor nicht zuging (siehe ⚠ oben)`
+        : ''),
+  );
 } catch (err) {
   check('run completed', false, err instanceof Error ? err.message : String(err));
   if (stackLog) console.error(`\n--- Stack-Ausgabe (Ende) ---\n${stackLog.slice(-2000)}`);
