@@ -1634,8 +1634,9 @@ are not — they are `labels` in the window's own season `settings`, with a gene
   ordinary top-level row and TTU-14 has nothing to stand on. Build one instead: `POST` a task,
   `POST` a child naming it, then `DELETE` the parent — the route stamps **one** row, so the child
   stays live under a trashed parent, which is that state exactly. Give the child the status of the
-  row it is going to be dropped on, or the rank rule refuses the drop before the parent rule is
-  ever consulted.
+  row it is going to be dropped on: `canDrop` tests the effective parent *first* and the rank
+  second, so a child of another status is refused for the wrong reason and the case would prove
+  nothing about the promotion.
 - **Every demo artist has exactly two live projects.** So a project-card reorder there can be
   driven but not *asserted*: „and the other cards kept their relative order" is a statement about a
   list of one. Add a third card over the API (`POST /api/projects`) before opening the page — it
@@ -1655,7 +1656,12 @@ are not — they are `labels` in the window's own season `settings`, with a gene
   and travelling still works, which is what keeps one drag recipe for all eight surfaces. Outside
   the mode nothing is draggable at all (`enabled: arranging`), which is *this* surface's canary
   where `handleProps` is every other one's. The strip is `[aria-label="Nach oben"]`'s parent row,
-  and its handle is the one with `opacity-100`.
+  and its handle carries `opacity-100` as a class of its own — **which a substring test cannot
+  see**: `DragHandle`'s base list carries `group-hover:opacity-100` on *every* live handle in the
+  app, so `className.includes('opacity-100')` is true of the hover-only state too and stays green
+  when the arranger's override is taken away. Match the whole token
+  (`/(^|\s)opacity-100(\s|$)/`), or read the computed opacity with the pointer parked off the
+  strip.
 - **The fixed anchor's neighbouring gaps are illegal drops, on the two pages that have one.**
   `toolbarAfterKey` is `artists` on the Übersicht and `saisons` on the landing page, and `canDrop`
   refuses any pairing that names it — so the anchor cannot be carried anywhere *and* nothing can be

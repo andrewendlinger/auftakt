@@ -552,8 +552,10 @@ const HANDLE = '[title^="Zum Verschieben ziehen"]';
  * assertion itself is that proof.
  */
 async function grabHandle(page, row, handle = HANDLE, timeout = 5000) {
-  await row.scrollIntoViewIfNeeded().catch(() => {});
-  await row.hover().catch(() => {}); // the handle is `opacity-40` at rest (WP-35), hit-testable either way
+  // Both bounded: a locator that matches nothing waits out Playwright's 30 s default here as
+  // readily as anywhere else, and this function's whole contract is that it *reports* instead.
+  await row.scrollIntoViewIfNeeded({ timeout }).catch(() => {});
+  await row.hover({ timeout }).catch(() => {}); // `opacity-40` at rest (WP-35), hit-testable either way
   const h = await row
     .locator(handle)
     .first()
@@ -580,24 +582,46 @@ async function grabHandle(page, row, handle = HANDLE, timeout = 5000) {
  * visible band; when the target has nothing in that band the geometric centre is kept, so every
  * short row behaves as it did before.
  */
-async function dragOver(page, target) {
-  const t = await target.first().evaluate((el) => {
-    const r = el.getBoundingClientRect();
-    const top = Math.max(r.top, 110);
-    const bottom = Math.min(r.bottom, window.innerHeight - 12);
-    return {
-      x: r.left + r.width / 2,
-      y: bottom > top ? (top + bottom) / 2 : r.top + r.height / 2,
-    };
-  });
+async function dragOver(page, target, timeout = 5000) {
+  /** The hittable middle, or `null` when nothing of the target is in the band. */
+  const aim = () =>
+    target
+      .first()
+      .evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        const top = Math.max(r.top, 110);
+        const bottom = Math.min(r.bottom, window.innerHeight - 12);
+        return bottom > top ? { x: r.left + r.width / 2, y: (top + bottom) / 2 } : null;
+      }, undefined, { timeout })
+      .catch(() => null);
+
+  let t = await aim();
+  // Nothing in the band means the target is off screen — scroll it in and measure again rather
+  // than aiming at a midpoint no pointer can reach. Scrolling mid-drag is fine; Chromium does it
+  // itself at the viewport edges.
+  if (!t) {
+    await target.first().scrollIntoViewIfNeeded({ timeout }).catch(() => {});
+    t = await aim();
+  }
+  // A target that is not there at all is a legitimate state for a case driving a broken build, and
+  // an unguarded `evaluate` would wait out its timeout and then **throw** — ending the run with
+  // the pointer still down. Report it instead, and let go first: a held button outlives the case.
+  if (!t) {
+    await page.mouse.up().catch(() => {});
+    return false;
+  }
   await page.mouse.move(t.x, t.y, { steps: 25 });
   await page.mouse.move(t.x, t.y + 2, { steps: 5 });
+  return true;
 }
 
-/** The whole gesture: grab the ⠿, carry, release. `false` means there was no handle to grab. */
+/**
+ * The whole gesture: grab the ⠿, carry, release. `false` means it did not happen — no handle to
+ * take hold of, or no target to carry to — and in both cases the pointer has been let go again.
+ */
 async function dragHandleOnto(page, source, target, handle = HANDLE) {
   if (!(await grabHandle(page, source, handle))) return false;
-  await dragOver(page, target);
+  if (!(await dragOver(page, target))) return false; // `dragOver` released it
   await page.mouse.up();
   return true;
 }
@@ -7819,13 +7843,18 @@ try {
   const ttStart = await ttApi();
   const ttSameRank = [41, 42, 43, 44];
   const ttStatuses = new Set(ttSameRank.map((id) => ttOf(ttStart, id)?.status ?? NO_MATCH));
+  // `?? NO_MATCH` on both sides, and the odd row asserted to *exist*: a fixture that had lost task
+  // 45 would otherwise compare `undefined` against a set built from the fallback and pass — with
+  // no row of another rank left on the page for the refusal below to be tried on.
+  const ttOdd = ttOf(ttStart, 45)?.status ?? NO_MATCH;
   check(
     'Vorbedingung: vier gleichrangige Zeilen, eine fünfte mit anderem Status, drei Kinder darunter',
     ttStatuses.size === 1 &&
       !ttStatuses.has(NO_MATCH) &&
-      !ttStatuses.has(ttOf(ttStart, 45)?.status) &&
+      ttOdd !== NO_MATCH &&
+      !ttStatuses.has(ttOdd) &&
       [46, 47, 48].every((id) => ttOf(ttStart, id)?.parent_id === 41),
-    `41–44 ${[...ttStatuses].join('/')}, 45 ${ttOf(ttStart, 45)?.status}, Kinder von ${[46, 47, 48].map((id) => ttOf(ttStart, id)?.parent_id).join('/')}`,
+    `41–44 ${[...ttStatuses].join('/')}, 45 ${ttOdd}, Kinder von ${[46, 47, 48].map((id) => ttOf(ttStart, id)?.parent_id).join('/')}`,
   );
   const ttDom0 = await until(ttDom, (d) => d.length >= 9, 8000);
   check(
@@ -7863,7 +7892,7 @@ try {
   // Held, not released: the highlight and the dimming are what the user has to read *during* the
   // gesture, and a refused pairing withholds the first while keeping the second.
   const ttGrab2 = await grabHandle(tt, ttRow(41));
-  await dragOver(tt, ttRow(42));
+  const ttCarry1 = await dragOver(tt, ttRow(42));
   // Both states in the predicate, because the assertion below reads both. Here that is
   // discipline rather than a repro — a `<tr>` carries no transition and the two land in one
   // commit — but on the cards in AU it is the difference between green and one red run in three.
@@ -7875,12 +7904,13 @@ try {
   check(
     'mitten im Zug hebt sich die gleichrangige Schwester hervor — und nur sie',
     ttGrab2 &&
+      ttCarry1 &&
       idsWith(ttOverSame, 'target') === '42' &&
       idsWith(ttOverSame, 'faded') === '41' &&
       idsWith(ttOverSame, 'armed') === '41',
     `gegriffen ${ttGrab2}, Ziel ${idsWith(ttOverSame, 'target')}, blass ${idsWith(ttOverSame, 'faded')}, scharf ${idsWith(ttOverSame, 'armed')}`,
   );
-  await dragOver(tt, ttRow(45));
+  const ttCarry2 = await dragOver(tt, ttRow(45));
   // Nothing to poll for: the highlight is *withheld*, and a poll for a negative is satisfied by
   // its first read. A beat longer than the highlight above took to appear, then one reading —
   // still with the pointer down, so „nothing lights up" cannot be „the drag is over".
@@ -7900,8 +7930,8 @@ try {
   const ttAfter2 = await ttApi();
   check(
     'losgelassen über der anderen Rangstufe ändert der Zug nichts',
-    ttStamp(ttAfter2) === ttStamp(ttAfter1),
-    ttStamp(ttTop(ttAfter2)),
+    ttGrab2 && ttCarry2 && ttStamp(ttAfter2) === ttStamp(ttAfter1),
+    `gegriffen ${ttGrab2}, getragen ${ttCarry2}, ${ttStamp(ttTop(ttAfter2))}`,
   );
 
   const ttGrab3 = await dragHandleOnto(tt, ttRow(46), ttRow(42));
@@ -8028,7 +8058,7 @@ try {
     `${ttWhy} / ${ttCycle}`,
   );
   const ttGrab6 = await grabHandle(tt, ttRow(44), '[title^="Spaltensortierung"]');
-  await dragOver(tt, ttRow(42));
+  const ttCarry6 = await dragOver(tt, ttRow(42));
   await sleep(500);
   const ttUnderSort = await ttHeld();
   await tt.mouse.up();
@@ -8037,10 +8067,11 @@ try {
   check(
     'derselbe Zug am stumpfen Griff schärft keine Zeile, hebt keine hervor und schreibt nichts',
     ttGrab6 &&
+      ttCarry6 &&
       idsWith(ttUnderSort, 'armed') === 'keine' &&
       idsWith(ttUnderSort, 'target') === 'keine' &&
       ttStamp(ttAfter6) === ttStamp(ttAfter5),
-    `gegriffen ${ttGrab6}, scharf ${idsWith(ttUnderSort, 'armed')}, Ziel ${idsWith(ttUnderSort, 'target')}, ${ttStamp(ttTop(ttAfter6))}`,
+    `gegriffen ${ttGrab6}, getragen ${ttCarry6}, scharf ${idsWith(ttUnderSort, 'armed')}, Ziel ${idsWith(ttUnderSort, 'target')}, ${ttStamp(ttTop(ttAfter6))}`,
   );
   const ttTwice = (await clickIfThere(ttHead)) && (await clickIfThere(ttHead));
   const ttBack = await until(ttHandles, (h) => h.live > 0, 5000);
@@ -8049,6 +8080,10 @@ try {
     ttTwice && ttBack.live === ttBack.rows && ttBack.dead === 0,
     `geklickt ${ttTwice}, ${JSON.stringify(ttBack)}`,
   );
+
+  // Closed for the reason #138 documents: every window this gate leaves open joins the fan-out of
+  // every later blanket `invalidate()`, against one Express process — the storm's own supply line.
+  await tt.close().catch(() => {});
 
   // ======================================================================== AU · the two card grids
   //
@@ -8099,7 +8134,7 @@ try {
   const pcOrder = await until(pcDom, (d) => d.length === 3, 8000);
   const pcWant = moveTo(pcOrder, pcOrder[2], pcOrder[0]);
   const pcGrab = await grabHandle(pc, pcCard(pcOrder[2]));
-  await dragOver(pc, pcCard(pcOrder[0]));
+  const pcCarry = await dragOver(pc, pcCard(pcOrder[0]));
   // The ring and the fade are two properties of one `transition`, and they do not arrive in the
   // same frame: the first run of this case polled for the ring alone and read the carried card at
   // full opacity — „blass keine" against a card that was on its way to 0.4.
@@ -8111,6 +8146,7 @@ try {
   check(
     'mitten im Zug trägt die Zielkarte den Ring und die gezogene wird blass',
     pcGrab &&
+      pcCarry &&
       idsWith(pcFlight, 'target') === String(pcOrder[0]) &&
       idsWith(pcFlight, 'faded') === String(pcOrder[2]),
     `gegriffen ${pcGrab}, Ziel ${idsWith(pcFlight, 'target')}, blass ${idsWith(pcFlight, 'faded')}`,
@@ -8194,6 +8230,8 @@ try {
       scShown.every((aria, i) => aria.endsWith(`„${scWantLabels[i]}“ öffnen`)),
     scShown.slice(0, 3).join(' | '),
   );
+
+  await pc.close().catch(() => {});
 
   // ======================================================================== AV · the landing lists
   //
@@ -8353,6 +8391,8 @@ try {
   );
   ld.off('request', ldWatch);
 
+  await ld.close().catch(() => {});
+
   // ======================================================================== AW · „anordnen"
   //
   // The arranger is the one reorderer that runs in `mode: 'always'` — while „Bereiche bearbeiten"
@@ -8380,7 +8420,13 @@ try {
         width: el.getAttribute('data-width') ?? '',
         drag: el.getAttribute('draggable') === 'true',
         strip: el.querySelectorAll(':scope > div [aria-label="Nach oben"]').length,
-        handle: (el.querySelector('[title^="Zum Verschieben ziehen"]')?.className ?? '').includes('opacity-100'),
+        // The *own* `opacity-100`, as a whole class token. `DragHandle`'s base list carries
+        // `group-hover:opacity-100` for every live handle in the app, so a substring test is true
+        // of the hover-only state as well — it says „there is a handle", not „it is pinned
+        // visible", and the revert that takes the arranger's override away stays green under it.
+        handle: /(^|\s)opacity-100(\s|$)/.test(
+          el.querySelector('[title^="Zum Verschieben ziehen"]')?.className ?? '',
+        ),
         outline: getComputedStyle(el).outlineColor,
         faded: Number(getComputedStyle(el).opacity) < 0.6,
       })),
@@ -8401,7 +8447,11 @@ try {
     return shape.find((s) => s.outline === rare[0])?.key ?? 'keine';
   };
 
-  const arRest = await until(arShape, (s) => s.length >= 5, 8000);
+  const arRest = await until(
+    arShape,
+    (s) => s.length > 5 && !s.some((x) => x.drag) && !s.some((x) => x.strip),
+    8000,
+  );
   check(
     'außerhalb von „Bereiche bearbeiten“ ist kein Bereich ziehbar und keine Leiste da',
     arRest.length > 5 && !arRest.some((s) => s.drag) && !arRest.some((s) => s.strip),
@@ -8444,7 +8494,7 @@ try {
   const arTargetKey = 'termine';
   await arSec(arTargetKey).evaluate((el) => el.scrollIntoView({ block: 'center' })).catch(() => {});
   const arGrabA = await grabHandle(ar, arSec(arSource));
-  await dragOver(ar, arSec(arTargetKey));
+  const arCarryA = await dragOver(ar, arSec(arTargetKey));
   const arFlight = await until(
     arShape,
     (s) => arTarget(s) !== 'keine' && s.some((x) => x.faded),
@@ -8452,7 +8502,7 @@ try {
   );
   check(
     'mitten im Zug hebt sich der Zielbereich hervor und der gezogene wird blass',
-    arGrabA && arTarget(arFlight) === arTargetKey && arFlight.filter((s) => s.faded).map((s) => s.key).join(' ') === arSource,
+    arGrabA && arCarryA && arTarget(arFlight) === arTargetKey && arFlight.filter((s) => s.faded).map((s) => s.key).join(' ') === arSource,
     `gegriffen ${arGrabA}, Ziel ${arTarget(arFlight)}, blass ${arFlight.filter((s) => s.faded).map((s) => s.key).join(' ') || 'keiner'}`,
   );
   await ar.mouse.up();
@@ -8480,7 +8530,7 @@ try {
   await ar.evaluate(() => window.scrollTo(0, 0));
   const arNeighbour = arAfter[1]?.key ?? NO_MATCH;
   const arGrabB = await grabHandle(ar, arSec(arNeighbour));
-  await dragOver(ar, arSec(arAnchor));
+  const arCarryB = await dragOver(ar, arSec(arAnchor));
   await sleep(500);
   const arOverAnchor = await arShape();
   await ar.mouse.up();
@@ -8493,15 +8543,16 @@ try {
       arOverAnchor.filter((s) => s.faded).map((s) => s.key).join(' ') === arNeighbour,
     `gegriffen ${arGrabB}, Ziel ${arTarget(arOverAnchor)}, blass ${arOverAnchor.filter((s) => s.faded).map((s) => s.key).join(' ') || 'keiner'}`,
   );
+  const arStoredB = await arStored();
   check(
     '…und losgelassen ändert der Zug nichts',
-    arKeys(arAfterB) === arKeys(arAfter) && (await arStored()) === arStoredAfter,
-    arKeys(arAfterB),
+    arGrabB && arCarryB && arKeys(arAfterB) === arKeys(arAfter) && arStoredB === arStoredAfter,
+    `gegriffen ${arGrabB}, getragen ${arCarryB}, ${arKeys(arAfterB)}`,
   );
 
   await ar.evaluate(() => window.scrollTo(0, 0));
   const arGrabC = await grabHandle(ar, arSec(arAnchor));
-  await dragOver(ar, arSec(arNeighbour));
+  const arCarryC = await dragOver(ar, arSec(arNeighbour));
   await sleep(500);
   const arCarryAnchor = await arShape();
   await ar.mouse.up();
@@ -8510,10 +8561,11 @@ try {
   check(
     'der Anker selbst lässt sich greifen, aber nirgends absetzen: er ist blass, und kein Bereich wird zum Ziel',
     arGrabC &&
+      arCarryC &&
       arCarryAnchor.filter((s) => s.faded).map((s) => s.key).join(' ') === arAnchor &&
       arTarget(arCarryAnchor) === 'keine' &&
       arKeys(arAfterC) === arKeys(arAfter),
-    `gegriffen ${arGrabC}, blass ${arCarryAnchor.filter((s) => s.faded).map((s) => s.key).join(' ') || 'keiner'}, Ziel ${arTarget(arCarryAnchor)}, ${arKeys(arAfterC)}`,
+    `gegriffen ${arGrabC}, getragen ${arCarryC}, blass ${arCarryAnchor.filter((s) => s.faded).map((s) => s.key).join(' ') || 'keiner'}, Ziel ${arTarget(arCarryAnchor)}, ${arKeys(arAfterC)}`,
   );
   const arGrid1 = await arGrid();
   check(
@@ -8528,6 +8580,7 @@ try {
     arLeft && !arOff.some((s) => s.drag) && !arOff.some((s) => s.strip) && arKeys(arOff) === arKeys(arAfter),
     `geklickt ${arLeft}, ziehbar ${arOff.filter((s) => s.drag).length}, Leisten ${arOff.filter((s) => s.strip).length}`,
   );
+  await ar.close().catch(() => {});
 
   console.log(
     `\n${failures ? `✗ ${failures} Fehler` : '✓ alles ok'} (${checks} Prüfungen)` +
