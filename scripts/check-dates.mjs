@@ -1,7 +1,14 @@
 /**
  * Regression guard for the date/timestamp convention: every stored timestamp and every date
- * window is naive local time. There is no test framework in this repo, so this is a standalone
- * script — a sibling of `check-backup.mjs`, and the only automated cover the convention has.
+ * window is naive local time. A standalone script, a sibling of `check-backup.mjs`, and the only
+ * automated cover the convention has.
+ *
+ * **Standalone by decision, not by default.** This file used to open „there is no test framework
+ * in this repo"; that has been false since 2026-08-06, when going commercial reversed it („No
+ * test framework — REVERSED", `docs/DECISIONS.md`). That reversal added Vitest over the pure
+ * modules and a committed browser gate, and left these scripts „exactly as they are". This one
+ * in particular is unportable by construction: it proves itself by re-running the *whole* server
+ * under two `TZ` values 25 hours apart, which is a process boundary, not a test case.
  *
  * It is worth having because `npm run typecheck` cannot see a single thing it catches. One
  * `toISOString()` or one bare `date('now')` silently reports the wrong calendar day between

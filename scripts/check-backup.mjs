@@ -1,10 +1,16 @@
 /**
- * Regression guard for the backup/import path (WP-D). There is no test framework in
- * this repo, so this is a standalone script: it boots the real server against a
- * throwaway data dir and drives the /api/backup endpoints over HTTP.
+ * Regression guard for the backup/import path (WP-D) — a standalone script that boots the real
+ * server against a throwaway data dir and drives the /api/backup endpoints over HTTP.
  *
  * It covers the parts that can be checked without a GUI. The Electron half —
  * dialogs, relaunch, the Windows crash — stays in docs/BACKUP-TESTING.md.
+ *
+ * **Standalone by decision, not by default.** This file used to open „there is no test framework
+ * in this repo"; that has been false since 2026-08-06, when going commercial reversed it („No
+ * test framework — REVERSED", `docs/DECISIONS.md`). That reversal added Vitest over the pure
+ * modules and a committed browser gate, and left these scripts „exactly as they are". Nothing
+ * here is to be ported into Vitest — a backup is a directory of real files written by a real
+ * server, and a suite that mocked either would assert the same names about nothing.
  *
  *   npm run check:backup
  */

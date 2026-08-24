@@ -1,7 +1,15 @@
 /**
- * Regression guard for the server's data invariants. There is no test framework in this repo,
- * so this is a standalone script — a sibling of `check-backup.mjs` and `check-dates.mjs`: it
- * boots the real server against a throwaway data dir and drives the API over HTTP.
+ * Regression guard for the server's data invariants — a standalone script and a sibling of
+ * `check-backup.mjs` and `check-dates.mjs`: it boots the real server against a throwaway data
+ * dir and drives the API over HTTP.
+ *
+ * **Standalone by decision, not by default.** This file used to open „there is no test framework
+ * in this repo"; that has been false since 2026-08-06, when going commercial reversed it („No
+ * test framework — REVERSED", `docs/DECISIONS.md`). What the reversal added was Vitest over the
+ * pure modules and a committed browser gate — and what it explicitly did not change was these
+ * scripts, which „stay exactly as they are". They are not to be ported into Vitest: the whole
+ * value here is a real server, a real sqlite file and a real HTTP round trip, and a port would
+ * trade every one of those for a mock while asserting the same names.
  *
  * Everything asserted here is a *server* invariant, deliberately. They do not move when the UI
  * changes, they are all reachable without a browser, and each one is something the 2026-07
