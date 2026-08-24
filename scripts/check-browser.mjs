@@ -56,6 +56,28 @@ const RUN = Date.now().toString(36).slice(-5);
  * report itself as present — this makes it report itself as missing instead.
  */
 const NO_MATCH = 'kein solcher Eintrag';
+
+/**
+ * How long a dialog or an inline editor may take to leave the screen after its write has already
+ * landed on the server — and why the landing cases wait for that rather than for the server.
+ *
+ * Every write on `#/` resolves only after a blanket `invalidate()`, and the surfaces that own the
+ * gesture close on *that* promise: `RecordFormModal` closes when `useGuardedAction` returns,
+ * `InlineInput` calls `onDone` when the write resolves. `invalidate()` refetches every active
+ * query of its page **and broadcasts**, so every other window refetches too — and this gate keeps
+ * a run's worth of windows open against one Express process. Measured on a throttled run with 24
+ * pages: the server had the row after ~200 ms and the dialog stayed up **20 s**; the rename's
+ * input stayed open **5.6 s** past the server. On the CI runner both are longer.
+ *
+ * So „the server has it" is not „the gesture is finished", and a case that proceeds on the former
+ * clicks into a backdrop (AQ: `saisons: keine`) or reads a heading whose text is inside an open
+ * `<input>` and therefore empty (AS: „ / ABLAGE …"). Both are how this slice failed on CI while
+ * being green locally 40 times. The budget is generous on purpose: it is never *waited out* on a
+ * healthy run, it is the ceiling under which the honest signal is allowed to arrive.
+ */
+const EDITOR_GONE_MS = 60_000;
+/** The same allowance for the polls that read what an editor's close reveals. */
+const SETTLED_MS = 25_000;
 /** Every fixture season carries this prefix, so `finally` can sweep leftovers of a killed run. */
 const FIXTURE = 'check:browser';
 
@@ -6914,6 +6936,14 @@ try {
     .locator('[role="button"][aria-label$="öffnen"]')
     .filter({ hasText: landingSeason.label })
     .first();
+  /**
+   * Open the card's Zeitraum editor, type, commit — and **wait for the editor to go away**.
+   *
+   * That last step is the whole point (`EDITOR_GONE_MS`, see there). While the `InlineInput` is
+   * open the card has no „Bearbeiten" button to read the line off, so `lpOwnCard().period` is `''`
+   * and a poll on the expected text simply runs out — for as long as the write's blanket
+   * `invalidate()` takes, which is not a property of this page at all.
+   */
   const lpPeriodEdit = async (shows, type) => {
     const opened = await clickIfThere(
       lpCardEl.locator('button[title^="Bearbeiten"]').filter({ hasText: shows }),
@@ -6921,23 +6951,24 @@ try {
     const box = lpCardEl.locator('input').first();
     await box.fill(type).catch(() => {});
     await box.press('Enter').catch(() => {});
-    return opened;
+    const closed = await gone(lpCardEl.locator('input'), EDITOR_GONE_MS);
+    return { opened, closed, ok: opened && closed };
   };
   const lpTyped = `Sommer ${RUN}`;
   // Not `null`: an unpinned window adopts the season the server echoed on its first request
   // (`pinFromResponse`), so „no switch happened" is this pin *unchanged*, not the absence of one.
   const lpPinBefore = await seasonPin(lp);
-  const lpEditOpened = await lpPeriodEdit('Noch keine Termine', lpTyped);
+  const lpEdit = await lpPeriodEdit('Noch keine Termine', lpTyped);
   const lpStored = await until(
     () => api('/seasons').then((r) => r.seasons.find((s) => s.id === landingSeason.id)?.period),
     (v) => v === lpTyped,
-    8000,
+    SETTLED_MS,
   );
-  const lpOwnAfter = await until(lpOwnCard, (c) => c?.period === lpTyped, 8000);
+  const lpOwnAfter = await until(lpOwnCard, (c) => c?.period === lpTyped, SETTLED_MS);
   check(
     'der Zeitraum lässt sich auf der Karte selbst eintragen und steht dann statt des automatischen Textes',
-    lpEditOpened && lpStored === lpTyped && lpOwnAfter?.period === lpTyped,
-    `geöffnet ${lpEditOpened}, gespeichert ${JSON.stringify(lpStored)}, Karte „${lpOwnAfter?.period}“`,
+    lpEdit.ok && lpStored === lpTyped && lpOwnAfter?.period === lpTyped,
+    `geöffnet ${lpEdit.opened}, Editor zu ${lpEdit.closed}, gespeichert ${JSON.stringify(lpStored)}, Karte „${lpOwnAfter?.period}“`,
   );
   // The editors stop the click from reaching the card, which is a `role="button"` that opens the
   // season — and opening one is `switchSeason`: a repin to *this* card's season plus a document
@@ -6951,18 +6982,24 @@ try {
     lpHashAfter === '#/' && lpPinAfter === lpPinBefore && lpPinAfter !== String(landingSeason.id),
     `${lpHashAfter}, Pin ${JSON.stringify(lpPinBefore)} → ${JSON.stringify(lpPinAfter)} (Karte ${landingSeason.id})`,
   );
-  const lpClearOpened = await lpPeriodEdit(lpTyped, '');
+  const lpClear = await lpPeriodEdit(lpTyped, '');
   const lpCleared = await until(
     () => api('/seasons').then((r) => r.seasons.find((s) => s.id === landingSeason.id)?.period),
     (v) => v == null,
-    8000,
+    SETTLED_MS,
   );
-  const lpOwnBack = await until(lpOwnCard, (c) => c?.period === 'Noch keine Termine', 8000);
+  const lpOwnBack = await until(lpOwnCard, (c) => c?.period === 'Noch keine Termine', SETTLED_MS);
   check(
     'leer lassen ist eine Rücknahme, kein leerer Eintrag: der automatische Text kommt zurück',
-    lpClearOpened && lpCleared == null && lpOwnBack?.period === 'Noch keine Termine',
-    `geöffnet ${lpClearOpened}, gespeichert ${JSON.stringify(lpCleared)}, Karte „${lpOwnBack?.period}“`,
+    lpClear.ok && lpCleared == null && lpOwnBack?.period === 'Noch keine Termine',
+    `geöffnet ${lpClear.opened}, Editor zu ${lpClear.closed}, gespeichert ${JSON.stringify(lpCleared)}, Karte „${lpOwnBack?.period}“`,
   );
+
+  // Closed here, and the same at the foot of AQ, AR and AS. Every open page refetches on every
+  // broadcast, and a page on `#/` refetches `seasonStats`, which opens **all sixteen** season
+  // files — so a landing window left behind makes the next landing case's writes slower for no
+  // reason. Nothing below reads `lp` again.
+  await lp.close().catch(() => {});
 
   // ======================================================================== AQ · the 409, merged
   //
@@ -7067,7 +7104,7 @@ try {
   const lqB = `Aus Fenster B ${RUN}`;
   const lqHold = await lqHoldPatch(lq1, '**/api/landing');
   const lqAAdded = await lpAddDoc(lq1, 'dokumente', lqA);
-  await until(async () => lqHold.held, (v) => v === true, 12_000);
+  await until(async () => lqHold.held, (v) => v === true, SETTLED_MS);
   // The two lines around the release are the staging, not the finding: they say the race was
   // really set up — the dialog was driven, the write is parked, the other window wrote in the
   // same generation — so that everything after them is about the conflict rather than about a
@@ -7078,7 +7115,7 @@ try {
     `Dialog bedient ${lqAAdded}, gehalten ${lqHold.held}`,
   );
   const lqBAdded = await lpAddDoc(lq2, 'dokumente', lqB);
-  const lqAfterB = await until(lpBlob, (l) => l.documents.some((d) => d.label === lqB), 12_000);
+  const lqAfterB = await until(lpBlob, (l) => l.documents.some((d) => d.label === lqB), SETTLED_MS);
   check(
     '…während das zweite in derselben Generation schreibt und sie damit weiterdreht',
     lqBAdded &&
@@ -7088,8 +7125,17 @@ try {
     `rev ${lqBase.rev} → ${lqAfterB.rev}: ${lqAfterB.documents.map((d) => d.label).join(' | ')}`,
   );
   lqHold.release();
-  const lqMerged = await until(lpBlob, (l) => l.documents.some((d) => d.label === lqA), 15_000);
+  const lqMerged = await until(lpBlob, (l) => l.documents.some((d) => d.label === lqA), SETTLED_MS);
   await lq1.unroute('**/api/landing');
+  // The server having the row is *not* the dialog being gone — see `EDITOR_GONE_MS`. Everything
+  // below reads the DOM, which works through a backdrop; the arrange click further down does not,
+  // and that is how this case failed on CI while passing forty times locally.
+  // Both windows: each opened a „Neues Dokument" dialog, and round 2 clicks „+ Dokument" in the
+  // second one — a backdrop that has not gone yet eats that click exactly as it eats the first
+  // window's arrange click.
+  const lqDialogGone =
+    (await gone(lq1.locator('.fixed.inset-0'), EDITOR_GONE_MS)) &&
+    (await gone(lq2.locator('.fixed.inset-0'), EDITOR_GONE_MS));
 
   check(
     'der erste Versuch trägt die Generation, die beide Fenster gelesen hatten — und wird abgelehnt',
@@ -7124,7 +7170,7 @@ try {
   const lqOnScreen = await until(
     () => lpRows(lq1, 'dokumente'),
     (r) => r.some((x) => x.text.includes(lqA)) && r.some((x) => x.text.includes(lqB)),
-    12_000,
+    SETTLED_MS,
   );
   check(
     '…und beide auf dem Schirm des Fensters, dessen Schreibvorgang abgelehnt worden war',
@@ -7150,7 +7196,10 @@ try {
   //
   // This drives the arranger's width toggle and nothing else — the ⠿ inside it, like the one in
   // the document lists, is #109's ground.
-  const lqArrangeOpen = await clickIfThere(lq1.getByRole('button', { name: '✎ Bereiche bearbeiten' }));
+  const lqArrangeOpen = await clickIfThere(
+    lq1.getByRole('button', { name: '✎ Bereiche bearbeiten' }),
+    SETTLED_MS,
+  );
   // Scoped to the strip itself — the grey control row the arranger puts *above* each section while
   // it is arranging — and not to the section. `saisons` contains the whole card grid, so a
   // `[data-section] button` read there is fifty pencils long and answers the wrong question.
@@ -7172,7 +7221,7 @@ try {
         })),
       ),
     (s) => s.some((x) => x.btns.some((b) => b.name === 'Breite umschalten')),
-    8000,
+    SETTLED_MS,
   );
   const lqSaisonsStrip = lqStrip.find((x) => x.key === 'saisons');
   const lqNotizenStrip = lqStrip.find((x) => x.key === 'notizen');
@@ -7185,7 +7234,8 @@ try {
   // everything else it offers is live.
   check(
     'die Saison-Kachel ist der feste Anker: nicht verschiebbar, nicht schmal, nicht zu entfernen',
-    lqArrangeOpen &&
+    lqDialogGone &&
+      lqArrangeOpen &&
       !!lqSaisonsStrip &&
       lqCtl(lqSaisonsStrip, 'Nach oben')?.disabled === true &&
       lqCtl(lqSaisonsStrip, 'Nach unten')?.disabled === true &&
@@ -7196,7 +7246,8 @@ try {
       lqCtl(lqNotizenStrip, 'Nach unten')?.disabled === false &&
       lqCtl(lqNotizenStrip, 'Breite umschalten')?.disabled === false &&
       lqCtl(lqNotizenStrip, 'Bereich entfernen')?.disabled === false,
-    `saisons: ${lqStripText(lqSaisonsStrip)} / notizen: ${lqStripText(lqNotizenStrip)}`,
+    `Dialoge weg ${lqDialogGone}, Modus an ${lqArrangeOpen} — ` +
+      `saisons: ${lqStripText(lqSaisonsStrip)} / notizen: ${lqStripText(lqNotizenStrip)}`,
   );
 
   const lqBefore2 = await lpBlob();
@@ -7208,13 +7259,14 @@ try {
   const lqHold2 = await lqHoldPatch(lq1, '**/api/landing');
   const lqWidthClicked = await clickIfThere(
     lq1.locator('[data-section="notizen"] button[title="Breite umschalten"]'),
+    SETTLED_MS,
   );
-  await until(async () => lqHold2.held, (v) => v === true, 12_000);
+  await until(async () => lqHold2.held, (v) => v === true, SETTLED_MS);
   const lqC = `Während des Umbaus ${RUN}`;
   const lqCAdded = await lpAddDoc(lq2, 'dokumente', lqC);
-  const lqAfterC = await until(lpBlob, (l) => l.documents.some((d) => d.label === lqC), 12_000);
+  const lqAfterC = await until(lpBlob, (l) => l.documents.some((d) => d.label === lqC), SETTLED_MS);
   lqHold2.release();
-  const lqArranged = await until(lpBlob, (l) => l.layout.length > 0, 15_000);
+  const lqArranged = await until(lpBlob, (l) => l.layout.length > 0, SETTLED_MS);
   await lq1.unroute('**/api/landing');
 
   const lqSent2 = lqSent().slice(lqSentBefore2);
@@ -7249,6 +7301,9 @@ try {
       lqArranged.documents.length === lqAfterC.documents.length,
     `${JSON.stringify(lqArranged.layout.map((e) => `${e.key}:${e.width}`))} bei ${lqArranged.documents.length} Dokumenten`,
   );
+
+  await lq1.close().catch(() => {});
+  await lq2.close().catch(() => {});
 
   // ======================================================================== AR · the budget spent
   //
@@ -7305,10 +7360,12 @@ try {
   const lrDlg = topDialog(lr);
   await lrDlg.getByPlaceholder('z. B. Fördervertrag').fill(lrTyped).catch(() => {});
   const lrSaved = await clickIfThere(lrDlg.getByRole('button', { name: 'Speichern' }));
+  // The toast is raised by `guard`'s catch, which runs *after* `landingUpdate`'s `finally
+  // { await invalidate() }` — so it too waits out the refetch storm (`EDITOR_GONE_MS`).
   const lrToast = await until(
     () => toast(lr, /fehlgeschlagen/).allInnerTexts(),
     (t) => t.length > 0,
-    20_000,
+    EDITOR_GONE_MS,
   );
   await sleep(400); // let the third answer's log entry land before the counts are read
   await lr.unroute('**/api/landing');
@@ -7378,7 +7435,7 @@ try {
     (r) =>
       r.some((x) => x.text.includes(lrTarget?.label ?? NO_MATCH)) &&
       !r.some((x) => x.text.includes(lrTyped)),
-    12_000,
+    SETTLED_MS,
   );
   check(
     'auf dem Schirm steht wieder der gespeicherte Name: der vorab veröffentlichte überlebt die Absage nicht',
@@ -7386,6 +7443,8 @@ try {
       !lrRows.some((x) => x.text.includes(lrTyped)),
     lrRows.map((r) => r.text).join(' | ') || 'keine Zeile',
   );
+
+  await lr.close().catch(() => {});
 
   // ======================================================================== AS · the other blob
   //
@@ -7444,12 +7503,12 @@ try {
   // rename — nothing else can be caught by the hold.
   const lsHold = await lqHoldPatch(ls1, '**/api/settings');
   const lsAOpened = await lpRename(ls1, 'landing.notizen', 'Notizen', lsNotes);
-  await until(async () => lsHold.held, (v) => v === true, 12_000);
+  await until(async () => lsHold.held, (v) => v === true, SETTLED_MS);
   const lsBOpened = await lpRename(ls2, 'landing.dokumente', 'Dokumente', lsDocs);
   const lsAfterB = await until(
     lsSettings,
     (s) => (s.labels ?? []).some((r) => r.label === lsDocs),
-    12_000,
+    SETTLED_MS,
   );
   // The staging line, like AQ's pair: both pencils were opened, the write is parked, and the other
   // window's rename moved the generation by exactly one.
@@ -7466,9 +7525,18 @@ try {
   const lsMerged = await until(
     lsSettings,
     (s) => (s.labels ?? []).some((r) => r.label === lsNotes),
-    15_000,
+    SETTLED_MS,
   );
   await ls1.unroute('**/api/settings');
+  // …and then the editors, which is the half the server cannot answer for. `EditableLabel` swaps
+  // the heading text out for an `InlineInput` while it is editing, so `[data-label]`'s textContent
+  // is the *input's* — empty — until `onDone` runs, and `onDone` runs when the write's promise
+  // resolves, i.e. after its blanket `invalidate()` (`EDITOR_GONE_MS`). Polling the heading text
+  // for that is polling a refetch storm; the editor going away is the signal, and it is the one
+  // both windows have to give, since both renamed.
+  const lsEditorsGone =
+    (await gone(ls1.locator('[data-label] input'), EDITOR_GONE_MS)) &&
+    (await gone(ls2.locator('[data-label] input'), EDITOR_GONE_MS));
 
   const lsSent = lsLog.filter((e) => e.body !== undefined);
   const lsGot = lsLog.filter((e) => e.status !== undefined);
@@ -7508,18 +7576,19 @@ try {
   const lsShown1 = await until(
     () => lsHeadings(ls1),
     (h) => h.includes(lsNotes.toUpperCase()) && h.includes(lsDocs.toUpperCase()),
-    12_000,
+    SETTLED_MS,
   );
   const lsShown2 = await until(
     () => lsHeadings(ls2),
     (h) => h.includes(lsNotes.toUpperCase()) && h.includes(lsDocs.toUpperCase()),
-    12_000,
+    SETTLED_MS,
   );
   check(
     '…und beide Fenster zeigen beide Namen',
-    lsShown1.join('|') === `${lsNotes.toUpperCase()}|${lsDocs.toUpperCase()}` &&
+    lsEditorsGone &&
+      lsShown1.join('|') === `${lsNotes.toUpperCase()}|${lsDocs.toUpperCase()}` &&
       lsShown2.join('|') === lsShown1.join('|'),
-    `${lsShown1.join(' / ')} gegen ${lsShown2.join(' / ')}`,
+    `Editoren zu ${lsEditorsGone} — ${lsShown1.join(' / ')} gegen ${lsShown2.join(' / ')}`,
   );
   // The blob under those headings never moved. Two generations on one page, two stores: a rename
   // that had gone through the registry — or a landing write that had bumped `settings` — shows up
@@ -7530,6 +7599,9 @@ try {
     lsLandingAfter.rev === lrAfter.rev && lsMerged.rev === lsBase.rev + 2,
     `landing rev ${lrAfter.rev} → ${lsLandingAfter.rev}, settings rev ${lsBase.rev} → ${lsMerged.rev}`,
   );
+
+  await ls1.close().catch(() => {});
+  await ls2.close().catch(() => {});
 
   console.log(`\n${failures ? `✗ ${failures} Fehler` : '✓ alles ok'} (${checks} Prüfungen)`);
 } catch (err) {

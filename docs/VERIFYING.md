@@ -1358,6 +1358,32 @@ are not — they are `labels` in the window's own season `settings`, with a gene
   events that line is „Noch keine Termine"; on one whose file could not be read it is
   „Zeitraum nicht verfügbar", and while the stats are still loading it is „…" (PGS-17). All three
   are different states and collapsing them is the defect the three-way branch exists for.
+- **„The server has it" is not „the gesture is finished", and on a slow machine the gap is
+  seconds.** Every write on this page resolves only after a blanket `invalidate()` — and the
+  surfaces that own the gesture close on *that* promise, not on the response:
+  `RecordFormModal` closes when `useGuardedAction` returns, `InlineInput` calls `onDone` when the
+  write resolves, and `guard`'s error toast is raised after the `finally` that awaits it.
+  `invalidate()` refetches every active query of its page **and broadcasts**, so every other open
+  window refetches too; a page on `#/` refetches `seasonStats`, which opens *every* season file.
+  Measured with 24 throttled windows on `#/` and sixteen seasons: the server had the row after
+  ~200 ms and the „Neues Dokument" dialog stayed up **20 s**; a heading rename's input stayed open
+  **5.6 s** in one round and **59.7 s** in a harsher one. This is not a defect — the editor does
+  close — but a driving script that proceeds when `GET` shows the value is then clicking into a
+  backdrop and reading a heading whose text lives inside an open `<input>`.
+- **…and that is exactly how a landing case passes forty times locally and fails on CI.** Two
+  shapes, both seen on the runner: the arrange click lands on the still-open dialog's backdrop, so
+  „anordnen" never turns on and the strip reads *empty* for every section (`saisons: keine`); and
+  `[data-label]`'s `textContent` is `''` while its `InlineInput` is open, so „the heading shows the
+  new name" polls a refetch storm and gives up (` / ABLAGE …`). **Wait for the surface to go away**
+  — `gone(page.locator('.fixed.inset-0'))`, `gone(page.locator('[data-label] input'))` — and put
+  that boolean in the assertion's *detail*, so a red line names the stage that failed instead of
+  describing an empty strip. Waiting is the same rule the editor entries above already state
+  („what really says the commit landed is the editor going away"); what is new is that the wait
+  has to be generous, because its length is a property of how many windows are open, not of the
+  page under test.
+- **A window left open costs every later case.** The gate opens ~30 pages and closes almost none,
+  so a broadcast fans out to all of them. Closing a case's windows when it is done is not tidiness
+  here: it is what keeps the *next* case's writes fast enough to drive.
 - **A season's own `period`/`subtitle` beat the automatic line even when the automatic one exists.**
   The demo's 2027 season carries both overrides *and* the same event range as 2026, which is what
   makes „the override wins" discriminate — asserted against 2028 (no events at all) alone it also
