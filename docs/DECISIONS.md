@@ -2706,3 +2706,79 @@ And the residual the cap deliberately leaves: two tightly packed 50.1 ms gaps wi
 fewer clean frames between them in one window still cross ({16.7×6, 50.1×2} aborts at exactly
 2 ≥ 2). If his machine produces that shape, the next decision is about *that* window, with
 this entry as its baseline.
+
+---
+
+## The boot gate asserts accounting, never a timing (2026-08-24, WP-61c, #7/#115)
+
+The gesture was the last thing in issue #7 with no automated check at all, and three properties
+kept it out of `check:browser` rather than being a handful of cases there. The overlay exists only
+in a built bundle (`'%PROD%' !== 'true'`), so the dev server that gate drives removes the node
+before React mounts. Its outcome is *measured* — the frame watchdog decides per launch, so an
+outcome is not a property of the build. And `reducedMotion: 'reduce'`, the escape hatch every
+other driving script uses to get past the overlay, removes it outright: a gate for the gesture
+cannot use the setting the rest of the suite depends on.
+
+**The answer to the second one is the design.** `npm run check:boot` asserts in three tiers.
+*Invariants*, on every boot: the legal outcome/`why` sets, `v: 3`, the clocks in order and inside
+`endMs`, `frames` present exactly when the gesture started, `abort:hitch` **iff** a judged delta
+reached `HITCH_MS`, `drops <= n` (WP-61b's cap, as arithmetic rather than as an outcome), the
+reveal beating bootBail, the report fitting the cap `electron/bootLog.ts` applies to it, and both
+channels — `localStorage` and the `bootSettled` bridge — carrying the same object. *State*:
+`.boot-show` observed as „svg visible while eleven of twelve animations are still paused and only
+`bootBail` runs", which is the only assertion that survives the class simply not being added —
+`showMs` is stamped either way, so a report field cannot catch it. And *caused outcomes only*: an
+outcome is asserted where, and only where, the gate injected the cause. No bound on `readyMs`,
+`med` or `p95` exists anywhere in it. **A red therefore means the accounting changed, never that
+the runner was busy** — which is the property that makes it safe on a CI runner slow enough to
+have produced ambiguous reds twice in this arc already (PR #138).
+
+Four bounds do read a clock, and the file's header names them, because a bound nobody declared is
+how that property rots. Three read the **CSS** clock, which is wall time the machine does not move
+— 20× CPU throttling shifts a gesture's length by 14 ms — namely a played gesture's
+`endMs − startMs` inside a 300 ms band, the same quantity under 2500 ms for a run that aborted,
+and `endMs < 7000`, which says a live reveal beats bootBail. The fourth is a floor of twenty
+judged frames on a played gesture, which a 2.6 s animation misses only below about eight frames a
+second. Everything cadence-dependent is *derived from the median the run itself reports*, with a
+margin against that reading's own rounding: the review round found the last hardcoded injection
+(30 ms, which inverts case F's outcome below ~34 Hz) and a ceiling that scaled with the cadence,
+and CI had already found a bound built by multiplying the rounded median, red at 33.3 against 33.4.
+
+Standing down is a measurement too, and it is bounded. A case may decline on evidence — a cadence
+whose tolerated band holds fewer than two frame intervals, or an injected gap that overshot
+`HITCH_MS` — but if **all three** drops cases decline, the run has said nothing about WP-61b and
+fails saying so. The one assertion whose subject the runner also contributes to, the `drops`
+ceiling, is re-measured once when it is exceeded, on its own line: an uncapped sum is over it every
+time, six frames of machine noise almost never twice running. That rescues a noisy run and cannot
+rescue a defect — verified against the revert, which still reds.
+
+**Three things the issue assumed turned out to be false**, and each changed the design.
+`ALLOWED_ORIGINS` never enters it: with `AUFTAKT_CLIENT_DIST` set the server serves `client/dist`
+at *its own* origin, exactly as the packaged app does, so the gate lives on **:4327** alone — no
+`:5317`, no `.demo`, and therefore no collision with a running `npm run demo` or with
+`check:browser`. „Not reproducible" is only half true: headless Chromium's cadence is remarkably
+stable (`med 8.3 · worst ≤ 10.4 · drops 0`, unchanged by `--disable-gpu`, swiftshader and 20× CPU
+throttling), and what a slow machine actually moves is `readyMs` against the 1200 ms deadline —
+where the *cache*, not the machine, decides (83 ms warm against 1574 ms cold-and-throttled). And
+the reduced-motion hatch is the script's `matchMedia`, not the `@media` rule: deleting the rule
+changes nothing observable, which is worth knowing before anyone tidies it away.
+
+**Not in `npm run check`**, for the same two reasons as `check:browser`: a browser binary and a
+free port, neither of which `check` may ever require — plus a build, which it also may not. Its
+own CI job rather than two more steps on `browser`, and that is wall clock rather than minutes:
+`checks` runs 54 s, `browser` 246 s, CodeQL 86 s, and appending ~50 s to the longest job would
+push pull-request feedback from ~4.1 to ~5.3 minutes, while a parallel job leaves it where it is
+and costs only Actions minutes, which a public repository does not pay.
+
+**What it deliberately does not assert**: aesthetics, exact durations (only that a played gesture's
+`endMs − startMs` sits in a 300 ms band, which says the reveal came from `bootOut` and not from a
+failsafe), which door a degraded run left by where two are legitimate, and anything needing the
+packaged app — the `boot-log.jsonl` writer and its fallback lines stay `check:unit`'s. In
+particular it does **not** touch WP-61b's open question of whether pre-rastering also makes the
+following frames cheap: that is a trace pair on real hardware. This gate asserts the mechanism,
+never the benefit.
+
+`check`, `busy`, `requireFreePort` and the process-group spawn/kill pair are minimal copies of
+`check-browser.mjs`'s and `check-backup.mjs`'s, left as copies on purpose and named at the foot of
+the file: a `scripts/lib/` extraction should move all four gates at once, and one gate importing
+another's internals would make this one fail for reasons that have nothing to do with the gesture.
