@@ -619,11 +619,12 @@ try {
    * and uncapped differ by one lost slot and no bound has room for both that and the runner's own
    * noise. Hardcoded sizes cannot do it either: 45 ms is five intervals at 120 Hz and two at 60.
    *
-   * The constant `HITCH_MS` itself is deliberately **not** canaryable this way — WP-61 placed 58
-   * at the midpoint *between* two steps a panel can produce (50.1 and 66.8 at 60 Hz, 49.8 and 58.1
-   * at 120), so no injected block lands between the top step and the constant at any refresh rate.
-   * `assertBundle` declares it outright instead, which fails by name, and the `abort:hitch`
-   * invariant catches any change to the judge that quotes it.
+   * The constant `HITCH_MS` itself is guarded by `assertBundle`'s declaration line, and that is
+   * the guarantee rather than a belt: WP-61 placed 58 at the midpoint *between* two steps a panel
+   * can produce, so the top step sits a hair from the value the constant had before it (50.0 at
+   * 120 Hz, 50.1 at 60) and whether a revert to 50 makes E and E3 abort is decided in the first
+   * decimal. Measured, it does at both cadences — that is a bonus, not something to rely on. The
+   * `abort:hitch` invariant is what catches a change to the judge that quotes the constant.
    */
   const med = first.r?.frames?.med ?? 0;
   const STEPS = med > 0 ? Math.floor((HITCH_MS - 0.1) / med) : 0;
