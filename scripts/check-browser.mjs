@@ -6323,15 +6323,18 @@ try {
     ccMgr2.locator('[data-column-row]').filter({ hasText: 'Phase' }).first().locator('button[title="Ausblenden"]'),
   );
   const ccConfirm = topDialog(cc);
+  // Truncated for the *detail* only: when this dialog fails to appear, `topDialog` is the manager
+  // behind it and its whole text — every column row, every emoji preset — would be the line.
   const ccConfirmText = (
     await ccConfirm.evaluate((el) => (el.textContent ?? '').trim()).catch(() => '')
   ).replace(/\s+/g, ' ');
+  const ccConfirmSeen = ccConfirmText.slice(0, 140) || 'kein Dialog';
   check(
     'die eigene Spalte auszublenden fragt erst nach — und sagt, dass die Werte bleiben',
     ccMgr2Up &&
       ccConfirmText.includes('Spalte „Phase“ ausblenden') &&
       ccConfirmText.includes('Die vorhandenen Werte bleiben erhalten'),
-    ccConfirmText || 'kein Dialog',
+    ccConfirmSeen,
   );
   await clickIfThere(ccConfirm.getByRole('button', { name: 'Ausblenden' }));
   const ccHiddenFlag = await until(
