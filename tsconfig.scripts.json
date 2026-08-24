@@ -11,12 +11,32 @@
   // arity and property access still gets checked, which is what catches the class of mistake
   // that matters here.
   //
-  // Deliberately not `strict`. Under full strict these four files produce 213 errors, ~200 of
-  // them `implicitly has an 'any' type` on callback parameters — annotating all of that would be
-  // a large rewrite of working, load-bearing scripts in exchange for no defect found. The
-  // settings below are the ones that catch *mistakes* rather than demand *annotations*: calling
-  // something that is not a function, reading a property that cannot exist, passing the wrong
-  // number of arguments, falling through a switch, forgetting a return on one branch.
+  // Deliberately not `strict`, and the ledger below is what that costs, measured rather than
+  // assumed (2026-08-24, across all six gates and their `lib/`). The principle has not changed:
+  // take the settings that catch *mistakes*, decline the ones that only demand *annotations*.
+  //
+  //   noImplicitAny              875 errors — nearly all `implicitly has an 'any' type` on a
+  //                              callback parameter. Annotating that is a rewrite of working,
+  //                              load-bearing scripts in exchange for no defect found.
+  //   strictNullChecks            73 errors — the honest remainder, and the one worth revisiting:
+  //                              these are places where a `find()` or an optional field is used
+  //                              without a guard. Not taken here because it is a change to
+  //                              working code, and this pass was a pure move.
+  //   noUnusedLocals               3 errors, and all three are the same TypeScript quirk: the
+  //                              local `require` from `createRequire` reads as unused, because
+  //                              tsc treats `require(...)` as a module reference rather than as
+  //                              a call to that binding. Renaming it silences the diagnostic and
+  //                              *loses* the typing `paths` below exists for — verified: with a
+  //                              differently-named binding, `new ExcelJS.Workbook().nonsense()`
+  //                              stops being an error. So the flag stays off rather than the
+  //                              types going.
+  //   useUnknownInCatchVariables   3 errors — `err.message` on an `unknown`, on failure paths.
+  //   noImplicitOverride           1 error, in `client/src/`, which this project only reaches
+  //                              through `client/scripts/check-markdown.ts`'s imports.
+  //
+  // The four below were free — zero errors at the moment they were turned on — and are here so
+  // they stay that way. `alwaysStrict` and `noUncheckedIndexedAccess` are omitted on purpose:
+  // both are no-ops here (every file is a module, and the latter needs `strictNullChecks`).
   //
   // If these files are ever converted to TypeScript, turn `strict` on with them.
   // `paths` because the gate scripts `createRequire` their heavy dependencies out of
@@ -43,6 +63,10 @@
     "noImplicitAny": false,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
+    "noUnusedParameters": true,
+    "noImplicitThis": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
     "allowJs": true,
     "checkJs": true,
     "resolveJsonModule": true,

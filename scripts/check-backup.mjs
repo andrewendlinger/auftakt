@@ -90,7 +90,7 @@ const { adopt, shutdown } = group({
   },
 });
 
-const server = adopt(
+adopt(
   spawn('npm', ['--prefix', 'server', 'run', 'dev'], {
     cwd: root,
     env: { ...process.env, AUFTAKT_DATA_DIR: dataDir, AUFTAKT_PORT: String(PORT) },
