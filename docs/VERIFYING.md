@@ -124,8 +124,9 @@ working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id
 two pages in one context, the sessionStorage pin plus a document reload, `data-app-ready` over
 `networkidle`, the out-of-band delete, the toast that lands one query late, the anchored composer
 placeholder, the two `[data-column-row]` lists, the real keystroke a note needs before it stores
-anything, the ⠿ and its 2-px nudge, the dialog-scoped „Löschen", the toast filtered by its own
-record, „gone" as a wait rather than a count, the two viewports a 624×560 window really produces,
+anything, the ⠿ and its 2-px nudge, the drop point clamped out from under the sticky header, the
+drop highlight polled together with the fade it arrives beside, the dialog-scoped „Löschen", the
+toast filtered by its own record, „gone" as a wait rather than a count, the two viewports a 624×560 window really produces,
 the overhang sweep's exemption for a scroll container, the A4 `page.pdf()` whose default
 `printBackground: false` is a repro rather than an oversight, the tab order read as *positions*
 rather than as keystrokes, the recording bridge stub, and the `<select>` that has to be used once
@@ -757,6 +758,43 @@ verified by hand, and the gate itself is written from this list.
   assert the **source** group is still `1` in the same sample, which is the half that fails if the
   dimming is simply applied to everything. The wrappers are `div.transition-opacity` inside
   `[data-section="links"]`, one per group, each holding its heading `span`.
+- **The drop target's cue is a different property on every surface, and one of them is a colour
+  that no literal may name.** A task row gets `outline-style: solid` where every other row reads
+  `none`; a project card gets `ring-2`, i.e. a box shadow on the outer `[data-project-card]` —
+  which carries no `hover:shadow-md` of its own, so the reading is unambiguous while the pointer
+  sits on it, and the *inner* `Card` would not be; a **section in „Bereiche bearbeiten" is always
+  outlined** (dashed `neutral-300`) and only its *colour* changes. So read the arranger's target
+  as the **odd colour out** of all sections rather than against `oklch(0.439 0 none)`, which is
+  how Tailwind serialises `neutral-600` today and not a contract (same trap as `text-neutral-400`
+  above).
+- **The highlight and the fade do not arrive in the same frame.** Both cues sit behind a CSS
+  `transition`, and `reducedMotion: 'reduce'` does not touch transitions — so a poll that waits
+  only for „some element is the drop target" reads the *carried* one at full opacity, which fails
+  the „and the dragged card goes blass" half against working code. Measured on the project cards:
+  one run in three. Put **both** states in the poll's predicate.
+- **A drop point on a big surface has to be computed, and the app's sticky header is 62 px.** The
+  geometric centre of a `[data-section]` in „Bereiche bearbeiten" is regularly outside the window
+  — the section is taller than the viewport — and a `mouse.move` to a centre that has been
+  scrolled up lands on the **header** instead: no `dragover` ever reaches the section, the release
+  does nothing, and the run reads exactly like a refused drop. Clamp the point into the visible
+  band (`max(rect.top, ~110)` … `min(rect.bottom, innerHeight - 12)`); `check:browser`'s
+  `dragOver` does that for every target now, which is a no-op for a short row.
+- **The task table's ⠿ is a *different element* under a header-click sort.** With an override in
+  force the row renders a disabled handle titled „Spaltensortierung aktiv — …", so
+  `[title^="Zum Verschieben ziehen"]` matches nothing at all: an unguarded `boundingBox()` there
+  costs 30 s and then ends the run rather than reddening a line. Address the disabled one as
+  `[title^="Spaltensortierung"]`, and note that the column header's own `title` names the way back
+  („Sortieren: aufsteigend → absteigend → Standard") — the third click is TTU-18.
+- **`sort_order` is renumbered per sibling group, so the ordinals of two levels collide.** One
+  drag among a parent's children renumbers *those* rows 0..n-1 while the top-level rows keep their
+  own 0..n-1 — by design, because the column orders a row among its siblings and not in the table.
+  A check that expects the numbers to be unique per page fails against working code.
+- **A card must not open when it is dragged**, and that is assertable rather than assumed:
+  `DragHandle` swallows its own click (it sits inside the project card's `<Link>` and beside the
+  season card's `role="button"`), so after a card reorder the URL must be unchanged — and on the
+  landing page's document rows, whose label *is* a button into the outside world, the recording
+  bridge stub must still be empty. Pair it with one real click, or „nothing was opened" is also
+  what a stub nobody wired reports.
 - **`keyboard.down` emits one keydown.** A repeat-key defect (TTU-24) needs events dispatched with
   `repeat: true`.
 - **Some repros only fire inside a refetch window.** On a local server the refetch beats a human's
@@ -1530,7 +1568,44 @@ are not — they are `labels` in the window's own season `settings`, with a gene
   the newest row first in any list nothing has been dragged in.
 - **Under the default `[status]`, any two open rows of the same status are draggable.** The tuned
   same-rank block in `demo.ts` (tasks 41–45) is no longer the only place a drop is accepted; task 45
-  is the odd rank there, and it is odd by *status* now, not by priority.
+  is the odd rank there, and it is odd by *status* now, not by priority. The whole block sits on
+  `#/project/5`, with tasks 46–48 as task 41's children — which makes that one page the place to
+  drive all three of the task table's rules: a drop between 41–44 is accepted, one on 45 is refused
+  by rank, and one from 46 onto 42 is refused by the *parent* although both are of equal rank.
+- **The orphan is not an orphan in a copied season.** `copySeasonData` re-roots a subtask whose
+  parent stayed behind (`parent_id = null`, db.ts), so in any fixture copy the demo's task 12 is an
+  ordinary top-level row and TTU-14 has nothing to stand on. Build one instead: `POST` a task,
+  `POST` a child naming it, then `DELETE` the parent — the route stamps **one** row, so the child
+  stays live under a trashed parent, which is that state exactly. Give the child the status of the
+  row it is going to be dropped on, or the rank rule refuses the drop before the parent rule is
+  ever consulted.
+- **Every demo artist has exactly two live projects.** So a project-card reorder there can be
+  driven but not *asserted*: „and the other cards kept their relative order" is a statement about a
+  list of one. Add a third card over the API (`POST /api/projects`) before opening the page — it
+  arrives with `sort_order: 0`, i.e. tied with the first, so read the starting order off the DOM
+  rather than assuming it. Project `sort_order` is seeded globally (project 1 → 0, project 3 → 2),
+  so the values interleave across artists and „the other artist's cards are untouched" is a real
+  check.
+- **The season cards are the registry array itself.** `POST /api/seasons/reorder` rewrites
+  `reg.seasons` — there is no column and no per-season database involved — so the assertion is
+  `GET /api/seasons`, and the window must **not** have switched season over it (the pin and
+  `activeId` are the pair to read). The card's ⠿ sits *outside* its `role="button"`, so the
+  wrapper is the handle's container:
+  `[data-section="saisons"] div.group.relative:has([aria-label$="„<Label>“ öffnen"])`.
+- **The arranger is the one reorderer that does not arm.** It runs `useDragReorder` in the default
+  `mode: 'always'`, so while „Bereiche bearbeiten" is on, every `[data-section]` carries
+  `draggable="true"` and the ⠿ in the strip is an affordance rather than the trigger — pressing it
+  and travelling still works, which is what keeps one drag recipe for all eight surfaces. Outside
+  the mode nothing is draggable at all (`enabled: arranging`), which is *this* surface's canary
+  where `handleProps` is every other one's. The strip is `[aria-label="Nach oben"]`'s parent row,
+  and its handle is the one with `opacity-100`.
+- **The fixed anchor's neighbouring gaps are illegal drops, on the two pages that have one.**
+  `toolbarAfterKey` is `artists` on the Übersicht and `saisons` on the landing page, and `canDrop`
+  refuses any pairing that names it — so the anchor cannot be carried anywhere *and* nothing can be
+  dropped on it, which is the drag twin of the two disabled ▲▼ (SHL-17). The honest handle for
+  „which section is the anchor" is the toolbar itself: „✓ Fertig" sits in the grid as a cell of its
+  own, and the anchor is the cell before it. An artist or project page passes no `toolbarAfterKey`
+  at all, so every pairing there is legal.
 - **The subtask trees, and which one answers which question.** The showcase is task 1
   („Instrumente – Anmietung und Transport", `#/project/1`): three *live* children — 2, 3 (coloured)
   and 4 (done three days ago, so still in the live list) — which is why its counter reads **„1/3"**,
