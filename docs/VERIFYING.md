@@ -1271,6 +1271,98 @@ to real `tasks` fields through `key`, and two of them take no input at all.
   never exercised. The stored map is keyed by `colId` — `custom:8`, `custom:9`, `custom:10` for the
   demo's three global custom columns.
 
+### Die Startseite und ihr Konflikt (#111)
+
+`#/` is the one page whose content lives **outside every season**: Notizen, Dokumente, the custom
+Bereiche and the arrangement are one blob in `seasons.json`, reached through `GET`/`PATCH
+/api/landing` and stamped with a generation (`landing.rev`, WP-53). The two *headings* above them
+are not — they are `labels` in the window's own season `settings`, with a generation of their own
+(`settings.rev`, WP-R5). So the same page can refuse a write for two different reasons.
+
+- **Every fixture season is a card on this page.** The grid is the whole registry in registry
+  order, so a case running late in `check:browser` finds a dozen `check:browser …` cards beside the
+  demo's three. A count asserts nothing; anchor each card on its own `aria-label`
+  (`Saison „<Label>“ öffnen` — German quotes, and the term is renameable) and assert the *order*
+  against `GET /api/seasons` rather than against a literal list.
+- **The landing content is cross-season, so a fixture season buys no isolation.** Pinning a window
+  to a copy does not give the case its own Notizen or Dokumente, deleting the fixture seasons at
+  the end does not clean them up, and two cases writing landing content share one blob. The only
+  isolation there is is `check:browser` rebuilding `.demo` per run — which also means a case here
+  must not assume the demo's three documents are still the whole list if an earlier case added one.
+  Compute the expected list from `GET /api/landing`, never from `demo.ts`.
+- **The demo has *no stored arrangement*: `landing.layout` is `[]`.** The page nonetheless renders
+  five sections, because `LandingPage` falls back to `DEFAULT_LANDING_LAYOUT` (`saisons` full,
+  `notizen` half, `dokumente` half) and `SectionArranger`'s merge appends the two custom sections —
+  keys `lt1`, `lt2` — at the end, full-width. So „what is the arrangement" read off the API is `[]`
+  while the page shows five `[data-section]` cells, and the first thing any arrangement write does
+  is materialise the whole array.
+- **`saisons` is mandatory and full-width-only on this page.** Its strip carries „Nach oben" /
+  „Nach unten" and nothing else — no „Breite umschalten", no „Bereich entfernen" — because
+  `LandingPage` passes `mandatoryKeys={['saisons']}` and `fullWidthKeys={['saisons']}`. A script
+  that addresses „the first Breite umschalten" is therefore on `notizen`, not on the season grid.
+- **A landing document with no URL is not a button.** `DocumentRow` renders the label as a
+  `<button>` calling `openExternal` only when `url` is set; without one it is a `<span>` plus
+  „(kein Link hinterlegt)". So `getByRole('button', { name: … })` matches two of the demo's three
+  rows, and the third one's *absence* from that namespace is the assertion — not an extra class or
+  a disabled attribute.
+- **Never click such a label without the bridge stub.** With no `window.auftakt`, `openExternal`
+  falls through to `window.open(url, '_blank')` — a real tab and a real request to whatever the row
+  points at, from whoever runs the script. The gate's recording stub puts the URL in
+  `window.__external` instead, which is also the only way to watch `normalizeUrl` run on the way
+  *out* (CCL-09): a row stored as „example.org/x.pdf" must hand over „https://example.org/x.pdf",
+  and every demo row already carries a scheme, so that half needs a fixture of its own.
+- **Hold the conflicting write with a gate, not with a sleep.** The entry under „Playwright traps"
+  says to route the `PATCH` rather than the `GET` — this is the other half: a fixed sleep is a
+  guess in both directions, and the honest hold is a promise the driving script resolves once the
+  *other* window's write is visible in `GET /api/landing`. Only the **first** attempt may be held;
+  the retry has to run at full speed or the run pays the hold twice and the case reports a timeout
+  for a mechanism that worked.
+- **The retry's request body is the assertion; the eventual state is not.** „Both windows' rows are
+  there" is equally true of a run where the timing slipped and no conflict ever happened. Read the
+  bodies off `page.on('request')`: the first `PATCH` carries the generation both windows read, the
+  second carries the winner's. And the two bodies tell the two kinds of landing write apart — for
+  an **intent** (`[...now, added]`, a document) the second body differs, because it was recomputed
+  over the winner's list; for the one **snapshot** write the landing has (`layout`, whose `fn`
+  ignores `cur` on purpose) the two bodies are byte-identical and only the `rev` moves.
+- **…which is also the promise worth gating.** A refused arrangement write is re-applied as
+  last-writer-wins for the *arrangement* — but its patch names only `layout`, so a document the
+  other window added in the meantime rides through untouched. That is WP-53's whole point, and
+  before it the arrangement write carried a stale `documents` array with it (SHL-01).
+- **Provoking three conflicts in a row needs the write stolen inside the route handler.** Firing a
+  fixed number of writes from a second window cannot be lined up with the retries. Perform a real,
+  unconditional `PATCH /api/landing` (no `rev` — the route writes it) from the driving script
+  *before* each `route.continue()`, and every attempt is stale by construction while the 409 under
+  test is still the server's own. Three attempts is the budget (`MAX_CONFLICT_ATTEMPTS`), so three
+  steals exhaust it exactly.
+- **An exhausted budget leaves the dialog open with the typed text still in it.**
+  `RecordFormModal.submit` closes only when `useGuardedAction` returns true, so the user gets the
+  toast „Speichern fehlgeschlagen. (Ein anderes Fenster hat inzwischen gespeichert.)" *and* a modal
+  still on screen holding what they wrote. A script that waits for the dialog to go away hangs; the
+  filled field is the evidence that nothing was lost.
+- **A refused landing write snaps the row back, and only an *edit* shows it.** `landingUpdate`
+  publishes optimistically before awaiting — but only when every row in the patch already has an
+  id (`rowsAllHaveIds`), and a newly added document is id-less by construction. So „the optimistic
+  value does not outlive a refused write" has to be driven by renaming an existing document, not by
+  adding one.
+- **The headings rename through the pencil's accessible name, and that name is the current text.**
+  `getByRole('button', { name: '„Notizen“ umbenennen' })` — German quotes — becomes
+  `'„Merkzettel“ umbenennen'` the moment the rename lands. The heading itself is CSS-uppercased, so
+  `innerText` reads `NOTIZEN` and never matches the stored label; the `data-label` attribute
+  (`landing.notizen`, `landing.dokumente`) is the stable handle for the pair.
+- **A settings conflict needs both windows on the *same* season.** `labels` is a per-season setting,
+  so two windows pinned to different seasons write two different files and never collide, however
+  hard the case tries. The landing content behind them is shared all the same — which is the one
+  page where those two rules disagree.
+- **`EditableFallbackText`'s pencil is „Bearbeiten – leer lassen für automatischen Text"**, and
+  clearing the field is a *reset* to the automatic line, not an empty override. On a season with no
+  events that line is „Noch keine Termine"; on one whose file could not be read it is
+  „Zeitraum nicht verfügbar", and while the stats are still loading it is „…" (PGS-17). All three
+  are different states and collapsing them is the defect the three-way branch exists for.
+- **A season's own `period`/`subtitle` beat the automatic line even when the automatic one exists.**
+  The demo's 2027 season carries both overrides *and* the same event range as 2026, which is what
+  makes „the override wins" discriminate — asserted against 2028 (no events at all) alone it also
+  passes on a build that never reads the override.
+
 ## Print and PDF
 
 - **`page.pdf()`'s default `printBackground: false` *is* the SHL-11 repro** — and a screenshot can
@@ -1502,6 +1594,21 @@ to real `tasks` fields through `key`, and two of them take no input at all.
 - **A season contact's GlobalSearch hit navigates to `#/dashboard`** („Greta Simoneit" on the
   demo) — asserting an artist or project URL there fails against working code (WP-47 rows have
   no parent to land on).
+- **The landing page's three seasons are a three-way fixture, and 2027 is the one that
+  discriminates.** „Demofest 2026" is active and populated; **„Demofest 2027"** was copied from it
+  *without tasks*, so it shows the same 4 Künstler and 8 Projekte with **0 Offene Aufgaben**, and it
+  is the only card carrying an override for both editable lines — subtitle „Planung startet im
+  Herbst" and Zeitraum „Juni – Juli 2027" — although its copied events give it exactly 2026's
+  automatic range; **„Demofest 2028 (in Planung)"** is empty, so it is 0/0/0 with the
+  „Noch keine Termine" fallback. The other two show the „Angelegt am <Datum>" subtitle fallback.
+- **The landing blob itself: three Dokumente, two Bereiche, one Notiz, no layout.** `demo.ts` calls
+  `patchLanding` once, so the content is generation **1** and `layout` is `[]`. The documents are
+  „Fördervertrag Stadt (PDF)" and „Vorlage Künstlervertrag" with URLs plus **„Altes
+  Sponsoring-Konzept" with `url: null`** — the „(kein Link hinterlegt)" branch. The two custom
+  sections are „Ideen für 2027" (a Textfeld, `lt1`) and „Verträge 2027" (a Dokumente list, `lt2`)
+  whose two rows live inside the section, *not* in `landing.documents` — two rows so the
+  within-section drag has somewhere to go (WP-50). The Notiz carries a `**bold**` run, an emoji and
+  a Markdown link, so „the note is rendered, not printed as source" is assertable on it.
 - **A layout assertion reads `[data-section]`/`[data-width]`, not the headings** — the arranger
   stamps both on every rendered section, and in arrange mode the in-card heading is hidden anyway.
 - **The demo seeds `artist_layout_saved` but leaves `artist_layout` unset** (both unset under
