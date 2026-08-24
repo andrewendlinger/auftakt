@@ -5781,9 +5781,11 @@ try {
   );
 
   // The one thing this form refuses, and it refuses silently: `add` starts with
-  // `if (!name.trim()) return`, so there is no disabled button and no message — unlike the option
-  // editors on „Kategorien" (case Q), which go stumpf with the reason beside the row. „Nothing
-  // happened" is therefore a beat plus a re-read, never a wait for something to appear.
+  // `if (!name.trim() || busyRef.current) return`, so there is no disabled button and no message —
+  // unlike the option editors on „Kategorien" (case Q), which go stumpf with the reason beside the
+  // row. „Nothing happened" is therefore a beat plus a re-read, never a wait for something to
+  // appear. It is an **invariant guard**: it forbids a nameless column being created, and no
+  // plausible revert of an existing fix takes it red on its own.
   await clickIfThere(ccDlg.getByRole('button', { name: '+ Spalte hinzufügen' }));
   await sleep(700);
   const ccNameless = await ccOwnCols();
@@ -6086,6 +6088,8 @@ try {
   );
   // `CustomCell` passes `allowEmpty` and the Status branch does not, so the empty entry is the one
   // thing that tells the two uses of the same pill apart — „it lists the categories" does not.
+  // The second half is an **invariant guard**: nothing would *add* an empty option to Status, so
+  // only the pair means anything, and it is the line above that a revert reddens.
   check(
     '…die Status-Spalte daneben nicht: dieselbe Pille, zwei Verträge',
     Array.isArray(ccStatusMenu) && ccStatusMenu.length > 0 && !ccStatusMenu.includes(''),
@@ -6204,6 +6208,11 @@ try {
 
   // 5 · the built-in that renders and takes nothing, on purpose — with the pair that says the row
   // was reachable at all. („Erstellt am" is the other one and ships hidden.)
+  //
+  // Both halves of the „no control" reading are **invariant guards**: they forbid an editor being
+  // *added* to a read-only cell, which no revert of an existing fix produces. The pair beside them
+  // — the custom text cell of the same row offering exactly one — is what a broken selector would
+  // fail on, and canaries 1 and 3 redden that column's neighbours for other reasons.
   const ccReadOnly = await ccRender(CC_TASK, {
     upd: ccAt('Zuletzt bearbeitet'),
     text: ccAt('Zuständig'),
@@ -6416,11 +6425,22 @@ try {
     Object.keys(ccMap ?? {}).length === 3 && ccGlobalIds.every((id) => ccMap?.[`custom:${id}`] === false),
     JSON.stringify(ccMap),
   );
-  const ccBadges = await ccMgr3
-    .locator('[data-column-row]')
-    .evaluateAll((els) =>
-      els.map((el) => [(el.textContent ?? '').replace(/\s+/g, ' ').trim(), (el.textContent ?? '').includes('abweichend')]),
-    );
+  // Polled, not read once. The map above is the *server's* state; the badge is the row's own,
+  // rendered from the entity cache — and canary 9a caught the two disagreeing for a moment, with
+  // three keys stored and one badge on screen. The predicate is what the assertion reads.
+  const ccBadges = await until(
+    () =>
+      ccMgr3
+        .locator('[data-column-row]')
+        .evaluateAll((els) =>
+          els.map((el) => [
+            (el.textContent ?? '').replace(/\s+/g, ' ').trim(),
+            (el.textContent ?? '').includes('abweichend'),
+          ]),
+        ),
+    (rows) => rows.filter(([, flagged]) => flagged).length === 3,
+    8000,
+  );
   check(
     '…und genau diese drei Zeilen tragen „abweichend“',
     ccBadges.filter(([, flagged]) => flagged).length === 3 &&
