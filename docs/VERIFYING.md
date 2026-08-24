@@ -1149,6 +1149,18 @@ Four types reach `tasks.custom_values` — `text`, `date`, `checkbox`, `select` 
 is four hardcoded branches, one input widget each. The seven built-ins are a fifth kind: they bind
 to real `tasks` fields through `key`, and two of them take no input at all.
 
+- **A fixture season's own label is in the header, inside a `<button>`.** The switcher chip reads
+  „<Saison> ▾", so a page-wide `getByRole('button', { name: /Spalten/ })` on a window pinned to a
+  season called „… Spaltentypen" matches **two** buttons and `.first()` is the chip — which opens
+  the switcher menu, i.e. a `.fixed.inset-0` click-away layer that `topDialog()` then reports as
+  the topmost dialog. Every assertion after that reads an empty dialog and the run looks like „the
+  column manager never opens". Anchor the button („⚙ Spalten", not `/Spalten/`) *and* keep the
+  word out of the fixture's label.
+- **`td:nth-child(0)` matches every `td` of the row, not none.** Measured on Chromium 1234 through
+  `document.querySelectorAll` as well as through Playwright. So a cell position computed from the
+  header row — „the column is not on screen" → index 0 — silently addresses the first control in
+  the row instead of nothing: a missing date column read back as the „Bestätigt" checkbox
+  (`value: "on"`). Clamp a not-found index to something that cannot match (`nth-child(9999)`).
 - **„+ Spalte hinzufügen" resets its form *after* the POST resolves, not before**, and the reset
   includes `setType('text')`. So a script that waits for the new column to appear in
   `GET /api/custom-columns` and then picks the next type has its `selectOption` overwritten a tick
@@ -1166,6 +1178,12 @@ to real `tasks` fields through `key`, and two of them take no input at all.
   renaming a seed row leaves a category labelled „Zuerst" whose stored value is still `offen`. To
   get label == value, remove the seed rows (one click per render, they are keyed by index) and add
   your own with „+ Kategorie".
+- **A pill's background is a 150 ms transition, so the colour has to be polled for.** `PillSelect`
+  paints the category's colour from an inline `style` on a button carrying Tailwind's `transition`,
+  and it interpolates out of the grey placeholder (`#f1f5f9`) when a value is first picked —
+  `reducedMotion: 'reduce'` touches animations, not transitions. Sampled on the *label* alone the
+  reading was `rgb(254, 227, 227)` for a category configured as `#fee2e2`, which reads as „the pill
+  paints the wrong colour". Put the expected colour in the poll's own predicate.
 - **A custom „Auswahl" pill offers an empty option and the built-in Status pill does not.**
   `CustomCell` passes `allowEmpty`, so the menu's first `[role="option"]` carries `data-value=""`;
   Status's first is the first real category. „The menu lists the configured categories" is true of
