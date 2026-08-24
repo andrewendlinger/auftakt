@@ -1156,6 +1156,14 @@ to real `tasks` fields through `key`, and two of them take no input at all.
   the topmost dialog. Every assertion after that reads an empty dialog and the run looks like „the
   column manager never opens". Anchor the button („⚙ Spalten", not `/Spalten/`) *and* keep the
   word out of the fixture's label.
+- **A `route` handler that is still sleeping when its `unroute` runs takes the whole run down.**
+  `route.continue()` then rejects with „Route is already handled", and a route callback is not
+  inside the driving script's `try` — so the rejection is an unhandled promise rejection that ends
+  the process, and every case after it simply never runs. It is the one place in a driving script
+  where the failure is worse than a red line: the run reports nothing at all. `await
+  route.continue().catch(() => {})` in any handler that delays, and prefer letting the page close
+  over unrouting mid-flight. (The entries above about *holding* a request are about opening the
+  window; this is about closing it again.)
 - **`td:nth-child(0)` matches every `td` of the row, not none.** Measured on Chromium 1234 through
   `document.querySelectorAll` as well as through Playwright. So a cell position computed from the
   header row — „the column is not on screen" → index 0 — silently addresses the first control in

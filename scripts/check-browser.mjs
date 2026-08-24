@@ -5777,7 +5777,7 @@ try {
   await ccPick(ccTypeSelect, 'text');
   check(
     '…und zurück auf „Text“ ist die Liste wieder weg',
-    (await until(() => ccDlg.locator('[data-option-row]').count(), (n) => n === 0, 4000)) === 0,
+    ccManagerUp && (await until(() => ccDlg.locator('[data-option-row]').count(), (n) => n === 0, 4000)) === 0,
   );
 
   // The one thing this form refuses, and it refuses silently: `add` starts with
@@ -5786,13 +5786,16 @@ try {
   // row. „Nothing happened" is therefore a beat plus a re-read, never a wait for something to
   // appear. It is an **invariant guard**: it forbids a nameless column being created, and no
   // plausible revert of an existing fix takes it red on its own.
-  await clickIfThere(ccDlg.getByRole('button', { name: '+ Spalte hinzufügen' }));
+  // …and the two things that keep „nothing was created" from being true for the wrong reason: the
+  // dialog was open, and the button really was pressed. Without them this reads green in exactly
+  // the state the switcher-chip defect above left the run in — no manager, no button, no column.
+  const ccNamelessClicked = await clickIfThere(ccDlg.getByRole('button', { name: '+ Spalte hinzufügen' }));
   await sleep(700);
   const ccNameless = await ccOwnCols();
   check(
     'ohne Namen wird keine Spalte angelegt',
-    ccNameless.length === 0,
-    ccNameless.map((c) => c.name).join(' | ') || 'keine',
+    ccManagerUp && ccNamelessClicked && ccNameless.length === 0,
+    `geklickt ${ccNamelessClicked}, ${ccNameless.map((c) => c.name).join(' | ') || 'keine Spalte'}`,
   );
 
   /**
@@ -6209,10 +6212,11 @@ try {
   // 5 · the built-in that renders and takes nothing, on purpose — with the pair that says the row
   // was reachable at all. („Erstellt am" is the other one and ships hidden.)
   //
-  // Both halves of the „no control" reading are **invariant guards**: they forbid an editor being
-  // *added* to a read-only cell, which no revert of an existing fix produces. The pair beside them
-  // — the custom text cell of the same row offering exactly one — is what a broken selector would
-  // fail on, and canaries 1 and 3 redden that column's neighbours for other reasons.
+  // The markup half and the behaviour half below are both **invariant guards**: they forbid an
+  // editor being *added* to a read-only cell, which no revert of an existing fix produces. The pair
+  // between them — the custom text cell of the same row offering exactly one control — is what a
+  // broken selector fails on, and canaries 1 and 3 redden that column's neighbours for other
+  // reasons.
   const ccReadOnly = await ccRender(CC_TASK, {
     upd: ccAt('Zuletzt bearbeitet'),
     text: ccAt('Zuständig'),
@@ -6227,6 +6231,7 @@ try {
     ccReadOnly.text?.controls === 1,
     JSON.stringify(ccReadOnly.text),
   );
+  // The behaviour half of the guard above: a missing button is not a missing handler.
   await clickIfThere(ccCell(CC_TASK, 'Zuletzt bearbeitet'));
   await sleep(400);
   check(
@@ -6291,7 +6296,19 @@ try {
     ccDefaultOrder.join(' ') || 'keine Zeilen',
   );
 
-  const ccTh = (name) => cc.locator('table thead th').filter({ hasText: new RegExp(name, 'i') }).first();
+  /**
+   * A header cell of the **task** table. Anchored the way `ccHeads` is: a project description can
+   * render a Markdown table of its own, and a page-wide `table thead th` would let a heading in
+   * one of those answer for a column.
+   */
+  const ccTh = (name) =>
+    cc
+      .locator('table')
+      .filter({ has: cc.locator('thead th', { hasText: /^Aufgabe$/ }) })
+      .first()
+      .locator('thead th')
+      .filter({ hasText: new RegExp(name, 'i') })
+      .first();
   /** The ⠿'s tooltip: the bare sentence, or the one naming the sort that has disabled it. */
   const ccHandleTitle = () =>
     cc
@@ -6353,6 +6370,13 @@ try {
   );
   // The discriminator against case G: the same 👁, one list further down, writes the column's
   // season default and leaves this page's own map alone.
+  //
+  // The map half is „nothing was written", and that cannot be waited *for* — a poll on `=== null`
+  // is satisfied by its first read, so a build that wrote both stores would slip past whenever its
+  // entity PATCH had not landed yet at the moment `enabled` flipped. It is a beat and then a read,
+  // the same shape as the nameless-column refusal above; 700 ms is two orders of magnitude past a
+  // localhost round trip, and the page issues no `PATCH /projects` at all until case AO's burst.
+  await sleep(700);
   const ccPageMap = (await ccProject()).task_columns;
   check(
     '…und schreibt dann die Saison-Vorgabe der Spalte, nicht die Karte der Seite',
@@ -6419,7 +6443,14 @@ try {
     12_000,
   );
   await cc.unroute('**/api/projects/*');
+  // Stated rather than assumed: an id that came back `undefined` would turn the check below into
+  // „`custom:undefined` is not in the map", which names the map and not the column that is missing.
   const ccGlobalIds = CC_GLOBALS.map((n) => ccAllCols.find((c) => c.name === n)?.id);
+  check(
+    'die drei globalen Spalten der Demo sind je eine Zeile mit eigener id',
+    ccGlobalIds.every((id) => typeof id === 'number'),
+    CC_GLOBALS.map((n, i) => `${n}:${ccGlobalIds[i]}`).join(' | '),
+  );
   check(
     'drei Spalten dreier Typen nacheinander ausgeblendet: alle drei stehen in der Karte der Seite (SHL-10)',
     Object.keys(ccMap ?? {}).length === 3 && ccGlobalIds.every((id) => ccMap?.[`custom:${id}`] === false),
