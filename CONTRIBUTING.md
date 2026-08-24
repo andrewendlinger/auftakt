@@ -111,17 +111,23 @@ server/   Express + better-sqlite3: db.ts (schema), seed.ts, demo.ts, routes/, l
 client/   React app: pages/, components/, api/, lib/ (linkify, dates, colors)
 electron/ main.ts, preload.ts, menu.ts, backup.ts
 shared/   time.ts — the timestamp convention, shared by server and Electron
-scripts/  build.mjs (esbuild bundles), icons.mjs (npm run icons) + the check-*.mjs gates
+scripts/  build.mjs (esbuild bundles), icons.mjs (npm run icons), the check-*.mjs gates,
+          lib/ (the harness they share) and check-browser/ (its helpers and cases/)
 build/    app icons for electron-builder (icon.icns, icon.ico, icon.png)
 docs/     architecture, decisions, verification and test checklists
 ```
 
 ## Gates
 
-There is no linter. That is a decision, not an oversight — see
-[docs/DECISIONS.md](docs/DECISIONS.md). Nor was there a test framework, until going
-commercial reversed that half; the same file records the reversal and what it does and
-does not change.
+There is no linter. That is a decision, not an oversight, and
+[docs/DECISIONS.md](docs/DECISIONS.md) now carries it: the rationale (strict `tsc` with
+`noUnusedLocals` across all three tiers, and `noUncheckedIndexedAccess` on server and client,
+covers most of what a linter is bought for; a single developer with no outside pull requests has
+no style to arbitrate)
+and the two bug classes it does leave uncovered — unawaited promises, and stale React hook
+dependencies. A narrow, bug-rules-only reversal for those two is proposed in issue #135. Nor was
+there a test framework, until going commercial reversed that half; the same file records the
+reversal and what it does and does not change.
 
 ```bash
 npm run typecheck   # server + client + electron

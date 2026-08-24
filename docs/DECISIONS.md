@@ -2782,3 +2782,167 @@ never the benefit.
 `check-browser.mjs`'s and `check-backup.mjs`'s, left as copies on purpose and named at the foot of
 the file: a `scripts/lib/` extraction should move all four gates at once, and one gate importing
 another's internals would make this one fail for reasons that have nothing to do with the gesture.
+
+---
+
+## No linter — the standing half of the original decision, with its two gaps named (recorded 2026-08-24, #135)
+
+`CONTRIBUTING.md` has said „There is no linter. That is a decision, not an oversight — see
+`docs/DECISIONS.md`" since before this file existed, and pointed at an entry nobody ever wrote.
+„No test framework — REVERSED" above reconstructed and then reversed the *other* half of that
+sentence and closed by noting that „the no-linter half of the original decision also stands — it
+was always a separate question". This is that half, written down at last, so that a decision
+nobody recorded stops being a decision nobody can weigh.
+
+**The standing rationale.** `npm run typecheck` is four projects, and three of them —
+`server/tsconfig.json`, `client/tsconfig.json`, `electron/tsconfig.json` — run `strict: true`
+with `noUnusedLocals` and `noUnusedParameters`, and the first two add `noUncheckedIndexedAccess`
+on top. That is most of what a linter is bought for: an unused import, a shadowed binding, an
+array index used as if it could not be `undefined`, a `switch` that falls through, a branch that
+forgets its return. It is enforced on every push and every pull request, in the `checks` job,
+before the gates run.
+
+What is left over from a linter's usual value is style, and style is arbitration between people.
+This is a single-developer repository that accepts no outside pull requests — the licence says so
+— so there is nobody to arbitrate with, no diff noise from two contributors' brace habits, and no
+review thread where a formatting argument displaces a correctness one. Adding a config file, a
+plugin set and a CI step to settle a dispute that cannot arise is a cost with no matching benefit.
+
+**Its two gaps, named rather than glossed.** Both are *bug* classes, and neither strict tsc nor
+any gate in the stack can see them except by accident:
+
+1. **Unawaited promises.** A dropped `await` is invisible to the type checker. The server is
+   async Express and the main process is async Electron, so the class is live in two tiers at
+   once; `@typescript-eslint`'s `no-floating-promises` and `no-misused-promises` are the only
+   things that catch it.
+2. **Stale React hook dependencies.** `react-hooks/exhaustive-deps` is the only detector for a
+   stale-closure bug, over ~15k lines of `client/src` that `check:browser` samples case by case
+   and cannot exhaust.
+
+Naming them is the point of writing this down. „There is no linter" read as a blanket claim that
+nothing is missed; it is not, and the two things that are missed are worth knowing about when a
+defect in either class is being hunted.
+
+**Reopening is tracked, and is not this entry's business.** Issue #135 proposes the narrow
+reversal these two gaps argue for: `typescript-eslint` with type-aware **bug rules only**, no
+style or formatting rules at all, wired into the `checks` job, with every initial finding either
+fixed or disabled inline with a reason. The new information it offers is the same one that
+reversed the test-framework half — the product is commercial, and the feedback path for an
+invisible defect is now a customer's support request. It is deliberately its own session: the
+`exhaustive-deps` triage is all behaviour judgements, and would make any pull request it shared
+unreviewable.
+
+So this entry is not „a linter was considered and refused". It is: the no-style half stands on its
+own reasoning and is not up for revisiting, the bug-rule half has a live proposal in #135, and
+until that lands the two gaps above are open by choice rather than by oversight.
+
+---
+
+## Die sechs Gates teilen sich eine Harness, und das Browser-Gate ist fünfzehn Dateien (2026-08-24)
+
+Six `check:*` scripts, each booting something real and asserting against it, had each grown its
+own copy of the same four mechanisms — and `scripts/check-browser.mjs` had reached 8,606 lines in
+one file. Neither is a defect, and that is exactly why it is worth recording what was done and,
+more importantly, what was *not*.
+
+**What the copies had cost.** The port guard existed under three names — `requireFreePort` twice,
+`assertPortFree` once, `requireFreePorts` once — with two different detection techniques: four
+gates bound a probe socket, `check-dates` opened a connection instead. `check()` was five lines in
+six files, and two of them counted their assertions while the other four did not, so
+„(627 Prüfungen)" was a property of some gates and not others for no reason anybody had chosen.
+The child-log buffers were capped at 8 KB in two files and unbounded in two others. `check-boot.mjs`
+shipped on 2026-08-24 with a note at its foot naming the four helpers it had copied and asking for
+this extraction by name; that note is the entry point to this one.
+
+`scripts/lib/` now holds one of each — `check.mjs`, `ports.mjs`, `server.mjs` (the detached process
+group of DBW-10/DBW-11, and the log tail), `wait.mjs`, `http.mjs` — and all six gates import it.
+
+**What stayed with the gates, deliberately.** The refusal *messages*. Each one says what that
+particular run would have done to the stranger's server it found: measure a bundle nobody built
+here, rebuild a database somebody is looking at, or fail with „no such table" against a deleted
+data dir. A shared message would have said none of it, and the message is the whole value of the
+guard. So `requireFreePorts` takes the sentence as an argument. The same applies to the two printed
+markers: `check-api`, `check-dates` and `check-package` right-align FAIL in a four-character field
+where the other three pad it, and both shapes are preserved rather than unified, because changing
+the shape of half the gates' output is not what an extraction is for.
+
+**The browser gate is now a runner and fifteen scenario files**, split along the section markers it
+already had. `scripts/check-browser.mjs` keeps the port refusal, the stack, the fixture seasons and
+the ordered list; `scripts/check-browser/` holds `config`, `report`, `stack`, `browser`, `bridge`,
+`probes`, `pdf` and `cases/*.mjs`, one file per area, A–AW. The npm script, the ports, the `.demo`
+rebuild, the refusal to start beside `npm run demo` and the order of the run are all unchanged.
+
+Two things made the split safe rather than hopeful.
+
+The first is that **the case bodies did not move a character**. Every case sat at two-space indent
+inside one `try`, and inside `export async function runX(fixtures) {` it sits at two-space indent
+too — so the diff is a wrapper, an import block and a destructure, and 7,398 lines that are
+byte-identical to their slice of the file they came from. That is asserted mechanically, not
+eyeballed.
+
+The second is the oracle for what crosses a file boundary. TypeScript 7 has no JavaScript API, so
+there was no parser to compute free variables with; instead the whole tree was typechecked a second
+time under a **`lib` with `DOM` removed**. Under that config every unbound identifier is an error,
+including the ones that would otherwise resolve silently to a DOM global — and this is not
+hypothetical: case F declares `const status` and case AH `const title`, both names `window` also
+carries, so a missed hand-over would have compiled clean and read `''` at runtime. The DOM globals
+the cases legitimately use inside `page.evaluate` were baselined from the original file first, and
+everything above that baseline is a missing binding. Two silent shadowings were found this way and
+would not have been found any other way: `toolbox` and `columns`, the fixture season and case F's
+column list, each colliding with the name of the exported function of the file that used it. The
+area functions are called `runToolbox`, `runColumns` and so on for exactly that reason.
+
+What the oracle cannot see is a *runtime* hand-over that nobody performs, and the run found the one
+that mattered: `root` is `resolve(dirname(import.meta.url), '..')`, which stopped being the
+repository once the constant moved a directory deeper, and the stack died on
+`scripts/scripts/demo.mjs`. That is the argument for the third net — the gate itself, run green
+before and after, with its assertion names compared.
+
+**The equivalence bar, and why it was set there.** No assertion added, removed, reworded or
+reordered, in any of the six gates. 1,316 assertion names captured from a green run before and
+after and diffed with the run-specific parts masked; every diff empty. For `check-api`,
+`check-backup`, `check-dates` and `check-package` the whole masked stdout is identical byte for
+byte. A gate is only worth what its history is worth: a restructure that quietly dropped four
+assertions would leave nothing to notice it, so the proof has to be mechanical or it is not a
+proof.
+
+**What was considered and not done.**
+
+- **Porting any of this into Vitest.** „No test framework — REVERSED" already settled it: these
+  scripts stay as they are, and the reversal's own words are that Vitest covers what they
+  structurally cannot reach and does not re-cover what they hold. The three headers that still
+  claimed „there is no test framework in this repo" were rewritten to say so.
+- **Importing from `~/.claude/tools/playwright`.** Still banned, for the reason the WP-R6 entry
+  gives: the repository may not depend on one developer's home directory. What that entry records
+  as „`scripts/check-browser.mjs` re-implements ~60 lines of that shared library" is now
+  `scripts/check-browser/browser.mjs`; the duplication is the same and is still deliberate.
+- **Moving the cross-area helpers into the harness.** `textOf`, `boxOf`, `pad2` and five others are
+  built by one area and reused by a later one. They ride on the `fixtures` object with the seasons
+  rather than being promoted to `browser.mjs`, because promoting them would have been a second
+  change with no proof behind it. `fixtures.mjs` types the object, so the coupling is now visible
+  and typechecked instead of being invisible in a shared scope.
+- **Folding `check:markdown` in.** `client/scripts/check-markdown.ts` shares the *shape* — a
+  counter, a name, a detail — and nothing else. It boots no server, holds no port, spawns no
+  child and speaks no HTTP; it builds a jsdom and a TipTap editor and asserts a round trip. The
+  only thing `scripts/lib/` could give it is `check.mjs`, across a package boundary (it lives in
+  `client/` and runs under that package's `tsx`), for five lines. Left where it is.
+- **Full `strict` on `tsconfig.scripts.json`.** Measured flag by flag rather than assumed, because
+  the file's own note carried a number from when it covered four smaller scripts. `noImplicitAny`
+  is **875** errors, nearly all annotations on callback parameters — declined for the same reason
+  as before. `strictNullChecks` is **73**, and those are real missing guards rather than missing
+  annotations; that is the one worth revisiting, and it is not taken here because this pass was a
+  pure move. Four flags turned out to cost *nothing* and are now on: `noUnusedParameters`,
+  `noImplicitThis`, `strictFunctionTypes`, `strictBindCallApply`.
+
+  `noUnusedLocals` is the one decline worth writing down, because it looks free and is not. It
+  reports three errors, all the same TypeScript quirk: the local `require` from `createRequire`
+  reads as unused, since tsc treats `require(...)` as a module reference rather than as a call to
+  that binding. Renaming it silences the diagnostic and **loses** the type resolution the `paths`
+  entry exists for — verified with a probe: under a differently-named binding,
+  `new ExcelJS.Workbook().nonsense()` stops being an error. The types are worth more than the flag.
+  It did earn its keep on the way past, finding a `const server` in `check-backup` that nothing had
+  read since the process group moved into `lib/`.
+
+  The split bought some of the same value for free in any case: the fifteen scenario files are now
+  checked against a declared `Fixtures` type, where a mistyped key used to be an `undefined` twenty
+  assertions later.
