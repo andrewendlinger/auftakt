@@ -5110,6 +5110,9 @@ try {
       return tile ? /** @type {HTMLElement} */ (tile).innerText.replace(/\s+/g, ' ').trim() : '';
     });
 
+  /** `dayCount` from `client/src/lib/dates.ts` — „1 Tag" / „30 Tage", which the two texts below use. */
+  const dayCountDe = (n) => `${n} Tag${n === 1 ? '' : 'e'}`;
+
   /** `YYYY-MM-DD HH:MM:SS`, local — the shape `acceptsErledigtAm` takes and SQLite compares. */
   const pad2 = (n) => String(n).padStart(2, '0');
   const stampAt = (ms) => {
@@ -5222,7 +5225,7 @@ try {
   const archHeads = (await archiveSections(arc)).map((s) => s.head);
   check(
     '…unter einer Überschrift, die die Aufbewahrungsfrist des Servers nennt (PGS-24)',
-    archHeads[0] === `Erledigte Aufgaben (älter als ${retention} Tage)`,
+    archHeads[0] === `Erledigte Aufgaben (älter als ${dayCountDe(retention)})`,
     `${archHeads.join(' / ')} bei archive_after_days=${retention}`,
   );
   // Three shapes of Zuordnung in one table, which is what those fixtures exist for: a project row
@@ -5284,7 +5287,8 @@ try {
 
   // A missing button is not a missing handler: `InlineNotes` opens on a single click and
   // `CommentCell` on a double one, and neither surface exists here. Task 25 is the one archived row
-  // with a comment, i.e. the only cell a double click could plausibly open.
+  // with a comment, i.e. the only cell a double click could plausibly open. An invariant guard like
+  // the line above, and for the same reason: what it forbids is an editor being *added* here.
   const archCommentRow = arc.locator('table tbody tr').filter({ hasText: 'Technikrider geprüft' });
   await clickIfThere(arc.locator('table tbody tr').first().locator('td').first());
   const archCommentBox = await boxOf(archCommentRow.locator('td').nth(3));
@@ -5365,7 +5369,12 @@ try {
   // What the row *can* do. The Zuordnung cell is where the task came from, and its badge is the way
   // back — to the page, not to the row: the archive edge is one-way from here, exactly as it is
   // from the search hit above.
-  const badge = await clickIfThere(arc.locator('table tbody tr').first().locator('a[href="#/project/1"]'));
+  // By the row's text, not by position: all five archived rows tie under `TASK_ORDER_DUE` (every
+  // one done, none with a due date), so `first()` is only task 24 by insert order and a sixth
+  // fixture would silently make this the wrong row.
+  const badge = await clickIfThere(
+    arc.locator('table tbody tr').filter({ hasText: 'Probenraum gebucht' }).locator('a[href="#/project/1"]'),
+  );
   // Guarded, and the fallback is a plain `goto`: a build whose badge is not a link at all must take
   // the line below red and still let the *pair* underneath report, which is about what the project
   // page holds and not about how it was reached. An unguarded `waitForURL` throws there and ends
@@ -5404,7 +5413,8 @@ try {
 
   // ======================================================================== AJ · the boundary itself
   //
-  // In a season of its own, and not a copy — see `boundary` above. `erledigt_am` is server-derived,
+  // In a season of its own, and not a copy — `agedSeason`, made with the other fixture seasons
+  // before any case has written. `erledigt_am` is server-derived,
   // so the two stamps go in through the one door that accepts them: the `{status, erledigt_am}`
   // pair `acceptsErledigtAm` takes, which exists for the undo stack (SDL-02). A lone `erledigt_am`
   // is dropped and the transform stamps today instead, which would read as a broken archive query.
@@ -5422,7 +5432,16 @@ try {
     await send('POST', G('/projects'), { artist_id: gArtist.id, code: 'GR1', name: 'Stichtag' })
   ).body;
   const TEN_MIN = 600_000;
-  const cutoffMs = Date.now() - retentionDays * 86_400_000;
+  // `setDate`, never `Date.now() - N * 86_400_000`. The server's cutoff is
+  // `datetime('now', 'localtime', '-N days')` — calendar-day arithmetic on the *naive local*
+  // clock, i.e. the same wall-clock time N days ago — while a fixed span of milliseconds is an
+  // absolute one. For the ~30 days after either DST transition the two differ by exactly one
+  // hour, six times this case's ±10-minute margin, so in Europe/Berlin the older fixture lands on
+  // the wrong side of the cutoff and four assertions go red against correct code. CI runs in UTC
+  // and never sees it (docs/VERIFYING.md, „Das Archiv").
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - retentionDays);
+  const cutoffMs = cutoff.getTime();
   /** A task completed `offset` ms from the cutoff — or an open one when `offset` is null. */
   const atBoundary = async (title, offset) => {
     const made = (await send('POST', G('/tasks'), { project_id: gProject.id, title })).body;
@@ -5572,7 +5591,7 @@ try {
     'das Archiv ist damit leer — und sagt die Frist des Servers dazu, statt „30“ zu behaupten',
     archEmpty[0]?.tasks === 0 &&
       archEmpty[0]?.empty ===
-        `Noch nichts archiviert. Erledigte Aufgaben wandern ${retentionDays} Tage nach Abschluss hierher.`,
+        `Noch nichts archiviert. Erledigte Aufgaben wandern ${dayCountDe(retentionDays)} nach Abschluss hierher.`,
     JSON.stringify(archEmpty[0]),
   );
   await gp.goto(`${UI}/#/project/${gProject.id}`);

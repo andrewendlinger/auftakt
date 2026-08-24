@@ -1076,9 +1076,13 @@ löschen" — is unrelated, and its traps are in „Playwright traps" and „Fix
   *behaviour* beside the markup: a click on the title and a double click on the Kommentar cell
   mount nothing, because a missing button is not a missing handler.
 - **Three of the four cells are struck and the Zuordnung cell deliberately is not** (`ArchivePage`
-  — it is where the row came from and how to get back to it). The **grey** is inherited by all
-  four, the links included, so „this cell is not treated as done" has to be read off
-  `textDecorationLine`; the colour is `oklch(0.708 0 none)` everywhere in the row and says nothing.
+  — it is where the row came from and how to get back to it). The grey it *does* inherit, its two
+  links included, so „the Zuordnung cell is not treated as done" has to be read off
+  `textDecorationLine`: `oklch(0.708 0 none)` is the colour of every cell in that row and says
+  nothing about which of them is struck. One node is exempt from the grey by design and is worth
+  knowing before writing an „everything is grey" assertion — a Markdown **link inside the
+  Kommentar** keeps its sky palette, exactly as in the task table's done comment — but no demo
+  fixture carries one, so there is nothing to measure it on today.
 - **The Zitat inside an archived comment is the one node that paints a colour of its own**, exactly
   as in the task table: `.prose-md blockquote` sets `#6b7280` and `.prose-md--done` hands it back
   to the row. That makes the assertion self-pairing with no second fixture — the quote's computed
@@ -1102,6 +1106,18 @@ löschen" — is unrelated, and its traps are in „Playwright traps" and „Fix
   `/api/settings.archive_after_days`, never from a calendar date: two tasks ten minutes either side
   of `now − N days` land on opposite sides, which is also the proof that the cutoff is a timestamp
   and not a calendar day.
+- **…and compute that stamp with `setDate`, never with `Date.now() - N * 86_400_000`.** The cutoff
+  is `datetime('now', 'localtime', '-N days')` — *calendar-day* arithmetic on the naive local
+  clock, i.e. the same wall-clock time N days ago — while a fixed span of milliseconds is an
+  absolute one. The two agree only while no DST transition falls inside the window: for the ~30
+  days after either change they differ by exactly **one hour**, which is six times the ±10-minute
+  margin a boundary fixture wants to use. Measured against an in-memory SQLite at
+  `TZ=Europe/Berlin`: in the autumn window the „ten minutes past the cutoff" task lands *inside*
+  the live window and never archives, and the spring window reverses it — four `check:browser`
+  assertions red against correct code, about two months a year. Nothing else catches it, either:
+  CI runs in UTC, and `check:dates` deliberately picks two DST-free zones 25 h apart. Build it the
+  way SQLite does, `const c = new Date(); c.setDate(c.getDate() - n)`, and apply the same rule to
+  anything compared against `deleted_at`'s purge window.
 - **The archive is the pair `(status = the done option) AND (erledigt_am <= cutoff)`, so moving the
   „erledigt" flag to another category empties it.** That is the only path in the UI that takes a
   task back *out* of the archive, and it is a definition change rather than a write: `erledigt_am`
