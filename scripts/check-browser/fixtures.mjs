@@ -25,7 +25,7 @@
  * @property {number} PAGE_BREAK_FIRST
  * @property {number[]} PAGE_BREAK_TRIES
  *
- * @property {any} data B–H · the copy the broadcast and core-path cases work in
+ * @property {any} data B–E · the copy the broadcast and season-switch cases work in
  * @property {any} trash I · the copy the delete path may empty
  * @property {any} sorted J–K, AT–AW · the copy the reorder cases shuffle
  * @property {any} sheets N · the copy whose project 1 loses its status pill

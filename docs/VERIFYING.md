@@ -2,8 +2,9 @@
 
 The automated gates are `npm run typecheck` and `npm run check` (unit · backup · dates · api ·
 markdown), plus `npm run check:browser` and `npm run check:boot`, which are outside `check`
-because each needs a browser binary. Everything *they* cannot reach is verified by driving the dev
-server, and this file is the accumulated cost of doing that.
+because each needs a browser binary, and `npm run check:package`, which is outside it because it
+inspects a build and only a tag produces one. Everything *they* cannot reach is verified by
+driving the dev server, and this file is the accumulated cost of doing that.
 
 Every entry below is something that produced a **wrong verification result** at least once during
 the 2026-07 review: a check that passed against a defect, or failed against working code. They are

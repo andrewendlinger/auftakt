@@ -17,6 +17,13 @@
  * failure, so the status is returned rather than raised. `ok` rides along for the callers that do
  * want to raise.
  *
+ * „No body" is `undefined` and only `undefined`, deliberately. One of the gates this replaced
+ * keyed on truthiness instead, which is the same thing for every call site that exists — none
+ * passes a falsy-but-defined body — and quietly different for one that does not: `body: null`
+ * would have sent no body at all there, and sends the four characters `null` here. `undefined` is
+ * the JavaScript answer to „the argument was omitted"; `null` is a value, and a route that reads
+ * a body has every right to be told about it.
+ *
  * @param {string} url
  * @param {{ method?: string, body?: any, headers?: Record<string, string>, empty?: any }} [opts]
  *   `empty` is what an unparseable response body becomes — `{}` for the gates that go on to read
