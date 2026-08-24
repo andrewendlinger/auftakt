@@ -522,6 +522,22 @@ verified by hand, and the gate itself is written from this list.
   enough to close it: that frame beat React's commit, the arrow was not `disabled` yet, and
   focusing it was undone milliseconds later — the fix looked right and the walk still ended on
   `<body>`.
+- **…and the restore is a one-shot, which is what `check:browser`'s case P goes red on in CI
+  (three times so far, `{"row":-1,"arrow":""}`).** The healthy sequence is measurable and was
+  measured — `focusin [up]@row1 → focusout [up:off]@row1 → focusin [down]@row0`: the arrow the
+  rule travelled with is `disabled` at its new end of the list, Chromium clears focus off a
+  control that becomes disabled, and `TaskSortEditor`'s effect then focuses the *other* arrow.
+  What has no second chance is a render that arrives **after** that effect and puts the rule back
+  where it was for one commit — a superseded `GET /api/settings` from the previous write's
+  invalidate, which is what a slow runner produces. At index 1 of two it is the **▼** that is
+  disabled, so focus is cleared again, `restore.current` has already been consumed, and the next
+  render (the correct order) re-focuses nothing. `row: -1` is that state. Not reproducible on this
+  machine: 0/10 under 8× CPU throttling, 0/7 with the settings GET parked and delivered late in
+  both shapes (request held, and response fetched early and fulfilled late). Two ways out, both
+  bigger than the flake: re-arm the restore when the moved rule's index changes under it, or stop
+  a superseded settings read from overwriting a newer write — which is the last-writer-wins stop
+  `useSettingsArray.write` documents as deliberate. Left as it is; the case is asserting the right
+  thing.
 - **Setting `input[type=color].value` directly is deduped by React's value tracker.** Use the
   native setter.
 - **A status change re-sorts the task table**, so `.first()` addresses a different row afterwards.
