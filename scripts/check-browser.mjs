@@ -7127,15 +7127,8 @@ try {
   lqHold.release();
   const lqMerged = await until(lpBlob, (l) => l.documents.some((d) => d.label === lqA), SETTLED_MS);
   await lq1.unroute('**/api/landing');
-  // The server having the row is *not* the dialog being gone — see `EDITOR_GONE_MS`. Everything
-  // below reads the DOM, which works through a backdrop; the arrange click further down does not,
-  // and that is how this case failed on CI while passing forty times locally.
-  // Both windows: each opened a „Neues Dokument" dialog, and round 2 clicks „+ Dokument" in the
-  // second one — a backdrop that has not gone yet eats that click exactly as it eats the first
-  // window's arrange click.
-  const lqDialogGone =
-    (await gone(lq1.locator('.fixed.inset-0'), EDITOR_GONE_MS)) &&
-    (await gone(lq2.locator('.fixed.inset-0'), EDITOR_GONE_MS));
+  // Everything below reads the DOM, which works through a backdrop — and these two windows keep
+  // one. See the second half for why it is never waited for.
 
   check(
     'der erste Versuch trägt die Generation, die beide Fenster gelesen hatten — und wird abgelehnt',
@@ -7196,8 +7189,31 @@ try {
   //
   // This drives the arranger's width toggle and nothing else — the ⠿ inside it, like the one in
   // the document lists, is #109's ground.
+  //
+  // **Two fresh windows, not the two above.** The dialog the first pair opened closes only when
+  // its write's promise resolves, and that promise awaits a blanket `invalidate()` whose refetches
+  // — fanned out over every window this gate has open, on one Express process — can stay pending
+  // for minutes on a slow runner: measured on CI as *still open after sixty seconds*, with no
+  // error toast, i.e. not a refused write but an unsettled one. A backdrop eats the arrange click,
+  // and the whole second half then fails for a reason that has nothing to do with it — which is
+  // exactly how this case failed on `main`. A conflict between two windows does not care *which*
+  // two, so it gets a pair with nothing in flight instead of a longer wait.
+  const [lq3, lq4] = await windows(context, 2, '/');
+  /** @type {Array<{ rev?: number, body?: string, status?: number }>} */
+  const lqLog2 = [];
+  lq3.on('request', (r) => {
+    if (r.url().includes('/api/landing') && r.method() === 'PATCH') {
+      const body = r.postData() ?? '{}';
+      lqLog2.push({ rev: jsonOr(body).rev, body });
+    }
+  });
+  lq3.on('response', (r) => {
+    if (r.url().includes('/api/landing') && r.request().method() === 'PATCH') {
+      lqLog2.push({ status: r.status() });
+    }
+  });
   const lqArrangeOpen = await clickIfThere(
-    lq1.getByRole('button', { name: '✎ Bereiche bearbeiten' }),
+    lq3.getByRole('button', { name: '✎ Bereiche bearbeiten' }),
     SETTLED_MS,
   );
   // Scoped to the strip itself — the grey control row the arranger puts *above* each section while
@@ -7209,7 +7225,7 @@ try {
   // opposite of what is true.
   const lqStrip = await until(
     () =>
-      lq1.locator('[data-section]').evaluateAll((els) =>
+      lq3.locator('[data-section]').evaluateAll((els) =>
         els.map((el) => ({
           key: el.getAttribute('data-section'),
           btns: [...(el.querySelector(':scope > div.rounded-lg.bg-neutral-100')?.querySelectorAll('button') ?? [])].map(
@@ -7234,8 +7250,7 @@ try {
   // everything else it offers is live.
   check(
     'die Saison-Kachel ist der feste Anker: nicht verschiebbar, nicht schmal, nicht zu entfernen',
-    lqDialogGone &&
-      lqArrangeOpen &&
+    lqArrangeOpen &&
       !!lqSaisonsStrip &&
       lqCtl(lqSaisonsStrip, 'Nach oben')?.disabled === true &&
       lqCtl(lqSaisonsStrip, 'Nach unten')?.disabled === true &&
@@ -7246,31 +7261,28 @@ try {
       lqCtl(lqNotizenStrip, 'Nach unten')?.disabled === false &&
       lqCtl(lqNotizenStrip, 'Breite umschalten')?.disabled === false &&
       lqCtl(lqNotizenStrip, 'Bereich entfernen')?.disabled === false,
-    `Dialoge weg ${lqDialogGone}, Modus an ${lqArrangeOpen} — ` +
+    `Modus an ${lqArrangeOpen} — ` +
       `saisons: ${lqStripText(lqSaisonsStrip)} / notizen: ${lqStripText(lqNotizenStrip)}`,
   );
 
   const lqBefore2 = await lpBlob();
-  // Two offsets, not one: the requests and the answers are counted separately, so a round that
-  // sends more than it is answered — or the other way round — is read as what it is instead of
-  // silently shifting one of the two slices below.
-  const lqSentBefore2 = lqSent().length;
-  const lqGotBefore2 = lqGot().length;
-  const lqHold2 = await lqHoldPatch(lq1, '**/api/landing');
+  const lqHold2 = await lqHoldPatch(lq3, '**/api/landing');
   const lqWidthClicked = await clickIfThere(
-    lq1.locator('[data-section="notizen"] button[title="Breite umschalten"]'),
+    lq3.locator('[data-section="notizen"] button[title="Breite umschalten"]'),
     SETTLED_MS,
   );
   await until(async () => lqHold2.held, (v) => v === true, SETTLED_MS);
   const lqC = `Während des Umbaus ${RUN}`;
-  const lqCAdded = await lpAddDoc(lq2, 'dokumente', lqC);
+  const lqCAdded = await lpAddDoc(lq4, 'dokumente', lqC);
   const lqAfterC = await until(lpBlob, (l) => l.documents.some((d) => d.label === lqC), SETTLED_MS);
   lqHold2.release();
   const lqArranged = await until(lpBlob, (l) => l.layout.length > 0, SETTLED_MS);
-  await lq1.unroute('**/api/landing');
+  await lq3.unroute('**/api/landing');
 
-  const lqSent2 = lqSent().slice(lqSentBefore2);
-  const lqGot2 = lqGot().slice(lqGotBefore2);
+  // Its own window's log, so there is no offset to keep: the arrangement half sends exactly these
+  // two requests and receives exactly these two answers.
+  const lqSent2 = lqLog2.filter((e) => e.body !== undefined);
+  const lqGot2 = lqLog2.filter((e) => e.status !== undefined);
   check(
     'auch die Anordnung wird abgelehnt und ein zweites Mal geschickt',
     lqWidthClicked &&
@@ -7302,8 +7314,7 @@ try {
     `${JSON.stringify(lqArranged.layout.map((e) => `${e.key}:${e.width}`))} bei ${lqArranged.documents.length} Dokumenten`,
   );
 
-  await lq1.close().catch(() => {});
-  await lq2.close().catch(() => {});
+  for (const page of [lq1, lq2, lq3, lq4]) await page.close().catch(() => {});
 
   // ======================================================================== AR · the budget spent
   //
