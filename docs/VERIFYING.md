@@ -32,6 +32,14 @@ manager or the editor, to a delete or a reorder, to anything under `#/einstellun
 dialog's keyboard behaviour or the search overlay, and to anything that lays out narrow or
 prints; it is not a substitute for the passes below.
 
+**The second committed gate is `npm run check:boot`** (WP-61c) — the boot gesture exists only in a
+built bundle, which is the one surface `check:browser` deliberately cannot reach, so this one
+builds the client itself, serves it from the real server on `:4327` against a throwaway data dir
+and drives seventeen cold boots. It needs neither `:5317` nor `.demo`, so unlike `check:browser` it
+runs happily beside a live `npm run demo`. Run it after anything in the overlay in
+`client/index.html` — the watchdog's constants, the phases, the report's fields — and after a
+change to the caps in `electron/bootLog.ts`, which it reads.
+
 **The Übersicht is `#/dashboard`. `#/` is the season landing page** — a different screen with no
 task tiles and no „Nächste Termine". Asserting dashboard content against `#/` fails against
 working code. The print sheets are `#/print/artist/:id` and `#/print/project/:id`.
@@ -170,6 +178,17 @@ verified by hand, and the gate itself is written from this list.
   the dev middleware as well as the build — so against `npm run demo` on `:5317` the node is
   removed before React mounts and a driving script can ignore it entirely. Everything below applies
   only when you verify against a **built** bundle: `npm run build`, then the server on `:4317`.
+- **The way to a bundle the overlay does exist in is the server, not a static file server.**
+  `server/src/index.ts` serves `client/dist` on its own port whenever it finds it, and
+  `AUFTAKT_CLIENT_DIST` also flips `isPackaged`, which drops the two `:5317` entries from
+  `ALLOWED_ORIGINS` — i.e. exactly the packaged app's configuration. So `npm run build:client`
+  followed by
+  `AUFTAKT_DATA_DIR=$(mktemp -d) AUFTAKT_PORT=4327 AUFTAKT_CLIENT_DIST=$PWD/client/dist npm --prefix server run start`
+  puts a faithful production client on `http://localhost:4327/`: same origin, no Vite, no `:5317`,
+  and therefore nothing to collide with — which is why `check:boot` can run beside a demo and
+  `check:browser` cannot. Handing `client/dist` to any *static* server instead leaves the app with
+  no `/api`: the bootstrap queries reject, `signalFailed()` fires, and **every** boot comes up
+  `cross / app-failed`. That reads as a broken gesture and is a missing server.
 - **The overlay has no fixed duration any more, and it is no longer a property of the build.** It
   holds a still frame until the app is ready, then decides at runtime whether to play the gesture,
   based on measured frame health. So a `waitForTimeout(2600)` is wrong in both directions, and the
@@ -363,6 +382,31 @@ verified by hand, and the gate itself is written from this list.
   `data-abort` by polling inside the page while `#boot-overlay` still exists — by the time an
   `await` in the driving script resolves, the node and its attributes are usually gone — or skip
   the race entirely and read `localStorage['auftakt-boot-report']` after `done`.
+- **`document.documentElement` is `null` inside an `addInitScript`** — which is the one moment an
+  observer of `html[data-boot]` can be installed, since the attribute's first write happens during
+  parse. `observe(document.documentElement, …)` therefore throws, the rest of the init script never
+  runs, and with no `pageerror` listener attached the run looks **completely normal**: the slot
+  injection above silently did nothing for nine cases and all nine passed. Observe the document
+  instead — `obs.observe(document, { attributes: true, subtree: true, attributeFilter: [...] })` —
+  and always attach `page.on('pageerror')` to a page that carries an init script.
+- **Headless Chromium's frame cadence is whatever the machine gives it, and no flag makes it
+  60 Hz.** On the ProMotion Mac this is developed on it is 8.3 ms — a whole gesture reports
+  `med 8.3 · p95 8.6 · worst ≤ 10.4 · drops 0`, and that is *unchanged* by `--disable-gpu`, by
+  swiftshader and by 20× CDP CPU throttling (`Emulation.setCPUThrottlingRate` slows script, not the
+  compositor). A CI runner may well deliver 16.7. Two consequences for anything that injects frame
+  stalls. An absolute block size is not portable — 50 ms is a tolerated 50.0 ms gap at 120 Hz and a
+  `hitch`-triggering 66.8 ms one at 60 — so **derive the block from the median the run itself
+  reports**. And `--disable-frame-rate-limit` is not the 60 Hz simulation its name suggests: it
+  uncaps rAF entirely (0.2 ms between blocks, a 0.2 ms median), which makes every judged verdict
+  meaningless — nine of a seventeen-case set went red under it against a perfectly good build.
+- **An injected shape that sits *on* a watchdog threshold is flaky by construction.**
+  `drops >= 0.2 * (deltas.length + drops)` rearranges to `drops >= n / 4`, so `g` injected gaps of
+  `G` ms among `c` clean frames of `med` ms abort only while `c <= 3g`, and the window closes only
+  once `g*G + c*med >= 200`. Three 45 ms gaps at an 8.3 ms median put those at `c >= 9.03` and
+  `c <= 9`: four runs out of six aborted, two played to the end, and neither answer was a defect.
+  Four gaps clear the margin at 60 Hz and at 120. Compute it before trusting an injected outcome —
+  and prefer asserting *where the cost was accounted* (`warm`, `warm2`, `showMs → startMs`, `tail`)
+  over asserting which door the run left by.
 - **An aborted or skipped gesture keeps its last frame on screen, and that is not a stuck
   animation.** `cross` from within `play` adds `#boot-overlay.boot-froze`, which holds the svg
   visible while every descendant animation re-pauses, so a screenshot taken then shows the hand
@@ -384,6 +428,26 @@ verified by hand, and the gate itself is written from this list.
   correct, though it reads as a bug — while a script that opens a context per scenario pays the
   full boot each time. `newContext({ reducedMotion: 'reduce' })` removes it outright and stays the
   cheapest way to get it out of the way.
+- **A cold boot without a cold cache: clear the session key and reload.**
+  `sessionStorage.removeItem('auftakt-booted')` followed by `page.reload()` comes up as a cold
+  start — the head script finds no key, `__auftaktWarm` stays false, the gesture plays — while the
+  HTTP and V8 code caches stay warm. That is the second launch onwards of an installed app, and the
+  only way to get repeated gestures out of one page. Measured against the built bundle: `readyMs`
+  92 ms on the first, cache-cold load and 20–36 ms on every one after it, against the 1200 ms
+  deadline; under 20× CPU throttling the warm number is 532 ms and the cold one 1574 ms — the only
+  one of the four to miss the deadline. It is the *cache*, not the machine, that decides whether a
+  slow runner still sees a gesture. A fresh page in the same context is a cold session too
+  (sessionStorage is per tab) but shares the context's HTTP cache. The gesture's own length is not
+  a machine property either: `endMs − startMs` measured 2599 ms at full speed and 2613 ms at 20×,
+  because the animations run on their own clock.
+- **The reduced-motion escape hatch is the *script's* `matchMedia`, not the `@media` rule.**
+  `#boot-overlay`'s `@media (prefers-reduced-motion: reduce) { display: none }` only covers the
+  interval before the body script runs; what removes the node, files `skip / reduced-motion` and
+  leaves `#root` un-inert is `matchMedia('(prefers-reduced-motion: reduce)').matches` in that
+  script. Deleting the CSS rule changes nothing observable — a context with
+  `reducedMotion: 'reduce'` still reports `skip / reduced-motion` — so a check written against the
+  stylesheet proves nothing about the hatch every other driving script depends on, and the media
+  query reads like dead code it is not.
 - **`page.goto` to the same hash is a no-op** under `HashRouter`, so a dialog left open by the
   previous scenario silently eats every click. Call `reload()` after `goto`.
 - **`html[data-app-ready]` survives an in-app hash navigation**, so after a `goto` to a *different*
