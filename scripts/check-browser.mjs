@@ -6711,6 +6711,9 @@ try {
   const lpTrio = [lpS1, lpS2, lpS3];
   const lpTrioCards = lpTrio.map((s) => lpAllCards.find((c) => c.aria.includes(s?.label ?? NO_MATCH)));
   const [lpC1, lpC2, lpC3] = lpTrioCards;
+  // A precondition rather than a detector, like the blob check above: it is what says the three
+  // roles below really are three different seasons, and every card assertion after it depends on
+  // that. No revert of an existing fix takes it red on its own.
   check(
     'die drei Saisons der Demo sind drei verschiedene Rollen und haben je eine Karte',
     lpDemoSeasons.length === 3 &&
@@ -6768,6 +6771,10 @@ try {
     (r) => r.length === lpStart.documents.length,
     8000,
   );
+  // This one compares the DOM against the server's *own* array, so it is blind to a server-side
+  // list bug by construction — which is the right contract for a list (its job is to render what
+  // it was given) and the reason it is an invariant guard rather than a regression detector. The
+  // stored list is AQ's and AR's ground.
   check(
     'die Dokumente-Liste zeigt genau die gespeicherten Zeilen, in ihrer Reihenfolge',
     lpDocRows.length === lpStart.documents.length &&
@@ -6790,6 +6797,10 @@ try {
     (r) => r.length === (lpLinkSection?.documents ?? []).length,
     8000,
   );
+  // An invariant guard too, and the thing it forbids is the two lenses being wired to one array:
+  // the builtin list writes `landing.documents`, a custom Dokumente-Bereich writes the `documents`
+  // inside its own section row, and nothing may render the other's rows. Same for the two lines
+  // below it — a Textfeld showing its stored text, a Notiz rendered rather than printed as source.
   check(
     'der eigene Dokumente-Bereich führt seine eigenen Zeilen — und die beiden Listen mischen sich nicht',
     lpLtRows.length === (lpLinkSection?.documents ?? []).length &&
@@ -6843,8 +6854,9 @@ try {
     lpBareClicked && lpOpened.length === 1 && lpOpened[0] === `https://${lpBare.url}`,
     `geklickt ${lpBareClicked}, ${JSON.stringify(lpOpened)} bei gespeichertem „${lpBare.url}“`,
   );
-  // The pair. Clicking the *label* of the row that has no URL, not the row — the ✎ and 🗑 sit at
-  // the row's right edge and `click()` aims at its centre.
+  // The pair, and an invariant guard: it forbids a click target being *added* to a row that has
+  // nowhere to go. Clicking the *label* of the row that has no URL, not the row — the ✎ and 🗑 sit
+  // at the row's right edge and `click()` aims at its centre.
   const lpNoUrl = lpStart.documents.find((d) => d.url === null);
   const lpBlankClicked = await clickIfThere(
     lp
@@ -6908,6 +6920,8 @@ try {
   // The editors stop the click from reaching the card, which is a `role="button"` that opens the
   // season — and opening one is `switchSeason`: a repin to *this* card's season plus a document
   // reload onto `#/dashboard`. So the pair is the hash and the pin, and the pin discriminates.
+  // An invariant guard (nothing may start propagating), but not a theoretical one: the first draft
+  // of this case asserted the pin was `null` and this line is what found `pinFromResponse`.
   const lpHashAfter = await lp.evaluate(() => location.hash);
   const lpPinAfter = await seasonPin(lp);
   check(
@@ -7032,6 +7046,10 @@ try {
   const lqHold = await lqHoldPatch(lq1, '**/api/landing');
   const lqAAdded = await lpAddDoc(lq1, 'dokumente', lqA);
   await until(async () => lqHold.held, (v) => v === true, 12_000);
+  // The two lines around the release are the staging, not the finding: they say the race was
+  // really set up — the dialog was driven, the write is parked, the other window wrote in the
+  // same generation — so that everything after them is about the conflict rather than about a
+  // click that never landed. Neither is a regression detector on its own.
   check(
     'das erste Fenster hängt an seinem eigenen Schreibvorgang',
     lqAAdded && lqHold.held,
@@ -7394,6 +7412,8 @@ try {
     (s) => (s.labels ?? []).some((r) => r.label === lsDocs),
     12_000,
   );
+  // The staging line, like AQ's pair: both pencils were opened, the write is parked, and the other
+  // window's rename moved the generation by exactly one.
   check(
     'das erste Fenster hängt an seiner Umbenennung, das zweite benennt die andere Überschrift um und gewinnt',
     lsAOpened &&
