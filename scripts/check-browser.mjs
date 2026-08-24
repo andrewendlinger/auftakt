@@ -5822,14 +5822,21 @@ try {
         await ccFill(ccDlg.locator('[data-option-label]').last(), label);
       }
     }
-    const had = (await ccOwnCols()).length;
     await clickIfThere(ccDlg.getByRole('button', { name: '+ Spalte hinzufügen' }));
     await until(
       () => ccDlg.getByPlaceholder('z. B. Verantwortlich').inputValue().catch(() => null),
       (v) => v === '',
       8000,
     );
-    return (await until(ccOwnCols, (c) => c.length === had + 1, 8000)).find((c) => c.name === name);
+    // Polled on the season's **whole** column list rather than on this page's own group. Whether
+    // the create really put the column in this page's scope is what the assertion below is about,
+    // and a wait that presupposed it would turn that assertion into a bare timeout.
+    const all = await until(
+      () => api(CC('/custom-columns')),
+      (cols) => cols.some((c) => c.name === name),
+      8000,
+    );
+    return all.find((c) => c.name === name);
   };
 
   const ccText = await ccAdd('Zuständig', 'text', 'Person');
