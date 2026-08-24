@@ -32,10 +32,19 @@
  *
  * **Nothing here asserts an uncaused timing.** No bound on `readyMs`, `med` or `p95`; no „must not
  * abort" without an injected reason. A red therefore means the accounting changed, never that the
- * runner was busy. The two things that *are* wall-clock — that a cold boot reaches `play`, and
- * that a played gesture runs its ~2.6 s — were measured against 20× CPU throttling and moved by
- * 2 % and 14 ms respectively; the cache, not the machine, is what decides the first (see
- * `docs/VERIFYING.md`), which is why case L2 runs first and leaves the caches warm.
+ * runner was busy.
+ *
+ * Four bounds do read a clock, and they are listed here because a bound nobody declared is how
+ * this discipline rots. Three of them read the *CSS* clock, which is wall time the machine does
+ * not move: a played gesture's `endMs − startMs` inside a 300 ms band (measured 2599 ms at full
+ * speed against 2613 ms at 20× CPU throttling), the same quantity under 2500 ms for a run that
+ * aborted, and `endMs < 7000`, which is the statement that a live reveal beats bootBail's dead
+ * man's switch. The fourth is a floor of twenty judged frames on a played gesture: a 2.6 s
+ * animation misses it only below about eight frames a second, where nothing else here would hold
+ * either. The one genuinely machine-dependent thing — that a cold boot is ready inside the 1200 ms
+ * deadline at all — is decided by the *cache* rather than by the machine (83 ms warm against
+ * 1574 ms cold-and-throttled, see `docs/VERIFYING.md`), which is why case L2 runs first and leaves
+ * the caches warm.
  *
  * **Injected shapes are sized from the cadence the run itself reports**, never absolutely: 50 ms
  * is a tolerated gap at 120 Hz and a `hitch` at 60. And every shape clears its threshold by a
@@ -70,7 +79,7 @@ const PORT = 4327;
 const BASE = `http://localhost:${PORT}`;
 
 /**
- * The two constants this file computes its injected shapes against.
+ * The three constants this file computes its injected shapes against.
  *
  * A second copy, deliberately. They belong to `client/index.html`; keeping them here as well means
  * that moving one and not the other is a red (`assertBundle` below), rather than a gate that
@@ -79,6 +88,8 @@ const BASE = `http://localhost:${PORT}`;
  */
 const HITCH_MS = 58;
 const WARM_FRAMES = 2;
+/** The uniformly-slow test's floor. Case F has to clear it to abort at all — see there. */
+const SLOW_MS = 22;
 
 /** Every door the report may name. An unknown one is a report this gate has not been taught. */
 const WHYS = new Set([
@@ -117,10 +128,25 @@ function check(name, ok, detail = '') {
  * readable as „this run was green".
  */
 let notExercised = 0;
+/** Which cases stood down, so the summary can ask whether anything is left. */
+const stoodDown = new Set();
 function skipCase(name, why) {
   notExercised++;
+  stoodDown.add(name);
   console.log(`  --    ${name} — nicht ausgeführt: ${why}`);
 }
+
+/**
+ * The cases that carry the drops arithmetic, and the reason there is a floor under standing down.
+ *
+ * Each of E, E2 and E3 may stand down on measured evidence, and each reason is sound on its own.
+ * All three at once is not: on a runner whose median passes ~29 ms the tolerated band stops
+ * holding two frame intervals, every one of them declines, and the gate would otherwise report a
+ * clean green having asserted nothing whatever about WP-61b — „skipped its way to green", read as
+ * „was green", which is the one outcome the counter above exists to prevent. So it is a check
+ * rather than a note, and it fails.
+ */
+const DROPS_CASES = ['E', 'E2', 'E3'];
 
 // ---------------------------------------------------------------------------- the stack
 
@@ -288,15 +314,22 @@ async function waitForServer() {
  */
 async function assertBundle() {
   const html = await (await fetch(`${BASE}/`)).text();
-  check('the served document carries the overlay', html.includes('id="boot-overlay"'));
+  // All three read literals out of the served document, which is fail-closed but assumes Vite goes
+  // on leaving an inline `<script>` in index.html alone. If it ever minifies one, all three fail
+  // at once and none of the three messages would say why — hence the shared hint.
+  const hint = 'kein Treffer — wenn alle drei Zeilen rot sind, minifiziert der Build inzwischen das Inline-Skript';
+  check('the served document carries the overlay', html.includes('id="boot-overlay"'), hint);
   check(
     "…and it is a production build ('%PROD%' replaced)",
     html.includes("'true' !== 'true'"),
-    html.includes('%PROD%') ? 'unersetzt' : '',
+    html.includes('%PROD%') ? 'unersetzt' : hint,
   );
   check(
-    `…and still declares HITCH_MS ${HITCH_MS} / WARM_FRAMES ${WARM_FRAMES}, which this gate's shapes are derived from`,
-    html.includes(`var HITCH_MS = ${HITCH_MS};`) && html.includes(`var WARM_FRAMES = ${WARM_FRAMES};`),
+    `…and still declares HITCH_MS ${HITCH_MS} / WARM_FRAMES ${WARM_FRAMES} / SLOW_MS ${SLOW_MS}, which this gate's shapes are derived from`,
+    html.includes(`var HITCH_MS = ${HITCH_MS};`) &&
+      html.includes(`var WARM_FRAMES = ${WARM_FRAMES};`) &&
+      html.includes(`var SLOW_MS = ${SLOW_MS};`),
+    hint,
   );
   return html;
 }
@@ -619,6 +652,17 @@ try {
    * and uncapped differ by one lost slot and no bound has room for both that and the runner's own
    * noise. Hardcoded sizes cannot do it either: 45 ms is five intervals at 120 Hz and two at 60.
    *
+   * The `med + 0.2` is not decoration either. `med` is reported to one decimal and the true
+   * interval jitters under it, so a machine reading 8.2 one run and 8.3 the next flips
+   * `floor(57.9 / med)` between **seven** and six — and seven intervals of a real 8.33 ms frame is
+   * 58.3, over the bound. That happened: one run in three asked for 58.4 ms, all three drops cases
+   * stood down on the overshoot, and the family check below went red for arithmetic. The margin
+   * makes the choice stable across the reading's own noise.
+   *
+   * `STEPS_SAFE` is one interval lower, and it is what case E2 uses. E2 needs its gaps to be
+   * *late*, not to sit at the top of the band, so giving it the robust size means an unlucky
+   * overshoot in E and E3 can never take the whole drops family — and therefore the run — with it.
+   *
    * The constant `HITCH_MS` itself is guarded by `assertBundle`'s declaration line, and that is
    * the guarantee rather than a belt: WP-61 placed 58 at the midpoint *between* two steps a panel
    * can produce, so the top step sits a hair from the value the constant had before it (50.0 at
@@ -627,16 +671,19 @@ try {
    * `abort:hitch` invariant is what catches a change to the judge that quotes the constant.
    */
   const med = first.r?.frames?.med ?? 0;
-  const STEPS = med > 0 ? Math.floor((HITCH_MS - 0.1) / med) : 0;
-  const GAP_A = Math.round(STEPS * med) + 1;
-  const GAP_B = Math.round(Math.ceil(STEPS / 2) * med) + 1;
+  const STEPS = med > 0 ? Math.floor((HITCH_MS - 0.1) / (med + 0.2)) : 0;
+  const STEPS_SAFE = Math.max(2, STEPS - 1);
+  const gap = (k) => Math.round(k * med) + 1;
+  const GAP_A = gap(STEPS);
+  const GAP_B = gap(Math.ceil(STEPS / 2));
+  const GAP_SAFE = gap(STEPS_SAFE);
   // Below two intervals a gap cannot be billed as a lost slot at all, so the drops shapes would
   // assert nothing. Stated as the arithmetic rather than as a millisecond threshold, and the cases
   // stand down on it with the number rather than producing a red that means „slow panel".
   const gapsUsable = played && STEPS >= 2;
   console.log(
     `\n  Kadenz: med ${med} ms — die tolerierte Bandbreite fasst ${STEPS} Bilder;` +
-      ` Lücken ${GAP_A}/${GAP_B} ms\n`,
+      ` Lücken ${GAP_A}/${GAP_B} ms, robuste ${GAP_SAFE} ms\n`,
   );
 
   /**
@@ -648,6 +695,34 @@ try {
    * over such a run, so nothing goes unchecked — only the claim that needed a tolerated gap.
    */
   const overshot = (g) => (g.r?.frames?.worst ?? 0) >= HITCH_MS;
+
+  /**
+   * Boot a shape, and if the run's own dropped frames put `drops` over the ceiling, boot it once
+   * more and believe the second reading.
+   *
+   * The ceiling is the only assertion here whose subject the runner also contributes to: capped,
+   * an injected gap bills one lost slot, and so does every frame the machine happens to drop
+   * beside it. A run on this machine measured `drops: 8` against two injected gaps and a ceiling
+   * of four — six late frames of its own — which is a red with no defect behind it, and no fixed
+   * ceiling separates that from the +5 an uncapped bill would add at 120 Hz.
+   *
+   * One re-measurement separates them, because the two differ in *reproducibility*: an uncapped
+   * sum is over the ceiling every single time, machine noise almost never twice running. Bounded
+   * to one retry, announced on its own line as it happens, and the second reading is what the
+   * assertion sees — so this can rescue a noisy run but never a defect. It is deliberately not a
+   * stand-down: nothing is skipped, the same claim is simply measured again.
+   */
+  async function bootUnderCeiling(label, opts, ceiling) {
+    let g = await boot(opts);
+    if (!overshot(g) && (g.r?.frames?.drops ?? 0) > ceiling) {
+      console.log(
+        `  ⚠     ${label}: drops ${g.r?.frames?.drops} über der Schranke ${ceiling} — der Lauf hatte eigene` +
+          ` Aussetzer, wird einmal wiederholt`,
+      );
+      g = await boot(opts);
+    }
+    return g;
+  }
 
   // ---- B: `.boot-show` — visible while every clock but the bail still sits at zero -------------
   {
@@ -704,12 +779,16 @@ try {
   // ---- E: the customer's window, re-enacted (WP-61b) --------------------------------------------
   if (!gapsUsable) skipCase('E', `die tolerierte Bandbreite fasst nur ${STEPS} Bilder (med ${med} ms)`);
   else {
-    const g = await boot({
-      plan: [
-        { slot: 5, ms: GAP_A },
-        { slot: 7, ms: GAP_B },
-      ],
-    });
+    const g = await bootUnderCeiling(
+      'E',
+      {
+        plan: [
+          { slot: 5, ms: GAP_A },
+          { slot: 7, ms: GAP_B },
+        ],
+      },
+      4,
+    );
     invariants('E', g);
     if (overshot(g)) skipCase('E', `die eingespielte Lücke ist übergelaufen (${g.r?.frames?.worst} ≥ ${HITCH_MS})`);
     else {
@@ -735,7 +814,10 @@ try {
   // ---- E2: a fourth late frame in the same window still crosses ---------------------------------
   if (!gapsUsable) skipCase('E2', `die tolerierte Bandbreite fasst nur ${STEPS} Bilder (med ${med} ms)`);
   else {
-    const g = await boot({ plan: [5, 7, 9, 11].map((slot) => ({ slot, ms: GAP_A })) });
+    // `GAP_SAFE`, not `GAP_A`: this case needs four *late* frames, not four frames at the top of
+    // the tolerated band, so it takes the size an overshoot cannot reach — which is what keeps the
+    // family check below satisfiable when E and E3 stand down.
+    const g = await boot({ plan: [5, 7, 9, 11].map((slot) => ({ slot, ms: GAP_SAFE })) });
     invariants('E2', g);
     // Four rather than three: three sits exactly on `drops >= n / 4` at an 8.3 ms median — the
     // window needs `c >= 9.03` clean frames to close and the abort needs `c <= 9` — and was flaky
@@ -752,7 +834,7 @@ try {
   // ---- E3: the largest gap HITCH_MS still calls noise --------------------------------------------
   if (!gapsUsable) skipCase('E3', `die tolerierte Bandbreite fasst nur ${STEPS} Bilder (med ${med} ms)`);
   else {
-    const g = await boot({ plan: [{ slot: 6, ms: GAP_A }] });
+    const g = await bootUnderCeiling('E3', { plan: [{ slot: 6, ms: GAP_A }] }, 3);
     invariants('E3', g);
     const worst = g.r?.frames?.worst ?? 0;
     if (overshot(g)) skipCase('E3', `die eingespielte Lücke ist übergelaufen (${worst} ≥ ${HITCH_MS})`);
@@ -763,24 +845,59 @@ try {
         `${g.r?.outcome}/${g.r?.why}, worst ${worst}`,
       );
       // Uncapped this one gap alone bills `round(worst/med) - 1` — five at an 8.3 ms median, which
-      // is the 120 Hz false abort WP-61b repaired. Capped it bills one; the bound leaves two
+      // is the 120 Hz false abort WP-61b repaired. Capped it bills one; the ceiling leaves two
       // frames of room for a stray late one of the runner's own.
-      check('E3: …and is billed once, not per slot it spans', (g.r?.frames?.drops ?? 99) <= 3, `drops ${g.r?.frames?.drops}`);
+      //
+      // The floor is not decoration. Without it the pair „plays to `done`" and „drops ≤ 3" is
+      // satisfied by a boot with **no gap in it at all** — so the one case that carries the 120 Hz
+      // half of the WP-61b canary would read green if the injection silently stopped running,
+      // which is this file's own war story (docs/VERIFYING.md, the init-script observer). E has
+      // the same floor for the same reason.
+      check(
+        'E3: …and is billed once, not per slot it spans',
+        (g.r?.frames?.drops ?? 0) >= 1 && (g.r?.frames?.drops ?? 99) <= 3,
+        `drops ${g.r?.frames?.drops}, worst ${worst}`,
+      );
     }
   }
 
   // ---- F: cadence that degrades after two clean windows aborts ----------------------------------
-  {
-    // From slot 30, so `quick` has a low tenth percentile behind it before the median flips —
-    // uniform slowness from the first frame is the watchdog's documented blind spot, not a defect.
-    const g = await boot({ plan: Array.from({ length: 60 }, (_, i) => ({ slot: i + 30, ms: 30 })) });
-    invariants('F', g);
-    check(
-      'F: a cadence that degrades mid-gesture aborts (slow or drops — the door is not fixed)',
-      g.r?.outcome === 'cross' && /^abort:(slow|drops)$/.test(g.r?.why),
-      `${g.r?.outcome}/${g.r?.why}, med ${g.r?.frames?.med}, quick ${g.r?.frames?.quick}`,
-    );
-    check('F: …and does not play to the end', (g.r?.endMs ?? 9999) < 2000, `${g.r?.endMs} ms`);
+  //
+  // The last shape here that was ever a hardcoded number, and it inverted its own outcome below
+  // ~34 Hz: a flat 30 ms block yields a delta of `floor(30 / med) * med`, which at a 33 ms median
+  // is 33 and at a 58 ms one is a `hitch` — so the run left by a door this case rejects, with no
+  // injected cause for the difference. Asked for in intervals now, like every other shape.
+  //
+  // `SLOW_FACTOR_STEPS` is the smallest number of intervals whose product with `med` clears the
+  // uniformly-slow test's *floor*: `nominal > max(SLOW_MS, quick * 1.35)`, where `quick` stays near
+  // `med` because the first 29 frames are clean, so the 1.35 term is satisfied by any k ≥ 2 and the
+  // floor is what decides. Two at 60 Hz (33.4 > 22), three at 120 (24.9 > 22).
+  if (!gapsUsable) skipCase('F', `die tolerierte Bandbreite fasst nur ${STEPS} Bilder (med ${med} ms)`);
+  else {
+    const k = Math.max(2, Math.floor(SLOW_MS / med) + 1);
+    if (k > STEPS) skipCase('F', `eine Verlangsamung um ${k} Bilder überschritte HITCH_MS (med ${med} ms)`);
+    else {
+      // From slot 30, so `quick` has a low tenth percentile behind it before the median flips —
+      // uniform slowness from the first frame is the watchdog's documented blind spot, not a defect.
+      const block = Math.round(k * med) + 1;
+      const g = await boot({ plan: Array.from({ length: 60 }, (_, i) => ({ slot: i + 30, ms: block })) });
+      invariants('F', g);
+      check(
+        'F: a cadence that degrades mid-gesture aborts (slow or drops — the door is not fixed)',
+        g.r?.outcome === 'cross' && /^abort:(slow|drops)$/.test(g.r?.why),
+        `${g.r?.outcome}/${g.r?.why}, ${k} Bilder à ${med} ms, med ${g.r?.frames?.med}, quick ${g.r?.frames?.quick}`,
+      );
+      // Against the *gesture's* clock, not the run's: the injection starts at slot 30, whose wall
+      // time is `30 * med` and therefore four times longer at 30 Hz than at 120 — a fixed ceiling
+      // on `endMs` silently stops meaning anything on a slower runner. `endMs - startMs` is the
+      // same quantity case A bounds from below, and it is CSS wall time, which the machine does
+      // not move (2599 ms at full speed, 2613 ms at 20× throttling).
+      check(
+        'F: …and does not reach the gesture’s own fade',
+        (g.r?.endMs ?? 9999) - (g.r?.startMs ?? 0) < 2500,
+        `${Math.round((g.r?.endMs ?? 0) - (g.r?.startMs ?? 0))} ms nach dem Start`,
+      );
+    }
   }
 
   // ---- G: a click during the hold forfeits the gesture and shows nothing -------------------------
@@ -880,6 +997,13 @@ try {
     check('L: …and #root is never inert', g.phase.every((p) => !p.inert) && !g.rootInert);
     check('L: the overlay node is gone', !g.overlay);
   }
+
+  const anyDrops = DROPS_CASES.some((c) => !stoodDown.has(c));
+  check(
+    'the drops arithmetic was exercised at all (E, E2 or E3)',
+    anyDrops,
+    anyDrops ? '' : `alle drei standen ab — med ${med} ms, die tolerierte Bandbreite fasst ${STEPS} Bilder`,
+  );
 
   console.log(
     `\n${failures ? `✗ ${failures} Fehler` : '✓ alles ok'} (${checks} Prüfungen)` +
