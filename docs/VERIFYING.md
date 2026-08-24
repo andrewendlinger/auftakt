@@ -786,8 +786,9 @@ verified by hand, and the gate itself is written from this list.
 - **The highlight and the fade do not arrive in the same frame.** Both cues sit behind a CSS
   `transition`, and `reducedMotion: 'reduce'` does not touch transitions — so a poll that waits
   only for „some element is the drop target" reads the *carried* one at full opacity, which fails
-  the „and the dragged card goes blass" half against working code. Measured on the project cards:
-  one run in three. Put **both** states in the poll's predicate.
+  the „and the dragged card goes blass" half against working code — met on the project cards, the
+  first time that case ran („blass keine" against a card on its way to 0.4). Put **both** states in
+  the poll's predicate.
 - **A drop point on a big surface has to be computed, and the app's sticky header is 62 px.** The
   geometric centre of a `[data-section]` in „Bereiche bearbeiten" is regularly outside the window
   — the section is taller than the viewport — and a `mouse.move` to a centre that has been
