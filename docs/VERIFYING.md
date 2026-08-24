@@ -1143,6 +1143,88 @@ löschen" — is unrelated, and its traps are in „Playwright traps" and „Fix
   The `.xlsx` export can — `ExcelButton` sends no `scope`, so the sheet is the live list — but
   reading one means unzipping a workbook, and `check:browser` does not.
 
+### Die Spaltentypen (#114)
+
+Four types reach `tasks.custom_values` — `text`, `date`, `checkbox`, `select` — and `CustomCell`
+is four hardcoded branches, one input widget each. The seven built-ins are a fifth kind: they bind
+to real `tasks` fields through `key`, and two of them take no input at all.
+
+- **„+ Spalte hinzufügen" resets its form *after* the POST resolves, not before**, and the reset
+  includes `setType('text')`. So a script that waits for the new column to appear in
+  `GET /api/custom-columns` and then picks the next type has its `selectOption` overwritten a tick
+  later — the second column is created as a Text column and every assertion about it is about the
+  wrong type. Wait for the *form*: `getByPlaceholder('z. B. Verantwortlich')` back to `''`. Cost
+  one wrong run here.
+- **The name field is the only thing that refuses, and it refuses silently.** `AddColumnForm.add`
+  starts with `if (!name.trim() ...) return`, so the button is not disabled, no message appears and
+  nothing is created — unlike the option editors in Einstellungen, which go *stumpf* with an amber
+  sentence beside the row (see „A settings editor refuses by going stumpf"). „Nothing happened"
+  therefore has to be asserted as a beat plus a re-read, not as a wait for a message.
+- **The Kategorien editor exists only while „Auswahl (farbig)" is picked, and picking it seeds two
+  rows** („offen", „fertig", `SEED_OPTIONS`). Their mere presence is not the user's input — the
+  dirty check compares against them — and `normalizeOptions` **keeps an existing `value`**, so
+  renaming a seed row leaves a category labelled „Zuerst" whose stored value is still `offen`. To
+  get label == value, remove the seed rows (one click per render, they are keyed by index) and add
+  your own with „+ Kategorie".
+- **A custom „Auswahl" pill offers an empty option and the built-in Status pill does not.**
+  `CustomCell` passes `allowEmpty`, so the menu's first `[role="option"]` carries `data-value=""`;
+  Status's first is the first real category. „The menu lists the configured categories" is true of
+  both, so it is the empty entry that tells the two branches apart.
+- **The checkbox stores a real boolean and the other three store strings.** `commitCustom` sends
+  `e.target.checked`, so the blob holds `{"14": true}`, while `customValueOf` stringifies on the
+  way out and the cell tests `raw === 'true'`. A check written against `'true'` on the API side
+  passes against a build that stores the string and fails against the one that ships.
+- **Clearing a custom cell stores `''`; clearing the built-in Fällig stores `null`.** Both cells
+  are the same `InlineInput`, with `empty: 'raw'` in `CustomCell` and `empty: 'clear'` in
+  `DueCell` — so the custom column keeps its key in `custom_values` with an empty value while
+  `tasks.due_date` really becomes `NULL`. The screen is identical („—" in both), which is why this
+  has to be read off the API.
+- **A half-typed date is `value === ''` with `validity.badInput === true`**, and it needs an
+  **empty** date cell — typing a segment into a filled one replaces that segment and the value
+  stays complete (WP-43, and the entry under „Playwright traps"). Enter then leaves the editor
+  **open** and issues no request at all, and Escape throws the digits away. Assert `badInput`
+  itself as the precondition: on a browser whose locale orders the segments differently, two typed
+  digits may complete a segment set and the case would otherwise pass vacuously.
+- **The two timestamp built-ins render a `<span>` and nothing else.** „Zuletzt bearbeitet" and
+  „Erstellt am" are `TimestampCell`, so the cell holds no `<button>`, a click mounts no editor, and
+  „this column refuses input" only means something next to a cell that accepts it — the custom
+  text cell in the same row is the pair. („Erstellt am" ships hidden, so the reachable one is
+  „Zuletzt bearbeitet".)
+- **Two writes into two cells of one row need the row's own GET held back to prove anything.**
+  `commitCustom` sends only the changed key and the server merges it (TTU-23); a version that sent
+  the whole blob would rebuild it from the `task` captured at render time and silently undo the
+  first write. Against localhost the refetch beats the second click, so both versions pass —
+  `page.route('**/api/tasks*', …)` with a delay on `GET` opens the window (measured: PATCH 1 at
+  +0 ms, its refetch issued at +11 ms and held, PATCH 2 at +61 ms).
+- **A column created in the manager reaches the table while the dialog is still open** — the
+  manager's `onAdded` is `useInvalidateAll` — so „the header appeared" is assertable without a
+  reload, and a script that reloads first cannot tell that apart from a build that only picks the
+  column up on the next load.
+- **The same 👁 writes to two different stores, and which one depends on the list it sits in.** In
+  „Globale Spalten" it is `toggleHere` → this page's `task_columns`; in the page's own scope group
+  below it is `toggleEnabled` → `custom_columns.enabled`, the **season default**, and hiding there
+  asks first („Spalte „…" ausblenden" / „Die vorhandenen Werte bleiben erhalten …"). Showing again
+  never asks. So a case about the per-page map must use a *global* row, and one about the season
+  default a *scoped* row; reading `enabled` after clicking the upper list (or `task_columns` after
+  clicking the lower one) reports „the toggle does nothing".
+- **Hiding the column a header click is sorting by is only reachable from a page's own scope
+  group**, and that is what makes it drivable at all: the manager sits on the page, so the table
+  stays mounted across the write. The override then stops ordering (WP-59 + TTU-18) *and* the ⠿
+  goes back to being draggable — the handle's `title` is the handle: „Spaltensortierung aktiv — …"
+  while an override is in force, the bare „Zum Verschieben ziehen" otherwise. Showing the column
+  again brings the override back: it is suspended, not deleted.
+- **A custom „Auswahl" column sorts by its *configured* category order, not alphabetically by the
+  stored value** (TTU-19). Pick fixture values whose three candidate orders all differ, or the
+  assertion passes on the defect: on demo project 2 the season default is `35 40 34`, and with
+  „Vorbereitung"/„Durchführung"/„Nachbereitung" on tasks 34/40/35 the configured order is
+  `34 40 35` while a string compare gives `40 35 34`.
+- **Toggling three global columns in one burst is the case the per-page map exists to survive**
+  (SHL-10): every write persists the whole map, so a toggle computed from the pre-first-toggle
+  value silently undoes its predecessor. Hold the entity `PATCH` back
+  (`page.route('**/api/projects/*', …)`) or the writes settle between the clicks and the burst is
+  never exercised. The stored map is keyed by `colId` — `custom:8`, `custom:9`, `custom:10` for the
+  demo's three global custom columns.
+
 ## Print and PDF
 
 - **`page.pdf()`'s default `printBackground: false` *is* the SHL-11 repro** — and a screenshot can
@@ -1288,6 +1370,14 @@ löschen" — is unrelated, and its traps are in „Playwright traps" and „Fix
   WP-51), with values on that artist's own tasks 16 and 51. It is the fixture for „a scope's
   columns stay on its own page" — it must be absent from every project page, from the Übersicht
   and from every other artist.
+- **Three of the four custom column *types* have a demo fixture and `text` has none.** „Bereich"
+  (select, id 8), „Bestätigt" (checkbox, 9) and „Abgabe" (date, 10) are the global customs, and
+  „Freigabe" (select, 11) is the scoped one — so `CustomCell`'s fallthrough branch, the one every
+  unrecognised type also lands in, is reachable on the demo only by creating a column. `#/project/2`
+  („NQ2 · Schulworkshop") is where to do it: three tasks (34 „Schulen kontaktieren" with a Fällig
+  date, 35 and 40 without), none done, none a subtask, and `custom_values` empty on all three — so
+  nothing a poll waits for can be satisfied by a value that was already there. Under the season
+  default the three render in the order **35 40 34**.
 - **Two demo pages depart from the season's column set, one per direction (WP-59).**
   `#/project/4` („AB2 · Radio-Session") stores `{"due":false}` and is the only project **without**
   Fällig — every other project has it, which is the customer's own example and the pair to compare;
