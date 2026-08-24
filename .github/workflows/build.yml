@@ -148,8 +148,63 @@ jobs:
       - name: Browser gate
         run: npm run check:browser
 
+  # The boot gate, beside `browser` rather than inside it. It drives the same Chromium but against
+  # a *built* bundle — the one surface `check:browser` cannot reach, since `#boot-overlay` does not
+  # exist on the dev server — so it needs a `vite build` that job does not do, and it needs the
+  # gesture *not* suppressed by `reducedMotion: 'reduce'`, which every case over there relies on.
+  #
+  # Its own job because of wall clock, not minutes. Measured on this repository: `checks` 54 s,
+  # `browser` 246 s, CodeQL 86 s, and this gate ~35 s locally. Appended to `browser` it would push
+  # the critical path from ~4.1 to ~5.3 min on every pull request; beside it, it finishes long
+  # before `browser` does and PR feedback stays where it is. The duplicated setup — three `npm ci`
+  # and a cache restore — is Actions minutes, which a public repository does not pay for.
+  #
+  # It needs no free :5317 and no `.demo`: the built client is served by the server itself, on
+  # :4327, against a throwaway data dir.
+  boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+            client/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm --prefix server ci
+          npm --prefix client ci
+
+      # The same cache key as `browser`, so the two jobs share one download rather than paying for
+      # a browser each.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium
+        run: npx playwright-core install --with-deps chromium
+
+      # The gate builds the client itself — a stale `client/dist` would be a silent false green,
+      # which is the one failure mode it may not have.
+      - name: Boot gate
+        run: npm run check:boot
+
   build:
-    needs: [checks, browser]
+    needs: [checks, browser, boot]
     # The installers are the expensive half — two runners, a native rebuild of
     # better-sqlite3 and electron-builder. Only worth it for something publishable.
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
