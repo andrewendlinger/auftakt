@@ -2733,6 +2733,25 @@ outcome is asserted where, and only where, the gate injected the cause. No bound
 the runner was busy** — which is the property that makes it safe on a CI runner slow enough to
 have produced ambiguous reds twice in this arc already (PR #138).
 
+Four bounds do read a clock, and the file's header names them, because a bound nobody declared is
+how that property rots. Three read the **CSS** clock, which is wall time the machine does not move
+— 20× CPU throttling shifts a gesture's length by 14 ms — namely a played gesture's
+`endMs − startMs` inside a 300 ms band, the same quantity under 2500 ms for a run that aborted,
+and `endMs < 7000`, which says a live reveal beats bootBail. The fourth is a floor of twenty
+judged frames on a played gesture, which a 2.6 s animation misses only below about eight frames a
+second. Everything cadence-dependent is *derived from the median the run itself reports*, with a
+margin against that reading's own rounding: the review round found the last hardcoded injection
+(30 ms, which inverts case F's outcome below ~34 Hz) and a ceiling that scaled with the cadence,
+and CI had already found a bound built by multiplying the rounded median, red at 33.3 against 33.4.
+
+Standing down is a measurement too, and it is bounded. A case may decline on evidence — a cadence
+whose tolerated band holds fewer than two frame intervals, or an injected gap that overshot
+`HITCH_MS` — but if **all three** drops cases decline, the run has said nothing about WP-61b and
+fails saying so. The one assertion whose subject the runner also contributes to, the `drops`
+ceiling, is re-measured once when it is exceeded, on its own line: an uncapped sum is over it every
+time, six frames of machine noise almost never twice running. That rescues a noisy run and cannot
+rescue a defect — verified against the revert, which still reds.
+
 **Three things the issue assumed turned out to be false**, and each changed the design.
 `ALLOWED_ORIGINS` never enters it: with `AUFTAKT_CLIENT_DIST` set the server serves `client/dist`
 at *its own* origin, exactly as the packaged app does, so the gate lives on **:4327** alone — no
