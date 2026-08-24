@@ -2782,3 +2782,56 @@ never the benefit.
 `check-browser.mjs`'s and `check-backup.mjs`'s, left as copies on purpose and named at the foot of
 the file: a `scripts/lib/` extraction should move all four gates at once, and one gate importing
 another's internals would make this one fail for reasons that have nothing to do with the gesture.
+
+---
+
+## No linter — the standing half of the original decision, with its two gaps named (recorded 2026-08-24, #135)
+
+`CONTRIBUTING.md` has said „There is no linter. That is a decision, not an oversight — see
+`docs/DECISIONS.md`" since before this file existed, and pointed at an entry nobody ever wrote.
+„No test framework — REVERSED" above reconstructed and then reversed the *other* half of that
+sentence and closed by noting that „the no-linter half of the original decision also stands — it
+was always a separate question". This is that half, written down at last, so that a decision
+nobody recorded stops being a decision nobody can weigh.
+
+**The standing rationale.** `npm run typecheck` is four projects, and three of them —
+`server/tsconfig.json`, `client/tsconfig.json`, `electron/tsconfig.json` — run `strict: true`
+with `noUnusedLocals` and `noUnusedParameters`, and the first two add `noUncheckedIndexedAccess`
+on top. That is most of what a linter is bought for: an unused import, a shadowed binding, an
+array index used as if it could not be `undefined`, a `switch` that falls through, a branch that
+forgets its return. It is enforced on every push and every pull request, in the `checks` job,
+before the gates run.
+
+What is left over from a linter's usual value is style, and style is arbitration between people.
+This is a single-developer repository that accepts no outside pull requests — the licence says so
+— so there is nobody to arbitrate with, no diff noise from two contributors' brace habits, and no
+review thread where a formatting argument displaces a correctness one. Adding a config file, a
+plugin set and a CI step to settle a dispute that cannot arise is a cost with no matching benefit.
+
+**Its two gaps, named rather than glossed.** Both are *bug* classes, and neither strict tsc nor
+any gate in the stack can see them except by accident:
+
+1. **Unawaited promises.** A dropped `await` is invisible to the type checker. The server is
+   async Express and the main process is async Electron, so the class is live in two tiers at
+   once; `@typescript-eslint`'s `no-floating-promises` and `no-misused-promises` are the only
+   things that catch it.
+2. **Stale React hook dependencies.** `react-hooks/exhaustive-deps` is the only detector for a
+   stale-closure bug, over ~15k lines of `client/src` that `check:browser` samples case by case
+   and cannot exhaust.
+
+Naming them is the point of writing this down. „There is no linter" read as a blanket claim that
+nothing is missed; it is not, and the two things that are missed are worth knowing about when a
+defect in either class is being hunted.
+
+**Reopening is tracked, and is not this entry's business.** Issue #135 proposes the narrow
+reversal these two gaps argue for: `typescript-eslint` with type-aware **bug rules only**, no
+style or formatting rules at all, wired into the `checks` job, with every initial finding either
+fixed or disabled inline with a reason. The new information it offers is the same one that
+reversed the test-framework half — the product is commercial, and the feedback path for an
+invisible defect is now a customer's support request. It is deliberately its own session: the
+`exhaustive-deps` triage is all behaviour judgements, and would make any pull request it shared
+unreviewable.
+
+So this entry is not „a linter was considered and refused". It is: the no-style half stands on its
+own reasoning and is not up for revisiting, the bug-rule half has a live proposal in #135, and
+until that lands the two gaps above are open by choice rather than by oversight.

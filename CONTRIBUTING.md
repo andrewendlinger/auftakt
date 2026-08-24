@@ -118,10 +118,14 @@ docs/     architecture, decisions, verification and test checklists
 
 ## Gates
 
-There is no linter. That is a decision, not an oversight — see
-[docs/DECISIONS.md](docs/DECISIONS.md). Nor was there a test framework, until going
-commercial reversed that half; the same file records the reversal and what it does and
-does not change.
+There is no linter. That is a decision, not an oversight, and
+[docs/DECISIONS.md](docs/DECISIONS.md) now carries it: the rationale (strict `tsc` with
+`noUncheckedIndexedAccess` and `noUnusedLocals` across all three tiers covers most of what a
+linter is bought for; a single developer with no outside pull requests has no style to arbitrate)
+and the two bug classes it does leave uncovered — unawaited promises, and stale React hook
+dependencies. A narrow, bug-rules-only reversal for those two is proposed in issue #135. Nor was
+there a test framework, until going commercial reversed that half; the same file records the
+reversal and what it does and does not change.
 
 ```bash
 npm run typecheck   # server + client + electron
