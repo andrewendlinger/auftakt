@@ -6688,12 +6688,16 @@ try {
         ? ', in der Reihenfolge der Registry'
         : `, ab Position ${lpOffBy}: „${lpAllCards[lpOffBy]?.title ?? '—'}“ statt „${lpRegistry.seasons[lpOffBy].label}“`),
   );
+  // „this window's season" is `useCurrentSeasonId`'s rule spelled out — the pin if there is one,
+  // the registry default otherwise — and not the registry default alone, which would agree with
+  // it here and stop agreeing the moment a case leaves a pinned window on this page.
+  const lpMineId = Number((await seasonPin(lp)) ?? lpRegistry.activeId);
   check(
     '„Aktiv“ trägt genau die Karte, auf der dieses Fenster steht',
     lpAllCards.filter((c) => c.aktiv).length === 1 &&
       lpAllCards.find((c) => c.aktiv)?.title ===
-        lpRegistry.seasons.find((s) => s.id === lpRegistry.activeId)?.label,
-    lpAllCards.filter((c) => c.aktiv).map((c) => c.title).join(' | ') || 'keine',
+        lpRegistry.seasons.find((s) => s.id === lpMineId)?.label,
+    `${lpAllCards.filter((c) => c.aktiv).map((c) => c.title).join(' | ') || 'keine'} bei Saison ${lpMineId}`,
   );
 
   // The demo's own three — „not a fixture of this run" is the only handle that survives the run
