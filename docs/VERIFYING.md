@@ -126,7 +126,8 @@ two pages in one context, the sessionStorage pin plus a document reload, `data-a
 placeholder, the two `[data-column-row]` lists, the real keystroke a note needs before it stores
 anything, the ⠿ and its 2-px nudge, the drop point clamped out from under the sticky header, the
 drop highlight polled together with the fade it arrives beside, the dialog-scoped „Löschen", the
-toast filtered by its own record, „gone" as a wait rather than a count, the two viewports a 624×560 window really produces,
+toast filtered by its own record, „gone" as a wait rather than a count, the two viewports a
+624×560 window really produces,
 the overhang sweep's exemption for a scroll container, the A4 `page.pdf()` whose default
 `printBackground: false` is a repro rather than an oversight, the tab order read as *positions*
 rather than as keystrokes, the recording bridge stub, and the `<select>` that has to be used once
