@@ -5703,8 +5703,8 @@ try {
   /**
    * `td` position (1-based) of the column whose header contains `name`. The gutter is cell 1 in
    * the header row and in every body row, so the two line up index for index. Refreshed by hand
-   * wherever the column set changes below; an unknown name yields 0, i.e. a locator that matches
-   * nothing and an assertion that reports what it really found.
+   * wherever the column set changes below; a name that is not in the row yields 0, which
+   * `ccCell` turns into a locator that cannot match (see there).
    */
   let ccHeadRow = [];
   const ccAt = (name) => ccHeadRow.findIndex((h) => h.toLowerCase().includes(name.toLowerCase())) + 1;
@@ -5742,9 +5742,11 @@ try {
     '„Spalten verwalten“ ist offen und die Liste dieser Seite ist leer',
     ccManagerUp && (await shown(ccDlg.getByText('Noch keine Spalten.'), 4000)),
   );
+  // Both of these are counts of something that is *not* there, so both carry `ccManagerUp`: a
+  // dialog that never opened has no reset button and no category rows either.
   check(
     '…und „Auf Saison-Vorgabe zurücksetzen“ wird nicht angeboten, solange nichts abweicht',
-    (await ccDlg.getByRole('button', { name: /Saison-Vorgabe/ }).count()) === 0,
+    ccManagerUp && (await ccDlg.getByRole('button', { name: /Saison-Vorgabe/ }).count()) === 0,
   );
 
   const ccTypeSelect = ccDlg.locator('select');
@@ -5757,7 +5759,10 @@ try {
     ccTypes.join(' | ') === 'text=Text | date=Datum | checkbox=Checkbox | select=Auswahl (farbig)',
     ccTypes.join(' | ') || 'keine Optionen',
   );
-  check('für „Text“ gibt es keine Kategorienliste', (await ccDlg.locator('[data-option-row]').count()) === 0);
+  check(
+    'für „Text“ gibt es keine Kategorienliste',
+    ccManagerUp && (await ccDlg.locator('[data-option-row]').count()) === 0,
+  );
   await ccPick(ccTypeSelect, 'select');
   const ccSeeds = await until(
     () => ccDlg.locator('[data-option-label]').evaluateAll((els) => els.map((el) => el.value)),
@@ -5872,20 +5877,24 @@ try {
     ['Text', 'Datum', 'Checkbox', 'Auswahl · 3'].every((label, i) => ccRowTexts[i]?.includes(label)),
     ccRowTexts.join(' | '),
   );
+  const ccSwatches = await ccDlg
+    .locator('[data-column-row]')
+    .filter({ hasText: 'Phase' })
+    .first()
+    .locator('span.rounded-full[title]')
+    .count();
   check(
     '…und zeigt die drei Kategorienfarben der „Auswahl“ als Punkte',
-    (await ccDlg
-      .locator('[data-column-row]')
-      .filter({ hasText: 'Phase' })
-      .first()
-      .locator('span.rounded-full[title]')
-      .count()) === 3,
+    ccSwatches === 3,
+    `${ccSwatches} Punkte`,
   );
 
   // Read while the manager is still open: creating a column invalidates, so it reaches the table
   // without a reload — and a case that reloads first cannot tell that apart from a build that only
   // picks a new column up on the next load.
   ccHeadRow = await until(ccHeads, (h) => h.some((x) => x.includes('Phase')), 8000);
+  // The last `th` is the actions column and carries no text, so the four own ones are the four
+  // before it — which is also the assertion: `compareColumns` puts every global first (TTU-21).
   check(
     'die vier Köpfe stehen in der Tabelle, ohne Neuladen und hinter den globalen',
     ccHeadRow.slice(-5, -1).join(' | ') === '👤 Zuständig | Zusage bis | Vertrag | Phase',
@@ -6083,8 +6092,10 @@ try {
   // three positive cases, and the two that need one of their own carry it in the same check.
   console.log('\nAN · Was eine Zelle verwirft — und was sie nicht verlieren darf');
 
-  /** Every task PATCH this page issues, so „nothing was written" is a reading and not a hope. */
-  /** @type {string[]} */
+  /**
+   * Every task PATCH this page issues, so „nothing was written" is a reading and not a hope.
+   * @type {string[]}
+   */
   const ccPatches = [];
   cc.on('request', (r) => {
     if (r.method() === 'PATCH' && r.url().includes('/api/tasks/')) ccPatches.push(r.url());
@@ -6098,7 +6109,10 @@ try {
   if (await shown(ccHalf, 4000)) await cc.keyboard.type('12');
   const ccBad = await ccHalf
     .first()
-    .evaluate((el) => ({ value: /** @type {HTMLInputElement} */ (el).value, bad: /** @type {HTMLInputElement} */ (el).validity.badInput }))
+    .evaluate((el) => {
+      const input = /** @type {HTMLInputElement} */ (el);
+      return { value: input.value, bad: input.validity.badInput };
+    })
     .catch(() => null);
   // Asserted as its own precondition: on a browser whose date segments are ordered differently,
   // two digits might complete the field and everything below would pass without a repro.
@@ -6272,6 +6286,9 @@ try {
   const ccTitleBefore = await ccHandleTitle();
 
   await clickIfThere(ccTh('Phase'));
+  // „changed at all" rather than „is the expected order", deliberately: a build that sorts by the
+  // wrong key still changes the order, and this way the assertion below reports *that* order
+  // instead of timing out and reporting the one it started from. Canary 11 is what it looks like.
   const ccSorted = await until(() => rowIds(cc), (r) => r.join(' ') !== ccDefaultOrder.join(' '), 8000);
   check(
     'ein Klick auf den „Phase“-Kopf ordnet nach der eingestellten Kategorien-Reihenfolge (TTU-19)',
