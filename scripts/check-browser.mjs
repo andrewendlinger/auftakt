@@ -6070,17 +6070,29 @@ try {
   await until(() => ccValues(CC_TASK), (v) => v[ccKey(ccDate)] === ccIso, 8000);
   await clickIfThere(ccCell(CC_TASK, 'Vertrag').locator('input[type="checkbox"]'));
   await until(() => ccValues(CC_TASK), (v) => v[ccKey(ccBox)] === true, 8000);
-  await ccOpenPill(CC_TASK, 'Phase');
-  await clickIfThere(cc.locator(`[role="option"][data-value="${CC_PHASES[0]}"]`));
+  // The pick is the one write here that is neither a keystroke nor a toggle, and it is the one
+  // that has landed nowhere on a slow runner — twice in CI, both times as `select:undefined` and a
+  // grey placeholder. Two waits, because there are two things to wait for: `ccOpenPill` waits for
+  // the listbox, and the *option inside it* is waited for here — a menu that is on screen while
+  // the table under it re-renders can still be empty. Both booleans, and the click's own, travel
+  // into the check: without them „the value was not stored" and „the option was never clicked"
+  // are the same red line, and the run that needs reading is the one that cannot say which.
+  const ccPillOpen = await ccOpenPill(CC_TASK, 'Phase');
+  const ccOption = cc.locator(`[role="option"][data-value="${CC_PHASES[0]}"]`);
+  const ccOptionShown = await shown(ccOption, 4000);
+  const ccPicked = await clickIfThere(ccOption);
 
   const ccStored = await until(() => ccValues(CC_TASK), (v) => Object.keys(v).length === 4, 8000);
   check(
     'alle vier Typen schreiben in dieselbe Zelle der Zeile, jeder unter seiner Spalten-id',
-    ccStored[ccKey(ccText)] === 'Merle Dahlke' &&
+    ccPillOpen &&
+      ccOptionShown &&
+      ccPicked &&
+      ccStored[ccKey(ccText)] === 'Merle Dahlke' &&
       ccStored[ccKey(ccDate)] === ccIso &&
       ccStored[ccKey(ccBox)] === true &&
       ccStored[ccKey(ccSel)] === CC_PHASES[0],
-    JSON.stringify(ccStored),
+    `Menü ${ccPillOpen}, Eintrag sichtbar ${ccOptionShown}, geklickt ${ccPicked}, ${JSON.stringify(ccStored)}`,
   );
   check(
     '…die Checkbox als echter Boolean, die drei anderen als Zeichenkette',
