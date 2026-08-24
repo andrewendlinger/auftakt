@@ -7617,9 +7617,10 @@ try {
   //  * **Equal rank** — `compareByRules` over the active rules *truncated at* „Manuelle
   //    Reihenfolge" must return 0. The demo's block 41–45 is tuned for exactly that: four rows of
   //    one status, a fifth of another, all with the same (hidden, therefore inert) Priorität.
-  //  * **The same *effective* parent** — the promotion an orphan gets, not the raw `parent_id`.
-  //    Task 12's parent is soft-deleted, so it renders among the top-level rows; comparing
-  //    `parent_id` made it a sibling of nobody and no drop target ever lit up (TTU-14).
+  //  * **The same *effective* parent** — the promotion a row whose parent is in the Papierkorb
+  //    gets, not the raw `parent_id`. It renders among the top-level rows, and comparing
+  //    `parent_id` made it a sibling of nobody: no drop target ever lit up (TTU-14). The demo has
+  //    such a row; a *copy* does not, so this case builds its own — see there.
   //  * **No header-click sort in force.** A header click is a temporary *view*: dragging under it
   //    renumbered `sort_order` to match an order the user never configured, with no undo (TTU-04).
   //    The ⠿ stays where it is, disabled, and says why.
@@ -7672,6 +7673,15 @@ try {
     );
   /** „which rows are `key` right now", as a stable string — the card grids below read the same way. */
   const idsWith = (rows, key) => rows.filter((r) => r[key]).map((r) => r.id).join(' ') || 'keine';
+  /**
+   * „`want` really is a different order from `before`".
+   *
+   * `moveTo` hands its input back unchanged when either id is missing from the list — the same
+   * contract `arrayMoveTo` has — so an expectation built from a list that lost a row would be the
+   * starting order itself, and „it moved" would then be true of a drag that did nothing at all.
+   * Every accepted-drag assertion below carries this beside its own reading.
+   */
+  const aMove = (before, want) => before.join(' ') !== want.join(' ');
 
   const ttStart = await ttApi();
   const ttSameRank = [41, 42, 43, 44];
@@ -7679,6 +7689,7 @@ try {
   check(
     'Vorbedingung: vier gleichrangige Zeilen, eine fünfte mit anderem Status, drei Kinder darunter',
     ttStatuses.size === 1 &&
+      !ttStatuses.has(NO_MATCH) &&
       !ttStatuses.has(ttOf(ttStart, 45)?.status) &&
       [46, 47, 48].every((id) => ttOf(ttStart, id)?.parent_id === 41),
     `41–44 ${[...ttStatuses].join('/')}, 45 ${ttOf(ttStart, 45)?.status}, Kinder von ${[46, 47, 48].map((id) => ttOf(ttStart, id)?.parent_id).join('/')}`,
@@ -7699,7 +7710,7 @@ try {
   const ttDom1 = await until(ttDom, (d) => ttLevel0(d).join(' ') === ttWant1.join(' '), 8000);
   check(
     'eine Zeile lässt sich auf eine gleichrangige Schwester ziehen und steht danach an deren Platz',
-    ttGrab1 && ttLevel0(ttDom1).join(' ') === ttWant1.join(' '),
+    ttGrab1 && aMove(ttTopBefore, ttWant1) && ttLevel0(ttDom1).join(' ') === ttWant1.join(' '),
     `gegriffen ${ttGrab1}, ${ttLevel0(ttDom1).join(' ')} statt ${ttWant1.join(' ')}`,
   );
   const ttAfter1 = await ttApi();
@@ -7720,9 +7731,9 @@ try {
   // gesture, and a refused pairing withholds the first while keeping the second.
   const ttGrab2 = await grabHandle(tt, ttRow(41));
   await dragOver(tt, ttRow(42));
-  // Both states in the predicate, not just the highlight: the rows carry a CSS `transition`, so a
-  // reading taken the instant the outline appears can still catch `opacity` on its way down —
-  // which is the same trap the pill's colour poll in AM records, one surface further.
+  // Both states in the predicate, because the assertion below reads both. Here that is
+  // discipline rather than a repro — a `<tr>` carries no transition and the two land in one
+  // commit — but on the cards in AU it is the difference between green and one red run in three.
   const ttOverSame = await until(
     ttHeld,
     (rows) => rows.some((r) => r.target) && rows.some((r) => r.faded),
@@ -7778,7 +7789,9 @@ try {
   );
   check(
     'unter demselben Elternteil ist derselbe Zug erlaubt',
-    ttGrab4 && ttKids(ttAfter4).map((t) => t.id).join(' ') === ttWant4.join(' '),
+    ttGrab4 &&
+      aMove(ttKids(ttAfter3).map((t) => t.id), ttWant4) &&
+      ttKids(ttAfter4).map((t) => t.id).join(' ') === ttWant4.join(' '),
     `gegriffen ${ttGrab4}, ${ttStamp(ttKids(ttAfter4))}`,
   );
   // Each sibling group is renumbered on its own, so the two levels' ordinals sit on top of one
@@ -7834,7 +7847,9 @@ try {
   );
   check(
     'die verwaiste Unteraufgabe darf auf eine Zeile der obersten Ebene, weil sie dort steht (TTU-14)',
-    ttGrab5 && ttTop(ttAfter5).map((t) => t.id).join(' ') === ttWant5.join(' '),
+    ttGrab5 &&
+      aMove(ttLevel0(ttDomOrphan), ttWant5) &&
+      ttTop(ttAfter5).map((t) => t.id).join(' ') === ttWant5.join(' '),
     `gegriffen ${ttGrab5}, ${ttTop(ttAfter5).map((t) => t.id).join(' ')} statt ${ttWant5.join(' ')}`,
   );
   check(
@@ -7852,18 +7867,27 @@ try {
     }));
   const ttHead = tt.locator('table thead th').filter({ hasText: 'Aufgabe' }).first();
   const ttFree = await ttHandles();
-  await ttHead.click();
+  const ttSorted = await clickIfThere(ttHead);
   const ttLocked = await until(ttHandles, (h) => h.dead > 0, 5000);
   check(
     'ein Klick auf den Spaltenkopf nimmt jeder Zeile den Griff — und lässt ihn stehen, damit die Zeile sagen kann, warum (TTU-04)',
-    ttFree.live === ttFree.rows &&
+    ttSorted &&
+      ttFree.live === ttFree.rows &&
       ttFree.dead === 0 &&
       ttLocked.dead === ttLocked.rows &&
       ttLocked.live === 0,
-    `frei ${JSON.stringify(ttFree)}, sortiert ${JSON.stringify(ttLocked)}`,
+    `geklickt ${ttSorted}, frei ${JSON.stringify(ttFree)}, sortiert ${JSON.stringify(ttLocked)}`,
   );
-  const ttWhy = await tt.locator('tr[data-task-id] [title^="Spaltensortierung"]').first().getAttribute('title');
-  const ttCycle = await ttHead.getAttribute('title');
+  // Both bounded and swallowed. A build that stops rendering the disabled ⠿ leaves this locator
+  // matching nothing, and an unguarded `getAttribute` then waits 30 s and **throws** — which ends
+  // the run at this line instead of reddening it. Measured: the canary for that very rule did it.
+  const attr = (locator, name) =>
+    locator
+      .first()
+      .getAttribute(name, { timeout: 5000 })
+      .catch(() => null);
+  const ttWhy = await attr(tt.locator('tr[data-task-id] [title^="Spaltensortierung"]'), 'title');
+  const ttCycle = await attr(ttHead, 'title');
   check(
     '…und beide Tooltips nennen denselben Weg zurück: den Spaltenkopf noch einmal',
     ttWhy === 'Spaltensortierung aktiv — zum Verschieben die Sortierung zurücksetzen (Spaltenkopf erneut klicken)' &&
@@ -7885,13 +7909,12 @@ try {
       ttStamp(ttAfter6) === ttStamp(ttAfter5),
     `gegriffen ${ttGrab6}, scharf ${idsWith(ttUnderSort, 'armed')}, Ziel ${idsWith(ttUnderSort, 'target')}, ${ttStamp(ttTop(ttAfter6))}`,
   );
-  await ttHead.click();
-  await ttHead.click();
+  const ttTwice = (await clickIfThere(ttHead)) && (await clickIfThere(ttHead));
   const ttBack = await until(ttHandles, (h) => h.live > 0, 5000);
   check(
     'der dritte Klick auf denselben Kopf gibt die Griffe zurück (TTU-18)',
-    ttBack.live === ttBack.rows && ttBack.dead === 0,
-    JSON.stringify(ttBack),
+    ttTwice && ttBack.live === ttBack.rows && ttBack.dead === 0,
+    `geklickt ${ttTwice}, ${JSON.stringify(ttBack)}`,
   );
 
   // ======================================================================== AU · the two card grids
@@ -7945,7 +7968,8 @@ try {
   const pcGrab = await grabHandle(pc, pcCard(pcOrder[2]));
   await dragOver(pc, pcCard(pcOrder[0]));
   // The ring and the fade are two properties of one `transition`, and they do not arrive in the
-  // same frame: polling for the ring alone read the carried card at full opacity once in three.
+  // same frame: the first run of this case polled for the ring alone and read the carried card at
+  // full opacity — „blass keine" against a card that was on its way to 0.4.
   const pcFlight = await until(
     pcHeld,
     (rows) => rows.some((r) => r.target) && rows.some((r) => r.faded),
@@ -7966,15 +7990,18 @@ try {
   );
   check(
     'die letzte Projektkarte steht danach vorn, die beiden anderen in ihrer alten Reihenfolge dahinter',
-    pcAfter.join(' ') === pcWant.join(' '),
+    aMove(pcOrder, pcWant) && pcAfter.join(' ') === pcWant.join(' '),
     `${pcAfter.join(' ')} statt ${pcWant.join(' ')}`,
   );
   const pcRows = await pcApi(1);
+  // One read for the verdict *and* the detail: two fetches can sample different moments, and the
+  // log would then contradict its own verdict on exactly the run that needs reading.
+  const pcForeignAfter = await pcApi(2);
   check(
     '…und die Karten dieses Künstlers sind 0..n-1 durchnummeriert, die eines anderen unberührt',
     pcStamp(pcRows) === pcWant.map((id, i) => `${id}:${i}`).join(' ') &&
-      pcStamp(await pcApi(2)) === pcStamp(pcForeign),
-    `${pcStamp(pcRows)} | fremd ${pcStamp(await pcApi(2))} (vorher ${pcStamp(pcForeign)})`,
+      pcStamp(pcForeignAfter) === pcStamp(pcForeign),
+    `${pcStamp(pcRows)} | fremd ${pcStamp(pcForeignAfter)} (vorher ${pcStamp(pcForeign)})`,
   );
   // The whole reason `DragHandle` swallows its own click: the handle sits inside the card's
   // `<Link>`, so a press that did not become a drag would otherwise open the project.
@@ -8005,14 +8032,15 @@ try {
   );
   check(
     'auch die Saisonkarten lassen sich umsortieren — und das ist die Reihenfolge der Registry selbst',
-    scGrab && scAfter.join(' ') === scWant.join(' '),
+    scGrab && aMove(scIds, scWant) && scAfter.join(' ') === scWant.join(' '),
     `gegriffen ${scGrab}, ${scAfter.slice(0, 4).join(' ')}… statt ${scWant.slice(0, 4).join(' ')}…`,
   );
   const scReg = await scRegistry();
+  const scPinAfter = await seasonPin(ld);
   check(
     '…und das Fenster hat dabei keine Saison gewechselt: derselbe Pin, dieselbe voreingestellte Saison, dieselbe Seite',
-    (await seasonPin(ld)) === scPinBefore && scReg.activeId === scStart.activeId && ld.url().endsWith('#/'),
-    `Pin ${scPinBefore} → ${await seasonPin(ld)}, aktiv ${scStart.activeId} → ${scReg.activeId}, ${ld.url()}`,
+    scPinAfter === scPinBefore && scReg.activeId === scStart.activeId && ld.url().endsWith('#/'),
+    `Pin ${scPinBefore} → ${scPinAfter}, aktiv ${scStart.activeId} → ${scReg.activeId}, ${ld.url()}`,
   );
   await ld.reload();
   await ready(ld);
@@ -8108,7 +8136,9 @@ try {
   );
   check(
     'die letzte Zeile der eingebauten Liste steht nach dem Zug an erster Stelle',
-    ldGrab && ldAfter.documents.map((d) => d.id).join(' ') === ldWant.join(' '),
+    ldGrab &&
+      aMove(ldGrown.documents.map((d) => d.id), ldWant) &&
+      ldAfter.documents.map((d) => d.id).join(' ') === ldWant.join(' '),
     `gegriffen ${ldGrab}, ${ldStamp(ldAfter.documents)}`,
   );
   // The whole point of computing over `read()`: the row this page never saw is still there, and
@@ -8157,7 +8187,9 @@ try {
   );
   check(
     'der eigene Dokumente-Bereich sortiert seine eigenen Zeilen, in seiner eigenen Zeile der Registry',
-    ldGrab2 && ldSectionDocs(ldAfter2).map((d) => d.id).join(' ') === ldSecWant.join(' '),
+    ldGrab2 &&
+      aMove(ldSecRows.map((d) => d.id), ldSecWant) &&
+      ldSectionDocs(ldAfter2).map((d) => d.id).join(' ') === ldSecWant.join(' '),
     `gegriffen ${ldGrab2}, ${ldStamp(ldSectionDocs(ldAfter2))}`,
   );
   check(
@@ -8227,10 +8259,13 @@ try {
    * and a Tailwind shade serialises as `oklch(…)` that no hardcoded rgb would ever match.
    */
   const arTarget = (shape) => {
-    const colours = new Set(shape.map((s) => s.outline));
-    if (colours.size !== 2) return colours.size === 1 ? 'keine' : `${colours.size} Farben`;
-    const [rare] = [...colours].filter((c) => shape.filter((s) => s.outline === c).length === 1);
-    return shape.find((s) => s.outline === rare)?.key ?? 'keine';
+    const colours = [...new Set(shape.map((s) => s.outline))];
+    if (colours.length === 1) return 'keine';
+    const rare = colours.filter((c) => shape.filter((s) => s.outline === c).length === 1);
+    // Anything but „all alike" or „all alike but one" is a reading this case cannot interpret, and
+    // saying so beats reporting „keine" for two highlighted sections.
+    if (colours.length !== 2 || rare.length !== 1) return `${colours.length} Farben`;
+    return shape.find((s) => s.outline === rare[0])?.key ?? 'keine';
   };
 
   const arRest = await until(arShape, (s) => s.length >= 5, 8000);
@@ -8239,11 +8274,12 @@ try {
     arRest.length > 5 && !arRest.some((s) => s.drag) && !arRest.some((s) => s.strip),
     `${arRest.length} Bereiche, ziehbar ${arRest.filter((s) => s.drag).length}, Leisten ${arRest.filter((s) => s.strip).length}`,
   );
-  await ar.getByRole('button', { name: '✎ Bereiche bearbeiten' }).click();
-  const arOn = await until(arShape, (s) => s.every((x) => x.drag), 5000);
+  const arEntered = await clickIfThere(ar.getByRole('button', { name: '✎ Bereiche bearbeiten' }));
+  const arOn = await until(arShape, (s) => s.every((x) => x.drag && x.strip === 1 && x.handle), 5000);
   check(
     '…im Modus trägt jeder Bereich seine Leiste mit einem dauerhaft sichtbaren ⠿ und ist ziehbar',
-    arOn.length === arRest.length &&
+    arEntered &&
+      arOn.length === arRest.length &&
       arOn.every((s) => s.drag && s.strip === 1 && s.handle),
     `ziehbar ${arOn.filter((s) => s.drag).length}/${arOn.length}, Leisten ${arOn.filter((s) => s.strip === 1).length}, ⠿ ${arOn.filter((s) => s.handle).length}`,
   );
@@ -8273,7 +8309,7 @@ try {
   // screen together and both *behind* the anchor, so this move is the legal one.
   const arSource = 'stats';
   const arTargetKey = 'termine';
-  await arSec(arTargetKey).evaluate((el) => el.scrollIntoView({ block: 'center' }));
+  await arSec(arTargetKey).evaluate((el) => el.scrollIntoView({ block: 'center' })).catch(() => {});
   const arGrabA = await grabHandle(ar, arSec(arSource));
   await dragOver(ar, arSec(arTargetKey));
   const arFlight = await until(
@@ -8291,7 +8327,8 @@ try {
   const arAfter = await until(arShape, (s) => s.map((x) => x.key).join(' ') === arWantKeys.join(' '), 8000);
   check(
     'ein Bereich lässt sich auf einen anderen ziehen und steht danach an dessen Platz',
-    arAfter.map((s) => s.key).join(' ') === arWantKeys.join(' '),
+    aMove(arOn.map((s) => s.key), arWantKeys) &&
+      arAfter.map((s) => s.key).join(' ') === arWantKeys.join(' '),
     arKeys(arAfter),
   );
   // The write is the whole arrangement — every key with its width, not just the one that moved.
@@ -8303,6 +8340,10 @@ try {
   );
 
   // Now the two illegal gestures. Both start from the top of the page, where the anchor is.
+  //
+  // The neighbour is the section directly below it — the one whose ▲ #136 found permanently
+  // disabled, because the anchor stays put and nothing may pass it. This is that same rule seen
+  // from the mouse: the gap in front of the anchor is not a drop target either.
   await ar.evaluate(() => window.scrollTo(0, 0));
   const arNeighbour = arAfter[1]?.key ?? NO_MATCH;
   const arGrabB = await grabHandle(ar, arSec(arNeighbour));
@@ -8347,12 +8388,12 @@ try {
     arGrid1.indexOf('werkzeuge') === 1 && arGrid1[0] === arAnchor,
     arGrid1.join(' '),
   );
-  await ar.getByRole('button', { name: '✓ Fertig' }).click();
-  const arOff = await until(arShape, (s) => !s.some((x) => x.drag), 5000);
+  const arLeft = await clickIfThere(ar.getByRole('button', { name: '✓ Fertig' }));
+  const arOff = await until(arShape, (s) => !s.some((x) => x.drag) && !s.some((x) => x.strip), 5000);
   check(
     '„✓ Fertig“ beendet den Modus: die Bereiche sind wieder unbeweglich',
-    !arOff.some((s) => s.drag) && !arOff.some((s) => s.strip) && arKeys(arOff) === arKeys(arAfter),
-    `ziehbar ${arOff.filter((s) => s.drag).length}, Leisten ${arOff.filter((s) => s.strip).length}`,
+    arLeft && !arOff.some((s) => s.drag) && !arOff.some((s) => s.strip) && arKeys(arOff) === arKeys(arAfter),
+    `geklickt ${arLeft}, ziehbar ${arOff.filter((s) => s.drag).length}, Leisten ${arOff.filter((s) => s.strip).length}`,
   );
 
   console.log(`\n${failures ? `✗ ${failures} Fehler` : '✓ alles ok'} (${checks} Prüfungen)`);
