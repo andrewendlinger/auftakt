@@ -2620,3 +2620,89 @@ hide the next `writeFileSync` that genuinely does take a caller's path.
 **Revisit when** either site stops being what it is: if `writeBootReport` ever gains a second
 writer (a helper process, a worker), or if `saveRegistry` ever derives its path from anything a
 request carries. Both are the kind of change that should reopen the alert on its own.
+
+---
+
+## A tolerated gap must not count twice, and the raster is paid before the clocks start (2026-08-24, WP-61b)
+
+The second customer log arrived (diagnostics bundle AF-2608240821, one v0.10.0 boot), and it
+answers both questions the WP-61 entry above pre-registered, in one line:
+
+```
+outcome cross · why abort:drops · lead 15.9 · warm 16.7 · warm2 100.1
+n:10 · med 16.8 · p95 50 · worst 50 · drops 3 · tail: 12 deltas, med 16.6, verdict ok
+```
+
+The v0.9.2 exemption works — the ~100 ms first raster sits in `warm2`, judged by nobody — and
+the run then died to precisely the predicted trade: a clean 16.8 ms median window holding one
+33.3 and one 50 scored `drops = 1 + 2 = 3 ≥ 0.2 · (10 + 3) = 2.6` at the first window
+boundary, ~370 ms into a 2.6 s gesture. „Start der Animation war immernoch nur kurz zu sehen."
+The coherent follow-up the entry above deferred — a 50.1 ms gap cannot be noise for the hitch
+test and two lost frames for `drops` — is now taken. One data point would not have carried it;
+one data point plus a second customer complaint about the same symptom does, because the
+alternative is a third customer visit to learn nothing new.
+
+**The decision: each judged delta contributes at most one lost slot to `drops`.** Every judged
+delta is below `HITCH_MS` by construction (larger ones abort as `hitch` before any window
+verdict), so the cap turns the test into: abort when a quarter of the window's frames are late
+— `drops >= 0.2 · (n + drops)` rearranges to `drops >= n / 4` on both sides of the change. The
+cap only ever lowers the sum and the test is monotone in it, so **no window that passed before
+can abort now**; the change is pass-ward only. Checked against the log's machine: the aborted
+window survives at 2 < 2.4, and the sustained-stutter net holds — alternating 16.7/50 aborts
+in every window alignment (through `drops` where the median stays 16.7, through `slow` where
+it flips to 50), every-third-frame-50 aborts at exactly threshold.
+
+The cap also repairs a false abort nobody had hit yet: at 120 Hz a *lone* 50 ms gap scored
+`round(50/8.3) − 1 = 5` drops against a threshold of `0.2 · (20 + 5) = 5` — an abort on
+exactly the "~50 ms of wall clock at either rate" that `HITCH_MS`'s midpoint placement
+declares tolerable. ProMotion ramp frames (41.7/33.3/25 against a later 8.3 median) stop
+over-counting the same way. The known price, taken deliberately: a sustained cadence of one
+tolerated gap every ~117 ms at 60 Hz — every fifth frame, ~8.5 visible skips per second — now
+plays to completion where it used to abort ({16.7×8, 50×2} scores 2 < 2.5). No shape avoids
+this while fixing the customer: cap-at-two still aborts him (3 ≥ 2.6), threshold 0.25 keeps
+the double-count and saves him at 90 % of threshold, and a two-consecutive-windows rule buys
+its tolerance with 200 ms of judged stutter on screen. The `quick`-based surcharge stays
+rejected for the reasons in the WP-61 entry.
+
+**`.boot-show` is built, as the variant the WP-61 entry kept.** The deciding number was the
+second prediction's: `lead + warm + warm2 = 132.7 ms` — the clocks start at `.boot-play`'s
+style application, so the customer's gesture began that far into its swing on every cold
+boot. `start()` now applies `.boot-show` (svg visible, every animation still paused at zero)
+after its deadline check, waits two rAFs — the same pipeline length `onReady` waits, for the
+same reason — and only then latches `playing` and adds `.boot-play`. What the show frames buy
+is unconditional for the jump-ahead: the clocks now start at zero regardless of what the
+raster costs, and the cost itself moves to the new `showMs → startMs` span in the report.
+Whether pre-rastering *also* cheapens the following frames (only tiles, the GPU upload and
+the program cache are pre-payable; every animated frame re-rasters) is the half of the old
+gate still unmeasured — the packaged-build trace pair is the remaining evidence step, and the
+next customer log is the answer that counts either way.
+
+Three consequences that are part of the design, not incidental:
+
+- **The deadline is not re-checked after the show frames.** On the machine this exists for
+  they cost the very ~100 ms a re-check would convert into `why: deadline` — the exact trade
+  that killed the phase-A pre-warm above. The hold-max failsafe spans the wait, and the
+  continuation re-checks `gone/crossing/fading/playing` — `playing` because moving the latch
+  two frames later un-latches the synchronous double-start guard, `fading` against bootBail's
+  `animationstart` interleaving.
+- **`crossFade()` removes `.boot-show` when the gesture never started** (the `else` of the
+  `.boot-froze` branch): a cross landing inside the show frames must show the flat rectangle,
+  not two rastered-but-parked frames of hand riding the fade — the phase-A invariant.
+- **bootBail's delay moved 6000 → 7000 ms.** Its 6000 was derived from "1200 deadline + 2600
+  gesture + 400 failsafe"; the show frames run *after* the deadline check, bounded only by the
+  3500 ms hold-max racing the continuation (an overdue timer can lose to the rendering step
+  that then re-arms it), so the slowest live reveal is now ~6500 ms — inside the old delay,
+  where the bail's `from { opacity: 1 }` wins the overlay's animation list and pops a
+  half-faded reveal back to opaque before re-fading.
+
+**The report is `v: 3`** — `drops` capped (judge and report field agree again), `showMs`
+added (t0-relative, like `readyMs`/`startMs`; set with `startMs: null` it is the signature of
+a show-phase cross). Nothing in `electron/` branches on `v` or reads the changed fields;
+`showMs` stays out of the German digest with `warm` and `quick`.
+
+**What the third log has to show:** `showMs → startMs` ≈ 100–130 ms carrying the raster,
+`warm2` collapsed to ~16.7, the first window surviving its 33/50 noise, outcome `play/done`.
+And the residual the cap deliberately leaves: two tightly packed 50.1 ms gaps with six or
+fewer clean frames between them in one window still cross ({16.7×6, 50.1×2} aborts at exactly
+2 ≥ 2). If his machine produces that shape, the next decision is about *that* window, with
+this entry as its baseline.

@@ -184,8 +184,9 @@ verified by hand, and the gate itself is written from this list.
     user clicked, or the frame watchdog aborted. `#boot-overlay[data-abort]` distinguishes the last
     one and names the reason (`hitch` — one frame over 58 ms, so a 50.1 ms gap, which is three
     vsync intervals at 60 Hz, is deliberately tolerated; `slow` — a median well over the
-    cadence this display has been seen to deliver; `drops` — a fifth of frames lost; `starved` —
-    too few frames delivered).
+    cadence this display has been seen to deliver; `drops` — a quarter of the window's frames
+    late, each late frame counting once however many slots it spans (WP-61b); `starved` — too
+    few frames delivered).
   - `done` → the node is gone and `#root` is no longer `inert`.
 - **Every boot files a report: `localStorage['auftakt-boot-report']`.** Written in the overlay's
   single exit path just after the node is removed, so it is the non-racy way to learn what a boot
@@ -194,19 +195,24 @@ verified by hand, and the gate itself is written from this list.
   overwrites it with `skip / warm`, which is also how you prove the reload happened). Fields:
   `outcome` (`play` | `cross` | `skip`), `why` (`done`, `deadline`, `click`, `app-failed`,
   `abort:<reason>`, `hold-max`, `gesture-max`, `warm`, `secondary`, `reduced-motion`, `no-prod`),
-  `readyMs`/`startMs`/`endMs` on the same clock the 1200 ms deadline reads, and — when the
-  gesture played — `frames` (judged deltas: `n`, `med`, `p95`, `worst`, `quick`, `drops`, plus
-  `lead`, the release→first-callback gap, and `warm`/`warm2`, the two exempt head frames) and
-  `tail` (deltas recorded unjudged during the reveal fade, with a retrospective `verdict`). A
-  `tail.verdict` of `hitch` on a run with **no** `data-abort` is not a contradiction: the
-  attribute still means the watchdog *changed the outcome*, the tail is record-only. Under
-  Electron the same report goes out over the `bootSettled` bridge.
-- **The report is versioned, and WP-61 made it `v: 2`.** Two head frames are exempt instead of
-  one (so `frames.n` counts one delta fewer, and `warm2` joins `warm`) and `HITCH_MS` moved
-  50 → 58. Nothing branches on `v` — a `v: 1` line stays readable field for field — but `n`,
-  `why` and `tail.verdict` were produced under the old rules, so a log holding both generations
-  must not be compared across the boundary. Old lines are *stricter*: a `tail.verdict` of
-  `hitch` needed only 50 ms there. `grep '"v":2'` separates them.
+  `readyMs`/`showMs`/`startMs`/`endMs` on the same clock the 1200 ms deadline reads (`showMs`
+  is when `.boot-show` made the svg visible; the first raster's cost is the `showMs → startMs`
+  span, and `showMs` with `startMs: null` is the signature of a cross that landed during the
+  show frames), and — when the gesture played — `frames` (judged deltas: `n`, `med`, `p95`,
+  `worst`, `quick`, `drops`, plus `lead`, the release→first-callback gap, and `warm`/`warm2`,
+  the two exempt head frames) and `tail` (deltas recorded unjudged during the reveal fade,
+  with a retrospective `verdict`). A `tail.verdict` of `hitch` on a run with **no**
+  `data-abort` is not a contradiction: the attribute still means the watchdog *changed the
+  outcome*, the tail is record-only. Under Electron the same report goes out over the
+  `bootSettled` bridge.
+- **The report is versioned: WP-61 made it `v: 2`, WP-61b `v: 3`.** v: 2 — two head frames
+  exempt instead of one (so `frames.n` counts one delta fewer, and `warm2` joins `warm`) and
+  `HITCH_MS` moved 50 → 58. v: 3 — the `drops` sum caps each delta at one lost slot (judge and
+  report field both) and `showMs` joins the clock fields. Nothing branches on `v` — an old
+  line stays readable field for field — but `why`, `drops` and `tail.verdict` were produced
+  under different rules, so a log holding several generations must not be compared across the
+  boundaries. Old lines are *stricter*: a v:1 `tail.verdict` of `hitch` needed only 50 ms, and
+  a v:2 `abort:drops` can name a window v:3 would pass. `grep '"v":3'` separates them.
 - **Under Electron the reports accumulate: `boot-log.jsonl` in userData.** One line per settle —
   including warm reloads (a season switch writes `skip / warm`; that line is the reload proving
   itself, not noise) — wrapped by the main process with `at` (ISO time, main's clock, so a
@@ -311,7 +317,7 @@ verified by hand, and the gate itself is written from this list.
 - **`document.getAnimations()` returns all twelve animations during the hold, not `[]`** — paused is
   not idle, and a paused animation with a fill is still in effect and still enumerated. What
   distinguishes the hold is `playState`: every one reads `paused` except `bootBail`, the dead man's
-  switch, which runs unconditionally and spends the whole hold inside its 6 s delay. A script that
+  switch, which runs unconditionally and spends the whole hold inside its 7 s delay. A script that
   polls for an empty list waits forever; check `getAnimations().every(a => a.playState === 'paused'
   || a.animationName === 'bootBail')` instead. To look at a single frame, wait for
   `[data-boot="play"]` *first*, then `document.getAnimations().forEach(a => { a.pause();
@@ -330,13 +336,20 @@ verified by hand, and the gate itself is written from this list.
   two exceptions. The first is the **head of the gesture**: the first two measured deltas after
   `data-boot="play"` are exempt from every test (WP-61 — the first schedules the svg's first
   raster, the second waits for it), so a block landing there does not abort and shows up as
-  `frames.warm` / `frames.warm2` instead. That is also the handle for driving it: `start()` sets
-  `data-boot="play"` and calls `watchFrames()` inside one task, and a `MutationObserver` callback
-  is a microtask, so an observer on that attribute is registered *after* the watchdog's first rAF
-  and runs after it in every frame from then on — blocking inside your own rAF callback *k*
-  therefore inflates measured delta *k*, where delta 1 is `warm`. Slot-addressable injection with
-  no polling and no rAF patching: 150 ms at slot 1 stays a clean `play`/`done`, the same 150 ms at
-  slot 3 is `cross`/`abort:hitch`. Before WP-61 slot 2 aborted, which is the whole bug.
+  `frames.warm` / `frames.warm2` instead. That is also the handle for driving it: the show
+  continuation (since WP-61b, two rAFs into `start()`) sets `data-boot="play"` and calls
+  `watchFrames()` inside one task, and a `MutationObserver` callback is a microtask, so an
+  observer on that attribute is registered *after* the watchdog's first rAF and runs after it in
+  every frame from then on — blocking inside your own rAF callback *k* therefore inflates
+  measured delta *k*, where delta 1 is `warm`. Slot-addressable injection with no polling and no
+  rAF patching: 150 ms at slot 1 stays a clean `play`/`done`, the same 150 ms at slot 3 is
+  `cross`/`abort:hitch`. Before WP-61 slot 2 aborted, which is the whole bug. Since WP-61b two
+  sub-hitch gaps in one window no longer abort either — a ~50 ms and a ~33 ms block in the same
+  200 ms window is a clean `play`/`done` with `frames.drops: 2` (the customer's log line,
+  re-enacted); a third late frame in the window still crosses with `abort:drops`. And the two
+  `.boot-show` frames sit *between* `start()` entry and `data-boot="play"`: on a machine with a
+  cold raster the cost now lands in the report's `showMs → startMs` span, so `warm`/`warm2` near
+  16.7 with a fat `showMs → startMs` is the fix working, not a measurement gone missing.
   The second exception is a block that lands after the reveal fade has begun (~2230 ms in): from there the app
   is already showing through, so the watchdog stops judging — it keeps recording, and the block
   shows up in the report's `tail` — and the overlay lets the fade finish rather than throwing the
@@ -352,7 +365,14 @@ verified by hand, and the gate itself is written from this list.
   animation.** `cross` from within `play` adds `#boot-overlay.boot-froze`, which holds the svg
   visible while every descendant animation re-pauses, so a screenshot taken then shows the hand
   mid-swing with a half-drawn trail, fading out. A `cross` that never played shows the flat
-  rectangle instead — the parked hand and an un-landed wordmark are deliberately never drawn.
+  rectangle instead — the parked hand and an un-landed wordmark are deliberately never drawn;
+  `crossFade()` strips `.boot-show` on that path, so even a cross landing inside the show
+  frames fades the flat rectangle.
+- **A visible svg is not a playing gesture.** Since WP-61b, `.boot-show` unhides the svg up to
+  two frames *before* `data-boot="play"` — animations still paused, only the parked hand
+  showing — so a script that keys "the gesture started" off svg visibility now fires a phase
+  early. Wait for `[data-boot="play"]`; that write still happens in the same task as the
+  watchdog's first rAF.
 - **The overlay swallows the first interaction while it is up**, whatever phase it is in, because
   it keeps its pointer events until removal. `locator.click()` rides that out through actionability
   retries; a raw `mouse.click()` at coordinates only reveals the app. `#root` carries `inert` for

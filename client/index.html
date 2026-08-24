@@ -87,20 +87,27 @@
            usable app. Pausing everything took that away: a throw would now leave an
            opaque cream rectangle over a working app, with no reload affordance in a
            packaged window. So bootBail runs unconditionally, well past the latest reveal
-           any live script can produce (1200 ms deadline + 2600 ms gesture + 400 ms
-           failsafe = 4200 ms), and ends on visibility: hidden so the corpse stops
-           swallowing clicks too — which the old opacity-only fade never did.
+           any live script can produce, and ends on visibility: hidden so the corpse stops
+           swallowing clicks too — which the old opacity-only fade never did. The bound
+           used to be 1200 ms deadline + 2600 ms gesture + 400 ms failsafe = 4200 ms;
+           since .boot-show the deadline no longer caps when .boot-play lands — the show
+           frames run *after* that check, bounded only by the 3500 ms hold-max failsafe,
+           and an overdue timer can lose narrowly to the rendering step that runs the
+           continuation, which then re-arms it — so the slowest live reveal is
+           ~3500 + 2600 + 400 ≈ 6500 ms, and the delay has to sit beyond it. At the old
+           6000 a bail landing mid-fade wins the overlay's animation list and pops a
+           half-faded reveal back to opaque (WP-61b).
 
            bootBail fills *forwards*, never `both`, and that is not a detail: an animation
            still inside its delay counts as in effect when it fills backwards, and the
            later entry in an `animation` list wins the properties both entries touch. With
-           `both` here, bootBail's `from { opacity: 1 }` applied for its whole 6 s delay
+           `both` here, bootBail's `from { opacity: 1 }` applied for its whole 7 s delay
            and overrode bootOut — the reveal fade never rendered on any successful boot,
            and every launch ended in a hard cut. Forwards fill contributes nothing before
            the animation starts, which is exactly the dead man's switch that was wanted. */
         animation:
           bootOut 370ms linear calc((var(--ti) + 350) * 1ms) both,
-          bootBail 400ms linear 6000ms forwards;
+          bootBail 400ms linear 7000ms forwards;
       }
       /* Nothing runs until phase B — except the bail, which is why the play-state is a
          list rather than a single value. The universal selector is the point: a list of
@@ -166,6 +173,20 @@
         visibility: hidden;
       }
       #boot-overlay.boot-play svg {
+        visibility: visible;
+      }
+      /* Phase B's opening two frames: .boot-show makes the svg visible while every clock
+         still sits paused at zero, so the first raster — tile allocation, the GPU
+         upload, the program cache — is paid before the animations start instead of
+         inside the first judged frames. Without it the clocks begin at .boot-play's
+         style application and the gesture starts already jumped forward: lead + warm +
+         warm2 put the customer's machine ~133 ms into its swing (WP-61b). Only .mover
+         shows anything here — its parked hand computes opacity 1 through bootActorFade's
+         backwards fill — and two frames of it is the accepted price; the letters,
+         ripples and trail all fill backwards at zero. crossFade() removes the class when
+         the gesture never started, because a cross-fade from phase A must still show
+         nothing (see .boot-froze below). */
+      #boot-overlay.boot-show svg {
         visibility: visible;
       }
       /* An interrupted gesture — the watchdog aborting, or a click mid-swing — has to
@@ -595,6 +616,7 @@
            nothing here may add work between start() and the fade. */
         var why = null;
         var readyAt = 0;
+        var showAt = 0;
         var startAt = 0;
         var frames = null;
 
@@ -778,16 +800,43 @@
             if (!why) why = 'app-failed';
             return crossFade();
           }
-          playing = true;
-          startAt = performance.now();
-          html.dataset.boot = 'play';
-          performance.mark('auftakt:play');
-          overlay.classList.add('boot-play');
-          armFailsafe(GESTURE_MS + 400, function () {
-            if (!why) why = 'gesture-max';
-            bailOut();
+          /* Phase B opens with two shown-but-paused frames (WP-61b): .boot-show makes
+             the svg visible while every clock still sits at zero, so the first raster —
+             the cost that used to land in the judged frames and, before WP-61's
+             exemption, abort the gesture — is paid before the animations start. Without
+             it the clocks begin at style application and the gesture starts already
+             jumped forward; lead + warm + warm2 put the customer's machine ~133 ms into
+             its swing. Two frames for the same reason as onReady's pair — the first only
+             schedules the paint.
+
+             The deadline is deliberately not re-checked in the continuation: on the
+             machine this exists for, the show frames cost the very ~100 ms a re-check
+             would convert into `why: deadline` — the same trade that killed the phase-A
+             pre-warm (docs/DECISIONS.md). The hold-max failsafe from phase A stays armed
+             across the wait, so a stall here still reveals; when it fires, `crossing`
+             makes the continuation decline. `playing` and `fading` are in the re-check
+             because moving `playing = true` two frames later un-latches the synchronous
+             double-start guard the old body had — without them a second start() would
+             queue a second chain and run watchFrames() twice, double-counting every
+             delta. */
+          showAt = performance.now();
+          performance.mark('auftakt:show');
+          overlay.classList.add('boot-show');
+          requestAnimationFrame(function () {
+            requestAnimationFrame(function () {
+              if (gone || crossing || fading || playing) return;
+              playing = true;
+              startAt = performance.now();
+              html.dataset.boot = 'play';
+              performance.mark('auftakt:play');
+              overlay.classList.add('boot-play');
+              armFailsafe(GESTURE_MS + 400, function () {
+                if (!why) why = 'gesture-max';
+                bailOut();
+              });
+              watchFrames();
+            });
           });
-          watchFrames();
         }
 
         /* Frame-health watchdog: the promise that a stuttering gesture stops being a
@@ -820,9 +869,13 @@
            16.7 ms machine: that is background noise, not a stutter (WP-61). Placed at the
            midpoint of the two steps it tolerates three intervals at 60 Hz and six at 120 —
            the same ~50 ms of wall clock this comment always meant — and catches the next
-           one up at either rate. Sustained three-interval stutter is still caught: `drops`
-           counts every 50.1 ms gap as two lost frames at the window's end, and that safety
-           net is what makes raising the absolute safe.
+           one up at either rate. Sustained three-interval stutter is still caught, and
+           that is what makes raising the absolute safe: a window where a quarter of its
+           frames arrive late aborts through `drops`, and one whose *median* flips to the
+           stutter cadence aborts through `slow`. This clause used to lean on `drops`
+           billing every 50.1 ms gap as two lost frames; WP-61b retired exactly that — a
+           gap this constant classifies as tolerable cannot also count double one test
+           later — see the cap at the drops loop.
            Deliberately still not expressed as a multiple of the measured period — the
            period estimate is only trustworthy once the window has some samples, and a
            hitch has to be catchable on the very first one. */
@@ -900,7 +953,14 @@
                reached the third delta, and every exempt frame is choreography the user
                never sees, since the animations' clocks start at style application and run
                through them. A report showing both slots clean and `n: 1` with a fat frame
-               is this number being one short again; that is the shape to look for. */
+               is this number being one short again; that is the shape to look for.
+
+               .boot-show (WP-61b) pays the svg's first raster before the clocks start,
+               which should leave both slots cheap — but the exemption is not thereby
+               redundant: it is the length of the pipeline that presents the first
+               *animated* frame, which exists whether or not the raster underneath it was
+               pre-paid, and only what .boot-show could pre-pay (tiles, upload, program
+               cache) is off the bill. Do not remove one because the other landed. */
             if (warmed < WARM_FRAMES) {
               // WARM_FRAMES and the report's two slots move together: a third exempt frame
               // would be measured and never reported.
@@ -963,11 +1023,24 @@
             if (nominal > Math.max(SLOW_MS, quick * SLOW_FACTOR)) return abort('slow');
             var drops = 0;
             for (var i = 0; i < deltas.length; i++) {
-              drops += Math.max(0, Math.round(deltas[i] / nominal) - 1);
+              /* Capped at one lost slot per delta (the Math.min), and the cap is WP-61b.
+                 Every delta here is below HITCH_MS by construction — anything larger
+                 aborted above — yet the uncapped sum billed a 50 ms gap as *two* lost
+                 frames: the same gap HITCH_MS's midpoint placement classifies as
+                 tolerable noise. That incoherence aborted the customer's first
+                 clean-median window (one 33.3 plus one 50 scored 3 against a threshold
+                 of 2.6), and at 120 Hz a single lone 50 ms gap scored five drops against
+                 a threshold of five — an abort HITCH_MS's own "~50 ms of wall clock at
+                 either rate" doctrine forbids. The cap only ever lowers the sum, so no
+                 window that passed before can abort now; the known price — a tolerated
+                 gap every ~117 ms at 60 Hz now plays to the end — is taken deliberately,
+                 with the arithmetic in docs/DECISIONS.md. */
+              drops += Math.min(1, Math.max(0, Math.round(deltas[i] / nominal) - 1));
             }
-            /* One frame in five lost. A rate, not a count: a count of N gets *stricter*
-               the faster the panel, because a 120 Hz panel delivers twice the frames in
-               the same window and so twice the opportunities to score a drop — which is
+            /* A quarter of the window's frames late — the comparison rearranges to
+               drops >= n / 4. A rate, not a count: a count of N gets *stricter* the
+               faster the panel, because a 120 Hz panel delivers twice the frames in the
+               same window and so twice the opportunities to score a drop — which is
                backwards, since dropping one frame in five matters less at 120 Hz, not
                more. Measured as a count this mis-fired on healthy runs. */
             if (drops >= 0.2 * (deltas.length + drops)) return abort('drops');
@@ -1009,15 +1082,22 @@
            not have changed what the user saw. */
         function buildReport() {
           var report = {
-            /* 2 since WP-61: two head frames are exempt instead of one (so `frames.n`
-               counts one delta fewer, and `warm2` joins `warm`) and HITCH_MS moved 50 → 58.
-               A v:1 line stays readable field for field — nothing branches on this — but
-               `n`, `why` and `tail.verdict` were produced under the old rules, so a log
-               holding both generations must not be compared across the boundary. */
-            v: 2,
+            /* 3 since WP-61b: the drops sum is capped at one lost slot per delta (judge
+               and this field agree again), and `showMs` stamps when .boot-show made the
+               svg visible — the first raster's cost now lives between showMs and startMs
+               instead of inside lead/warm/warm2. `showMs` set with `startMs: null` is
+               the signature of a cross that landed during the show frames. 2 since
+               WP-61: two head frames exempt instead of one (so `frames.n` counts one
+               delta fewer, and `warm2` joins `warm`) and HITCH_MS moved 50 → 58. An
+               older line stays readable field for field — nothing branches on this —
+               but `why`, `drops` and `tail.verdict` were produced under different rules,
+               so a log holding several generations must not be compared across the
+               boundaries. */
+            v: 3,
             outcome: crossing ? 'cross' : playing ? 'play' : 'skip',
             why: why || 'done',
             readyMs: readyAt ? r10(readyAt - t0) : null,
+            showMs: showAt ? r10(showAt - t0) : null,
             startMs: startAt ? r10(startAt - t0) : null,
             endMs: r10(performance.now() - t0),
             frames: null,
@@ -1039,7 +1119,9 @@
             f.quick = r10(ranked[Math.min(rank, ranked.length - 1)]);
             var drops = 0;
             for (var i = 0; i < frames.seen.length; i++) {
-              drops += Math.max(0, Math.round(frames.seen[i] / f.med) - 1);
+              // Mirrors the judge's cap — one lost slot per delta — or this field would
+              // disagree with the abort that quoted it.
+              drops += Math.min(1, Math.max(0, Math.round(frames.seen[i] / f.med) - 1));
             }
             f.drops = drops;
           }
@@ -1088,8 +1170,13 @@
              svg's visibility as well as the running play-state, so losing it alone blanked
              the artwork in one frame and left a flat rectangle to fade. What is wanted is
              the opposite — the paused base rule freezes every descendant on the frame it
-             had reached, and this keeps that frame on screen to fade out from. */
+             had reached, and this keeps that frame on screen to fade out from. A cross
+             that lands inside the show frames goes the other way: the gesture never
+             started, so the parked hand .boot-show was rastering must not ride the fade —
+             dropping the class shows the flat rectangle, exactly as a phase-A cross
+             always has (WP-61b). */
           if (playing) overlay.classList.add('boot-froze');
+          else overlay.classList.remove('boot-show');
           html.classList.remove('boot-hold');
           overlay.classList.remove('boot-play');
           overlay.classList.add('boot-cross');
