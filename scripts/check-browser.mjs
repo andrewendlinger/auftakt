@@ -7173,10 +7173,16 @@ try {
   // rename can show that the published value does not outlive a refused write.
   console.log('\nAR · Drei Versuche, dann sagt es die App');
   const lr = await open(context, '/');
-  /** @type {Array<{ rev?: number, body?: string, status?: number }>} */
+  // The GETs go into the same list, in order, and this is the one case where they can be read:
+  // the writes that steal the generation come from *outside* the browser, so they broadcast no
+  // invalidate and this window issues no landing GET of its own except the ones the write path
+  // asks for. In AQ the other window's write does broadcast, and a GET may land anywhere.
+  /** @type {Array<{ rev?: number, body?: string, status?: number, get?: boolean }>} */
   const lrLog = [];
   lr.on('request', (r) => {
-    if (r.url().includes('/api/landing') && r.method() === 'PATCH') {
+    if (!r.url().includes('/api/landing')) return;
+    if (r.method() === 'GET') lrLog.push({ get: true });
+    if (r.method() === 'PATCH') {
       const body = r.postData() ?? '{}';
       lrLog.push({ rev: JSON.parse(body).rev, body });
     }
@@ -7228,6 +7234,20 @@ try {
     'jeder Versuch liest die Generation des Gewinners aus der Absage und steigt mit ihr',
     lrSent[0]?.rev === lrBase.rev && lrSent.every((s, i) => i === 0 || s.rev === lrSent[i - 1].rev + 1),
     `${lrSent.map((s) => s.rev).join(' → ')} ab ${lrBase.rev}`,
+  );
+  // …*out of the refusal*, and that is the half the revs alone cannot show: a retry that fetched
+  // the blob again would arrive at the same generation. Between the first attempt and the last
+  // there is no `GET /api/landing` at all — the 409 carried the content, so the retry costs no
+  // round trip. The window is only meaningful with three attempts in it, which the line above
+  // establishes and this one restates.
+  const lrIsPatch = lrLog.map((e) => e.body !== undefined);
+  const lrBetween = lrLog
+    .slice(lrIsPatch.indexOf(true), lrIsPatch.lastIndexOf(true))
+    .filter((e) => e.get).length;
+  check(
+    '…und zwar aus der Absage selbst: zwischen den drei Versuchen wird kein einziges Mal neu gelesen',
+    lrSent.length === 3 && lrBetween === 0,
+    `${lrBetween} GET zwischen Versuch 1 und 3 (${lrLog.map((e) => (e.get ? 'GET' : e.body !== undefined ? `PATCH@${e.rev}` : `→${e.status}`)).join(' ')})`,
   );
   const lrStolen = await lpBlob();
   check(
