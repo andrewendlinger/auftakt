@@ -608,8 +608,16 @@ try {
    *
    * `GAP_A` is a gap that is late but tolerable at any cadence this runs on; `GAP_B` a shorter
    * one, so that the pair reproduces the customer's aborted window (WP-61b) rather than two equal
-   * blocks. `TOLERATED` targets the largest gap `HITCH_MS` still calls noise — the top step below
-   * the constant — which is what makes case E3 the 58 → 50 revert's canary.
+   * blocks. `TOLERATED` aims at the top of the tolerated band — one quantization step under
+   * `HITCH_MS` — with three milliseconds of margin, and the margin is the point: **the constant's
+   * own value is not behaviourally canaryable and is not meant to be.** WP-61 placed 58 at the
+   * *midpoint between two steps the panel can produce* (50.1 and 66.8 at 60 Hz; 49.8 and 58.1 at
+   * 120), so a delta between the top tolerated step and the constant is not reliably producible at
+   * any refresh rate — aiming at it buys a case that oscillates between „one step lower" and „just
+   * over, stood down". `assertBundle` therefore declares `HITCH_MS` outright, which catches the
+   * 58 → 50 revert deterministically and by name, and the invariant above catches any change to
+   * the *judge* that quotes it. What E3 is for is the WP-61b cap: a lone gap this size bills five
+   * lost slots uncapped at an 8.3 ms median and one capped.
    */
   const med = first.r?.frames?.med ?? 0;
   const TOLERATED = Math.round(Math.floor((HITCH_MS - 0.1) / med) * med) - 3;
@@ -724,11 +732,14 @@ try {
     if (worst >= HITCH_MS) skipCase('E3', `die eingespielte Lücke ist übergelaufen (${worst} ≥ ${HITCH_MS})`);
     else {
       check(
-        `E3: a ${worst} ms gap — one step under HITCH_MS — plays on`,
+        `E3: a lone ${worst} ms gap inside the tolerated band plays on`,
         g.r?.outcome === 'play' && g.r?.why === 'done',
         `${g.r?.outcome}/${g.r?.why}, worst ${worst}`,
       );
-      check('E3: …billed once, at any refresh rate', (g.r?.frames?.drops ?? 99) <= 3, `drops ${g.r?.frames?.drops}`);
+      // Uncapped this one gap alone bills `round(worst/med) - 1` — five at an 8.3 ms median, which
+      // is the 120 Hz false abort WP-61b repaired. Capped it bills one; the bound leaves two
+      // frames of room for a stray late one of the runner's own.
+      check('E3: …and is billed once, not per slot it spans', (g.r?.frames?.drops ?? 99) <= 3, `drops ${g.r?.frames?.drops}`);
     }
   }
 
