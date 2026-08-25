@@ -130,7 +130,7 @@ describe('appLogLine', () => {
         {
           event: 'e'.repeat(200),
           msg: 'm'.repeat(2000),
-          stack: 's'.repeat(9000),
+          stack: 'TOP' + 's'.repeat(9000),
           note: 'n'.repeat(20), // not a capped field: it rides along whole
         },
         RUN,
@@ -139,6 +139,9 @@ describe('appLogLine', () => {
     expect(parsed.event).toHaveLength(APP_LOG_FIELD_CAPS.event as number);
     expect(parsed.msg).toHaveLength(APP_LOG_FIELD_CAPS.msg as number);
     expect(parsed.stack).toHaveLength(APP_LOG_FIELD_CAPS.stack as number);
+    // The cap must cut the tail, not the head: the top frames are the ones that name the
+    // throw site, and they are what sourcemapped stacks exist for.
+    expect(parsed.stack.startsWith('TOP')).toBe(true);
     expect(parsed.note).toHaveLength(20);
   });
 
