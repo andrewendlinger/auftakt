@@ -25,7 +25,10 @@ import {
   APP_LOG_NAME,
   BOOT_REPORT_MAX_CHARS,
   bootDiagnostics,
+  countEntries,
+  formatConsoleArgs,
   migrateBootLog,
+  writeAppLog,
   writeBootReport,
 } from './appLog';
 import {
@@ -158,7 +161,7 @@ function openExternalSafely(url: string): void {
  */
 async function collectSystemFacts({ gpu: withGpu = true } = {}): Promise<SystemFacts> {
   let gpuDevice = '';
-  const gpu: Record<string, string> = {};
+  let gpu: Record<string, string> = {};
   if (withGpu) {
     try {
       // 'complete' carries the driver strings 'basic' leaves out, and those are what a
@@ -181,13 +184,33 @@ async function collectSystemFacts({ gpu: withGpu = true } = {}): Promise<SystemF
     } catch {
       /* no GPU process to ask — the feature-status flags below still say something */
     }
-    try {
-      for (const [k, v] of Object.entries(app.getGPUFeatureStatus())) gpu[k] = String(v);
-    } catch {
-      /* same */
-    }
+    gpu = gpuFeatureStatus();
   }
 
+  return machineFacts(gpu, gpuDevice);
+}
+
+/** The GPU feature flags. Synchronous, unlike `getGPUInfo` — no round trip to ask. */
+function gpuFeatureStatus(): Record<string, string> {
+  const gpu: Record<string, string> = {};
+  try {
+    for (const [k, v] of Object.entries(app.getGPUFeatureStatus())) gpu[k] = String(v);
+  } catch {
+    /* no GPU process — the rest of the block still says something */
+  }
+  return gpu;
+}
+
+/**
+ * Everything `collectSystemFacts` gathers except the GPU query, which is the only awaited
+ * part of it (WP-69b).
+ *
+ * Split out for the crash path: `uncaughtException` writes its bundle and calls `app.exit(1)`
+ * in one synchronous run — there is no tick left to await a GPU query in, and a `.then()` on a
+ * dying process is a bundle that is never written. It passes `{}`/`''` and loses the graphics
+ * block; every other fact survives, and a crash is not read from `gpu_compositing` anyway.
+ */
+function machineFacts(gpu: Record<string, string>, gpuDevice: string): SystemFacts {
   const displays = screen.getAllDisplays().map((d) => ({
     width: d.size.width,
     height: d.size.height,
@@ -248,30 +271,43 @@ async function saveDiagnostics(ref: unknown, report: unknown): Promise<Diagnosti
   try {
     if (!isBundleRef(ref)) return { ok: false };
     const text = typeof report === 'string' ? report.slice(0, BOOT_REPORT_MAX_CHARS) : '';
-    const logFile = join(app.getPath('userData'), APP_LOG_NAME);
-    const log = existsSync(logFile) ? readFileSync(logFile, 'utf8') : '';
-    const bundle = buildDiagnosticsBundle({
-      ref,
-      at: localStamp(),
-      report: text,
-      facts: await collectSystemFacts(),
-      log,
-      entries: log.split('\n').filter((l) => l.length > 0).length,
-    });
-    // Never over a bundle already lying there: the reference is minute resolution, and a
-    // second report inside that minute would otherwise replace the first one's file while the
-    // first one's mail still names it. `uniqueBundleName` picks the suffix and the renderer
-    // sends whatever name comes back, so the mail and the file agree either way.
-    const desktop = app.getPath('desktop');
-    const name = uniqueBundleName(ref, (candidate) => existsSync(join(desktop, candidate)));
-    const file = join(desktop, name);
-    writeFileSync(file, bundle, 'utf8');
-    return { ok: true, name };
+    return { ok: true, name: writeBundleToDesktop(ref, text, await collectSystemFacts()) };
   } catch {
     // A bundle that cannot be written must not cost the mail: the dialog composes without
     // the attachment line instead, and the summary in the body still travels.
     return { ok: false };
   }
+}
+
+/**
+ * Read the log, build the bundle, write it to the desktop, return the name it got. Throws
+ * whatever the filesystem throws — both callers have somewhere better to put a failure than
+ * this function does.
+ *
+ * Synchronous from the read to the write, which is what lets the crash path (WP-69b) use the
+ * same machinery as the feedback dialog: the facts are the only awaited part, and it hands in
+ * what it could collect without waiting. One writer for one file format — a crash bundle a
+ * maintainer cannot read the same way as a reported one is worth much less than either.
+ */
+function writeBundleToDesktop(ref: string, report: string, facts: SystemFacts): string {
+  const logFile = join(app.getPath('userData'), APP_LOG_NAME);
+  const log = existsSync(logFile) ? readFileSync(logFile, 'utf8') : '';
+  const bundle = buildDiagnosticsBundle({
+    ref,
+    at: localStamp(),
+    report,
+    facts,
+    log,
+    entries: countEntries(log),
+  });
+  // Never over a bundle already lying there: the reference is minute resolution, and a
+  // second report inside that minute would otherwise replace the first one's file while the
+  // first one's mail still names it. `uniqueBundleName` picks the suffix and the renderer
+  // sends whatever name comes back, so the mail and the file agree either way.
+  const desktop = app.getPath('desktop');
+  const name = uniqueBundleName(ref, (candidate) => existsSync(join(desktop, candidate)));
+  writeFileSync(join(desktop, name), bundle, 'utf8');
+  return name;
 }
 
 /** The data dir holding the season DBs + seasons.json: dev → repo/.data; packaged → userData. */
@@ -765,6 +801,23 @@ async function createWindow(): Promise<void> {
     }
   });
 
+  /* Log-only (WP-69b), and this is the only window creation path, so wiring it here covers
+     every window. A renderer that dies takes its own capture with it — WP-69e's bridge cannot
+     report the crash that killed the bridge — so main's line is the only record that separates
+     „the window went blank" from „the user closed it". `unresponsive` is the same reading for
+     the case where the renderer is alive and pinned: it fires after a few seconds of a blocked
+     main thread, and `responsive` is what says whether the customer waited it out or gave up.
+     Branch-free: `logMain` is the one place `isDev` is decided. */
+  win.webContents.on('render-process-gone', (_e, details) => {
+    logMain({
+      level: 'error',
+      event: 'render-process-gone',
+      msg: `${details.reason} · exitCode ${details.exitCode}`,
+    });
+  });
+  win.on('unresponsive', () => logMain({ level: 'warn', event: 'unresponsive' }));
+  win.on('responsive', () => logMain({ level: 'info', event: 'responsive' }));
+
   // Awaited outside whenReady's try/catch until now, so a rejection here was an
   // unhandled rejection and a permanently blank window with nothing said about it —
   // the same silent failure ELP-06 fixed one step earlier, for the server.
@@ -937,6 +990,187 @@ if (!gotLock) {
  */
 migrateBootLog(app.getPath('userData'));
 
+/* ---- runtime capture (WP-69b) ---------------------------------------------------------
+ *
+ * Everything below writes into the same `app-log.jsonl` the boot reports go to, and only in a
+ * packaged run — the same `!isDev` rule those follow. A dev run has a terminal, so its
+ * `console.error` is already visible and its `uncaughtException` already reaches the developer;
+ * a Finder- or NSIS-launched app has no stdio at all, which is why none of this existed before
+ * and why a crash used to be a window that vanished with nothing written down anywhere.
+ */
+
+/**
+ * One runtime line from this process. `isDev` is decided here rather than at each of the eight
+ * call sites, so wiring a listener stays a single branch-free line wherever it belongs.
+ */
+function logMain(entry: Record<string, unknown>): void {
+  if (isDev) return;
+  writeAppLog(app.getPath('userData'), entry, { app: app.getVersion(), src: 'main' });
+}
+
+/**
+ * Name, message and stack of a thrown value — without trusting it to be an `Error`, or to
+ * have readable properties. `err.message` can be a getter that throws, and this runs inside
+ * handlers whose own failure would take out the report they exist to write.
+ */
+function errorFields(err: unknown): { msg: string; stack?: string } {
+  try {
+    if (err instanceof Error) {
+      return {
+        msg: `${err.name}: ${err.message}`,
+        stack: typeof err.stack === 'string' ? err.stack : undefined,
+      };
+    }
+    return { msg: formatConsoleArgs([err]) };
+  } catch {
+    return { msg: '[unreadable error value]' };
+  }
+}
+
+/** Guards the tee against re-entering itself — see `installConsoleTee`. */
+let teeing = false;
+
+/**
+ * Tee `console.error` and `console.warn` into the log.
+ *
+ * The one choke point worth having while the Express server runs *inside this process*
+ * (`startServer`): its ~9 `console.error` calls, electron-updater's logger and this file's own
+ * warnings all pass through here, so nothing server-side or dependency-side had to change to be
+ * captured. Installed before `startServer()`'s dynamic import for exactly that reason — a
+ * server that fails on its first line is the failure most worth having a line for.
+ *
+ * Not `console.log`: the listen banner and the trace path are the bulk of it, and a log that
+ * fills with routine notices is a log whose rotation throws away the errors.
+ *
+ * The original runs first and in its own try, so a broken stdout cannot cost the log line.
+ * `teeing` is the re-entrancy latch: `writeAppLog` never writes to the console, but a future
+ * something in that path that did would otherwise recurse until the stack ran out — and it
+ * would do it while reporting an error, i.e. exactly when the app can least afford it. The tee
+ * never logs about itself for the same reason.
+ */
+function installConsoleTee(): void {
+  for (const level of ['error', 'warn'] as const) {
+    const original = console[level].bind(console);
+    console[level] = (...args: unknown[]) => {
+      if (teeing) {
+        original(...args);
+        return;
+      }
+      teeing = true;
+      try {
+        original(...args);
+        logMain({ level, event: 'console', msg: formatConsoleArgs(args) });
+      } catch {
+        /* a console without stdio, an unwritable userData — never the caller's problem */
+      } finally {
+        teeing = false;
+      }
+    };
+  }
+}
+
+/**
+ * The „Meldung" section of a bundle nobody wrote. It sits where the customer's own words go,
+ * so it has to say that there are none — a report that reads as if somebody filled it in is a
+ * report a maintainer answers with questions to a person who never sent it.
+ */
+const CRASH_REPORT_TEXT =
+  'Automatischer Absturzbericht: Das Programm wurde durch einen unerwarteten Fehler beendet.\n' +
+  'Diesen Text hat niemand geschrieben — Auftakt hat die Datei beim Absturz selbst angelegt.\n' +
+  'Was unmittelbar davor getan wurde, weiß nur, wer davorsaß: ein Satz dazu in der E-Mail hilft sehr.';
+
+/**
+ * The reference a crash bundle is named after — `AF-YYMMDDHHMM` in naive local time, the same
+ * shape `feedbackRef` builds in `client/src/lib/feedbackMail.ts` and the only shape
+ * `isBundleRef` accepts. Spelled a second time rather than imported: this process cannot reach
+ * the renderer's bundle, and `diagnostics.ts` already states the format for its own reason.
+ *
+ * So a crash file and a reported file are the same kind of thing with the same kind of name,
+ * and a customer who sends both is sending two files that sort next to each other.
+ */
+function crashBundleRef(now = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `AF-${p(now.getFullYear() % 100)}${p(now.getMonth() + 1)}${p(now.getDate())}${p(now.getHours())}${p(now.getMinutes())}`;
+}
+
+/** Set by the first `uncaughtException`. Everything after it only gets its log line. */
+let crashHandled = false;
+
+/**
+ * The process-level handlers. Registered only in a packaged run, because two of them change
+ * behaviour rather than only observing it: `uncaughtException` replaces Electron's own English
+ * „A JavaScript error occurred in the main process" box — which a developer wants and a
+ * customer cannot use — and any `unhandledRejection` listener at all suppresses Node's default
+ * of re-throwing, which under Electron ends in that same box.
+ */
+function installProcessHandlers(): void {
+  /* Line, bundle, dialog, exit — in that order, and the exit is the part that is not
+     negotiable: a main process that has thrown owns the in-process SQLite server, so a window
+     left standing keeps writing through a runtime whose invariants are already gone. WAL makes
+     an immediate exit safe; a zombie holding the single-instance lock is not, and cannot even
+     be relaunched over. */
+  process.on('uncaughtException', (err) => {
+    const { msg, stack } = errorFields(err);
+    logMain({ level: 'error', event: 'uncaught-exception', msg, stack });
+    // A storm of them writes lines and nothing else: the first exception's dialog is on
+    // screen and the first exception's bundle is the one worth having.
+    if (crashHandled) return;
+    crashHandled = true;
+
+    let bundle = '';
+    try {
+      bundle = writeBundleToDesktop(crashBundleRef(), CRASH_REPORT_TEXT, machineFacts({}, ''));
+    } catch {
+      /* no desktop, a full disk — the dialog says so instead of naming a file that is not there */
+    }
+    try {
+      const message = 'Auftakt muss beendet werden.';
+      const detail = bundle
+        ? 'Es ist ein interner Fehler aufgetreten; das Programm kann nicht weiterlaufen.\n\n' +
+          `Ein Fehlerbericht liegt jetzt auf deinem Schreibtisch:\n${bundle}\n\n` +
+          'Du kannst diese Datei per E-Mail an auftakt@e-mail.de schicken — sie enthält keine ' +
+          'Termine, Künstler, Kontakte oder Notizen. Auftakt lässt sich danach wieder ganz ' +
+          'normal öffnen.'
+        : 'Es ist ein interner Fehler aufgetreten; das Programm kann nicht weiterlaufen.\n\n' +
+          'Ein Fehlerbericht konnte diesmal nicht gespeichert werden. Auftakt lässt sich wieder ' +
+          'ganz normal öffnen.';
+      // Sync: the next statement ends the process, and an async dialog on a dying process is
+      // one that never appears. `showErrorBox` is the one dialog Electron documents as usable
+      // before `ready`, which is precisely when a crash leaves the least behind.
+      if (app.isReady()) dialog.showMessageBoxSync({ type: 'error', message, detail });
+      else dialog.showErrorBox(message, detail);
+    } catch {
+      /* no GUI left to put it on — the file on the desktop is the report either way */
+    }
+    // Outside every try above, deliberately: whatever else failed, this must not.
+    app.exit(1);
+  });
+
+  // Log only. Node's default for an unhandled rejection is to re-throw it, which would land in
+  // the handler above and close the app — and a rejected background fetch is not that. The
+  // listener's existence is what turns it into a line.
+  process.on('unhandledRejection', (reason) => {
+    const { msg, stack } = errorFields(reason);
+    logMain({ level: 'error', event: 'unhandled-rejection', msg, stack });
+  });
+
+  // The GPU, the utility and the network processes. Chromium restarts most of them by itself,
+  // so this is not a failure to act on — it is the line that explains the five seconds of black
+  // window a customer describes and no other artefact records.
+  app.on('child-process-gone', (_e, details) => {
+    logMain({
+      level: 'error',
+      event: 'child-process-gone',
+      msg: `${details.type} · ${details.reason} · exitCode ${details.exitCode}`,
+    });
+  });
+}
+
+if (!isDev) {
+  installConsoleTee();
+  installProcessHandlers();
+}
+
 /**
  * Stops the AUFTAKT_BOOT_TRACE recording and resolves once the file is on disk. Null
  * when tracing is off. Memoised inside, so the settle timer, the cap timer and the quit
@@ -973,6 +1207,12 @@ app.on('second-instance', () => {
 
 app.whenReady().then(async () => {
   if (!gotLock) return;
+
+  // One line per launch, written before anything below it can fail. It is what anchors the
+  // rest of the file: a crash line is only readable against the start it belongs to, and a log
+  // that begins in the middle of a session cannot say whether the app had just come up or had
+  // been running for a week (WP-69b).
+  logMain({ level: 'info', event: 'app-start' });
 
   /* Opt-in boot tracing, for the launches the headless checks cannot represent — a real
      cold start on a real panel is the one path they never covered. AUFTAKT_BOOT_TRACE=1
