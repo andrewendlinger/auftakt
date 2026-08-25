@@ -147,8 +147,20 @@ describe('redactHome', () => {
     expect(out).toContain('~\\Desktop\\saison.db');
   });
 
+  it('strips it out of a JSON line too, where every backslash is doubled', () => {
+    // The runtime log is JSONL, and a stack trace in it spells the home path with `\\`. The
+    // literal split walks past that spelling, so on Windows — the customer's platform — the
+    // account name would have travelled inside the one section that carries stack traces.
+    const line = JSON.stringify({ stack: `at ${FACTS.home}\\AppData\\Local\\Auftakt\\main.cjs:1:1` });
+    const out = redactHome(line, FACTS.home);
+    expect(out).not.toContain('Marianne Fürst');
+    expect(out).toContain('main.cjs:1:1');
+  });
+
   it('leaves the text alone when there is no home to strip', () => {
     expect(redactHome('unverändert', '')).toBe('unverändert');
+    // A POSIX home has nothing to escape, so the second pass must not change the answer.
+    expect(redactHome('/Users/marianne/Desktop', '/Users/marianne')).toBe('~/Desktop');
   });
 });
 
@@ -344,12 +356,17 @@ describe('buildDiagnosticsBundle', () => {
 
   it('carries no account name anywhere in it', () => {
     // It is mail, not a local file. The redaction runs over the finished text, so a path the
-    // person typed into the report themselves is covered too.
+    // person typed into the report themselves is covered too — and so is one inside a stack
+    // trace in the runtime section, where JSON has doubled every backslash.
     const out = bundle({
       report: 'Ich habe die Datei aus C:\\Users\\Marianne Fürst\\Desktop geöffnet.',
+      log: `${boot(0)}\n${runtime(0, {
+        stack: 'Error: boom\n    at C:\\Users\\Marianne Fürst\\AppData\\Local\\Auftakt\\app.asar\\main.cjs:1:1',
+      })}\n`,
     });
     expect(out).not.toContain('Marianne Fürst');
     expect(out).toContain('~\\Desktop');
+    expect(under(out, 'Laufzeitprotokoll')).toContain('app.asar');
   });
 
   it('promises, in the same words every time, that no festival data leaves in it', () => {
