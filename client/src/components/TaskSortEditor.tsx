@@ -82,25 +82,57 @@ export function TaskSortEditor({
    *   writes in quick succession — add, then turn, then move — so a read overtaken by two writes
    *   answers with an array the rule was never in. Standing down there is the same dead end in a
    *   different shape.
-   * - It stands down when focus lands on something the user chose: any real element outside this
-   *   `<ol>`, which includes „Spalte wählen…" and „+ Hinzufügen", so adding a rule ends the move
-   *   on its own. `removeAt` clears it by hand, so removing the moved rule cannot leave a dead id
-   *   armed against a later re-add of the same column.
+   * - **The user's own pointer or key ends it, at the moment it happens.** A commit cannot tell
+   *   „focus is on `<body>` because this list dropped it" from „…because the user clicked an
+   *   unfocusable patch of the page", and the difference is the whole of what an armed restore
+   *   may do: left armed, it would wait for the next `task_sort` change — a second window
+   *   reordering the rules — and pull the keyboard into this card, scrolling the page back to it,
+   *   for a change the user did not make in this window. Waiting for a commit to notice is too
+   *   late; a `pointerdown` or `keydown` outside the `<ol>` stands the restore down when it
+   *   happens. **The arrow's own state cannot decide this** — the sibling window's reorder is
+   *   exactly what disables the arrow the restore is holding, so „my arrow went away, this must
+   *   be my commit" is true of the case it is meant to exclude. `held` is the second guard, not
+   *   the first: it catches focus leaving without any input of the user's at all.
    *
-   * What keeps an armed restore from pulling focus back here unasked is that it barely ever runs:
+   * It stands down on that input, when focus lands on a real element outside this `<ol>` — which
+   * includes „Spalte wählen…" and „+ Hinzufügen", so adding a rule ends the move on its own —
+   * when the arrow it holds is still there and still enabled, and in `removeAt`, so removing the
+   * moved rule cannot leave a dead id armed against a later re-add of the same column.
+   *
+   * The other half of not pulling focus back unasked is that this effect barely runs:
    * `useSettingsArray` memoises on the raw value's identity and React Query hands back the
    * *equal* array it already held, so a settings write that changes something else re-renders
    * nothing here. This effect runs when `task_sort` really changed — which is also why the
    * PATCH response, deeply equal to what the write already published, produces no commit of its
    * own between the move and the read that overtakes it.
    */
-  const restore = useRef<{ id: string; dir: -1 | 1 } | null>(null);
+  const restore = useRef<{ id: string; dir: -1 | 1; held: HTMLButtonElement | null } | null>(null);
   const move = (i: number, dir: -1 | 1) => {
     const next = arrayMove(value, i, dir);
     if (next === value) return;
-    restore.current = { id: value[i]!.id, dir };
+    // `held` starts as the arrow the press is on — the click focused it, and the commit that
+    // lands the rule at an end is what disables it. A press that somehow arrives without focus
+    // leaves it null, which reads as „owed" rather than as „the user blurred it".
+    const el = document.activeElement;
+    restore.current = { id: value[i]!.id, dir, held: el instanceof HTMLButtonElement ? el : null };
     onChange(next);
   };
+  // Armed is a ref, so there is no render to key this on — and it needs none: a listener that
+  // only ever nulls a ref is cheaper than the re-render that arming as state would cost, and it
+  // cannot miss the gesture by being attached one commit late. Capture phase, so a handler that
+  // stops propagation cannot hide the gesture from it.
+  useEffect(() => {
+    const standDown = (e: Event) => {
+      const t = e.target;
+      if (!(t instanceof Node) || !listRef.current?.contains(t)) restore.current = null;
+    };
+    document.addEventListener('pointerdown', standDown, true);
+    document.addEventListener('keydown', standDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', standDown, true);
+      document.removeEventListener('keydown', standDown, true);
+    };
+  }, []);
   useEffect(() => {
     const target = restore.current;
     const list = listRef.current;
@@ -113,15 +145,25 @@ export function TaskSortEditor({
       if (!list.contains(active)) restore.current = null;
       return;
     }
+    // Focus is nowhere, and no input of the user's has stood the restore down. The second guard:
+    // an arrow still standing there, still enabled, means focus left it some other way.
+    const held = target.held;
+    if (held && held.isConnected && !held.disabled) {
+      restore.current = null;
+      return;
+    }
     const i = value.findIndex((r) => r.id === target.id);
     // Absent for this commit — an overtaken read from before the rule existed. Wait for the one
-    // that has it rather than standing down.
+    // that has it rather than standing down; `held` is off the DOM meanwhile, which is what keeps
+    // the wait from being mistaken for a blur.
     if (i < 0) return;
     const row = list.querySelectorAll<HTMLElement>('[data-rule-row]')[i];
     const arrow = (d: -1 | 1) => row?.querySelector<HTMLButtonElement>(`[data-arrow="${d === -1 ? 'up' : 'down'}"]`);
     // The arrow pointing the way the user was going, unless the move just disabled it at an end.
     const same = arrow(target.dir);
-    (same && !same.disabled ? same : arrow(target.dir === -1 ? 1 : -1))?.focus();
+    const next = same && !same.disabled ? same : arrow(target.dir === -1 ? 1 : -1);
+    target.held = next ?? null;
+    next?.focus();
   }, [value]);
   const setDir = (i: number, dir: 'asc' | 'desc') =>
     onChange(value.map((r, idx) => (idx === i ? { ...r, dir } : r)));

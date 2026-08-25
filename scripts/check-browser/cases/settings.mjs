@@ -184,12 +184,19 @@ export async function runSettings(fixtures) {
     await s.route('**/api/settings', async (route) => {
       if (state.armed && route.request().method() === 'GET') {
         state.armed = false;
-        state.served = true;
         // Guarded like every route callback in this suite: it runs outside the runner's `try`, so
-        // a rejection here ends the process instead of failing one line (docs/VERIFYING.md).
+        // a rejection here ends the process instead of failing one line (docs/VERIFYING.md). And
+        // `served` is set from the fulfil rather than before it — a swallowed rejection leaves the
+        // read *unanswered*, which renders the tab's ErrorState and unmounts the editor. That is
+        // the same misdiagnosis this flag exists to prevent, arriving through the guard.
         await route
           .fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
-          .catch(() => {});
+          .then(
+            () => {
+              state.served = true;
+            },
+            () => {},
+          );
         return;
       }
       await route.continue().catch(() => {});
