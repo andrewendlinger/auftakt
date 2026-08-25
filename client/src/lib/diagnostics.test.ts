@@ -253,7 +253,7 @@ describe('buildDiagnosticsBundle', () => {
   it('carries the log in full, not a digest of it', () => {
     // The entire reason the file exists: the mail can only afford five folded lines.
     const out = bundle();
-    expect(out).toContain('Startprotokoll (boot-log.jsonl, 2 Einträge)');
+    expect(out).toContain('Startprotokoll (app-log.jsonl, 2 Einträge)');
     for (const line of LOG.split('\n')) expect(out).toContain(line);
   });
 

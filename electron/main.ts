@@ -22,11 +22,12 @@ import { exportFileName } from './exportName';
 import { readSeasonTerms } from './seasonTerms';
 import { readWindowBounds, usableBounds, writeWindowBounds } from './windowBounds';
 import {
-  BOOT_LOG_NAME,
+  APP_LOG_NAME,
   BOOT_REPORT_MAX_CHARS,
   bootDiagnostics,
+  migrateBootLog,
   writeBootReport,
-} from './bootLog';
+} from './appLog';
 import {
   buildDiagnosticsBundle,
   isBundleRef,
@@ -247,7 +248,7 @@ async function saveDiagnostics(ref: unknown, report: unknown): Promise<Diagnosti
   try {
     if (!isBundleRef(ref)) return { ok: false };
     const text = typeof report === 'string' ? report.slice(0, BOOT_REPORT_MAX_CHARS) : '';
-    const logFile = join(app.getPath('userData'), BOOT_LOG_NAME);
+    const logFile = join(app.getPath('userData'), APP_LOG_NAME);
     const log = existsSync(logFile) ? readFileSync(logFile, 'utf8') : '';
     const bundle = buildDiagnosticsBundle({
       ref,
@@ -923,6 +924,18 @@ if (!gotLock) {
   );
   app.exit(0);
 }
+
+/**
+ * Carry a pre-WP-69 `boot-log.jsonl` over to the unified `app-log.jsonl` (see appLog.ts).
+ *
+ * Here, and not later: everything in this file that reads or writes the log runs after this
+ * line — the IPC handlers, the 8 s fallback, `before-quit`, the signal handlers at the bottom
+ * of the file — so the rename always finds the legacy file before anything has created the new
+ * one under it. Below the single-instance guard for the same reason the capture below sits
+ * there: the instance that lost the lock has already exited, so this process is the only one
+ * touching the file.
+ */
+migrateBootLog(app.getPath('userData'));
 
 /**
  * Stops the AUFTAKT_BOOT_TRACE recording and resolves once the file is on disk. Null

@@ -10,12 +10,12 @@ import type { Rect, Size } from './cascade';
  * `close`, so the last one closed wins, and only the *first* window of a launch reads it back —
  * secondary windows keep cascading off the focused one (`cascade.ts`).
  *
- * Imports nothing from `electron`, deliberately — the same rule as backup.ts, bootLog.ts and
+ * Imports nothing from `electron`, deliberately — the same rule as backup.ts, appLog.ts and
  * cascade.ts, and for the same reason: it is what lets `client/src/lib/windowBounds.test.ts`
  * drive `usableBounds` from `check:unit`, which is the only automated run that reaches
  * main-process code at all. The userData path and the work areas are passed in.
  *
- * **This is per-machine state, so it lives beside `boot-log.jsonl` in userData and deliberately
+ * **This is per-machine state, so it lives beside `app-log.jsonl` in userData and deliberately
  * not in `seasons.json`.** The registry is exported, imported and backed up; a monitor layout
  * has no business travelling to another machine inside somebody's data.
  */

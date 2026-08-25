@@ -12,15 +12,15 @@
  * So the file is made attachable instead of the mail made bigger. Everything the maintainer
  * would otherwise ask for goes into one `.txt` on the desktop, named after the mail's own
  * reference, and the mail says which file to attach. Plain text and a `.txt` extension on
- * purpose: `boot-log.jsonl` does not open on double-click on Windows, and it sits in userData
+ * purpose: `app-log.jsonl` does not open on double-click on Windows, and it sits in userData
  * among `Cache/`, `GPUCache/` and `blob_storage/`, which is not a folder to send anybody into.
  *
- * Imports nothing from `electron`, deliberately — the same rule `bootLog.ts` follows, and for
+ * Imports nothing from `electron`, deliberately — the same rule `appLog.ts` follows, and for
  * the same reason: it is what lets `client/src/lib/diagnostics.test.ts` hold this text from
  * `check:unit`. Main collects the facts and passes them in.
  */
 
-import type { BootDiagnostics } from './bootLog';
+import type { BootDiagnostics } from './appLog';
 
 /** What `get-diagnostics` returns: the boot log's digest, plus one line about the machine. */
 export interface Diagnostics extends BootDiagnostics {
@@ -259,7 +259,7 @@ export interface BundleInput {
   /** The mail body, verbatim: the file and the mail then say the same thing. */
   report: string;
   facts: SystemFacts;
-  /** `boot-log.jsonl` in full — every line, unparsed. */
+  /** `app-log.jsonl` in full — every line, unparsed. */
   log: string;
   /** How many entries `log` holds, counted by the caller that read it. */
   entries: number;
@@ -289,7 +289,7 @@ export function buildDiagnosticsBundle(input: BundleInput): string {
     report.trim(),
     section('Rechner'),
     formatSystemInfo(facts),
-    section(`Startprotokoll (boot-log.jsonl, ${count})`),
+    section(`Startprotokoll (app-log.jsonl, ${count})`),
     // Dev writes no log at all, and neither has an install that has not settled a boot yet.
     // Saying so beats an empty section that reads like a truncated file.
     log.trim() ||

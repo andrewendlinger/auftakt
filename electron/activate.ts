@@ -2,7 +2,7 @@
  * What clicking the Dock icon means (macOS).
  *
  * Imports nothing from `electron`, deliberately — the same rule as cascade.ts, backup.ts,
- * bootLog.ts and exportName.ts: the windows arrive as anything that can answer `isDestroyed()`
+ * appLog.ts and exportName.ts: the windows arrive as anything that can answer `isDestroyed()`
  * and `isMinimized()`, which is what lets `client/src/lib/activate.test.ts` drive the branch
  * matrix from `check:unit`. The Dock is the one surface no automated run in this repository can
  * reach — `check:browser` drives a page, not a process, and launching the real app is off the
