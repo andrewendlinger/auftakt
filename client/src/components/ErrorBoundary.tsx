@@ -1,5 +1,17 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { signalFailed } from '../boot';
+import { logAppEvent } from '../lib/logEvent';
+
+/**
+ * How much of React's component stack rides along with the error's own.
+ *
+ * The two travel as one `stack` field, and `electron/appLog.ts` caps that field at 3000
+ * characters *from the front* — so an uncut component stack, which is one line per element down
+ * to the root, would push the trace naming the actual throw off the end. The error's stack is
+ * the part a bug is found from; the component stack says where in the tree it sat, which the
+ * first dozen frames already answer.
+ */
+const COMPONENT_STACK_MAX = 1500;
 
 interface State {
   failed: boolean;
@@ -25,6 +37,13 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error('Unbehandelter Render-Fehler', error, info.componentStack);
+    // …and into the runtime log, which is the only one of the two a packaged app keeps: the
+    // window it prints to has no console anybody can open (WP-69e).
+    logAppEvent(
+      'render-error',
+      error.message,
+      (error.stack ?? '') + (info.componentStack ?? '').slice(0, COMPONENT_STACK_MAX),
+    );
     // The fallback below is the app now; there is nothing further to wait for. Without
     // this the boot screen would hold its still frame over a rendered error message
     // until the data budget expired. `signalFailed` rather than `signalReady` so it
