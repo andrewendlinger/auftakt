@@ -67,8 +67,11 @@ check('the app is packed into app.asar', existsSync(asar));
 const require = createRequire(join(root, 'package.json'));
 /** @type {string[]} */
 let entries = [];
+/** @type {(archive: string, filename: string) => Buffer} */
+let extractFile;
 try {
-  const { listPackage } = require('@electron/asar');
+  const { listPackage, extractFile: extract } = require('@electron/asar');
+  extractFile = extract;
   // `{ isPack: false }` is optional at runtime but required by the type. Passing it explicitly
   // rather than casting the call away: `isPack: true` would annotate each entry with its offset
   // and size, which is not what the assertions below compare against.
@@ -81,16 +84,64 @@ try {
 }
 check('app.asar is not empty', entries.length > 0, `${entries.length} Einträge`);
 
-// The three bundles `files` in electron-builder.yml is supposed to include. `main.cjs` is the
-// entry point named by package.json#main — if it is absent the app cannot start at all.
+// The bundles `files` in electron-builder.yml is supposed to include. `main.cjs` is the entry
+// point named by package.json#main — if it is absent the app cannot start at all — and since
+// WP-69g it is a two-line loader in front of `main.bundle.cjs`, so both have to be here.
 for (const path of [
   '/electron/dist/main.cjs',
+  '/electron/dist/main.bundle.cjs',
   '/electron/dist/preload.cjs',
   '/server/dist/index.mjs',
   '/client/dist/index.html',
   '/package.json',
 ]) {
   check(`app.asar contains ${path}`, entries.includes(path));
+}
+
+// The source maps, pinned rather than assumed. They are what makes a stack in the runtime log
+// (WP-69) name `server/src/db.ts:1529` instead of a column of a 3.3 MB bundle, and they only
+// work if they travel *with* the app: Node reads the `.map` next to the file it is mapping, at
+// throw time, on the customer's machine. Nothing else in the build would notice their absence —
+// the app starts and runs perfectly without them, and the loss shows up months later as an
+// unreadable stack in a diagnostics bundle somebody is waiting on. A `files` glob that stops
+// matching `*.map`, or an esbuild option that stops emitting one, goes red here.
+for (const path of [
+  '/electron/dist/main.bundle.cjs.map',
+  '/electron/dist/preload.cjs.map',
+  '/server/dist/index.mjs.map',
+]) {
+  check(`app.asar contains ${path}`, entries.includes(path));
+}
+
+/** One packed file's text, by the same leading-slash path the entry list uses. */
+function packed(/** @type {string} */ path) {
+  return extractFile(asar, path.replace(/^\//, '')).toString('utf8');
+}
+
+// The loader is the mechanism, not a wrapper worth tidying away. Node caches a file's source
+// map while compiling it, so the call cannot stand inside the bundle it is meant to map (see
+// scripts/build.mjs); a "simplification" that folds these two lines back into main.ts would keep
+// every assertion above green and silently return main-process stacks to bundle positions.
+const loader = packed('/electron/dist/main.cjs');
+check(
+  'the entry loader enables source maps before requiring the bundle',
+  /setSourceMapsEnabled\(true\)[\s\S]*require\(['"]\.\/main\.bundle\.cjs['"]\)/.test(loader),
+  // Only the code, so a red shows what the entry point does instead — the file is mostly comment.
+  loader
+    .split('\n')
+    .filter((l) => l.trim() !== '' && !l.startsWith('//'))
+    .join(' '),
+);
+
+// `sourcesContent: false` in scripts/build.mjs, asserted where it matters. The esbuild default
+// embeds every source file's full text into the map, which would put the whole TypeScript source
+// of the server and of main inside each installer — ~4 MB of download, and precisely the sources
+// the `no TypeScript sources` check below exists to keep out of the package.
+for (const path of [
+  '/electron/dist/main.bundle.cjs.map',
+  '/server/dist/index.mjs.map',
+]) {
+  check(`${path} carries no embedded sources`, !packed(path).includes('"sourcesContent"'));
 }
 
 // Nothing should ship the sources or a stray node_modules tree — that is the `files` allowlist
