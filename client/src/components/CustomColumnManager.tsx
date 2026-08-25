@@ -213,6 +213,13 @@ export function CustomColumnManager({
    *
    * Focus the user moved elsewhere while the PATCH was in flight is left alone, the same rule
    * `Modal`'s close-restore follows.
+   *
+   * **Still a one-shot, deliberately** — its twin in `TaskSortEditor` is not. That one chases the
+   * rule across every commit since #139, because a `GET /api/settings` overtaken by a newer write
+   * put the rule back for one commit and spent the restore. The column list is the same shape and
+   * the same exposure, and it has never once been seen doing it; changing a second reorder surface
+   * on that reasoning alone is not what the freeze is for. If it ever flakes, the fix is written
+   * out over there.
    */
   useEffect(() => {
     const target = restoreFocus.current;
