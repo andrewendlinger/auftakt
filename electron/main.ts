@@ -40,10 +40,17 @@ import {
 import { messageBox, openDialog, saveDialog } from './dialogs';
 import { checkForUpdates, downloadAndInstallUpdate, startSilentStartupCheck } from './updater';
 
+// Source maps are switched on one file earlier, in the loader `scripts/build.mjs` writes as
+// `electron/dist/main.cjs`, and that is not a style choice: Node caches a file's map while
+// *compiling* it, so `process.setSourceMapsEnabled(true)` standing here — or in a banner —
+// would run after this bundle was compiled and leave every main-process frame in the runtime
+// log pointing at a column of `main.bundle.cjs`. It does work from a separate entry file.
+// Adding the call here would be a no-op that reads like the mechanism.
+
 const isDev = !app.isPackaged;
 
 // Cache V8's compilation of the server bundle across launches. It cannot help this file
-// — main.cjs is already compiling by the time this line runs — but startServer() imports
+// — main.bundle.cjs is already compiling by the time this line runs — but startServer() imports
 // server/dist/index.mjs, 3.4 MB of bundled JS that is parsed and compiled on every single
 // launch, before any window exists. Second and later launches skip that.
 //
