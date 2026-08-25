@@ -1,6 +1,7 @@
 /** O–R2 · the four Einstellungen tabs and what they write */
 
 import { cardWith, gone, open, pin, ready, shown, toast, topDialog, until } from '../browser.mjs';
+import { sleep } from '../../lib/wait.mjs';
 import { RUN, UI } from '../config.mjs';
 import { tabStop } from '../probes.mjs';
 import { check } from '../report.mjs';
@@ -91,6 +92,9 @@ export async function runSettings(fixtures) {
   check('die Spaltenauswahl ist gefüllt', options > 1, `${options} Optionen`);
   const rulesBefore = await rules();
   check('die Saison startet mit genau einer Regel', ruleText(rulesBefore) === 'status:asc', ruleText(rulesBefore));
+  // Two whole settings bodies, kept for the injection below: this one predates the rule the case
+  // is about, the next one has it in the place it was moved from.
+  const preAdd = await api(C('/settings'));
 
   await sortCard.locator('select').selectOption('due');
   await sortCard.getByRole('button', { name: '+ Hinzufügen' }).click();
@@ -101,6 +105,7 @@ export async function runSettings(fixtures) {
   await secondRule.getByRole('button', { name: 'Absteigend' }).click();
   const turned = await until(rules, (v) => v[1]?.dir === 'desc');
   check('…die Richtung wird mitgeschrieben', ruleText(turned) === 'status:asc | due:desc', ruleText(turned));
+  const preMove = await api(C('/settings'));
 
   await secondRule.locator('[data-arrow="up"]').click();
   const reordered = await until(rules, (v) => v[0]?.id === 'due');
@@ -108,19 +113,146 @@ export async function runSettings(fixtures) {
   // RTE-14: the focus goes with the rule, or the second ↑ undoes the first — focus would sit on
   // the position the rule left, which now holds the rule it swapped with. The restore runs off the
   // *server* array, so it lands a render after the write; polled for that reason (docs/VERIFYING.md).
-  const carried = await until(
-    () =>
-      s.evaluate(() => {
-        const row = document.activeElement?.closest('[data-rule-row]');
-        return {
-          row: row ? Array.from(document.querySelectorAll('[data-rule-row]')).indexOf(row) : -1,
-          arrow: document.activeElement?.getAttribute('data-arrow') ?? '',
-        };
-      }),
-    (v) => v.row === 0,
-    5000,
+  //
+  // The probe reads the row's **name** as well as its index, because „row 0" alone is also true of
+  // focus sitting on the *other* rule's arrow after a reorder that did not happen.
+  const sortFocus = () =>
+    s.evaluate(() => {
+      const row = document.activeElement?.closest('[data-rule-row]');
+      return {
+        row: row ? Array.from(document.querySelectorAll('[data-rule-row]')).indexOf(row) : -1,
+        arrow: document.activeElement?.getAttribute('data-arrow') ?? '',
+        rule: row ? (row.textContent ?? '').replace(/\s+/g, ' ').trim() : '',
+      };
+    });
+  const carried = await until(sortFocus, (v) => v.row === 0, 5000);
+  check(
+    'der Fokus wandert mit der verschobenen Regel (RTE-14)',
+    carried.row === 0 && !!carried.arrow && carried.rule.includes('Fällig'),
+    JSON.stringify(carried),
   );
-  check('der Fokus wandert mit der verschobenen Regel (RTE-14)', carried.row === 0 && !!carried.arrow, JSON.stringify(carried));
+
+  // ------------------------------------------------------------------ …and stays with it (#139)
+  //
+  // The half of RTE-14 that CI kept finding and this machine never could: a `GET /api/settings`
+  // that an already-committed write overtook lands late, puts the rule somewhere else for one
+  // commit, the arrow it is sitting on disables, Chromium drops focus — and a restore that had
+  // already spent itself leaves the keyboard at `<body>`. `{"row":-1,"arrow":""}`, on roughly a
+  // third of CI `browser` runs, never here (0/10 at 8× CPU throttle).
+  //
+  // **Injected, not raced.** Parking the read reproduces nothing — React Query cancels an
+  // in-flight fetch when a newer refetch starts, so a held response is discarded rather than
+  // applied (0/7, both shapes, docs/VERIFYING.md). What the product has to survive is the
+  // *commit*, so that is what the gate causes: one GET answered with a body the window has been
+  // past for two writes. Do not "improve" this back into a hold.
+  let sortReads = 0;
+  s.on('response', (r) => {
+    if (r.url().includes('/api/settings') && r.request().method() === 'GET') sortReads++;
+  });
+  /**
+   * Make this window re-read its settings, through the app's own cross-window signal — the one
+   * mechanism that refetches whatever `staleTime` says (a synthetic `focus` event does not; the
+   * five seconds in main.tsx would swallow it). `client/src/lib/broadcast.ts` states that the
+   * spec suppresses delivery only to the posting channel *object*, so a second channel in this
+   * window is delivered to the app's singleton. Held on `window` so it survives its own message.
+   */
+  const sortReread = () =>
+    s.evaluate(() => {
+      const w = /** @type {any} */ (window);
+      w.__gateChannel ??= new BroadcastChannel('auftakt');
+      w.__gateChannel.postMessage({ v: 1, type: 'invalidate' });
+    });
+  /**
+   * Answer exactly one settings GET with `body`, and report whether it really was answered.
+   *
+   * The quiet window first: a GET still in flight from the ▲'s own `invalidate()` would eat the
+   * shot, the injected commit would never happen, and the focus checks below would go red for a
+   * product that is working. `served` is what tells those two apart, which is why it is asserted
+   * rather than assumed — the same rule `check:boot` follows for injected causes.
+   */
+  const injectStale = async (body) => {
+    await until(
+      async () => {
+        const before = sortReads;
+        await sleep(250);
+        return before === sortReads;
+      },
+      (quiet) => quiet === true,
+      5000,
+    );
+    const state = { armed: false, served: false };
+    await s.route('**/api/settings', async (route) => {
+      if (state.armed && route.request().method() === 'GET') {
+        state.armed = false;
+        // Guarded like every route callback in this suite: it runs outside the runner's `try`, so
+        // a rejection here ends the process instead of failing one line (docs/VERIFYING.md). And
+        // `served` is set from the fulfil rather than before it — a swallowed rejection leaves the
+        // read *unanswered*, which renders the tab's ErrorState and unmounts the editor. That is
+        // the same misdiagnosis this flag exists to prevent, arriving through the guard.
+        await route
+          .fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+          .then(
+            () => {
+              state.served = true;
+            },
+            () => {},
+          );
+        return;
+      }
+      await route.continue().catch(() => {});
+    });
+    state.armed = true;
+    await sortReread();
+    return state;
+  };
+  const firstRule = sortCard.locator('[data-rule-row]').first();
+  /** Let the real answer through again, and wait for the list to be back on its feet. */
+  const sortRecover = async () => {
+    await s.unroute('**/api/settings');
+    await sortReread();
+    return until(() => firstRule.innerText(), (t) => t.includes('Fällig'), 8000);
+  };
+
+  const staleKnown = await injectStale(preMove);
+  const putBack = await until(() => firstRule.innerText(), (t) => t.includes('Status'), 8000);
+  check(
+    'ein überholter Lesevorgang stellt die Regel für einen Commit auf ihren alten Platz zurück (#139)',
+    staleKnown.served && putBack.includes('Status'),
+    `eingeschleust ${staleKnown.served}, Zeile 1 „${putBack.replace(/\s+/g, ' ').trim()}“`,
+  );
+  const chased = await until(sortFocus, (v) => v.row === 1, 5000);
+  check(
+    '…und der Fokus reist mit ihr, statt am <body> zu stranden',
+    chased.row === 1 && chased.arrow === 'up' && chased.rule.includes('Fällig'),
+    JSON.stringify(chased),
+  );
+  const recovered = await sortRecover();
+  const regained = await until(sortFocus, (v) => v.row === 0, 5000);
+  check(
+    '…und kommt mit ihr zurück, sobald die richtige Reihenfolge nachkommt',
+    recovered.includes('Fällig') && regained.row === 0 && !!regained.arrow && regained.rule.includes('Fällig'),
+    JSON.stringify(regained),
+  );
+
+  // The other shape, and the one a one-shot restore also dies on: a read overtaken by *two*
+  // writes answers with an array the rule was never in, so the row leaves the DOM altogether.
+  // A restore that stands down when it cannot find its rule strands the keyboard just the same.
+  const staleUnknown = await injectStale(preAdd);
+  const withoutRule = await until(() => sortCard.locator('[data-rule-row]').count(), (n) => n === 1, 8000);
+  check(
+    '…auch wenn der überholte Lesevorgang die Regel gar nicht kennt (#139)',
+    staleUnknown.served && withoutRule === 1,
+    `eingeschleust ${staleUnknown.served}, ${withoutRule} Zeile(n)`,
+  );
+  const recovered2 = await sortRecover();
+  const regained2 = await until(sortFocus, (v) => v.row === 0, 5000);
+  check(
+    '…wartet die Wiederherstellung auf den Commit, der sie wieder trägt',
+    recovered2.includes('Fällig') && regained2.row === 0 && !!regained2.arrow && regained2.rule.includes('Fällig'),
+    JSON.stringify(regained2),
+  );
+  // The rules are back to `due:desc | status:asc` on the server and in this window's cache, so the
+  // ✕ below computes its `removeAt(0)` from the truth rather than from an injected body.
 
   await sortCard.locator('[data-rule-row]').first().getByRole('button', { name: 'Entfernen' }).click();
   const dropped = await until(rules, (v) => v.length === 1);

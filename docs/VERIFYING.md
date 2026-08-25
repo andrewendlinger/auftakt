@@ -589,22 +589,41 @@ verified by hand, and the gate itself is written from this list.
   enough to close it: that frame beat React's commit, the arrow was not `disabled` yet, and
   focusing it was undone milliseconds later — the fix looked right and the walk still ended on
   `<body>`.
-- **…and the restore is a one-shot, which is what `check:browser`'s case P goes red on in CI
-  (three times so far, `{"row":-1,"arrow":""}`).** The healthy sequence is measurable and was
-  measured — `focusin [up]@row1 → focusout [up:off]@row1 → focusin [down]@row0`: the arrow the
-  rule travelled with is `disabled` at its new end of the list, Chromium clears focus off a
-  control that becomes disabled, and `TaskSortEditor`'s effect then focuses the *other* arrow.
-  What has no second chance is a render that arrives **after** that effect and puts the rule back
-  where it was for one commit — a superseded `GET /api/settings` from the previous write's
-  invalidate, which is what a slow runner produces. At index 1 of two it is the **▼** that is
-  disabled, so focus is cleared again, `restore.current` has already been consumed, and the next
-  render (the correct order) re-focuses nothing. `row: -1` is that state. Not reproducible on this
-  machine: 0/10 under 8× CPU throttling, 0/7 with the settings GET parked and delivered late in
-  both shapes (request held, and response fetched early and fulfilled late). Two ways out, both
-  bigger than the flake: re-arm the restore when the moved rule's index changes under it, or stop
-  a superseded settings read from overwriting a newer write — which is the last-writer-wins stop
-  `useSettingsArray.write` documents as deliberate. Left as it is; the case is asserting the right
-  thing.
+- **…and a one-shot restore is not enough, which is what `check:browser`'s case P went red on in
+  CI for a month (`{"row":-1,"arrow":""}`, roughly a third of `browser` runs; #139, fixed).** The
+  healthy sequence is measurable and was measured — `focusin [up]@row1 → focusout [up:off]@row1 →
+  focusin [down]@row0`: the arrow the rule travelled with is `disabled` at its new end of the
+  list, Chromium clears focus off a control that becomes disabled, and `TaskSortEditor`'s effect
+  then focuses the *other* arrow. What a one-shot has no answer for is a render arriving **after**
+  that effect which disturbs the rule for one commit — a superseded `GET /api/settings` from an
+  earlier write's invalidate, which is what a slow runner produces. Focus is cleared a second
+  time, the restore is already spent, and the next render (the correct order) re-focuses nothing.
+  `row: -1` is that state. The restore therefore **chases**: it stays armed and puts focus back on
+  every commit that drops it, standing down only when focus lands on a real element outside the
+  list. Two shapes have to survive that, and both are in the gate — a body that still knows the
+  rule but leaves it at an end (`i` unchanged, arrow disabled: an *index* test misses this), and a
+  body from before the rule existed at all (`i < 0`, so „the rule is gone" must not disarm).
+- **Reproducing a superseded read: fulfil one, never hold it.** Parking the GET does nothing —
+  React Query cancels the in-flight fetch when a newer refetch starts, so a held response is
+  discarded rather than applied (0/7 here, both shapes: request held, and response fetched early
+  and fulfilled late; also 0/10 under 8× CPU throttling). What the product has to survive is the
+  *commit*, so cause that instead: a one-shot `page.route` that answers a single `GET
+  /api/settings` with a body the window has been past for two writes, and — because
+  `invalidateQueries()` is the one thing that refetches regardless of `staleTime` — make the
+  window ask for it through the app's own cross-window signal,
+  `new BroadcastChannel('auftakt').postMessage({ v: 1, type: 'invalidate' })` from inside the
+  page. `client/src/lib/broadcast.ts` states the spec suppresses delivery only to the posting
+  channel *object*, so a second channel in the same window reaches the app's singleton; a
+  synthetic `focus` event does not work, the five-second `staleTime` swallows it. Two rules make
+  it honest: wait for a quiet window first, or a GET still in flight eats the shot and the case
+  reports a product failure for an injection that never happened — and assert the „was served"
+  flag as its own staging line, the way `check:boot` asserts every injected cause. The gate then
+  reproduces the *effect* (a commit that disturbs the rule) rather than the *cause* (a genuinely
+  late read); that is the trade, and it is the input the restore has to handle.
+- **The same one-shot shape is still in `CustomColumnManager`, deliberately.** Its list also comes
+  back from a refetch, so it has the same exposure — but it has never been observed doing it, and
+  its comment says so. A red there is not a new finding; it is this one, and the fix is written
+  out in `TaskSortEditor`.
 - **Setting `input[type=color].value` directly is deduped by React's value tracker.** Use the
   native setter.
 - **A status change re-sorts the task table**, so `.first()` addresses a different row afterwards.

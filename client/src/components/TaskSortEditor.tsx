@@ -60,33 +60,119 @@ export function TaskSortEditor({
    * synchronously; here the array belongs to the settings cache a level up, so the frame callback
    * beats the commit and reads the pre-move rows — the same reason `CustomColumnManager` waits
    * for its refetch, and the same shape of fix.
+   *
+   * **It is a chase, not a one-shot** (#139). A one-shot was this gate's loudest flake: it puts
+   * focus back once and is spent, and the commit that undoes it can still be on its way. The
+   * settings cache settles over however many commits it takes — the write publishes optimistically,
+   * the PATCH answers, and a `GET /api/settings` issued by an *earlier* write's invalidate can land
+   * after all of that and disturb the rule for one commit. On a slow runner it does. Each time it
+   * does, the arrow the rule is sitting on becomes `disabled` at an end (or its row leaves
+   * entirely), Chromium clears focus off it, and the keyboard is back at `<body>` with the moved
+   * rule on screen — the honest, if unlikely, defect `check:browser`'s case P reported as
+   * `{"row":-1,"arrow":""}`.
+   *
+   * So the restore stays armed and puts focus back on **every** commit that drops it:
+   *
+   * - The condition is „focus was dropped", not „the rule's index changed". A superseded body can
+   *   leave the rule where it is and still disable its arrow — two rules, ▲ pressed on the second,
+   *   focus lands on ▼ at row 0; a body from before the *other* rule existed keeps this one at
+   *   index 0 and makes it last, so ▼ disables and focus goes. An index test calls that „nothing
+   *   moved" and leaves the keyboard stranded.
+   * - A commit that does not carry the rule **at all** keeps the restore armed. Einstellungen
+   *   writes in quick succession — add, then turn, then move — so a read overtaken by two writes
+   *   answers with an array the rule was never in. Standing down there is the same dead end in a
+   *   different shape.
+   * - **The user's own pointer or key ends it, at the moment it happens.** A commit cannot tell
+   *   „focus is on `<body>` because this list dropped it" from „…because the user clicked an
+   *   unfocusable patch of the page", and the difference is the whole of what an armed restore
+   *   may do: left armed, it would wait for the next `task_sort` change — a second window
+   *   reordering the rules — and pull the keyboard into this card, scrolling the page back to it,
+   *   for a change the user did not make in this window. Waiting for a commit to notice is too
+   *   late; a `pointerdown` or `keydown` outside the `<ol>` stands the restore down when it
+   *   happens. **The arrow's own state cannot decide this** — the sibling window's reorder is
+   *   exactly what disables the arrow the restore is holding, so „my arrow went away, this must
+   *   be my commit" is true of the case it is meant to exclude. `held` is the second guard, not
+   *   the first: it catches focus leaving without any input of the user's at all.
+   *
+   * It stands down on that input, when focus lands on a real element outside this `<ol>` — which
+   * includes „Spalte wählen…" and „+ Hinzufügen", so adding a rule ends the move on its own —
+   * when the arrow it holds is still there and still enabled, and in `removeAt`, so removing the
+   * moved rule cannot leave a dead id armed against a later re-add of the same column.
+   *
+   * The other half of not pulling focus back unasked is that this effect barely runs:
+   * `useSettingsArray` memoises on the raw value's identity and React Query hands back the
+   * *equal* array it already held, so a settings write that changes something else re-renders
+   * nothing here. This effect runs when `task_sort` really changed — which is also why the
+   * PATCH response, deeply equal to what the write already published, produces no commit of its
+   * own between the move and the read that overtakes it.
    */
-  const restore = useRef<{ id: string; dir: -1 | 1 } | null>(null);
+  const restore = useRef<{ id: string; dir: -1 | 1; held: HTMLButtonElement | null } | null>(null);
   const move = (i: number, dir: -1 | 1) => {
     const next = arrayMove(value, i, dir);
     if (next === value) return;
-    restore.current = { id: value[i]!.id, dir };
+    // `held` starts as the arrow the press is on — the click focused it, and the commit that
+    // lands the rule at an end is what disables it. A press that somehow arrives without focus
+    // leaves it null, which reads as „owed" rather than as „the user blurred it".
+    const el = document.activeElement;
+    restore.current = { id: value[i]!.id, dir, held: el instanceof HTMLButtonElement ? el : null };
     onChange(next);
   };
+  // Armed is a ref, so there is no render to key this on — and it needs none: a listener that
+  // only ever nulls a ref is cheaper than the re-render that arming as state would cost, and it
+  // cannot miss the gesture by being attached one commit late. Capture phase, so a handler that
+  // stops propagation cannot hide the gesture from it.
+  useEffect(() => {
+    const standDown = (e: Event) => {
+      const t = e.target;
+      if (!(t instanceof Node) || !listRef.current?.contains(t)) restore.current = null;
+    };
+    document.addEventListener('pointerdown', standDown, true);
+    document.addEventListener('keydown', standDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', standDown, true);
+      document.removeEventListener('keydown', standDown, true);
+    };
+  }, []);
   useEffect(() => {
     const target = restore.current;
-    if (!target) return;
-    restore.current = null;
-    const i = value.findIndex((r) => r.id === target.id);
     const list = listRef.current;
-    if (i < 0 || !list) return;
-    // Focus the user moved elsewhere in the meantime is left alone.
+    if (!target || !list) return;
     const active = document.activeElement;
-    if (active && active !== document.body && !list.contains(active)) return;
+    if (active && active !== document.body) {
+      // Focus the user moved out of this list is left alone, and ends the restore. Inside it,
+      // there is nothing to repair — the row is keyed by rule id, so the DOM node travels with
+      // the rule and focus travels with the node.
+      if (!list.contains(active)) restore.current = null;
+      return;
+    }
+    // Focus is nowhere, and no input of the user's has stood the restore down. The second guard:
+    // an arrow still standing there, still enabled, means focus left it some other way.
+    const held = target.held;
+    if (held && held.isConnected && !held.disabled) {
+      restore.current = null;
+      return;
+    }
+    const i = value.findIndex((r) => r.id === target.id);
+    // Absent for this commit — an overtaken read from before the rule existed. Wait for the one
+    // that has it rather than standing down; `held` is off the DOM meanwhile, which is what keeps
+    // the wait from being mistaken for a blur.
+    if (i < 0) return;
     const row = list.querySelectorAll<HTMLElement>('[data-rule-row]')[i];
     const arrow = (d: -1 | 1) => row?.querySelector<HTMLButtonElement>(`[data-arrow="${d === -1 ? 'up' : 'down'}"]`);
     // The arrow pointing the way the user was going, unless the move just disabled it at an end.
     const same = arrow(target.dir);
-    (same && !same.disabled ? same : arrow(target.dir === -1 ? 1 : -1))?.focus();
+    const next = same && !same.disabled ? same : arrow(target.dir === -1 ? 1 : -1);
+    target.held = next ?? null;
+    next?.focus();
   }, [value]);
   const setDir = (i: number, dir: 'asc' | 'desc') =>
     onChange(value.map((r, idx) => (idx === i ? { ...r, dir } : r)));
-  const removeAt = (i: number) => onChange(value.filter((_, idx) => idx !== i));
+  const removeAt = (i: number) => {
+    // The rule the restore is chasing may be this one; a dead id left armed would jump focus
+    // onto the same column the day it is added back.
+    restore.current = null;
+    onChange(value.filter((_, idx) => idx !== i));
+  };
   const add = () => {
     if (!toAdd) return;
     onChange([...value, { id: toAdd, dir: 'asc' }]);
