@@ -857,6 +857,13 @@ async function ensureBackupDir(): Promise<string> {
 let chores: Promise<unknown> | null = null;
 
 /**
+ * Settles once the bundled server answers /api/health; the chores gate on it. Reassigned
+ * in whenReady to the actual startServer() promise — the resolved default is for dev,
+ * where the server runs outside this process (and runStartupChores no-ops anyway).
+ */
+let serverReady: Promise<void> = Promise.resolve();
+
+/**
  * The startup backup and the update check, held until the boot screen has gone.
  *
  * Still not awaited (ELP-08) — the window must not wait on disk I/O — but "not awaited"
@@ -882,6 +889,15 @@ function runStartupChores(): Promise<unknown> {
   if (chores) return chores;
   if (isDev) return (chores = Promise.resolve());
   chores = (async () => {
+    // window-all-closed can release the chores while the server is still importing — a
+    // closable window exists that early since PR #144. A backup POSTed then died on
+    // ECONNREFUSED in milliseconds and settled this memoised promise as failed for the
+    // whole launch, silently skipping the one backup the last-window path exists to
+    // save. So the chores wait for the health check first; the quit path's
+    // QUIT_CHORES_MS cap still bounds how long „close the window" can take, and every
+    // other caller arrives long after the server is up, so the await is free for them
+    // (PR144-04).
+    await serverReady;
     const backupDir = await ensureBackupDir();
     if (backupDir) await runStartupBackup(ORIGIN, backupDir);
   })().catch(reportBackupProblem);
@@ -938,6 +954,8 @@ let stopBootTrace: (() => Promise<void>) | null = null;
 let startupDone = false;
 /** Set once the last window has closed and the quit is only waiting on the chores. */
 let quitting = false;
+/** A window was asked for (relaunch or Dock click) while startup was still running. */
+let windowRequested = false;
 
 app.on('second-instance', () => {
   // A second launch opens a NEW window (the multi-window convention — Chrome, VS Code):
@@ -956,8 +974,18 @@ app.on('second-instance', () => {
   // opening a window here is the only way they get one at all. Call off the quit as well
   // as opening it, or app.quit() would tear the new window down a moment later and the
   // relaunch would read as an app that opened and died.
-  if (!startupDone) return;
+  //
+  // The quit is called off *before* the startupDone gate, and the gate queues instead of
+  // dropping: since the window shows before the server starts (PR #144), the last window
+  // can close — arming the quit — while startup is still running, and a relaunch landing
+  // in that gap used to be swallowed while the armed quit killed the instance. Clearing
+  // `quitting` alone would trade that for a headless survivor, so the request is
+  // remembered and answered right after startupDone flips (PR144-02).
   quitting = false;
+  if (!startupDone) {
+    windowRequested = true;
+    return;
+  }
   void createWindow();
 });
 
@@ -1053,6 +1081,34 @@ app.whenReady().then(async () => {
   // on Windows, since `?.` short-circuits the argument too.
   app.dock?.setMenu(buildDockMenu({ onNewWindow: whenStarted(() => void createWindow()) }));
 
+  // A Dock click used to be answered only when *no* window existed, and a minimized window is
+  // still a window — so with both windows minimized the handler did nothing, and the one window
+  // that did come back came back without it; the other was reachable only from the Fenster menu
+  // or Exposé (WP-67). activatePlan holds the three-way decision and says why each branch is what
+  // it is, including why it names nothing as the restorer of that one window; the loop is the
+  // same shape notifyBackupConfigChanged uses, because `getAllWindows()` is the only list of
+  // windows this app keeps (see liveWindow).
+  //
+  // **The event's second argument is not read** (WP-67b). It is macOS' `hasVisibleWindows`, and it
+  // is `true` on this platform while every window is minimized — the state the fix above exists
+  // for — so the first version of this handler passed it in and never reached its own new branch.
+  // activatePlan derives „on screen" from the windows instead; the measurement is in that file.
+  //
+  // Registered before the first window exists, because a closable window is on screen for
+  // the whole server start (PR #144): a macOS user who closes it and clicks the Dock icon
+  // must not find a dead handler. The create half needs the server, so during startup it
+  // queues like second-instance does (answered right after startupDone below); the restore
+  // half is pure window state and stays live throughout (PR144-03).
+  app.on('activate', () => {
+    const plan = activatePlan(BrowserWindow.getAllWindows());
+    if (plan.create) {
+      if (startupDone) void createWindow();
+      else windowRequested = true;
+    }
+    // All of them come back. Which one ends up frontmost is macOS's call, not this loop's.
+    for (const w of plan.restore) w.restore();
+  });
+
   // The window first, the server second: the first thing a launch puts on screen is the
   // cream window — ~0.4 s after the double-click — and only then does it pay for the
   // 3.4 MB server import and the health poll, behind that window. The reverse order was
@@ -1062,7 +1118,10 @@ app.whenReady().then(async () => {
 
   if (!isDev) {
     try {
-      await startServer();
+      // Held in serverReady too, so the chores share the same health-check gate — a
+      // rejection lands in their .catch(reportBackupProblem) alongside the dialog below.
+      serverReady = startServer();
+      await serverReady;
     } catch (err) {
       // Nothing works without the bundled server, and every failure here is silent by
       // nature (a health-check timeout, an unresolvable ESM import). Unhandled, the
@@ -1081,6 +1140,11 @@ app.whenReady().then(async () => {
 
   await loadWindow(win, isSecondary);
   startupDone = true;
+  // A relaunch or Dock click that arrived during startup was queued rather than answered
+  // (second-instance / activate above). If its window still does not exist, open it now;
+  // the count guard keeps a request absorbed while the first window was alive absorbed —
+  // answering that one would open a second window nobody asked for.
+  if (windowRequested && BrowserWindow.getAllWindows().length === 0) void createWindow();
 
   // The renderer normally releases these (see runStartupChores). It might not: a crashed
   // or wedged renderer must not cost the user their backup for the launch — and that
@@ -1098,24 +1162,7 @@ app.whenReady().then(async () => {
       void runStartupChores();
     }, 8000);
 
-  // A Dock click used to be answered only when *no* window existed, and a minimized window is
-  // still a window — so with both windows minimized the handler did nothing, and the one window
-  // that did come back came back without it; the other was reachable only from the Fenster menu
-  // or Exposé (WP-67). activatePlan holds the three-way decision and says why each branch is what
-  // it is, including why it names nothing as the restorer of that one window; the loop is the
-  // same shape notifyBackupConfigChanged uses, because `getAllWindows()` is the only list of
-  // windows this app keeps (see liveWindow).
-  //
-  // **The event's second argument is not read** (WP-67b). It is macOS' `hasVisibleWindows`, and it
-  // is `true` on this platform while every window is minimized — the state the fix above exists
-  // for — so the first version of this handler passed it in and never reached its own new branch.
-  // activatePlan derives „on screen" from the windows instead; the measurement is in that file.
-  app.on('activate', () => {
-    const plan = activatePlan(BrowserWindow.getAllWindows());
-    if (plan.create) void createWindow();
-    // All of them come back. Which one ends up frontmost is macOS's call, not this loop's.
-    for (const w of plan.restore) w.restore();
-  });
+  // The 'activate' handler is registered above, before the first window — see PR144-03.
 });
 
 /** Longest a quit will wait on the startup chores it just released. */

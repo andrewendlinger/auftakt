@@ -3001,6 +3001,21 @@ finally looks like what it always was on paper: cream, then the 200 ms cross-fad
   to unparented if the user closed it during a hung start).
 - `AUFTAKT_BOOT_TRACE` now also records the window's first present.
 
+**The follow-up family the reversal created.** A closable window now exists for the whole
+server start, and the second review round (Opus · medium, on the PR) found three handlers
+still assuming it cannot — all one root cause: closing the cream window during the start
+released the chores against a server that was not listening, so the launch's backup silently
+died on ECONNREFUSED (fixed by gating the chores on the shared `serverReady` promise, still
+bounded by `QUIT_CHORES_MS` — PR144-04); a relaunch landing in the armed-quit gap was
+swallowed while the quit killed the instance, and clearing `quitting` alone would only have
+traded that for a headless survivor, so window requests arriving during startup are *queued*
+and answered right after `startupDone` (PR144-02); and the `activate` handler was registered
+only at the end of whenReady, leaving a macOS user who closed the cream window with dead Dock
+clicks — it now registers before the first window, restore-branch live throughout,
+create-branch queueing like second-instance (PR144-03). The lesson generalises: showing the
+window earlier moved the start of "a user can act" back by seconds, and every startup-phase
+handler had to be re-read against that.
+
 **What deliberately did not change.** `GESTURE_DEADLINE` stays 1200 ms — the boot log from the
 same device (149 entries over twelve days: 37 cold boots, 4 completed gestures, 2 of 31 on the
 internal display) says the gesture rarely plays there, and the standing answer stands: the
