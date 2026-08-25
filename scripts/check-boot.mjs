@@ -23,7 +23,7 @@
  * (a) *Invariants*, on every single boot: the legal outcome/why sets, `v: 3`, the clocks in order
  *     and inside `endMs`, `frames` present exactly when the gesture started, `abort:hitch` if and
  *     only if a judged delta reached `HITCH_MS`, `drops <= n` (the WP-61b cap, as arithmetic), the
- *     reveal beating bootBail, the report fitting the cap `electron/bootLog.ts` applies to it, and
+ *     reveal beating bootBail, the report fitting the cap `electron/appLog.ts` applies to it, and
  *     the two channels — `localStorage` and the `bootSettled` bridge — carrying the same object.
  * (b) *State*: `.boot-show` observed as „svg visible while every clock but the dead man's switch
  *     still sits paused", and the phase-A invariant that a cross which never played shows nothing.
@@ -52,8 +52,11 @@
  * reds in six runs before it was understood (docs/VERIFYING.md).
  *
  * **What it does not touch.** The animation itself, aesthetics, exact durations, anything that
- * needs the packaged app (the `boot-log.jsonl` writer, its fallback lines and the German digest
- * are `check:unit`'s), and the open WP-61b question of whether pre-rastering also makes the
+ * needs the packaged app (the `app-log.jsonl` writer, its fallback lines, the German digest, the
+ * one-time rename off the pre-WP-69 `boot-log.jsonl` and the filtering that keeps runtime lines
+ * out of a boot summary are `client/src/lib/appLog.test.ts`'s, under `check:unit` — this gate runs
+ * no Electron main and asserts against the report object the *page* produces, so none of that is
+ * reachable from here), and the open WP-61b question of whether pre-rastering also makes the
  * following frames cheap — that is a trace pair on real hardware, not something a headless browser
  * can answer. This gate asserts the mechanism, never the benefit.
  *
@@ -250,8 +253,8 @@ async function assertBundle() {
 }
 
 /**
- * The cap the main process applies to a report before it reaches `boot-log.jsonl`, read out of
- * `electron/bootLog.ts` so the two cannot drift.
+ * The cap the main process applies to a report before it reaches `app-log.jsonl`, read out of
+ * `electron/appLog.ts` so the two cannot drift.
  *
  * A renderer report that outgrows this is not a smaller diagnostic, it is *no* diagnostic: main
  * writes `{"outcome":"invalid-report"}` instead. Nothing else in the repository checks that the
@@ -260,7 +263,7 @@ async function assertBundle() {
  * and not defaulted.
  */
 function reportCap() {
-  const src = readFileSync(join(root, 'electron', 'bootLog.ts'), 'utf8');
+  const src = readFileSync(join(root, 'electron', 'appLog.ts'), 'utf8');
   const m = /BOOT_REPORT_MAX_CHARS\s*=\s*(\d+)/.exec(src);
   return m ? Number(m[1]) : NaN;
 }
@@ -274,7 +277,7 @@ function reportCap() {
  * Four jobs, all of them recorders rather than drivers except where a case asks for a cause:
  *
  * - the **bridge stub**, which is how the report is captured. `bootSettled` is the channel the
- *   Electron main process reads and `boot-log.jsonl` is written from, so recording it is the
+ *   Electron main process reads and `app-log.jsonl` is written from, so recording it is the
  *   faithful route; the `localStorage` copy is read afterwards and compared against it. The stub
  *   is omitted entirely for case M, which is what a plain browser looks like.
  * - the **phase log** (`data-boot`) and the **overlay's class log**, each sampled with the svg's
