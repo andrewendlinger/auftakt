@@ -2993,7 +2993,10 @@ finally looks like what it always was on paper: cream, then the 200 ms cross-fad
   secondary windows too.
 - The menu is set *before* the first show, and that order is load-bearing: on Windows a
   window presented before `setApplicationMenu` wears Electron's default English menu for the
-  whole server start.
+  whole server start. In exchange its handlers are gated on `startupDone` — armed but
+  waiting, like `second-instance` — because every entry needs the server, and a Cmd/Strg+N
+  during the hold must be a no-op rather than a „hilft eine Neuinstallation" dialog about a
+  server that is two seconds from existing (found by review, PR144-01).
 - The server-start failure dialog is parented to the visible window (`messageBox` falls back
   to unparented if the user closed it during a hung start).
 - `AUFTAKT_BOOT_TRACE` now also records the window's first present.

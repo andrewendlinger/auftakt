@@ -1017,31 +1017,41 @@ app.whenReady().then(async () => {
     }
   }
 
+  // The menu is installed before the server for the default-menu reason below — which
+  // arms its handlers while nothing is listening yet. Every entry needs the server (a
+  // new window loads from it; export, import and the backup folder speak to it), so
+  // each waits for startup the same way second-instance does: silently. A click during
+  // the cream hold is a no-op, not a „hilft eine Neuinstallation" dialog about a server
+  // that is two seconds from existing.
+  const whenStarted = (fn: () => void) => () => {
+    if (startupDone) fn();
+  };
   Menu.setApplicationMenu(
     buildMenu({
-      onNewWindow: () => void createWindow(),
+      onNewWindow: whenStarted(() => void createWindow()),
       // Menu clicks carry no renderer context, so the season comes from the focused window —
       // resolved once, at the click, rather than again inside each helper.
-      onExport: () => {
+      onExport: whenStarted(() => {
         const win = BrowserWindow.getFocusedWindow();
         void windowSeason(win).then((id) => exportDatabase(id, win));
-      },
-      onImport: () => {
+      }),
+      onImport: whenStarted(() => {
         const win = BrowserWindow.getFocusedWindow();
         void windowSeason(win).then((id) => importDatabase(id, win));
-      },
-      onChooseBackup: () => void chooseBackupDir(BrowserWindow.getFocusedWindow()),
+      }),
+      onChooseBackup: whenStarted(() => void chooseBackupDir(BrowserWindow.getFocusedWindow())),
     }),
   );
   // Beside the application menu, and for the same reason: both are app-level state, neither
   // belongs to a window, and set here they are in place before the first one exists — a
-  // right-click on the Dock icon during a slow launch already has its entry. Since the
-  // window below shows before the server starts, this order is load-bearing rather than
-  // tidy: on Windows a window presented before setApplicationMenu wears Electron's default
-  // English menu (File/View/…) for the whole server start, then swaps. `app.dock` is
-  // typed `Dock | undefined` (undefined off macOS), so the optional call *is* the platform
-  // branch: nothing is built on Windows, since `?.` short-circuits the argument too.
-  app.dock?.setMenu(buildDockMenu({ onNewWindow: () => void createWindow() }));
+  // right-click on the Dock icon during a slow launch already has its entry (a no-op until
+  // startup finishes, like everything above). Since the window below shows before the
+  // server starts, this order is load-bearing rather than tidy: on Windows a window
+  // presented before setApplicationMenu wears Electron's default English menu (File/View/…)
+  // for the whole server start, then swaps. `app.dock` is typed `Dock | undefined`
+  // (undefined off macOS), so the optional call *is* the platform branch: nothing is built
+  // on Windows, since `?.` short-circuits the argument too.
+  app.dock?.setMenu(buildDockMenu({ onNewWindow: whenStarted(() => void createWindow()) }));
 
   // The window first, the server second: the first thing a launch puts on screen is the
   // cream window — ~0.4 s after the double-click — and only then does it pay for the
