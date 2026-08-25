@@ -1009,6 +1009,20 @@ function logMain(entry: Record<string, unknown>): void {
 }
 
 /**
+ * The same, for a line that arrived from a window (WP-69e). Its one caller is the `log-event`
+ * handler at the bottom of this file, which is what makes `src` honest: a source is decided by
+ * the side of the IPC boundary a line came in on, never by what the entry claims — `appLogLine`
+ * spreads the meta last precisely so a renderer cannot say `src:'main'`.
+ *
+ * A sibling of `logMain` rather than a parameter on it: `src` would then be a value eight call
+ * sites pass, and the whole point is that none of them can.
+ */
+function logRenderer(entry: Record<string, unknown>): void {
+  if (isDev) return;
+  writeAppLog(app.getPath('userData'), entry, { app: app.getVersion(), src: 'renderer' });
+}
+
+/**
  * Name, message and stack of a thrown value — without trusting it to be an `Error`, or to
  * have readable properties. `err.message` can be a getter that throws, and this runs inside
  * handlers whose own failure would take out the report they exist to write.
@@ -1408,6 +1422,52 @@ ipcMain.handle('get-diagnostics', async () => ({
 ipcMain.handle('save-diagnostics', (_e, ref: unknown, report: unknown) =>
   saveDiagnostics(ref, report),
 );
+
+/**
+ * How many lines the windows of one run may add to the log between them (WP-69e).
+ *
+ * The renderer is the untrusted side, and the failure this bounds is not a hostile one: a render
+ * error inside a component that re-renders, or a rejected poll, produces the same line hundreds
+ * of times a minute. `client/src/lib/logEvent.ts` already collapses repeats and stops at 50 per
+ * page, but that half lives where the failure is — a wedged renderer is exactly the process whose
+ * bookkeeping cannot be relied on, and this side is the one holding the file handle.
+ *
+ * 200 against a file that keeps 500 lines: a run that spends its whole budget still leaves the
+ * boot reports and main's own lines readable around it.
+ */
+const RENDERER_LOG_BUDGET = 200;
+/** Accepted renderer lines this run, and — at `RENDERER_LOG_BUDGET + 1` — the mute latch. */
+let rendererLines = 0;
+
+/**
+ * One line from a window. Fire-and-forget: the reply is empty and the preload discards it.
+ *
+ * Validated to a plain object here and capped field by field in `appLog.ts`, so this handler
+ * decides *whether* a line is written and that module decides what it may hold. A payload that
+ * is not an object is dropped without a marker line, unlike an unwritable entry from this
+ * process: the renderer can send them in a loop, and a marker per attempt would turn the log
+ * into the disk-filling channel every other rule here exists to prevent. Everything the app's
+ * own code sends is built by `logAppEvent`, which cannot produce one.
+ */
+ipcMain.handle('log-event', (_e, payload: unknown) => {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return;
+  if (rendererLines >= RENDERER_LOG_BUDGET) {
+    // Once, not once per dropped line — the latch is the counter itself going one past the
+    // budget. A log whose tail is a thousand identical „muted" lines has lost the same history
+    // the budget exists to protect.
+    if (rendererLines === RENDERER_LOG_BUDGET) {
+      rendererLines += 1;
+      logRenderer({
+        level: 'warn',
+        event: 'renderer-log-muted',
+        msg: `${RENDERER_LOG_BUDGET} renderer lines this run — further ones are dropped until restart`,
+      });
+    }
+    return;
+  }
+  rendererLines += 1;
+  logRenderer(payload as Record<string, unknown>);
+});
 /** Whether any renderer settle arrived, so the 8 s fallback can log its absence. */
 let bootReported = false;
 // Sent from the boot overlay's single exit path, not from React — see runStartupChores.

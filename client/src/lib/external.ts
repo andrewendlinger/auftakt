@@ -62,10 +62,22 @@ declare global {
        * `client/index.html`, not from React — React never learns the overlay existed.
        * Releases the startup chores the main process is holding back (see main.ts).
        * The optional payload is the boot report, which main appends to
-       * boot-log.jsonl in userData (electron/bootLog.ts).
+       * app-log.jsonl in userData (electron/appLog.ts).
        */
       bootSettled?: (report?: unknown) => Promise<void>;
-      /** The last boots, already summarized by main — see electron/bootLog.ts (WP-54). */
+      /**
+       * One runtime line into that same app-log.jsonl (WP-69e) — a window error, an unhandled
+       * rejection, a React render error. Fire-and-forget in both directions: it answers
+       * nothing, and a caller learns nothing about whether the line was written, because the
+       * places that call it are error paths that have no better plan either way.
+       *
+       * `unknown` rather than a shape, deliberately: main is the side that decides what a line
+       * may contain — it validates the payload, budgets how many arrive per run and caps the
+       * fields — so a type here would only describe an intention. Call it through
+       * `lib/logEvent.ts`, which is where the renderer's own dedupe and cap live.
+       */
+      logEvent?: (payload: unknown) => void;
+      /** The last boots, already summarized by main — see electron/appLog.ts (WP-54). */
       getDiagnostics?: () => Promise<Diagnostics>;
       /**
        * Write the full log + machine details to the desktop as `Auftakt-Diagnose-<ref>.txt`,
