@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { exportFileName, labelSlug } from '../../../electron/exportName';
 
 /**
- * Same arrangement as backupDir.test.ts and bootLog.test.ts: the module lives in `electron/`,
+ * Same arrangement as backupDir.test.ts and appLog.test.ts: the module lives in `electron/`,
  * imports nothing from `electron`, and this suite is the only automated run that reaches it.
  *
  * Why it is worth pinning: the season label reaching this function is free text the user typed

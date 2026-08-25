@@ -6,7 +6,7 @@ import { readSeasonTerms } from '../../../electron/seasonTerms';
 
 /**
  * The module under test lives in `electron/`, not here — same arrangement as `backupDir`,
- * `bootLog`, `cascade`, `exportName` and `windowBounds`: Vitest is installed in `client/` only,
+ * `appLog`, `cascade`, `exportName` and `windowBounds`: Vitest is installed in `client/` only,
  * and this is the only automated run that reaches Electron main-process code at all.
  *
  * Why it is worth a suite of its own: `readSeasonTerms` feeds three dialogs the customer sees at

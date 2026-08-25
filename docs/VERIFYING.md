@@ -40,7 +40,7 @@ builds the client itself, serves it from the real server on `:4327` against a th
 and drives seventeen cold boots. It needs neither `:5317` nor `.demo`, so unlike `check:browser` it
 runs happily beside a live `npm run demo`. Run it after anything in the overlay in
 `client/index.html` — the watchdog's constants, the phases, the report's fields — and after a
-change to the caps in `electron/bootLog.ts`, which it reads.
+change to the caps in `electron/appLog.ts`, which it reads.
 
 **The Übersicht is `#/dashboard`. `#/` is the season landing page** — a different screen with no
 task tiles and no „Nächste Termine". Asserting dashboard content against `#/` fails against
@@ -236,20 +236,27 @@ verified by hand, and the gate itself is written from this list.
   under different rules, so a log holding several generations must not be compared across the
   boundaries. Old lines are *stricter*: a v:1 `tail.verdict` of `hitch` needed only 50 ms, and
   a v:2 `abort:drops` can name a window v:3 would pass. `grep '"v":3'` separates them.
-- **Under Electron the reports accumulate: `boot-log.jsonl` in userData.** One line per settle —
+- **Under Electron the reports accumulate: `app-log.jsonl` in userData.** One line per settle —
   including warm reloads (a season switch writes `skip / warm`; that line is the reload proving
   itself, not noise) — wrapped by the main process with `at` (ISO time, main's clock, so a
-  renderer cannot spoof it) and `app` (version). Capped at 64 KB, then trimmed to the last 100
-  lines. A launch whose renderer never reported still gets a line, through one of two doors: a
+  renderer cannot spoof it) and `app` (version). Since WP-69 that file is **shared with the
+  runtime lines** main writes for a caught failure, and the discriminator is `src`: a boot report
+  never carries it, every runtime line always does. Past 512 KB it is rewritten to the newest
+  lines fitting *both* 500 lines and 256 KB, whole lines only. A launch whose renderer never
+  reported still gets a line, through one of two doors: a
   crashed or wedged renderer that lives past 8 s gets `{"outcome":"no-report","why":"fallback-8s"}`
   from the chores fallback, and a launch *quit* before the overlay settled — Cmd-Q or Ctrl-C
   during the hold or the gesture; on macOS the 8 s timer dies with the process — gets
   `{"outcome":"no-report","why":"quit"}` from the before-quit/SIGINT hooks. An empty log after a
   launch therefore always means the diagnostics did not run, never that the boot was merely
   short-lived. Read it with
-  `tail -n 5 ~/Library/Application\ Support/Auftakt/boot-log.jsonl | jq .` (Windows:
-  `%APPDATA%\Auftakt\boot-log.jsonl`). Dev mode writes nothing, matching the overlay it reports
-  on. The writer is `electron/bootLog.ts`, electron-import-free so `check:unit` covers it.
+  `jq -c 'select(has("src") | not)' ~/Library/Application\ Support/Auftakt/app-log.jsonl | tail -n 5`
+  (Windows: `%APPDATA%\Auftakt\app-log.jsonl`) — a plain `tail` now mixes runtime lines in, which
+  is exactly what `summarizeBootLog` filters out with `isBootLine`. An installation that predates
+  WP-69 still has `boot-log.jsonl`; main renames it onto the new name on the first start after the
+  update — idempotent, and never over an `app-log.jsonl` that already exists — so the history
+  survives. Dev mode writes nothing, matching the overlay it reports on. The writer is
+  `electron/appLog.ts`, electron-import-free so `check:unit` covers it.
 - **Since WP-54 the customer can reach it too**, which is the point of the file: Einstellungen →
   „Programm & Hilfe" → „Feedback senden…" writes the whole log into a bundle on the desktop and
   asks them to attach it. `summarizeBootLog`'s five-line digest is now the **fallback** — it rides

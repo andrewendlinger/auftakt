@@ -4,7 +4,7 @@ import type { Announcement } from '../api/types';
  *
  * `electron/updateCheck.ts` is the *Electron-free* half of the update check — its own docstring
  * says so, it imports nothing, and it is already the file the client Vitest suite reaches into
- * for the four cross-tree tests (`backupDir`, `bootLog`, `cascade`, `exportName`). The rule in
+ * for the four cross-tree tests (`backupDir`, `appLog`, `cascade`, `exportName`). The rule in
  * docs/ARCHITECTURE.md is that React never imports Electron **APIs**; a numeric compare of two
  * `X.Y.Z` tags we mint ourselves is not one, and it is exactly the same question the update card
  * asks about a release tag. Answering it twice in one app is how a `1.10.0`-vs-`1.9.0`

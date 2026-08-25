@@ -3,7 +3,7 @@ import { WINDOW_MINIMUM, type Rect } from '../../../electron/cascade';
 import { usableBounds, type SavedWindow } from '../../../electron/windowBounds';
 
 /**
- * Same arrangement as cascade.test.ts, backupDir.test.ts and bootLog.test.ts: the module lives
+ * Same arrangement as cascade.test.ts, backupDir.test.ts and appLog.test.ts: the module lives
  * in `electron/`, imports nothing from `electron`, and this suite is the only automated run
  * that reaches it.
  *

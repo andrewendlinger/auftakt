@@ -182,7 +182,7 @@ What the headless checks cannot cover: real `BrowserWindow`s, the menu, the casc
 focused-window season resolution. Run with at least two seasons present.
 
 - [ ] „Neues Fenster" / Cmd+N (Ctrl+N) opens a second window, cascaded off the first — not
-      perfectly stacked — and **without** the boot gesture. `boot-log.jsonl` gains a
+      perfectly stacked — and **without** the boot gesture. `app-log.jsonl` gains a
       `skip / secondary` line; a reload of that window logs `skip / warm`.
 - [ ] Press it **four times on a laptop panel** (1440×900 or smaller): four windows you can
       tell apart, none of them under the menu bar or past the screen edge. The old wrap reset

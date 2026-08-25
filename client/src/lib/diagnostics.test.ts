@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-// Reaches up into electron/, like bootLog.test.ts: `check:unit` is the only automated run
+// Reaches up into electron/, like appLog.test.ts: `check:unit` is the only automated run
 // that touches main-process code at all, and this module is written to be reachable from it.
 import {
   buildDiagnosticsBundle,

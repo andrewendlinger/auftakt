@@ -3,7 +3,7 @@ import { activatePlan } from '../../../electron/activate';
 
 /**
  * The module under test lives in `electron/`, not here — same arrangement as `backupDir`,
- * `bootLog`, `cascade` and `exportName`, and for a sharper reason than any of them: this is a
+ * `appLog`, `cascade` and `exportName`, and for a sharper reason than any of them: this is a
  * Dock click. No `check:*` script drives it, `check:browser` drives a page rather than a process,
  * and launching the real app opens a window on somebody's desktop. Reading the code is the only
  * other check there is, which is exactly why the decision was extracted to be readable here.

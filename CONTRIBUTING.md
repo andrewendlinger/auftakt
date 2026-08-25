@@ -27,8 +27,8 @@ Bug reports and ideas are genuinely useful. Helpful things to include:
   the rest in
 - for anything that goes wrong during startup: the `Auftakt-Diagnose-<Kennung>.txt` that same
   dialog writes to your desktop when you report a *Fehler*, and asks you to attach. It carries the
-  whole of `boot-log.jsonl` — the only record of what the boot animation actually did — plus the
-  machine's details
+  whole of `app-log.jsonl` — the only record of what the boot animation actually did, and of
+  anything the app caught going wrong while it ran — plus the machine's details
 - the app version (Einstellungen → *Programm & Hilfe* → **Version & Updates**)
 - your OS, and whether you are running the packaged app or the dev server
 - whether it reproduces against `npm run demo`, which uses invented data
