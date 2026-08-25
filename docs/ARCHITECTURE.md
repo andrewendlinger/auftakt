@@ -742,8 +742,10 @@ display. A path *from* the renderer would be a filesystem call pointed anywhere 
 the same hole the scheme allowlist closes for `openExternal` (X-02).
 
 `save-diagnostics` is the exception, and it exists because a `mailto:` cannot carry an attachment
-(see `docs/DECISIONS.md`): it writes the full log plus the machine's details to the desktop so the
-customer has one named file to attach. Writing is now *all* it does — it revealed the file in the
+(see `docs/DECISIONS.md`): it writes the log plus the machine's details to the desktop so the
+customer has one named file to attach — under two headings since WP-69f, „Startprotokoll" with
+every boot line in it and „Laufzeitprotokoll" with the tail of the runtime ones, because one
+count over a file holding both kinds named neither of them. Writing is now *all* it does — it revealed the file in the
 Finder until WP-66, and nothing on the feedback path opens a window the customer did not ask for
 any more, `shell.showItemInFolder` appearing nowhere in the app. It takes two arguments and trusts
 neither. The

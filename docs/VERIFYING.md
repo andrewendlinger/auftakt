@@ -258,8 +258,10 @@ verified by hand, and the gate itself is written from this list.
   survives. Dev mode writes nothing, matching the overlay it reports on. The writer is
   `electron/appLog.ts`, electron-import-free so `check:unit` covers it.
 - **Since WP-54 the customer can reach it too**, which is the point of the file: Einstellungen →
-  „Programm & Hilfe" → „Feedback senden…" writes the whole log into a bundle on the desktop and
-  asks them to attach it. `summarizeBootLog`'s five-line digest is now the **fallback** — it rides
+  „Programm & Hilfe" → „Feedback senden…" writes the log into a bundle on the desktop and
+  asks them to attach it — since WP-69f under **two** headings, „Startprotokoll" carrying every
+  boot line and „Laufzeitprotokoll" the last 200 runtime lines (64 KB), each counted separately in
+  its own heading. `summarizeBootLog`'s five-line digest is now the **fallback** — it rides
   in the mail body only when no bundle was written (a Wunsch, the browser build, or a failed
   write), so a mail that carries the file carries no digest at all. Do not verify the digest by
   reading the dialog; read the summary itself under `check:unit`, where the four record species
@@ -276,8 +278,9 @@ verified by hand, and the gate itself is written from this list.
   the GPU calls). The file persists between runs, so a manual pass that does not delete
   it is reading a stale bundle a minute later — the reference in it is the tell. And **dev writes
   no boot log**, so a bundle built in dev holds the machine section and „noch keinen Start
-  protokolliert" under the log heading; that is the branch, not a truncated file. A Wunsch writes
-  nothing at all.
+  protokolliert" under „Startprotokoll" — with „noch keinen Fehler protokolliert" under
+  „Laufzeitprotokoll" unless something really did go wrong; those are the branches, not a
+  truncated file. A Wunsch writes nothing at all.
 - **Going „Zurück", editing an answer and pressing „Weiter" again writes a *second* bundle, and
   the handover then names `…-2.txt`.** The file carries the report text, so the first one would
   otherwise be the version the customer attaches; `uniqueBundleName` (`electron/diagnostics.ts`)

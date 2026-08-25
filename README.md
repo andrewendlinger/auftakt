@@ -155,7 +155,8 @@ siehst vorher, was drinsteht. Jede Meldung bekommt eine Kennung wie `AF-26081415
 steht; darauf lässt sich später Bezug nehmen.
 
 Bei einem **Fehler** legt Auftakt zusätzlich einen Diagnosebericht auf dem Schreibtisch ab —
-`Auftakt-Diagnose-<Kennung>.txt`, mit dem vollständigen Startprotokoll und den Angaben zum Rechner.
+`Auftakt-Diagnose-<Kennung>.txt`, mit dem vollständigen Startprotokoll, den zuletzt aufgetretenen
+Fehlern und den Angaben zum Rechner.
 Der Dialog sagt vorher, dass das passiert, und die E-Mail beginnt mit der Bitte, die Datei
 anzuhängen. **Anhängen musst du sie selbst** — eine E-Mail lässt sich von außen nicht mit einem
 Anhang öffnen, das kann kein Programm für dich übernehmen. Die Datei ist reiner Text, enthält keine

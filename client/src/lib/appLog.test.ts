@@ -20,6 +20,7 @@ import {
   countEntries,
   formatConsoleArgs,
   migrateBootLog,
+  splitAppLog,
   summarizeBootLog,
   tailAppLog,
   trimAppLog,
@@ -272,6 +273,46 @@ describe('countEntries', () => {
     expect(countEntries('{"outcome":"play"}\n{"event":"x","src":"main"}\n')).toBe(2);
     // A torn last line is still an entry as far as the bundle header is concerned.
     expect(countEntries('{"a":1}\n{"b":')).toBe(2);
+  });
+});
+
+describe('splitAppLog', () => {
+  const BOOT = '{"outcome":"play","why":"done","at":"2026-08-25T09:00:00.000Z"}';
+  const RUNTIME = '{"v":1,"event":"server-error","msg":"boom","at":"2026-08-25T09:00:01.000Z","src":"server"}';
+
+  it('sorts the two kinds apart by the one discriminator, keeping the lines verbatim', () => {
+    const { boot, runtime } = splitAppLog(`${BOOT}\n${RUNTIME}\n`);
+    expect(boot).toEqual([BOOT]);
+    expect(runtime).toEqual([RUNTIME]);
+  });
+
+  it('keeps each side in file order and loses nothing in between', () => {
+    // The bundle prints both sides raw, and a boot analysis reads them in the order they
+    // were written — interleaving with runtime lines must not reorder either side.
+    const lines = ['{"outcome":"a"}', RUNTIME, '{"outcome":"b"}', RUNTIME, '{"outcome":"c"}'];
+    const { boot, runtime } = splitAppLog(lines.join('\n') + '\n');
+    expect(boot).toEqual(['{"outcome":"a"}', '{"outcome":"b"}', '{"outcome":"c"}']);
+    expect(runtime).toHaveLength(2);
+    expect(boot.length + runtime.length).toBe(countEntries(lines.join('\n')));
+  });
+
+  it('counts an explicit null src as a runtime line, like isBootLine does', () => {
+    const { boot, runtime } = splitAppLog('{"outcome":"play","src":null}\n');
+    expect(boot).toEqual([]);
+    expect(runtime).toHaveLength(1);
+  });
+
+  it('never drops a line it cannot read — an unreadable log line is itself a finding', () => {
+    // `trimAppLog` does not validate JSON, so a rotated file really can carry a torn line,
+    // and so can a disk that lost a write. It belongs in the bundle either way.
+    const { boot, runtime } = splitAppLog(`${BOOT}\n{"b":\nnot json at all\n[1,2,3]\n"a string"\n`);
+    expect(boot).toEqual([BOOT]);
+    expect(runtime).toEqual(['{"b":', 'not json at all', '[1,2,3]', '"a string"']);
+  });
+
+  it('says nothing about an empty log', () => {
+    expect(splitAppLog('')).toEqual({ boot: [], runtime: [] });
+    expect(splitAppLog('\n\n')).toEqual({ boot: [], runtime: [] });
   });
 });
 

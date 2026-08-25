@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 // Reaches up into electron/, like appLog.test.ts: `check:unit` is the only automated run
 // that touches main-process code at all, and this module is written to be reachable from it.
+import { BUNDLE_TAIL_LINES } from '../../../electron/appLog';
 import {
   buildDiagnosticsBundle,
   diagnosticsFileName,
@@ -221,9 +222,11 @@ describe('formatSystemInfo', () => {
 });
 
 describe('buildDiagnosticsBundle', () => {
-  const LOG = ['{"outcome":"play","why":"done","at":"2026-08-14T12:06:35.907Z"}', '{"outcome":"skip"}'].join(
-    '\n',
-  );
+  const boot = (i: number) =>
+    JSON.stringify({ outcome: 'play', why: 'done', i, at: `2026-08-14T12:0${i % 10}:00.000Z` });
+  const runtime = (i: number, over: Record<string, unknown> = {}) =>
+    JSON.stringify({ v: 1, event: 'render-error', msg: `Fehler ${i}`, src: 'renderer', ...over });
+  const LOG = [boot(0), runtime(0), boot(1)].join('\n') + '\n';
 
   const bundle = (over: Partial<Parameters<typeof buildDiagnosticsBundle>[0]> = {}) =>
     buildDiagnosticsBundle({
@@ -232,9 +235,17 @@ describe('buildDiagnosticsBundle', () => {
       report: 'Art: Fehler · Bereich: Künstler\n\nWas passiert ist:\nDie Seite blieb leer.',
       facts: FACTS,
       log: LOG,
-      entries: 2,
       ...over,
     });
+
+  /**
+   * The text under one heading. „Is the line in the file" is the wrong question since WP-69f:
+   * a runtime line under „Startprotokoll" is exactly the defect the split removed.
+   */
+  const under = (out: string, heading: string): string => {
+    const block = out.split('\n========== ').find((b) => b.startsWith(heading));
+    return block ? block.slice(block.indexOf('\n')) : '';
+  };
 
   it('opens on the reference that ties it to the mail', () => {
     const out = bundle();
@@ -253,18 +264,82 @@ describe('buildDiagnosticsBundle', () => {
   it('carries the log in full, not a digest of it', () => {
     // The entire reason the file exists: the mail can only afford five folded lines.
     const out = bundle();
-    expect(out).toContain('Startprotokoll (app-log.jsonl, 2 Einträge)');
-    for (const line of LOG.split('\n')) expect(out).toContain(line);
+    expect(out).toContain('Startprotokoll (app-log.jsonl, 2 Starteinträge)');
+    expect(out).toContain('Laufzeitprotokoll (app-log.jsonl, 1 Eintrag)');
+    for (const line of LOG.split('\n').filter(Boolean)) expect(out).toContain(line);
+  });
+
+  it('sorts each kind of line under the heading that names it', () => {
+    // The count used to be over the whole file and the dump under „Startprotokoll" was all of
+    // it, so a crash landed unlabelled in a section about starts, under a number counting
+    // something else. Both sides are now asserted against the *other* section, not the file.
+    const out = bundle();
+    expect(under(out, 'Startprotokoll')).toContain(boot(0));
+    expect(under(out, 'Startprotokoll')).not.toContain('"src":"renderer"');
+    expect(under(out, 'Laufzeitprotokoll')).toContain(runtime(0));
+    expect(under(out, 'Laufzeitprotokoll')).not.toContain('"outcome":"play"');
+  });
+
+  it('carries every boot line however many there are — none of them can be asked for again', () => {
+    // The boot side is the raw material of the cross-version timing comparison, so it has no
+    // budget: rotation already bounds the file, and a report is one shot at that history.
+    const many = Array.from({ length: BUNDLE_TAIL_LINES + 50 }, (_, i) => boot(i));
+    const out = bundle({ log: many.join('\n') + '\n' });
+    expect(out).toContain(`Startprotokoll (app-log.jsonl, ${BUNDLE_TAIL_LINES + 50} Starteinträge)`);
+    const shown = under(out, 'Startprotokoll').split('\n').filter((l) => l.startsWith('{'));
+    expect(shown).toHaveLength(BUNDLE_TAIL_LINES + 50);
+    expect(shown[0]).toBe(many[0]);
+  });
+
+  it('cuts the runtime side from the top and says so in the heading', () => {
+    // One misbehaving interval writes hundreds of these, and the newest are the ones next to
+    // what the person is reporting. A section that silently showed 200 of 250 would read as a
+    // log that lost the rest.
+    const many = Array.from({ length: BUNDLE_TAIL_LINES + 50 }, (_, i) => runtime(i));
+    const out = bundle({ log: many.join('\n') + '\n' });
+    expect(out).toContain(
+      `Laufzeitprotokoll (app-log.jsonl, letzte ${BUNDLE_TAIL_LINES} von ${BUNDLE_TAIL_LINES + 50} Einträgen)`,
+    );
+    const shown = under(out, 'Laufzeitprotokoll').split('\n').filter((l) => l.startsWith('{'));
+    expect(shown).toHaveLength(BUNDLE_TAIL_LINES);
+    expect(shown[shown.length - 1]).toBe(many[many.length - 1]);
+    expect(out).not.toContain(runtime(0));
+    // Nothing was cut from the starts, so that heading carries no „letzte … von".
+    expect(out).toContain('Startprotokoll (app-log.jsonl, 0 Starteinträge)');
+  });
+
+  it('drops the „letzte … von" when the whole runtime log fits', () => {
+    expect(bundle({ log: [runtime(0), runtime(1)].join('\n') + '\n' })).toContain(
+      'Laufzeitprotokoll (app-log.jsonl, 2 Einträge)',
+    );
+  });
+
+  it('shows a line it cannot read rather than dropping it', () => {
+    // A torn line survives rotation as unparseable text, and on a report about a crash that
+    // is itself the finding. It counts as runtime — nothing may vanish between the sections.
+    const out = bundle({ log: `${boot(0)}\n{"event":"render-err\n` });
+    expect(out).toContain('Laufzeitprotokoll (app-log.jsonl, 1 Eintrag)');
+    expect(under(out, 'Laufzeitprotokoll')).toContain('{"event":"render-err');
   });
 
   it('says an empty log is empty rather than showing a blank section', () => {
-    const out = bundle({ log: '', entries: 0 });
-    expect(out).toContain('0 Einträge');
+    const out = bundle({ log: '' });
+    expect(out).toContain('Startprotokoll (app-log.jsonl, 0 Starteinträge)');
     expect(out).toContain('noch keinen Start protokolliert');
+    expect(out).toContain('Laufzeitprotokoll (app-log.jsonl, 0 Einträge)');
+    expect(out).toContain('noch keinen Fehler protokolliert');
   });
 
-  it('counts one entry in the singular', () => {
-    expect(bundle({ entries: 1 })).toContain('1 Eintrag)');
+  it('says which of the two is empty when only one of them is', () => {
+    // The normal case on a healthy installation: plenty of starts, nothing that went wrong.
+    const healthy = bundle({ log: `${boot(0)}\n` });
+    expect(healthy).toContain('Startprotokoll (app-log.jsonl, 1 Starteintrag)');
+    expect(healthy).toContain('noch keinen Fehler protokolliert');
+    expect(healthy).not.toContain('noch keinen Start protokolliert');
+    // And dev, where nothing writes a boot report at all but a crash still would.
+    const dev = bundle({ log: `${runtime(0)}\n` });
+    expect(dev).toContain('noch keinen Start protokolliert');
+    expect(dev).not.toContain('noch keinen Fehler protokolliert');
   });
 
   it('carries no account name anywhere in it', () => {
@@ -277,7 +352,19 @@ describe('buildDiagnosticsBundle', () => {
     expect(out).toContain('~\\Desktop');
   });
 
-  it('states what is not in it, where that can still be checked', () => {
-    expect(bundle()).toContain('keine Termine, Künstler');
+  it('promises, in the same words every time, that no festival data leaves in it', () => {
+    // This sentence is the promise the dialog makes and the rule `appLog.ts` is written to
+    // keep. Pinned so that editing it is a deliberate act rather than a tidy-up — and pinned
+    // over normalised whitespace, so re-flowing the paragraph around it stays free.
+    const flat = bundle().replace(/\s+/g, ' ');
+    expect(flat).toContain('Sie enthält keine Termine, Künstler, Kontakte oder Notizen');
+  });
+
+  it('names both kinds of log where it says what is in it', () => {
+    // The header is what the person checks the sections below against, so it may not describe
+    // a file that only carries starts once it also carries failures.
+    const flat = bundle().replace(/\s+/g, ' ');
+    expect(flat).toContain('das Protokoll der letzten Programmstarts');
+    expect(flat).toContain('die Fehler, die dem Programm zuletzt aufgefallen sind');
   });
 });

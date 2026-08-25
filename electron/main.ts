@@ -25,7 +25,6 @@ import {
   APP_LOG_NAME,
   BOOT_REPORT_MAX_CHARS,
   bootDiagnostics,
-  countEntries,
   formatConsoleArgs,
   migrateBootLog,
   writeAppLog,
@@ -292,14 +291,7 @@ async function saveDiagnostics(ref: unknown, report: unknown): Promise<Diagnosti
 function writeBundleToDesktop(ref: string, report: string, facts: SystemFacts): string {
   const logFile = join(app.getPath('userData'), APP_LOG_NAME);
   const log = existsSync(logFile) ? readFileSync(logFile, 'utf8') : '';
-  const bundle = buildDiagnosticsBundle({
-    ref,
-    at: localStamp(),
-    report,
-    facts,
-    log,
-    entries: countEntries(log),
-  });
+  const bundle = buildDiagnosticsBundle({ ref, at: localStamp(), report, facts, log });
   // Never over a bundle already lying there: the reference is minute resolution, and a
   // second report inside that minute would otherwise replace the first one's file while the
   // first one's mail still names it. `uniqueBundleName` picks the suffix and the renderer

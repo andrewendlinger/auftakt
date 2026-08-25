@@ -2961,9 +2961,12 @@ trace of the crash. That is the gap; the shape of the fix is the part worth reco
 
 **One file, not two.** `boot-log.jsonl` becomes `app-log.jsonl` and carries both kinds of line.
 The alternative — a second `error-log.jsonl` beside it — was rejected on three counts that are
-all the same count: two files mean two rotations to reason about, two sections in the diagnostics
-bundle to keep in step, and two artefacts a customer has to be told about. And the interleaving is
-itself the diagnostic: „the boot reported `play`, then eleven seconds later a 500" is one story in
+all the same count: two files mean two rotations to reason about, two readers to keep in step, and
+two artefacts a customer has to be told about. (The bundle grew two *sections* anyway in WP-69f —
+every boot line under „Startprotokoll", the runtime tail under „Laufzeitprotokoll". Printed from
+the one file at the moment it is written, which is not the same thing as two files to keep in
+step: nothing can fall between them, and the split is a `'src' in line` test rather than a second
+rotation.) And the interleaving is itself the diagnostic: „the boot reported `play`, then eleven seconds later a 500" is one story in
 one file and a correlation exercise in two.
 
 **Boot lines keep their exact shape; `src` is the discriminator.** A boot report is still

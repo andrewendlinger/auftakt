@@ -389,6 +389,47 @@ export function isBootLine(line: Record<string, unknown>): boolean {
   return !('src' in line);
 }
 
+/** A log's raw lines, sorted into the two kinds. Every non-empty line is in exactly one. */
+export interface AppLogSplit {
+  /** Boot reports — the lines `isBootLine` accepts, in file order. */
+  boot: string[];
+  /** Everything else: runtime events, and any line that is not a JSON object at all. */
+  runtime: string[];
+}
+
+/**
+ * Pure: sort a log's lines into boot reports and runtime lines, without changing any of them
+ * (WP-69f). The diagnostics bundle prints each kind under its own heading, and the two are
+ * budgeted differently — every boot line travels, the runtime side travels as a tail.
+ *
+ * Raw lines rather than parsed records: the bundle shows the file's own text, and the
+ * cross-version boot analysis reads those lines field by field. Parsing here only decides
+ * which side a line falls on.
+ *
+ * A line that is not JSON, or JSON that is not a plain object, counts as a runtime line —
+ * nothing is dropped. `trimAppLog` does not validate JSON, so a rotated file really can carry
+ * a torn one, and on a report about a crash an unreadable log line is itself the finding.
+ */
+export function splitAppLog(content: string): AppLogSplit {
+  const boot: string[] = [];
+  const runtime: string[] = [];
+  // `for…of` for the reason `summarizeBootLog` gives: `lines[i]` is `string | undefined`
+  // under the client tsconfig this file is also checked through.
+  for (const line of content.split('\n')) {
+    if (line.length === 0) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      runtime.push(line);
+      continue;
+    }
+    const r = obj(parsed);
+    (r && isBootLine(r) ? boot : runtime).push(line);
+  }
+  return { boot, runtime };
+}
+
 /** One record → one line. Clauses appear only when the numbers behind them do. */
 function summaryLine(r: Record<string, unknown>): string {
   // Pure string surgery rather than `new Date(...)`: a formatter that reads the machine's
