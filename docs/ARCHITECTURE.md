@@ -764,6 +764,37 @@ the quit grace is window-count-agnostic; a second app launch opens a new window
 (`second-instance`). The single-instance lock stays — two *processes* would race the port and
 corrupt WAL sidecars on import.
 
+## The app log: one file, two kinds of line
+
+`electron/appLog.ts` owns `app-log.jsonl` in userData — the packaged app's only landing place for
+evidence, holding both the boot reports (one line per settle, WP-61) and the runtime lines WP-69
+added: a crash, a 500, a failed update, a React render error. The server runs in-process and a
+Finder-launched app has no stdio, so packaged main tees `console.error`/`console.warn` into the
+log before `startServer()`'s import; `console.log` deliberately is not teed. The legacy
+`boot-log.jsonl` is renamed onto the new name once by `migrateBootLog` — a rename, not a merge, so
+cross-version boot history survives the update.
+
+**`src` is the discriminator, and boot lines never carry it.** A boot report keeps its exact WP-61
+shape `{v, …report, at, app}` because `scripts/check-boot.mjs` and the cross-version analysis read
+it field by field; a runtime line is `{v:1, …entry, at, app, src}` with `src: 'main' | 'renderer'`
+(the in-process server's lines arrive through the tee as `main`). Every reader splits on
+`'src' in line` and nothing has to guess.
+
+Writes go through `appendAndRotate`: append, and past `APP_LOG_MAX_BYTES` (512 KB) rewrite the
+tail down to `APP_LOG_KEEP_LINES`/`APP_LOG_KEEP_BYTES`. The renderer is the untrusted side, so a
+line is bounded twice — per field (`event ≤ 64`, `msg ≤ 500`, `stack ≤ 3000`) and whole
+(`BOOT_REPORT_MAX_CHARS` / `APP_LOG_EVENT_MAX_CHARS`, 4 KB each); `check:boot` reads the boot cap
+out of this file rather than duplicating it. Like `backup.ts`, the module imports nothing from
+`electron` and never reads anything it was not handed — no environment, no user name, no path
+lookups — which keeps it testable from `check:unit` and keeps the diagnostics bundle's
+no-personal-data promise checkable.
+
+`electron/diagnostics.ts` prints the file into the customer bundle (`Auftakt-Diagnose-AF-….txt`,
+written to the desktop; the customer mails it themselves, nothing opens): boot lines under
+„Startprotokoll", the runtime tail under „Laufzeitprotokoll" — one file, split at print time. The
+full shape of the decision — one file not two, the tee not a logger module, `uncaughtException`
+exits, no minidumps — is `docs/DECISIONS.md` „One log file, and a crash writes its own bundle".
+
 ## Packaging
 
 `scripts/build.mjs` esbuilds the server to one ESM file (with `better-sqlite3` external — it is
