@@ -4,12 +4,15 @@ import { sleep } from '../../lib/wait.mjs';
 import { stubElectron } from '../bridge.mjs';
 import { clickIfThere, dragHandleOnto, dragOver, grabHandle, moveTo, open, pin, ready, seasonPin, until } from '../browser.mjs';
 import { NO_MATCH, RUN } from '../config.mjs';
+import { handedOver } from '../fixtures.mjs';
 import { check } from '../report.mjs';
 import { api, send } from '../stack.mjs';
 
 /** @param {import('../fixtures.mjs').Fixtures} fixtures */
 export async function runReorder(fixtures) {
-  const { S, context, sorted } = fixtures;
+  const { context, sorted } = fixtures;
+  /** `S` — the sorted season's query scope — comes from `records`, twelve files earlier. */
+  const { S } = handedOver(fixtures, ['S']);
   // ======================================================================== AT · the task table
   //
   // The last five ⠿ surfaces the gate did not drive (#109), and this is the one with rules. Three
@@ -719,7 +722,9 @@ export async function runReorder(fixtures) {
       );
       const bar = btn?.closest('div.sm\\:col-span-2');
       return [...(bar?.parentElement?.children ?? [])].map(
-        (el) => el.getAttribute('data-section') ?? (el.contains(btn) ? 'werkzeuge' : el.tagName),
+        // `btn ?? null` only for `contains`'s signature: no „✓ Fertig" leaves no `bar`, hence no
+        // children and no call at all — the empty grid is what the assertion below then reports.
+        (el) => el.getAttribute('data-section') ?? (el.contains(btn ?? null) ? 'werkzeuge' : el.tagName),
       );
     });
   const arGrid0 = await arGrid();

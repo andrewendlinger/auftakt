@@ -1,6 +1,6 @@
 /**
  * What crosses a scenario file's boundary — the type, so a mistyped key is a red rather than an
- * `undefined` twenty assertions later.
+ * `undefined` twenty assertions later, and the one guard that goes with it (`handedOver`, below).
  *
  * There are two kinds of entry and the split makes the difference visible for the first time.
  * Most are **fixtures the prologue built**: the season copies each area works in, taken before
@@ -53,4 +53,32 @@
  * @property {(page: any) => Promise<any>} [rowIds] `archive` → `columns`
  */
 
-export {};
+/**
+ * The handed-over helpers, taken together with the run order that guarantees them.
+ *
+ * They are optional on `Fixtures` because the prologue cannot build them — each exists only from
+ * the moment the file that owns it has run — so every call to one is „possibly undefined" to a
+ * typechecker, and the reader has no way to say „but my writer ran first" except by asserting it.
+ * This is that assertion, once, for all five readers.
+ *
+ * A miss is never a defect in the app and never something to carry on past: it is the ordered
+ * list in `check-browser.mjs` having moved so that a reader now runs before its writer, and the
+ * next twenty assertions would fail against a gate that is holding the wrong end of itself. Names
+ * the key and stops, rather than leaving `undefined is not a function` to be traced back by hand.
+ *
+ * @template {keyof Fixtures} K
+ * @param {Fixtures} fixtures
+ * @param {K[]} keys
+ * @returns {{ [P in K]-?: NonNullable<Fixtures[P]> }}
+ */
+export function handedOver(fixtures, keys) {
+  const missing = keys.filter((key) => fixtures[key] === undefined);
+  if (missing.length > 0) {
+    throw new Error(
+      `Weitergereichte Helfer fehlen: ${missing.join(', ')} — die Reihenfolge der Fälle in` +
+        ` check-browser.mjs stimmt nicht mehr, ein Leser läuft vor seinem Schreiber`,
+    );
+  }
+  // The keys are checked one by one above; the cast is only how that reaches the type.
+  return /** @type {any} */ (fixtures);
+}

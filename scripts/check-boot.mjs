@@ -300,6 +300,17 @@ function reportCap() {
  * `observe(document, { subtree: true })` and not `observe(document.documentElement, …)`: there is
  * no `documentElement` yet when an init script runs, and the throw would take the rest of this
  * function with it — silently, since the overlay would still behave perfectly.
+ *
+ * @typedef {object} BootOpts what a case asks this harness to do to the boot it is about to take
+ * @property {{ slot: number, ms: number }[]} [plan] frames to block, addressed by slot (delta 1 is
+ *   `warm`), each for that many milliseconds
+ * @property {'throw' | 'hold-click' | 'show-click' | null} [mode] the one injected cause, if any
+ * @property {number} [delayMs] how long the bundle is held back, and with it readiness
+ * @property {boolean} [reduce] take the boot in the `reducedMotion: 'reduce'` context
+ * @property {boolean} [bridge] install the `window.auftakt` stub (case M is the run without one)
+ * @property {boolean} [noboot] load with `?noboot=1`
+ *
+ * @param {BootOpts} opts
  */
 function pageHarness(opts) {
   const w = /** @type {any} */ (window);
@@ -388,6 +399,8 @@ let reduceCtx = null;
  * same context is a cold start that still shares the context's HTTP and code caches, which is what
  * an installed app's second launch onwards looks like — and what keeps `readyMs` two orders of
  * magnitude clear of the 1200 ms deadline (docs/VERIFYING.md).
+ *
+ * @param {BootOpts} [opts]
  */
 async function boot({ plan = [], mode = null, delayMs = 0, reduce = false, bridge = true, noboot = false } = {}) {
   const page = await /** @type {import('playwright-core').BrowserContext} */ (reduce ? reduceCtx : ctx).newPage();
@@ -410,6 +423,9 @@ async function boot({ plan = [], mode = null, delayMs = 0, reduce = false, bridg
     .catch(() => false);
   const got = await page.evaluate(() => {
     const w = /** @type {any} */ (window);
+    // `any`: the parsed report, the string this leaves behind when it will not parse, or `null`
+    // when the key is not there — case M reads fields off it, the invariants read the marker.
+    /** @type {any} */
     let ls = null;
     try {
       ls = JSON.parse(localStorage.getItem('auftakt-boot-report') ?? 'null');

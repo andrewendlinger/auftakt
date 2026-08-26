@@ -14,12 +14,15 @@ import {
   until,
 } from '../browser.mjs';
 import { UI } from '../config.mjs';
+import { handedOver } from '../fixtures.mjs';
 import { check } from '../report.mjs';
 import { api, scoped, send } from '../stack.mjs';
 
 /** @param {import('../fixtures.mjs').Fixtures} fixtures */
 export async function runColumns(fixtures) {
-  const { columnsSeason, context, pad2, rowIds } = fixtures;
+  const { columnsSeason, context } = fixtures;
+  /** Both come from `archive`, which runs immediately before this file. */
+  const { pad2, rowIds } = handedOver(fixtures, ['pad2', 'rowIds']);
   // ======================================================================== AL–AO · the column types
   //
   // The task table has no fixed column list — every column is a `custom_columns` row — but the

@@ -387,20 +387,21 @@ export async function runRender(fixtures) {
   const p1 = await open(context, '/dashboard');
   await pin(p1, sheets.id, '/print/project/1');
   await p1.locator('.print-group-head').first().waitFor({ timeout: 10_000 });
-  const ink = await p1.evaluate(() => ({
-    groups: Array.from(document.querySelectorAll('.print-group-head span')).map(
-      (s) => getComputedStyle(s).backgroundColor,
-    ),
-    // Optional-chained on purpose: a fixture that lost its coloured runs must fail the one check
-    // written for it, not throw out of the case and take N2 with it.
-    rot: document.querySelector('.print-page .tc-rot')
-      ? getComputedStyle(document.querySelector('.print-page .tc-rot')).color
-      : '',
-    gruen: document.querySelector('.print-page .tc-gruen')
-      ? getComputedStyle(document.querySelector('.print-page .tc-gruen')).color
-      : '',
-    statusPill: document.querySelectorAll('.print-page header .rounded-full').length,
-  }));
+  const ink = await p1.evaluate(() => {
+    // Looked up once and kept: a fixture that lost its coloured runs must fail the one check
+    // written for it, not throw out of the case and take N2 with it — so „not there" is the empty
+    // string rather than a `getComputedStyle(null)`.
+    const rot = document.querySelector('.print-page .tc-rot');
+    const gruen = document.querySelector('.print-page .tc-gruen');
+    return {
+      groups: Array.from(document.querySelectorAll('.print-group-head span')).map(
+        (s) => getComputedStyle(s).backgroundColor,
+      ),
+      rot: rot ? getComputedStyle(rot).color : '',
+      gruen: gruen ? getComputedStyle(gruen).color : '',
+      statusPill: document.querySelectorAll('.print-page header .rounded-full').length,
+    };
+  });
   check(
     'der Projektbogen hat zwei Statusgruppen und farbigen Text',
     ink.groups.length === 2 && !!ink.rot && !!ink.gruen && ink.statusPill === 0,
@@ -529,7 +530,17 @@ export async function runRender(fixtures) {
     heads.map((x) => x.text).join(' | '),
   );
 
+  /** @typedef {ReturnType<typeof paintedAt>} Painted where a colour sits, and what surrounds it */
+  /**
+   * The length at which the rule first moved the head across the break, or `null` for „in none of
+   * `PAGE_BREAK_TRIES` did it" — which is an assertion below, not a reason to stop.
+   * @type {{ rows: number, kept: Painted, split: Painted } | null}
+   */
   let boundary = null;
+  /**
+   * The last pair measured, so a search that found no boundary can still say what it saw.
+   * @type {{ kept: Painted, split: Painted } | null}
+   */
   let last = null;
   for (const offset of PAGE_BREAK_TRIES) {
     if (boundary) break;

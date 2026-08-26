@@ -37,7 +37,11 @@ export const tabStop = (page) =>
             el.getClientRects().length > 0,
         )
       : [];
-    const at = items.indexOf(document.activeElement);
+    // No `activeElement` at all is the same answer as one that is not in the list: `-1`, „the trap
+    // let go". Spelled out rather than left to `indexOf(null)` finding nothing, which reads like a
+    // near miss when it is the plainest case of all.
+    const active = document.activeElement;
+    const at = active ? items.indexOf(active) : -1;
     const el = items[at];
     return {
       at,
