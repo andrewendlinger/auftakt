@@ -1071,7 +1071,12 @@ function installConsoleTee(): void {
       }
       teeing = true;
       try {
-        original(...args);
+        try {
+          original(...args);
+        } catch {
+          /* the console's own formatting can throw (a hostile custom inspect) — the log line
+             below is hardened against exactly that input and must still get to run */
+        }
         logMain({ level, event: 'console', msg: formatConsoleArgs(args) });
       } catch {
         /* a console without stdio, an unwritable userData — never the caller's problem */
