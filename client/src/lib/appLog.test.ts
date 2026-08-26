@@ -19,6 +19,7 @@ import {
   bootLogLine,
   countEntries,
   formatConsoleArgs,
+  splitConsoleArgs,
   migrateBootLog,
   splitAppLog,
   summarizeBootLog,
@@ -512,6 +513,40 @@ describe('formatConsoleArgs', () => {
       expect(() => formatConsoleArgs(args)).not.toThrow();
       expect(typeof formatConsoleArgs(args)).toBe('string');
     }
+  });
+});
+
+describe('splitConsoleArgs', () => {
+  it('lifts the stack out of the message, which is what the 500-char msg cap demands', () => {
+    const { msg, stack } = splitConsoleArgs([
+      'API-Fehler',
+      'GET',
+      '/api/tasks/7',
+      new Error('no such row'),
+    ]);
+    expect(msg).toContain('API-Fehler GET /api/tasks/7');
+    expect(msg).toContain('Error: no such row');
+    expect(msg).not.toContain('appLog.test.ts'); // no frames in msg …
+    expect(stack).toContain('appLog.test.ts'); // … they all live here, under the 3000 cap
+  });
+
+  it('takes the first stack-carrying Error and leaves stack unset without one', () => {
+    const bare = new Error('first');
+    bare.stack = undefined;
+    const second = new Error('second');
+    expect(splitConsoleArgs([bare, second]).stack).toContain('second');
+    expect(splitConsoleArgs(['nur Text', 42]).stack).toBeUndefined();
+  });
+
+  it('never throws — it shares the tee seat with formatConsoleArgs', () => {
+    const cursed = new Error('x');
+    Object.defineProperty(cursed, 'stack', {
+      get() {
+        throw new Error('nope');
+      },
+    });
+    expect(() => splitConsoleArgs([cursed])).not.toThrow();
+    expect(splitConsoleArgs([cursed]).msg).toContain('[unformattable]');
   });
 });
 

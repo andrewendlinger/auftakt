@@ -281,6 +281,32 @@ export function formatConsoleArgs(args: unknown[]): string {
   }
 }
 
+/**
+ * Like `formatConsoleArgs`, but with the first stack-carrying Error lifted into its own field.
+ *
+ * Inlined into `msg` a stack lives inside the 500-character cap, which keeps three or four
+ * frames of it; in the line's `stack` slot it has 3000. The server's error middleware —
+ * `console.error('API-Fehler', method, path, err)` — is the line this exists for: the one
+ * unhandled-500 record a customer bundle carries. Same never-throw contract as above.
+ */
+export function splitConsoleArgs(args: unknown[]): { msg: string; stack?: string } {
+  try {
+    let stack: string | undefined;
+    const flat = args.map((arg) => {
+      if (!(arg instanceof Error)) return arg;
+      try {
+        stack ??= typeof arg.stack === 'string' ? arg.stack : undefined;
+        return `${arg.name}: ${arg.message}`;
+      } catch {
+        return '[unformattable]'; // a throwing name/message/stack getter
+      }
+    });
+    return { msg: formatConsoleArgs(flat), stack };
+  } catch {
+    return { msg: '[unformattable console arguments]' };
+  }
+}
+
 /** One argument. An Error is worth its stack; everything else gets a shallow inspect. */
 function formatArg(arg: unknown): string {
   try {
