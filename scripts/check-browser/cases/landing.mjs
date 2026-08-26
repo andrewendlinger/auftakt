@@ -26,6 +26,51 @@ export async function runLanding(fixtures) {
 
   /** The landing blob as the server has it. Every expectation below is computed from this. */
   const lpBlob = () => api('/landing');
+
+  /**
+   * Wait until a window's own PATCH log holds the `n` answers the next check reads.
+   *
+   * The polls in the conflict cases below are `lpBlob` and `lsSettings` — node-side reads of what
+   * the *server* stores. Their logs are fed by Playwright `request`/`response` **page events**,
+   * which reach this process over the browser's CDP connection. Those are two clocks, and „the
+   * server has it" says nothing about the second one: the write is stored the moment it is
+   * handled, the driver hears about the answer one hop later. So a round in which both PATCHes
+   * went out with the right revs and the retry really was answered 200 reads as „beantwortet mit
+   * 409" — one status short, which looks like a refused retry and is an unread one (#166, seen
+   * twice: locally on 2026-08-25 and in the `browser` job of PR #162).
+   *
+   * The margin these cases used to run on is one `until` sleep plus one `unroute` round trip: on
+   * an idle machine the answer is logged 147 ms before the poll returns, with 24 windows open
+   * under 8× CPU throttling a median of 18 ms, and at 30 windows and 20× it goes the other way by
+   * up to half a second. So the log is waited for, never only the state that implies it.
+   *
+   * Bounded like everything here, and a plain synchronisation rather than a recovery: a round that
+   * really is answered once fails the assertion it was going to fail, with the same detail,
+   * `SETTLED_MS` later — so unlike `reloadedSurfaces` and `reopenedPopovers` there is nothing to
+   * announce and nothing to count.
+   *
+   * @param {ReadonlyArray<{ status?: number }>} log
+   * @param {number} n
+   */
+  const lpAnswered = (log, n) =>
+    until(async () => log.filter((e) => e.status !== undefined).length, (c) => c >= n, SETTLED_MS);
+
+  /**
+   * The answers of one log as `n` fixed slots — „409/—" rather than „409".
+   *
+   * `#166` cost a diagnosis from the failure line alone, because a joined list of what *did* arrive
+   * reads as a complete answer set: „beantwortet mit 409" looks like a refused retry and was a
+   * missing status. A slot per expected answer says which one is absent, and a run with more
+   * answers than expected still shows all of them.
+   *
+   * @param {ReadonlyArray<{ status?: number }>} log
+   * @param {number} n
+   */
+  const lpStatuses = (log, n) => {
+    const got = log.filter((e) => e.status !== undefined);
+    return Array.from({ length: Math.max(n, got.length) }, (_, i) => got[i]?.status ?? '—').join('/');
+  };
+
   /** „2026-08-24 11:14:39" → „24.08.2026" — `formatDate`'s output, spelled out rather than
    *  imported: this file may not reach into `client/src`, and a literal date would go stale. */
   const lpDay = (iso) => String(iso ?? '').slice(0, 10).split('-').reverse().join('.');
@@ -531,18 +576,21 @@ export async function runLanding(fixtures) {
   lqHold.release();
   const lqMerged = await until(lpBlob, (l) => l.documents.some((d) => d.label === lqA), SETTLED_MS);
   await lq1.unroute('**/api/landing');
+  // The blob poll above says the server merged; it does not say this window's log has heard the
+  // answers back. Two clocks — see `lpAnswered` (#166).
+  await lpAnswered(lqLog, 2);
   // Everything below reads the DOM, which works through a backdrop — and these two windows keep
   // one. See the second half for why it is never waited for.
 
   check(
     'der erste Versuch trägt die Generation, die beide Fenster gelesen hatten — und wird abgelehnt',
     lqSent()[0]?.rev === lqBase.rev && lqGot()[0]?.status === 409,
-    `rev ${lqSent()[0]?.rev} (gelesen ${lqBase.rev}) → ${lqGot()[0]?.status}`,
+    `rev ${lqSent()[0]?.rev} (gelesen ${lqBase.rev}) → ${lqGot()[0]?.status ?? '—'}`,
   );
   check(
     'der zweite trägt die des Gewinners und wird genommen — zwei Versuche, kein dritter',
     lqSent().length === 2 && lqSent()[1]?.rev === lqAfterB.rev && lqGot()[1]?.status === 200,
-    `${lqSent().map((s) => s.rev).join(' → ')} beantwortet mit ${lqGot().map((g) => g.status).join('/')}`,
+    `${lqSent().map((s) => s.rev).join(' → ')} beantwortet mit ${lpStatuses(lqLog, 2)}`,
   );
   // The line that tells „the conflict was re-applied" from „the timing slipped and there was
   // none": the two request bodies. An intent recomputed over the winner's list carries the
@@ -693,9 +741,11 @@ export async function runLanding(fixtures) {
   lqHold2.release();
   const lqArranged = await until(lpBlob, (l) => l.layout.length > 0, SETTLED_MS);
   await lq3.unroute('**/api/landing');
+  await lpAnswered(lqLog2, 2);
 
   // Its own window's log, so there is no offset to keep: the arrangement half sends exactly these
-  // two requests and receives exactly these two answers.
+  // two requests and receives exactly these two answers — and it is read once both have arrived,
+  // which the poll on `lpBlob` above does not establish (#166: this is the line CI reddened).
   const lqSent2 = lqLog2.filter((e) => e.body !== undefined);
   const lqGot2 = lqLog2.filter((e) => e.status !== undefined);
   check(
@@ -707,7 +757,7 @@ export async function runLanding(fixtures) {
       lqGot2[1]?.status === 200 &&
       lqSent2[0]?.rev === lqBefore2.rev &&
       lqSent2[1]?.rev === lqAfterC.rev,
-    `${lqSent2.map((s) => s.rev).join(' → ')} beantwortet mit ${lqGot2.map((g) => g.status).join('/')}`,
+    `${lqSent2.map((s) => s.rev).join(' → ')} beantwortet mit ${lpStatuses(lqLog2, 2)}`,
   );
   const lqLayout1 = jsonOr(lqSent2[0]?.body).layout;
   const lqLayout2 = jsonOr(lqSent2[1]?.body).layout;
@@ -793,7 +843,14 @@ export async function runLanding(fixtures) {
     (t) => t.length > 0,
     EDITOR_GONE_MS,
   );
-  await sleep(400); // let the third answer's log entry land before the counts are read
+  // The third *answer*, and only that: what was a `sleep(400)` here waited for a positive, which is
+  // a condition. „No fourth" is not this wait's job and never was — `lrSteals` is incremented in
+  // *this* process, inside the route handler and before `route.continue()`, so a fourth attempt
+  // reads as 4 before its request has even been forwarded, with no event in flight to lose, and
+  // `lrSteals === 3` stands in the same condition below. That the toast is also strictly after the
+  // budget — `guard`'s catch raises it after `retryOnConflict` spent `MAX_CONFLICT_ATTEMPTS` and
+  // after `landingUpdate`'s `finally { await invalidate() }` — is the second lock, not the first.
+  await lpAnswered(lrLog, 3);
   await lr.unroute('**/api/landing');
 
   const lrSent = lrLog.filter((e) => e.body !== undefined);
@@ -801,7 +858,7 @@ export async function runLanding(fixtures) {
   check(
     'drei Versuche und kein vierter — das ist ein Budget, keine Schleife',
     lrSteals === 3 && lrSent.length === 3 && lrGot.length === 3 && lrGot.every((g) => g.status === 409),
-    `${lrSteals} Fremdschreiben, ${lrSent.length} PATCH, Antworten ${lrGot.map((g) => g.status).join('/') || 'keine'}`,
+    `${lrSteals} Fremdschreiben, ${lrSent.length} PATCH, Antworten ${lpStatuses(lrLog, 3)}`,
   );
   check(
     'jeder Versuch liest die Generation des Gewinners aus der Absage und steigt mit ihr',
@@ -966,6 +1023,9 @@ export async function runLanding(fixtures) {
   const lsEditor1 = await surfaceSettled(ls1, ls1.locator('[data-label] input'));
   const lsEditor2 = await surfaceSettled(ls2, ls2.locator('[data-label] input'));
   const lsEditorsGone = lsEditor1 !== 'offen' && lsEditor2 !== 'offen';
+  // Both waits above are page-observed, which usually puts the answers in the log ahead of their
+  // reply — usually is not a guarantee, and the log is what the next check reads (#166).
+  await lpAnswered(lsLog, 2);
 
   const lsSent = lsLog.filter((e) => e.body !== undefined);
   const lsGot = lsLog.filter((e) => e.status !== undefined);
@@ -976,7 +1036,7 @@ export async function runLanding(fixtures) {
       lsGot[0]?.status === 409 &&
       lsSent[1]?.rev === lsAfterB.rev &&
       lsGot[1]?.status === 200,
-    `${lsSent.map((s) => s.rev).join(' → ')} beantwortet mit ${lsGot.map((g) => g.status).join('/') || 'keine'}`,
+    `${lsSent.map((s) => s.rev).join(' → ')} beantwortet mit ${lpStatuses(lsLog, 2)}`,
   );
   const lsFirst = jsonOr(lsSent[0]?.body).labels ?? [];
   const lsRetry = jsonOr(lsSent[1]?.body).labels ?? [];
