@@ -86,7 +86,8 @@ export function PrintArtist() {
   const projectOpen = openTasks.filter((t) => t.project_id);
 
   return (
-    <PrintPage>
+    // See PrintProject: back to the artist this sheet belongs to, not to the start page (WP-71).
+    <PrintPage back={`/artist/${artistId}`} title={artist.name}>
       <PrintHeader accent={artist.color} kicker={saison} title={artist.name} image={artist.image}>
         {artist.notes && <Markdown className="mt-1 text-sm text-neutral-600">{artist.notes}</Markdown>}
       </PrintHeader>

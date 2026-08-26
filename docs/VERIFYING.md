@@ -44,7 +44,7 @@ here.
 | `seasons.mjs` | A–E | the season matrix in two windows, and the export that carries it |
 | `tasks.mjs` | F–H | the three core paths: a task, a column, the editor |
 | `records.mjs` | I–K | deleting a record, and reordering by the ⠿ |
-| `render.mjs` | L–N2 | the two pure render assurances: the smallest window, and paper |
+| `render.mjs` | L–N3 | the two pure render assurances: the smallest window, and paper |
 | `settings.mjs` | O–R2 | the four Einstellungen tabs and what they write |
 | `keyboard.mjs` | S–T | the keyboard contract and the search overlay |
 | `electron.mjs` | U–U2 | the two Electron surfaces, against a recording bridge stub |
@@ -1683,6 +1683,22 @@ are not — they are `labels` in the window's own season `settings`, with a gene
   around the tuned length must go **both ways** (56, 57, 55, 58, …): a boundary can drift down as
   easily as up, and a search that only grows the list reports „no effect at any length" on a
   perfectly good build, which reads exactly like the regression it guards.
+- **A sheet reached by `pin()` is not a sheet a customer ever reached.** Every print assertion here
+  used to open `#/print/…` directly and read the bytes, and that is how the sheet stayed a *dead
+  end* for two releases: the routes sit outside `Layout`, so there is no header, no Breadcrumbs and
+  no season switcher on them, and the packaged app has no browser chrome and no „Zurück" in its
+  menu either — the customer could leave the Ein-Pager only by quitting Auftakt (WP-71). Drive the
+  whole walk at least once: click „🖨 Ein-Pager (PDF)" on `#/project/1`, then the sheet's own
+  „Zurück", and assert the **URL on the other side** — the origin page, `#/project/1`, never
+  `#/`. The error sheet (`PrintFallback`) is the one that goes to the start page, deliberately, and
+  it is a different component.
+- **A control on the sheet cannot be found in the PDF by its own colour.** The save button is
+  `bg-neutral-900` and the sheet's body text is `text-neutral-900`, so „is this shade in the bytes"
+  is answered by every line of the handout. Mark it instead — set an inline `color` nothing else
+  paints (`rgb(1, 254, 3)`) and look for that one fill. It has to go on the `<a>` and the `<button>`
+  **themselves**: both carry a `text-*` class, so a colour set on the row they share is inherited
+  by neither. The control for that assertion is `@media print { .no-print { display: flex
+  !important } }`, the same runtime override the two cases above use.
 
 ## Native modules in the packaged app
 
