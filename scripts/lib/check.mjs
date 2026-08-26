@@ -31,6 +31,7 @@ export const MARKERS = {
  * @returns {{
  *   check: (name: string, ok: unknown, detail?: string) => boolean,
  *   count: { failures: number, checks: number },
+ *   pin: (expected: number) => void,
  * }}
  */
 export function createCheck(markers = MARKERS.padded) {
@@ -45,5 +46,21 @@ export function createCheck(markers = MARKERS.padded) {
     if (!ok) count.failures++;
     return Boolean(ok);
   }
-  return { check, count };
+  /**
+   * Assert, after the last case, that exactly `expected` checks ran. The totals are quoted in
+   * prose — and prose cannot be typechecked, which is the argument that built
+   * `bootThresholds.test.ts`. Callers gate the call on a green, complete run: a red one may
+   * legitimately have skipped past assertions (`if (!check(…)) return`), and a run that stood
+   * cases down says so itself. Not a `check()`, deliberately — the pin must not count itself
+   * into the total it verifies.
+   */
+  function pin(expected) {
+    if (count.checks === expected) return;
+    count.failures++;
+    console.log(
+      `${markers.fail} Prüfungszahl: ${count.checks} statt ${expected} — Assertions kamen dazu` +
+        ` oder entfielen; die Konstante im Runner mitziehen (und die Prosa, die sie zitiert)`,
+    );
+  }
+  return { check, count, pin };
 }

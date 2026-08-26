@@ -8,4 +8,4 @@
  */
 import { createCheck } from '../lib/check.mjs';
 
-export const { check, count } = createCheck();
+export const { check, count, pin } = createCheck();

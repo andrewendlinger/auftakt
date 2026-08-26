@@ -114,7 +114,14 @@ const WHYS = new Set([
   'abort:starved',
 ]);
 
-const { check, count } = createCheck();
+const { check, count, pin } = createCheck();
+
+/**
+ * Every assertion a full run makes, exactly — pinned only when nothing failed and nothing stood
+ * down, so a machine whose cadence stands E/E2/E3 (or F) down is never a red. The total is
+ * quoted in prose that cannot be typechecked; a new case moves this number too, deliberately.
+ */
+const EXPECTED_CHECKS = 210;
 
 /**
  * A case that could not be exercised, with the evidence for why.
@@ -932,6 +939,8 @@ try {
     anyDrops,
     anyDrops ? '' : `alle drei standen ab — med ${med} ms, die tolerierte Bandbreite fasst ${STEPS} Bilder`,
   );
+
+  if (count.failures === 0 && notExercised === 0) pin(EXPECTED_CHECKS);
 
   console.log(
     `\n${count.failures ? `✗ ${count.failures} Fehler` : '✓ alles ok'} (${count.checks} Prüfungen)` +

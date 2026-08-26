@@ -50,7 +50,7 @@
  */
 import { requireFreePorts } from './lib/ports.mjs';
 import { FIXTURE, PORT, RUN } from './check-browser/config.mjs';
-import { check, count } from './check-browser/report.mjs';
+import { check, count, pin } from './check-browser/report.mjs';
 import { api, assertDemo, scoped, send, shutdown, stackLog, startStack, waitForStack } from './check-browser/stack.mjs';
 import { launch, reloadedSurfaces } from './check-browser/browser.mjs';
 import { runSeasons } from './check-browser/cases/seasons.mjs';
@@ -68,6 +68,13 @@ import { runArchive } from './check-browser/cases/archive.mjs';
 import { runColumns } from './check-browser/cases/columns.mjs';
 import { runLanding } from './check-browser/cases/landing.mjs';
 import { runReorder } from './check-browser/cases/reorder.mjs';
+
+/**
+ * Every assertion a green run makes, exactly. The total is quoted in prose (`check-boot.mjs`'s
+ * header, CLAUDE.md, decision records), and prose cannot be typechecked — so the run pins it.
+ * Adding or removing a case moves this number too, deliberately.
+ */
+const EXPECTED_CHECKS = 632;
 
 // ---------------------------------------------------------------------------- the run
 
@@ -311,6 +318,10 @@ try {
   await runColumns(fixtures);
   await runLanding(fixtures);
   await runReorder(fixtures);
+
+  // Only on a green run: a failed `check()` may have short-circuited a case's remaining
+  // assertions, and that run is red already — the pin guards the green ones.
+  if (count.failures === 0) pin(EXPECTED_CHECKS);
 
   console.log(
     `\n${count.failures ? `✗ ${count.failures} Fehler` : '✓ alles ok'} (${count.checks} Prüfungen)` +
