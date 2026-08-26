@@ -250,8 +250,8 @@ verified by hand, and the gate itself is written from this list.
   `{"outcome":"no-report","why":"quit"}` from the before-quit/SIGINT hooks. An empty log after a
   launch therefore always means the diagnostics did not run, never that the boot was merely
   short-lived. Read it with
-  `jq -c 'select(has("src") | not)' ~/Library/Application\ Support/Auftakt/app-log.jsonl | tail -n 5`
-  (Windows: `%APPDATA%\Auftakt\app-log.jsonl`) — a plain `tail` now mixes runtime lines in, which
+  `jq -c 'select(has("src") | not)' ~/Library/Application\ Support/auftakt/app-log.jsonl | tail -n 5`
+  (Windows: `%APPDATA%\auftakt\app-log.jsonl`) — a plain `tail` now mixes runtime lines in, which
   is exactly what `summarizeBootLog` filters out with `isBootLine`. An installation that predates
   WP-69 still has `boot-log.jsonl`; main renames it onto the new name on the first start after the
   update — idempotent, and never over an `app-log.jsonl` that already exists — so the history
