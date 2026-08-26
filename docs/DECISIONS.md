@@ -3510,16 +3510,19 @@ restore-point databases in the audit produced no sidecar artifacts while reading
 app-produced backup never has one, so a file that does is a hand-copied live database with rows the
 import would silently drop.
 
+---
+
 ## `check:boot` never causes `warm` — the field's most common outcome is an accepted gap (2026-08-26, WP-70)
 
 The customer's real `boot-log.jsonl` (149 lines over eleven days) is dominated by an outcome the
 boot gate never produces: `skip/warm` — a same-process renderer reload that finds its session
 state already stamped, reuses the memoised startup and skips the gesture — accounts for 106
 lines, 71.1 %. Season switches and in-app reloads simply outnumber cold starts in the field,
-about three warm reloads for every launch. The gate, meanwhile, causes and asserts `done`,
-`secondary`, `abort:hitch`, `abort:drops`, `click` and `deadline`; it cannot cause `warm`,
-because that requires reloading the *same* window with its `sessionStorage` intact, and the
-harness only ever cold-starts the app. That is its design, not an oversight (see „The boot gate
+about three warm reloads for every launch. The gate, meanwhile, causes and asserts six of the
+seven outcomes this log contains — `done`, `secondary`, `abort:hitch`, `abort:drops`, `click`
+and `deadline` — and more besides that the log happens not to show (`hold-max`, `app-failed`,
+`reduced-motion`); the one it cannot cause is `warm`, because that requires reloading the
+*same* window with its `sessionStorage` intact, and the harness only ever cold-starts the app. That is its design, not an oversight (see „The boot gate
 asserts accounting, never a timing").
 
 Decided by Andre, 2026-08-26: **this is an accepted, named gap, not a hole to close.** The
