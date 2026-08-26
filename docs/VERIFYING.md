@@ -35,7 +35,7 @@ dialog's keyboard behaviour or the search overlay, and to anything that lays out
 prints; it is not a substitute for the passes below.
 
 **Where a case letter lives.** Comments across the repo cite the gate's areas as `case A` …
-`case AW`; this table is the index that resolves them. The authoritative range is each file's
+`case AX`; this table is the index that resolves them. The authoritative range is each file's
 own head line in `scripts/check-browser/cases/` — a new surface adds a file there and a row
 here.
 
@@ -55,7 +55,7 @@ here.
 | `archive.mjs` | AH–AK | the archive and its boundary |
 | `columns.mjs` | AL–AO | the custom column types |
 | `landing.mjs` | AP–AS | the landing page and its two conflicting blobs |
-| `reorder.mjs` | AT–AW | the reorderable surfaces |
+| `reorder.mjs` | AT–AX | the reorderable surfaces |
 
 **The second committed gate is `npm run check:boot`** (WP-61c) — the boot gesture exists only in a
 built bundle, which is the one surface `check:browser` deliberately cannot reach, so this one

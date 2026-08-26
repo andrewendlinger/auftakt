@@ -27,7 +27,7 @@
  *
  * @property {any} data B–E · the copy the broadcast and season-switch cases work in
  * @property {any} trash I · the copy the delete path may empty
- * @property {any} sorted J–K, AT–AW · the copy the reorder cases shuffle
+ * @property {any} sorted J–K, AT–AX · the copy the reorder cases shuffle
  * @property {any} sheets N · the copy whose project 1 loses its status pill
  * @property {any} printed N2 · the one season that is not a copy — a task list of a tuned length
  * @property {any} config O–R2 · the copy the settings cases rewrite

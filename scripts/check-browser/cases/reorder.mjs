@@ -936,6 +936,11 @@ export async function runReorder(fixtures) {
     axA1.join(' ').includes('kontakte:full links:full') &&
       axA1.indexOf('links:full') < axA1.indexOf('aufgaben:full') &&
       axA5.at(-1) === 'links:full' &&
+      // `includes` first: `indexOf` answers -1 for a section that is not on the page at all, and
+      // -1 is below every index — so „behind the task table" would stay true of a build that had
+      // stopped rendering the task table. The `axA1` arm above needs no such guard: it compares
+      // two indices, and a missing one takes that comparison red on its own.
+      axA5.includes('aufgaben:full') &&
       axA5.indexOf('aufgaben:full') < axA5.length - 1,
     `Künstler 1: ${axA1.join(' ')} | Künstler 5: ${axA5.join(' ')}`,
   );
