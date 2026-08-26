@@ -11,17 +11,42 @@
   // arity and property access still gets checked, which is what catches the class of mistake
   // that matters here.
   //
-  // Deliberately not `strict`, and the ledger below is what that costs, measured rather than
-  // assumed (2026-08-24, across all six gates and their `lib/`). The principle has not changed:
-  // take the settings that catch *mistakes*, decline the ones that only demand *annotations*.
+  // `strictNullChecks` is on since WP-76 (2026-08-26), and it is the one flag here that was not
+  // free. It cost 73 errors, and none of them was an annotation asked for by a typechecker with
+  // nothing better to do: each was a real read of something that can be absent — a `find()`, a
+  // `querySelector`, `getWorksheet('Aufgaben')`, `.pop()` on a split, a helper one scenario file
+  // hands the next — in the scripts that decide whether a release ships. All 73 are now explicit,
+  // and each says what a miss means *there*:
   //
-  //   noImplicitAny              875 errors — nearly all `implicitly has an 'any' type` on a
+  //   a throw    where a miss means the gate itself has come apart and every assertion after it
+  //              would be measuring the wrong thing — a season copy that was never taken and is
+  //              about to be opened by name, an .xlsx with no „Aufgaben" sheet, a scenario file
+  //              reading a helper a reordered run never handed it, a tsx helper that printed
+  //              nothing. A gate that stops and names the reason is behaving correctly; one that
+  //              carries on into `undefined is not a function` twenty lines later is not.
+  //   a narrow   only where absence is a legitimate outcome the assertion already reads — no
+  //              `activeElement` is `at: -1`, „the focus trap let go"; a print fixture that lost
+  //              its coloured runs fails its own check instead of throwing out of the case.
+  //
+  // Nothing was widened to `any`, no assertion was added, removed or reworded, and no `check()`
+  // changed its verdict — `check:browser` and `check:boot` pin their totals and both still hold
+  // them. What the flag does from here is make the next missing guard a red on the line that
+  // needs it, which is what this project is for.
+  //
+  // Still deliberately not `strict`, and the ledger below is what that costs, measured rather
+  // than assumed (2026-08-24, re-measured 2026-08-26 with `strictNullChecks` on, across all six
+  // gates and their `lib/`). The principle has not changed: take the settings that catch
+  // *mistakes*, decline the ones that only demand *annotations*.
+  //
+  //   noImplicitAny              854 errors — nearly all `implicitly has an 'any' type` on a
   //                              callback parameter. Annotating that is a rewrite of working,
   //                              load-bearing scripts in exchange for no defect found.
-  //   strictNullChecks            73 errors — the honest remainder, and the one worth revisiting:
-  //                              these are places where a `find()` or an optional field is used
-  //                              without a guard. Not taken here because it is a change to
-  //                              working code, and this pass was a pure move.
+  //   noUncheckedIndexedAccess    12 errors, and the honest remainder now — the flag was a no-op
+  //                              before `strictNullChecks` and is not one any more. Each is an
+  //                              index the surrounding code has already established (`dbLines[0]`
+  //                              beside its own `length === 1`, `clocks[i - 1]` behind an
+  //                              `i === 0 ||`, `plan[plan.length - 1]`), so unlike the 73 above it
+  //                              buys guards against cases that cannot arise. Measured, not taken.
   //   noUnusedLocals               3 errors, and all three are the same TypeScript quirk: the
   //                              local `require` from `createRequire` reads as unused, because
   //                              tsc treats `require(...)` as a module reference rather than as
@@ -34,9 +59,9 @@
   //   noImplicitOverride           1 error, in `client/src/`, which this project only reaches
   //                              through `client/scripts/check-markdown.ts`'s imports.
   //
-  // The four below were free — zero errors at the moment they were turned on — and are here so
-  // they stay that way. `alwaysStrict` and `noUncheckedIndexedAccess` are omitted on purpose:
-  // both are no-ops here (every file is a module, and the latter needs `strictNullChecks`).
+  // Every other flag below was free — zero errors at the moment it was turned on — and is here so
+  // it stays that way. `alwaysStrict` is omitted on purpose and is still a no-op: every file here
+  // is a module.
   //
   // If these files are ever converted to TypeScript, turn `strict` on with them.
   // `paths` because the gate scripts `createRequire` their heavy dependencies out of
@@ -61,6 +86,7 @@
     },
     "strict": false,
     "noImplicitAny": false,
+    "strictNullChecks": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "noUnusedParameters": true,

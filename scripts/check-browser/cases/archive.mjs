@@ -3,12 +3,15 @@
 import { sleep } from '../../lib/wait.mjs';
 import { clickIfThere, gone, open, pin, ready, shown, topDialog, until } from '../browser.mjs';
 import { UI } from '../config.mjs';
+import { handedOver } from '../fixtures.mjs';
 import { check } from '../report.mjs';
 import { api, scoped, send } from '../stack.mjs';
 
 /** @param {import('../fixtures.mjs').Fixtures} fixtures */
 export async function runArchive(fixtures) {
-  const { HOME, agedSeason, boxOf, context } = fixtures;
+  const { HOME, agedSeason, context } = fixtures;
+  /** `boxOf` comes from `toolbox`, which runs two files earlier. */
+  const { boxOf } = handedOver(fixtures, ['boxOf']);
   // ======================================================================== AH–AK · the archive
   //
   // Distinct from I/I2, which own the **Papierkorb** — soft-deleted records, their dependency

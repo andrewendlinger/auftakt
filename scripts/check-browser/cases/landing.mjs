@@ -805,7 +805,10 @@ export async function runLanding(fixtures) {
   );
   check(
     'jeder Versuch liest die Generation des Gewinners aus der Absage und steigt mit ihr',
-    lrSent[0]?.rev === lrBase.rev && lrSent.every((s, i) => i === 0 || s.rev === lrSent[i - 1].rev + 1),
+    // `?? NaN`: a PATCH whose body carried no `rev` at all satisfies no step, which is what the
+    // arithmetic already said — `undefined + 1` is `NaN` and `NaN` equals nothing.
+    lrSent[0]?.rev === lrBase.rev &&
+      lrSent.every((s, i) => i === 0 || s.rev === (lrSent[i - 1].rev ?? NaN) + 1),
     `${lrSent.map((s) => s.rev).join(' → ')} ab ${lrBase.rev}`,
   );
   // …*out of the refusal*, and that is the half the revs alone cannot show: a retry that fetched

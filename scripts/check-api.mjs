@@ -85,8 +85,11 @@ function startServer() {
 
 async function stopServer() {
   if (!server) return;
-  const dead = new Promise((res) => server.once('exit', res));
-  server.kill();
+  // Taken into a const first: `server` is a module-level `let` that `startServer()` reassigns, so
+  // the guard above narrows it for this line but not inside the callback below, which outlives it.
+  const running = server;
+  const dead = new Promise((res) => running.once('exit', res));
+  running.kill();
   await dead;
   server = null;
 }
@@ -115,10 +118,16 @@ async function ok(method, path, body, headers) {
 
 const seasonFile = (name) => join(dataDir, name);
 
-/** Carried across the stop/start boundary, where the purge and the on-disk checks run. */
+/**
+ * Carried across the stop/start boundary, where the purge and the on-disk checks run.
+ * @type {string | null}
+ */
 let copyTarget = null;
+/** @type {string | null} */
 let projectCopyTarget = null;
+/** @type {string | null} */
 let seasonScopeCopy = null;
+/** @type {string | null} */
 let seasonScopeBare = null;
 /**
  * Row ids the purge section plants before the restart and asserts on after it. Typed as a bag
@@ -1074,9 +1083,12 @@ try {
       // so today's `Buffer<ArrayBuffer>` does not match its plain `Buffer`; and it types
       // `Row.values` as a union with the by-key object form, which the array access below is not.
       await wb.xlsx.load(/** @type {any} */ (Buffer.from(await res.arrayBuffer())));
-      const header = /** @type {import('exceljs').CellValue[]} */ (
-        wb.getWorksheet('Aufgaben').getRow(1).values
-      );
+      // No sheet by that name is the export having broken outright, not a column missing off it —
+      // the case below can say nothing about that, so stop here with the reason rather than let
+      // it read as „die Spalte fehlt".
+      const sheet = wb.getWorksheet('Aufgaben');
+      if (!sheet) throw new Error(`Die .xlsx zu „${query}“ hat kein Blatt „Aufgaben“ (HTTP ${res.status})`);
+      const header = /** @type {import('exceljs').CellValue[]} */ (sheet.getRow(1).values);
       return header.filter(Boolean).map(String);
     };
     const artistSheet = await headersOf(`?resolved_artist_id=${artist.id}`);
@@ -1357,6 +1369,16 @@ try {
 
   await stopServer();
 
+  // The four copies the sections above recorded are opened by name below. A `null` here is never
+  // a product defect — it is this script's own two-phase shape having come apart, a copy section
+  // not having run before the section that reads its file back. Say so, rather than handing
+  // better-sqlite3 a `null` it answers with a bare TypeError.
+  if (!copyTarget || !projectCopyTarget || !seasonScopeCopy || !seasonScopeBare) {
+    throw new Error(
+      `Eine Saison-Kopie wurde nie angelegt: ${JSON.stringify({ copyTarget, projectCopyTarget, seasonScopeCopy, seasonScopeBare })}`,
+    );
+  }
+
   // ------------------------------------------------------------------ the copy, on disk
   {
     const db = new Database(copyTarget, { readonly: true });
@@ -1437,6 +1459,10 @@ try {
       `INSERT INTO tasks (title, status, parent_id, created_at, updated_at)
        VALUES (?, 'new', ?, datetime('now','localtime'), datetime('now','localtime'))`,
     );
+    /**
+     * The row each level hangs under: `null` for the root, the level before it after that.
+     * @type {number | null}
+     */
     let parent = null;
     deepTree = [];
     for (const level of ['Ebene 1', 'Ebene 2', 'Ebene 3', 'Ebene 4']) {

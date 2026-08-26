@@ -83,7 +83,14 @@ const helper = (() => {
             console.log(JSON.stringify({a, b: fileStamp(), s: localStamp(), d: localDay()}));`],
     { encoding: 'utf8', env: process.env, cwd: join(REPO, 'server') },
   );
-  return JSON.parse((out.stdout || '{}').trim().split('\n').pop());
+  // The **last** line, because tsx may print a warning before the payload. A run that printed
+  // nothing at all is the helper having failed to start; the old `|| '{}'` swallow let the first
+  // assertion print a „FAIL" naming the wrong culprit before the next line threw a bare
+  // TypeError. Stop with the reason instead.
+  const lines = (out.stdout ?? '').trim().split('\n');
+  const payload = lines[lines.length - 1];
+  if (!payload) throw new Error(`tsx gab nichts aus (Status ${out.status})\n${out.stderr ?? ''}`);
+  return JSON.parse(payload);
 })();
 
 check('localStamp() is the SQLite space format', SPACE_STAMP.test(helper.s), helper.s);
@@ -268,7 +275,7 @@ try {
   // What it still owns is the *today* edge — „from today onwards, running multi-day events
   // included" — and that is exactly the comparison a bare date('now') gets wrong, in both
   // directions: Kiritimati (UTC+14) would let „gestern" in, Midway (UTC-11) would drop „heute".
-  const mk = (title, start_at, end_at = null) =>
+  const mk = (title, start_at, /** @type {string | null} */ end_at = null) =>
     api('POST', '/events', { artist_id: artist.id, type: 'Auftritt', title, start_at, end_at, all_day: 1 });
   await mk('heute', dayOffset(0));
   await mk('gestern', dayOffset(-1));

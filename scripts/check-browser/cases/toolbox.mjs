@@ -3,12 +3,15 @@
 import { sleep } from '../../lib/wait.mjs';
 import { clickIfThere, gone, open, pin, ready, scrollSettled, shown, until, windowContext } from '../browser.mjs';
 import { UI } from '../config.mjs';
+import { handedOver } from '../fixtures.mjs';
 import { check } from '../report.mjs';
 import { api, scoped, send } from '../stack.mjs';
 
 /** @param {import('../fixtures.mjs').Fixtures} fixtures */
 export async function runToolbox(fixtures) {
-  const { browser, context, textOf, toolbox } = fixtures;
+  const { browser, context, toolbox } = fixtures;
+  /** `textOf` comes from `subtasks`, which runs immediately before this file. */
+  const { textOf } = handedOver(fixtures, ['textOf']);
   // ======================================================================== AA–AC · the toolbox
   //
   // What sits in front of case H. That one asserts a note *saves* — on blur, and through the door

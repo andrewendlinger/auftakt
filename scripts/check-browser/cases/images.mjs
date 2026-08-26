@@ -3,12 +3,22 @@
 import { sleep } from '../../lib/wait.mjs';
 import { clickIfThere, open, pin, ready, shown, until } from '../browser.mjs';
 import { API, RUN, UI } from '../config.mjs';
+import { handedOver } from '../fixtures.mjs';
 import { check } from '../report.mjs';
 import { api, scoped, send } from '../stack.mjs';
 
 /** @param {import('../fixtures.mjs').Fixtures} fixtures */
 export async function runImages(fixtures) {
-  const { boxOf, caretIn, context, openNote, pictures, saveNote, textOf, toolbarBtn } = fixtures;
+  const { context, pictures } = fixtures;
+  /** Five from `toolbox`, which runs immediately before this file, and `textOf` from `subtasks`. */
+  const { boxOf, caretIn, openNote, saveNote, textOf, toolbarBtn } = handedOver(fixtures, [
+    'boxOf',
+    'caretIn',
+    'openNote',
+    'saveNote',
+    'textOf',
+    'toolbarBtn',
+  ]);
   // ======================================================================== AD–AG · images in the text
   //
   // WP-37 put pictures into the database and into the editor, and case N asserts the far end of
