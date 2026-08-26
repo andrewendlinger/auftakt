@@ -9,6 +9,15 @@ startup, which asks the GitHub Releases API for the latest published version
 number. It sends no data of yours — see
 [`electron/updateCheck.ts`](electron/updateCheck.ts) for the whole of it.
 
+## Supported versions
+
+Only the **latest release** receives fixes. Auftakt ships fix-forward: a defect
+in a released version is fixed in a new release, never by re-tagging or
+replacing a published installer — a published artefact and its provenance
+attestation are immutable. The in-app updater moves existing installations to
+the latest version; older installers stay downloadable for provenance, but
+nothing is backported to them.
+
 ## Reporting a vulnerability
 
 Please report security issues **privately**, not as a public issue.
