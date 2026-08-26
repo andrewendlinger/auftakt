@@ -20,6 +20,17 @@ import { backupDirProblem, runStartupBackup } from './backup';
 import { WINDOW_MINIMUM, WINDOW_PREFERRED, cascadeBounds, fittedSize } from './cascade';
 import { exportFileName } from './exportName';
 import { readSeasonTerms } from './seasonTerms';
+import {
+  HEALTH_TIMEOUT_MS,
+  KEEP_WAITING,
+  POLL_FIRST_MS,
+  STATUS_LOAD_CAP_MS,
+  nextPollDelay,
+  statusUrl,
+  waitDialog,
+  waitLogEntry,
+  waitStep,
+} from './serverWait';
 import { readWindowBounds, usableBounds, writeWindowBounds } from './windowBounds';
 import {
   APP_LOG_NAME,
@@ -334,7 +345,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return json;
 }
 
-async function startServer(): Promise<void> {
+async function startServer(win: BrowserWindow): Promise<void> {
   // Configure the bundled server via env, then import it (it calls app.listen on load).
   process.env.AUFTAKT_DATA_DIR = dataDir();
   process.env.AUFTAKT_PORT = String(PORT);
@@ -343,37 +354,136 @@ async function startServer(): Promise<void> {
   // It reaches the MANIFEST.txt of every restore point (WP-41), which is what tells a
   // customer years later which version wrote the backup they are about to restore.
   process.env.AUFTAKT_APP_VERSION = app.getVersion();
+  // The wait's clock starts one line above the import rather than after it (WP-72). That import
+  // is 3.4 MB of bundled JS compiled synchronously on this event loop, and on the machines this
+  // patience exists for the file is being read through a virus scanner while it happens — a wait
+  // measured from after it would call a 40-second launch a two-second one, and would let the
+  // window sit silent through the part that is actually slow. performance.now() and not
+  // Date.now(): a first launch is exactly when Windows corrects its clock, and a wait must not
+  // jump because the time did.
+  const startedAt = performance.now();
   const serverEntry = join(app.getAppPath(), 'server', 'dist', 'index.mjs');
   await import(pathToFileURL(serverEntry).href);
-  await waitForServer();
+  await waitForServer(win, startedAt);
+}
+
+/** One health poll. Bounded, so a wedged connection cannot swallow the whole patience. */
+async function serverAnswers(): Promise<boolean> {
+  try {
+    const r = await fetch(`${ORIGIN}/api/health`, {
+      signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+    });
+    return r.ok;
+  } catch {
+    return false; // not up yet, refused, or the poll ran out of time — all the same answer
+  }
 }
 
 /**
- * The cream window is already on screen while this runs, so every millisecond here delays
- * content rather than the window — still worth polling tightly, because the boot overlay's
- * deadline clock starts with the page. A flat 150 ms interval charged the full 150 ms
- * whenever the server bound just after a poll was refused, which is the common case: the
- * listen call is a few ticks behind the import that triggered it. Start tight and back off
- * to the old interval, so the usual launch pays ~15 ms and a genuinely slow one is polled
- * no harder than before.
+ * „Beenden" from the wait dialog. A class rather than a flag, so the handler in whenReady can
+ * tell a launch the user ended from a launch that failed: the user has already answered the only
+ * question there was, and a second dialog after it — least of all one advising a reinstall —
+ * would be the app arguing with them.
  */
-function waitForServer(timeoutMs = 10000): Promise<void> {
-  const start = Date.now();
-  let delay = 15;
-  return new Promise((res, rej) => {
-    const tick = async () => {
-      try {
-        const r = await fetch(`${ORIGIN}/api/health`);
-        if (r.ok) return res();
-      } catch {
-        /* not up yet */
+class StartupAbandoned extends Error {
+  constructor() {
+    // Carried rather than left empty: this value is one reordering away from a dialog that
+    // prints `err.message` as its first line, and a blank first line reads as a bug.
+    super('Start vom Benutzer beendet');
+  }
+}
+
+/**
+ * Poll `/api/health` until the bundled server answers, and stop being silent about it long
+ * before giving up (WP-72).
+ *
+ * The cream window is already on screen while this runs (PR #144), so every millisecond here
+ * delays content rather than the window — still worth polling tightly, because the boot
+ * overlay's deadline clock starts with the page. A flat 150 ms interval charged the full 150 ms
+ * whenever the server bound just after a poll was refused, which is the common case: the listen
+ * call is a few ticks behind the import that triggered it.
+ *
+ * **What replaced the ten-second timeout.** It used to reject at 10 s with „Server-Start
+ * Zeitüberschreitung", which a customer met once as a dialog that offered a reinstall and an
+ * exit — 24 s before the next launch worked fine. The app's own update dialog says a scanner
+ * over a fresh binary „kostet auf manchen Rechnern eine Minute oder mehr", so ten seconds was
+ * the app contradicting itself. Now the same moment puts the reason on screen instead
+ * (`serverWait.ts` holds every number and every sentence), the wait runs to `PATIENCE_MS`, and
+ * what happens then is a question rather than a verdict. „Weiter warten" starts a fresh cycle;
+ * the status stays up throughout, so nothing flashes between rounds.
+ *
+ * The fast path — the overwhelming majority of launches — never reaches any of it and is
+ * visually untouched: no navigation, no dialog, no log line.
+ */
+async function waitForServer(win: BrowserWindow, startedAt: number): Promise<void> {
+  const elapsed = () => performance.now() - startedAt;
+  let cycleAt = startedAt;
+  let delay = POLL_FIRST_MS;
+  let announced = false;
+  let rounds = 0;
+
+  for (;;) {
+    if (await serverAnswers()) {
+      // Only a wait somebody watched is worth a line; a log that fills with routine notices is a
+      // log whose rotation throws the errors away (WP-69).
+      if (announced) logMain(waitLogEntry('ready', elapsed(), rounds));
+      return;
+    }
+    switch (waitStep(performance.now() - cycleAt, announced)) {
+      case 'announce':
+        announced = true;
+        logMain(waitLogEntry('slow', elapsed()));
+        await showStartupStatus(win);
+        break;
+      case 'ask': {
+        // Polling stops for as long as the box is open — there is no way to take a message box
+        // back off the screen, so a server that comes up mid-question is answered by the poll
+        // right after „Weiter warten", ≤500 ms later. Parented to the window that has been on
+        // screen the whole time; messageBox falls back to unparented if it was closed.
+        const answer = await messageBox(win, waitDialog(rounds));
+        if (answer.response !== KEEP_WAITING) {
+          logMain(waitLogEntry('quit', elapsed(), rounds));
+          throw new StartupAbandoned();
+        }
+        rounds += 1;
+        cycleAt = performance.now();
+        logMain(waitLogEntry('again', elapsed(), rounds));
+        break;
       }
-      if (Date.now() - start > timeoutMs) return rej(new Error('Server-Start Zeitüberschreitung'));
-      setTimeout(tick, delay);
-      delay = Math.min(delay * 2, 150);
-    };
-    void tick();
-  });
+      case 'poll':
+        break;
+    }
+    await new Promise((r) => setTimeout(r, delay));
+    delay = nextPollDelay(delay, announced);
+  }
+}
+
+/**
+ * Put the status page into the window that is already standing there.
+ *
+ * **Why a `data:` URL and not a packaged file.** The client is not loaded and cannot be — the
+ * server it would load from is the thing being waited for — so the page has to come from this
+ * process. A file under `client/dist` would be a new packaging input for `check:package` to
+ * pin and a second place the launch can fail; the document is a few hundred bytes of markup
+ * with nothing to fetch, so it travels in the URL. `loadURL` is main-initiated, so the
+ * `will-navigate` origin guard is not involved (it fires for renderer-initiated navigation
+ * only), and the page's opaque origin cannot see the app's `sessionStorage` — the boot gate's
+ * `auftakt-booted` key is untouched and the gesture still decides for itself when the app
+ * finally loads.
+ *
+ * **Awaited, and bounded, and both halves matter.** Awaited because this navigation must not
+ * still be pending when `loadWindow` starts the app's own: Electron attaches the new load's
+ * listeners before it cancels the old one, so the aborted navigation's `did-fail-load` lands on
+ * the *successor's* promise and rejects a load that is in fact fine (electron#17526) — which
+ * would end a launch that finally worked with „Die Oberfläche konnte nicht geladen werden.
+ * ERR_ABORTED". Bounded because the loop owes the user a dialog at `PATIENCE_MS`, and a promise
+ * that never settles is the one way it could fail to keep that promise. A rejection is swallowed
+ * on purpose: a status page that will not load must not be what ends the launch.
+ */
+async function showStartupStatus(win: BrowserWindow): Promise<void> {
+  if (win.isDestroyed()) return;
+  const load = win.loadURL(statusUrl()).catch(() => {});
+  await Promise.race([load, new Promise((r) => setTimeout(r, STATUS_LOAD_CAP_MS))]);
 }
 
 /**
@@ -1396,14 +1506,30 @@ app.whenReady().then(async () => {
     try {
       // Held in serverReady too, so the chores share the same health-check gate — a
       // rejection lands in their .catch(reportBackupProblem) alongside the dialog below.
-      serverReady = startServer();
+      // The window goes in because a slow start is now something the window says rather
+      // than something it hides (WP-72).
+      serverReady = startServer(win);
       await serverReady;
     } catch (err) {
-      // Nothing works without the bundled server, and every failure here is silent by
-      // nature (a health-check timeout, an unresolvable ESM import). Unhandled, the
-      // whole handler rejects with the cream window stuck on screen (ELP-06). Parented
-      // to that window; messageBox falls back to unparented exactly when the user has
-      // already closed it during a hung start.
+      // The user answered „Beenden" to the wait dialog. They have already had the only
+      // question this launch had; exit on their answer rather than arguing with it.
+      if (err instanceof StartupAbandoned) {
+        app.exit(1);
+        return;
+      }
+      // What is left here is a hard failure — an unresolvable ESM import, a corrupt asar —
+      // and no longer the health-check timeout, which `waitForServer` now answers itself.
+      // That narrowing is what makes this text right again: for a bundle that cannot be
+      // loaded at all a reinstall really is the counsel, where for a scanner reading a fresh
+      // binary it was advice that wrote a second fresh binary to be read.
+      //
+      // Logged since WP-72: it is silent by nature (nothing is thrown to the console tee),
+      // so the diagnostics bundle of a customer whose app „does not open" used to say
+      // nothing whatever about the one thing that stopped it. Unhandled, the whole handler
+      // would reject with the cream window stuck on screen (ELP-06). Parented to that
+      // window; messageBox falls back to unparented exactly when the user has already
+      // closed it during a hung start.
+      logMain({ level: 'error', event: 'server-start-failed', ...errorFields(err) });
       await messageBox(win, {
         type: 'error',
         message: 'Auftakt konnte nicht gestartet werden.',
