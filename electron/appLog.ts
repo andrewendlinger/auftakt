@@ -74,7 +74,11 @@ export const APP_LOG_FIELD_CAPS: Readonly<Record<string, number>> = {
 };
 
 /** Where a runtime line came from. Its presence is what makes a line *not* a boot report. */
-export type AppLogSource = 'main' | 'server' | 'renderer';
+// No 'server' member, deliberately: the server runs in-process and its console output reaches
+// the log through main's tee, so a server line IS a main line ({src:'main', event:'console'}).
+// The member existed briefly and described a writer that never existed — a triager filtering
+// on it would have matched nothing. It returns the day the server leaves the process.
+export type AppLogSource = 'main' | 'renderer';
 
 /** The wrapper fields of a runtime line. Stamped by main, never by whoever sent the entry. */
 export interface AppLogMeta {

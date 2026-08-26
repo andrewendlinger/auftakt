@@ -301,7 +301,7 @@ describe('countEntries', () => {
 
 describe('splitAppLog', () => {
   const BOOT = '{"outcome":"play","why":"done","at":"2026-08-25T09:00:00.000Z"}';
-  const RUNTIME = '{"v":1,"event":"server-error","msg":"boom","at":"2026-08-25T09:00:01.000Z","src":"server"}';
+  const RUNTIME = '{"v":1,"event":"console","msg":"boom","at":"2026-08-25T09:00:01.000Z","src":"main"}';
 
   it('sorts the two kinds apart by the one discriminator, keeping the lines verbatim', () => {
     const { boot, runtime } = splitAppLog(`${BOOT}\n${RUNTIME}\n`);
@@ -388,7 +388,7 @@ describe('writing (the one file both kinds land in)', () => {
   it('rotates back under the trigger instead of growing without end', () => {
     const stack = 'x'.repeat(3000);
     for (let i = 0; i < 250; i++) {
-      writeAppLog(dir, { event: 'boom', stack, i }, { app: '0.11.0', src: 'server' });
+      writeAppLog(dir, { event: 'boom', stack, i }, { app: '0.11.0', src: 'main' });
     }
     const size = statSync(join(dir, APP_LOG_NAME)).size;
     expect(size).toBeLessThanOrEqual(APP_LOG_MAX_BYTES);

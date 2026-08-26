@@ -2972,7 +2972,8 @@ one file and a correlation exercise in two.
 **Boot lines keep their exact shape; `src` is the discriminator.** A boot report is still
 `{v, …report, at, app}` and carries no `src`, because `scripts/check-boot.mjs` and the WP-61b/c
 cross-version comparison read those lines field by field. Runtime lines are `{v:1, …entry, at,
-app, src}` and *always* carry `src` (`main` | `server` | `renderer`), so every reader separates
+app, src}` and *always* carry `src` (`main` | `renderer` — the in-process server's lines arrive
+through the tee as `main`), so every reader separates
 the two with one `'src' in line` test — `summarizeBootLog` filters before it counts, and the gate
 filters before every field-discipline assertion. Adding an `src` to boot reports would have been
 the tidier symmetry and would have silently reclassified every line ever written; the builder
