@@ -88,7 +88,13 @@ Auftakt-Diagnose-*.txt
 MACOS-SESSION.md
 WINDOWS-SESSION.md
 
-# agent tooling (local only)
+# agent tooling — CLAUDE.md and .claude/ (skills, per-repo agent settings, worktrees) stay
+# local by choice: they are one developer's working notes and process runbooks, they carry
+# internal narratives (customer incidents, release mechanics) that have no place in a public
+# repository, and with PRs closed a committed copy buys a collaborator nothing — the same
+# trade the release-process decision made. CONTRIBUTING.md and docs/ carry everything durable;
+# the runbooks are archived privately. Ignored rather than merely untracked so a stray
+# `git add -A` cannot sweep them in.
 CLAUDE.md
 .claude/
 

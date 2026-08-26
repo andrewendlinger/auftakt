@@ -6,8 +6,8 @@ import { describe, expect, it } from 'vitest';
 /**
  * The boot overlay's thresholds live in `client/index.html`, but every one of them is also
  * *stated* in `docs/VERIFYING.md`, because that file is what a driving script is written
- * against. TODO.md has said for a while that the two must move together, and by the overlay's
- * own comments they repeatedly have not: WP-61 found `HITCH_MS` documented as 50 ms while the
+ * against. The two must move together — an old rule, and by the overlay's
+ * own comments one repeatedly broken: WP-61 found `HITCH_MS` documented as 50 ms while the
  * value that mattered had been argued over three times. Prose cannot be typechecked, so this
  * is the gate — the same shape as `scripts/check-dates.mjs`, small and bespoke.
  *
