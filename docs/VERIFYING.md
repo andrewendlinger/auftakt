@@ -2005,10 +2005,44 @@ are not — they are `labels` in the window's own season `settings`, with a gene
   the trigger is `[title^="Schriftfarbe"]` — anchor it that way, the tooltip carries the platform's
   own spelling of the shortcut („⌘⇧F" on macOS, „Strg+Umschalt+F" on Windows) — the menu is
   `[role="dialog"][aria-label="Schriftfarbe"]`, its eight swatches are `[data-roving]` buttons
-  whose accessible name is the German colour („Rot", „Blau", …) and whose face is a letter A, and
-  „Standard" removes the colour. There is **no backdrop**, deliberately: a click outside closes the
+  whose accessible name is the German colour („Rot", „Blau", …), and „Standard" removes the colour.
+  There is **no backdrop**, deliberately: a click outside closes the
   menu *and* does what it was aimed at, so a script must not wait for a `.fixed.inset-0` to appear
   or expect one to swallow its next click.
+- **A swatch carries no text since WP-74 — its face is a filled chip.** The button holds one
+  `aria-hidden` `<span>` painted `background: currentColor` under the button's own `tc-…` class, so
+  `innerText`, `getByText('A')` and „does the swatch show the colour" read off the **child's
+  `backgroundColor`** — not off the button's `color`, which also computes to the palette hex but
+  would pass even against a build with no chip at all. It was a 13 px letter „A" until then, and
+  the reason it is not any more is the entry below.
+- **„Only six of the eight colours are visible" was never geometry — and the arithmetic says it
+  cannot be** (WP-74). Reported from a customer's 1536×767 at 125 %, i.e. ~1229×614 DIP. Driven at
+  exactly that shape, at four anchors — the project note, a task comment cell low in the table, the
+  same note after scrolling, and the Termin dialog's Notizen with only 173 px of room below the
+  trigger — the menu measured 134×102 in all four, `scrollHeight === clientHeight` in all four, and
+  all eight swatches sat fully inside both the viewport and the menu's own scroll port.
+  **A page note cannot be given a low anchor at all**, which is worth knowing before writing the
+  obvious drive: a description card sits at the top of its page, so a scroll can only carry it *up*
+  and out, `scrollBy` clamps at 0 and the toolbar stays exactly where it was — 306 px of room below,
+  the roomiest anchor there is, reported as if it had been pushed to the bottom edge. The dialog is
+  where the tight anchor lives. It cannot come out otherwise above a ~248 px
+  viewport, which is worth doing on paper before driving anything: the menu is 102 px tall (8 + 28
+  + 2 + 28 + 4 + 24 + 8), `useAnchoredPopover` flips above the anchor whenever
+  `scrollHeight > spaceBelow && spaceAbove > spaceBelow`, so the branch that neither flips nor fits
+  needs `spaceBelow < 102` **and** `spaceAbove <= spaceBelow` — i.e. `innerHeight < 110 + 28 + 102 +
+  8`. The app's smallest window renders at 498, and even the `Math.max(80, …)` floor still clears
+  both swatch rows (8 + 28 + 2 + 28 = 66) and cuts only „Standard". What reproduced instead was the
+  **ink**: a 13 px semibold „A" covers 6.3 % of its 28 px cell, so all eight cells are ~94 % white
+  and every one of the 28 pairs sits under ΔE00 4 measured as the colour the eye integrates at that
+  size — rot/pink 1.5, grün/türkis 1.6, orange/bernstein 1.7. „Six colours" is that palette read
+  *correctly*. A 20 px fill takes coverage to 55.6 % and leaves one pair under 10 (grün/türkis,
+  9.9). Two rules follow. **A count is not the assertion** — `count() === 8` passed against the
+  defect the whole time; assert each swatch's rect inside the menu's rect *and* the viewport, plus
+  `document.elementFromPoint` at its centre hitting the swatch itself, which is what case AB now
+  does at the customer's viewport. And **a legibility complaint is measurable**: rasterise with
+  `page.screenshot({ clip })` (never `fullPage`, which scrolls the popover shut), then decode it in
+  a second `about:blank` page with `createImageBitmap` + `OffscreenCanvas` — Node has no PNG
+  decoder and the browser is already open.
 - **…which makes „the palette adds no click-away layer" an assertion, and one worth writing.**
   Every *other* popover in the app hangs one off `document.body` — `PillSelect`,
   `ColorSwatchPicker` (the task row's „Farbe wählen"), `SeasonSwitcher`, `SectionArranger` all
@@ -2038,6 +2072,15 @@ are not — they are `labels` in the window's own season `settings`, with a gene
   check that samples it with the palette up reads „no colour" whatever the code does, and passes
   against a build that previews nothing at all. The pair is: unstyled while open, `tc-blau` once
   it has closed on a caret sitting in a blue run.
+- **…and since WP-74 only the *bar* takes that colour, not the letter.** The wrapper `<span>` still
+  carries `tc-…` — that is what the class-list assertion above reads — but the „A" inside it now
+  carries its own `text-neutral-600`, so `getComputedStyle(letter).color` is **never** the palette
+  colour and a preview check written against the letter reports „no colour" against working code.
+  The three spans are, in document order, wrapper → letter → bar; read
+  `getComputedStyle(spans[2]).backgroundColor`. Which is also where the **Tailwind v4 colour-space
+  trap** bites: a Tailwind utility computes to `oklch(0.439 0 none)` while the hand-written `tc-`
+  hexes in `index.css` compute to `rgb(29, 78, 216)`, so „the letter is not blue" is a
+  `!== 'rgb(29, 78, 216)'` and never an equality against a neutral spelled as `rgb(…)`.
 - **⌘⇧F is the keyboard route into it**, and it is the only way in without a mouse: every toolbar
   button is `tabIndex={-1}` (WP-43). Focus lands on the *current* colour, the arrows walk the grid
   (`useRovingFocus`), Enter applies, Escape closes — and **a second ⌘⇧F closes it too**, from

@@ -1,14 +1,14 @@
 /** AA–AC · the rich-text toolbar */
 
 import { sleep } from '../../lib/wait.mjs';
-import { clickIfThere, gone, open, pin, ready, shown, until } from '../browser.mjs';
+import { clickIfThere, gone, open, pin, ready, scrollSettled, shown, until, windowContext } from '../browser.mjs';
 import { UI } from '../config.mjs';
 import { check } from '../report.mjs';
 import { api, scoped, send } from '../stack.mjs';
 
 /** @param {import('../fixtures.mjs').Fixtures} fixtures */
 export async function runToolbox(fixtures) {
-  const { context, textOf, toolbox } = fixtures;
+  const { browser, context, textOf, toolbox } = fixtures;
   // ======================================================================== AA–AC · the toolbox
   //
   // What sits in front of case H. That one asserts a note *saves* — on blur, and through the door
@@ -232,7 +232,7 @@ export async function runToolbox(fixtures) {
   //
   // Back to the plain note first: this case grows its own run, and starting on the previous one's
   // would make „the sentence beside it stayed uncoloured" a statement about `<u>` instead.
-  console.log('\nAB · Die Schriftfarbe: Palette, Klick daneben, Zurücknehmen');
+  console.log('\nAB · Die Schriftfarbe: Palette, Klick daneben, Zurücknehmen, Kundenfenster');
   await send('PATCH', BOX('/projects/2'), { description: PLAIN_NOTE });
   await t.reload();
   await ready(t);
@@ -286,6 +286,31 @@ export async function runToolbox(fixtures) {
     swatches.join(' ') === PALETTE.join(' ') && (await colorMenu.getByRole('button', { name: 'Standard', exact: true }).count()) === 1,
     swatches.join(' ') || 'keine Felder',
   );
+  // What „acht Töne" does *not* say, and what the customer's report was really about (WP-74): a
+  // 13 px „A" inks 6.3 % of its cell, so eight of them are eight ~94 % white squares whose
+  // integrated colours all sit under ΔE00 4 — „ich sehe nur sechs Farben" is that palette read
+  // correctly. Four questions in one line, because each is a different way back to a letter:
+  // eight chips exist, none of them carries text, the eight fills are eight *different* colours
+  // (a chip that lost `bg-current` makes them all `rgba(0, 0, 0, 0)`), and one of them is exactly
+  // the hex `index.css` holds — which is what keeps the fill the rule it is about to apply.
+  const chips = await colorMenu
+    .locator('[data-roving]')
+    .evaluateAll((els) =>
+      els.map((e) => ({
+        id: e.getAttribute('data-color'),
+        text: (e.textContent ?? '').trim(),
+        fill: e.firstElementChild ? getComputedStyle(e.firstElementChild).backgroundColor : 'ohne Fläche',
+      })),
+    )
+    .catch(() => []);
+  check(
+    '…und jedes Feld ist eine gefüllte Fläche in seiner Farbe, kein dünner Buchstabe (WP-74)',
+    chips.length === 8 &&
+      chips.every((c) => c.text === '') &&
+      new Set(chips.map((c) => c.fill)).size === 8 &&
+      chips.find((c) => c.id === 'blau')?.fill === BLAU,
+    chips.map((c) => `${c.id} ${c.fill}${c.text ? ` „${c.text}“` : ''}`).join(' · ') || 'keine Felder',
+  );
 
   await clickIfThere(colorMenu.getByRole('button', { name: 'Blau', exact: true }));
   check('ein Griff in die Palette schließt sie wieder', await gone(colorMenu, 4000));
@@ -303,6 +328,26 @@ export async function runToolbox(fixtures) {
   check('…und nur ihn: der Satz daneben behält die Textfarbe', plainColor !== BLAU, plainColor);
   const glyphShut = await until(glyph, (c) => /\btc-/.test(c), 4000);
   check('der Knopf zeigt danach die Farbe, in der der Cursor steht', /\btc-blau\b/.test(glyphShut), glyphShut);
+  // …on the bar and nowhere else (WP-74). A letter painted in the colour *with* a rule under it in
+  // the same colour is exactly how „farbig unterstrichen" is drawn — which is what the customer
+  // read it as, sitting one button along from „Unterstrichen". The wrapper keeps the class (the
+  // line above reads it); the letter carries its own ink. Not an equality on the letter: a
+  // Tailwind neutral computes to `oklch(…)` while the hand-written `tc-` hexes compute to `rgb(…)`,
+  // so the two are not comparable as strings — „not the palette colour" is the honest form.
+  const preview = await trigger
+    .evaluate((el) => {
+      const spans = el.querySelectorAll('span'); // wrapper, letter, bar
+      return {
+        letter: spans[1] ? getComputedStyle(spans[1]).color : 'kein Buchstabe',
+        bar: spans[2] ? getComputedStyle(spans[2]).backgroundColor : 'kein Balken',
+      };
+    })
+    .catch(() => null);
+  check(
+    '…und färbt dabei nur den Balken, nicht den Buchstaben',
+    preview?.bar === BLAU && preview?.letter !== BLAU,
+    preview ? `Buchstabe ${preview.letter} · Balken ${preview.bar}` : 'kein Knopf',
+  );
 
   await clickIfThere(trigger);
   await shown(colorMenu, 4000);
@@ -414,6 +459,95 @@ export async function runToolbox(fixtures) {
     8000,
   );
   check('…und das Zurücknehmen wird ebenso gespeichert', !clearedColor.includes('tc-') && clearedColor.includes(COLOR_WORD), clearedColor);
+
+  // The customer's own window, and the one shape the „nur sechs Farben" report could have been
+  // about (WP-74): 1536×767 at 125 %, i.e. ~1229×614 DIP, with as little room under the toolbar as
+  // the app offers. A **count** is not the assertion — `count() === 8` above passed against the
+  // report the whole time — so this one is geometric: each swatch inside the window, inside the
+  // menu's own scroll port, and really the topmost thing at its own centre. The arithmetic says it
+  // can never fail above a ~248 px viewport (docs/VERIFYING.md has it worked out), and that is
+  // precisely why it is worth pinning: the day `useAnchoredPopover`'s cap, its flip or the menu's
+  // own height changes, this is the line that says the palette stopped fitting.
+  //
+  // A context of its own, never `setViewportSize`: a page laid out at 1400 measures a reflow
+  // rather than a first layout, which is not a state any window is in.
+  //
+  // The **Termin dialog's** Notizen and not a page note, and that is not a detail: a description
+  // card sits at the top of its page, so scrolling can only carry it *up* and out — the obvious
+  // drive („push the toolbar to the bottom edge") moves nothing and measures the roomiest anchor
+  // there is, 306 px below. A centred dialog puts the same toolbar 405 px into a 614 px window
+  // with 173 px under it — and its body scrolls, which is the clipping RTE-13 fixed with
+  // `position: fixed` in the first place.
+  const customer = await windowContext(browser, { width: 1229, height: 614 });
+  try {
+    const c = await open(customer, '/dashboard');
+    await pin(c, toolbox.id, '/artist/1');
+    // Scope to the section: contact, link and document rows are `li.group` with a
+    // `[title="Bearbeiten"]` on them too, so an unscoped selector picks whichever card comes first.
+    await clickIfThere(c.locator('[data-section="termine"] li.group [title="Bearbeiten"]'));
+    // The dialog's Notizen is a mounted `RichTextEditor` (it is in the tab order), so the click
+    // only places the caret — there is no reader to open first.
+    const noteOpen = await shown(c.locator('.rte-content'), 8000);
+    await clickIfThere(c.locator('.rte-content'));
+    await scrollSettled(c);
+    await clickIfThere(colorTrigger(c));
+    const upSmall = await shown(palette(c), 4000);
+    const fit = await c
+      .evaluate(() => {
+        const menu = document.querySelector('[role="dialog"][aria-label="Schriftfarbe"]');
+        const anchor = document.querySelector('.rte-root button[title^="Schriftfarbe"]');
+        if (!menu || !anchor) return null;
+        const m = menu.getBoundingClientRect();
+        const a = anchor.getBoundingClientRect();
+        const swatches = [...menu.querySelectorAll('[data-roving]')].map((el) => {
+          const r = el.getBoundingClientRect();
+          const hit = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+          return {
+            id: el.getAttribute('data-color'),
+            whole:
+              r.top >= 0 &&
+              r.left >= 0 &&
+              r.bottom <= window.innerHeight &&
+              r.right <= window.innerWidth &&
+              r.top >= m.top - 0.5 &&
+              r.bottom <= m.bottom + 0.5 &&
+              !!hit &&
+              el.contains(hit),
+          };
+        });
+        return {
+          below: Math.round(window.innerHeight - a.bottom - 8),
+          above: Math.round(a.top - 8),
+          box: `${Math.round(m.width)}×${Math.round(m.height)}`,
+          scrolls: menu.scrollHeight > menu.clientHeight,
+          whole: swatches.filter((x) => x.whole).length,
+          cut: swatches.filter((x) => !x.whole).map((x) => x.id),
+        };
+      })
+      .catch(() => null);
+    // The staging line, asserted rather than assumed: „acht sichtbar" over a toolbar that never
+    // left the top of the window is the emptiest possible pass, so the state this case needs says
+    // so on its own line — the way `check:boot` asserts every injected cause.
+    check(
+      'bei 1229×614 sitzt die Leiste des Termin-Dialogs tief im Fenster',
+      noteOpen && upSmall && !!fit && fit.below < 250 && fit.below < fit.above,
+      fit ? `Platz unter dem Knopf: ${fit.below} px, darüber ${fit.above} px` : 'keine Palette',
+    );
+    check(
+      '…und dort stehen alle acht Felder vollständig da, nicht sechs (WP-74)',
+      fit?.whole === 8,
+      fit ? `${fit.whole}/8 ganz sichtbar${fit.cut.length ? `, angeschnitten: ${fit.cut.join(' ')}` : ''}` : 'keine Palette',
+    );
+    check(
+      '…ohne dass die Palette dafür scrollen muss — auch „Standard“ steht ganz da',
+      fit?.scrolls === false,
+      fit ? `${fit.box}${fit.scrolls ? ' scrollt' : ''}` : 'keine Palette',
+    );
+  } finally {
+    // Closed whatever happened: the window holds an editor that was never saved, and a context
+    // left open would keep refetching into every invalidate the rest of the run broadcasts.
+    await customer.close().catch(() => {});
+  }
 
   // ======================================================================== AC · the compact bar
   //
