@@ -29,7 +29,11 @@ See `docs/DECISIONS.md` for why the gesture is sequenced the way it is.
 
 ## Dates and timestamps: naive local, one format
 
-**Everything stored is naive local time** — no UTC anywhere, no `Z` suffix, no offsets:
+**Everything stored is naive local time** — no UTC anywhere, no `Z` suffix, no offsets. The one
+deliberate exception is the app log: `app-log.jsonl`'s `at` field is ISO-8601 UTC, because a log
+is read off a machine whose timezone the reader cannot ask about („Log lines are UTC; everything
+else on disk is naive-local", `docs/DECISIONS.md`, 2026-08-26). Everything below is about what
+the *product* stores:
 
 | shape | used for |
 |---|---|

@@ -3310,3 +3310,202 @@ is „Als PDF speichern", and — unlike the packaged app — it also has its ow
 gate asserts the Electron shape through the recording bridge (`__pdfs`, area N4) and pins that
 no print dialog opens; what no headless run reaches is the real save dialog and the written
 file, which ride the packaged-build pass (`docs/VERIFYING.md`).
+
+---
+
+## Log lines are UTC; everything else on disk is naive-local (2026-08-26, WP-70)
+
+`docs/ARCHITECTURE.md` opens its timestamp section with „Everything stored is naive local time — no
+UTC anywhere, no `Z` suffix, no offsets", and follows it with „Never build a stamp from
+`toISOString()`". Read as written, `app-log.jsonl` breaks both rules: every line's `at` is
+`new Date().toISOString()`, a `Z`-suffixed UTC instant, written to disk by shipped code. That is
+the one exception, it is deliberate, and until this entry (and the sentence the same change adds
+to ARCHITECTURE's section head) it was written down nowhere — which is
+how it becomes either a tidy-up that renames the format under every log ever written, or a support
+answer that reads a customer's crash as having happened two hours before it did.
+
+**The exception is exactly two call sites and nothing else.** `writeBootReport` and `writeAppLog`
+in `electron/appLog.ts` each take the clock themselves — it belongs to main, not to whoever
+produced the entry — and that module imports nothing from `shared/time.ts`, which is where every
+other stamp in the product comes from. A sweep for `toISOString()` across shipped code finds those
+two and one more, `/api/health`'s `ts`, which is an HTTP response and never reaches a file. One
+file on disk carries UTC, and it is the log.
+
+**Everything else is naive-local, including artifacts that sit beside the log or inside the same
+document**: `seasons.json`'s `createdAt` (`localStamp()`), the restore-point folder names and
+`boot-trace-*.json` (`fileStamp()`), the backup manifest's „Backup vom 25.08.2026, 20:09 Uhr"
+(`germanStamp` in `lib/backupDocs.ts`, assembled by hand from `getDate()`/`getHours()` for the
+reason `shared/time.ts` gives), the `AF-YYMMDDHHMM` reference a customer reads out on the phone
+(built the same way in `client/src/lib/feedbackMail.ts` and again in `electron/main.ts`), the
+diagnostics bundle's own `Erstellt:` header (`localStamp()` at the call site in main), and every
+row stamp in every season database.
+
+The diagnostics bundle is where the boundary has an edge, because both conventions meet inside one
+customer-facing file. `Auftakt-Diagnose-AF-….txt` prints a local `Erstellt:` header and then, under
+„Startprotokoll" and „Laufzeitprotokoll", the raw log lines with their UTC `at` — and says so
+nowhere. The digest that travels in the *mail body* does say so: `summarizeBootLog` heads it
+„Startdiagnose — N Einträge (Zeit in UTC):" and does its date formatting as string surgery rather
+than through a `Date`, precisely so no machine's timezone can get into it. The attachment carries no
+such header. Anyone reading a bundle reads two clocks.
+
+**Why the log keeps UTC instead of joining the convention.** The naive-local rule exists so that a
+machine stamp and a date a person typed are the same kind of string and the client needs one parser
+— none of which applies to a file nobody types into and no page renders. What does apply is the
+opposite property: a log is read off a machine whose timezone the reader does not know, cannot ask
+about, and may be reading months later or against a second machine's log; a naive-local line is
+unorderable against anything but itself. And the specific hazard `shared/time.ts` bans
+`toISOString()` for — slicing the first ten characters yields the previous calendar day near
+midnight — belongs to stamps that become calendar days, which a log line never does.
+
+**The audit is the evidence the boundary is load-bearing, in both directions.** Pinning the
+customer's clock at UTC+2 was possible *only* because the two conventions sit side by side on one
+disk: a boot line at `2026-08-25T18:09:24.552Z` next to the restore point that same launch wrote,
+`auftakt-2026-08-25-20-09-24-601`. Neither artifact alone says anything about the machine's
+timezone; the pair says it to the millisecond, and that is what made 30 of 31 expected launches
+matchable to their folders within +18…+107 ms — which is in turn what let the one launch with no
+restore point be identified as a real backup failure rather than as pruning. The boundary is
+equally load-bearing in the direction nobody notices: a `Z` line read as a wall-clock time puts a
+customer's crash two hours from where it happened, and no other field in the file contradicts it.
+
+**Consequences.** Never read a log `at` as wall-clock time without applying the offset, and never
+derive a calendar day from one. Anything new that lands in `app-log.jsonl` takes the log's
+convention; anything new that lands anywhere else takes `shared/time.ts`. A reader that prints both
+kinds has to label them — the mail digest does, the bundle does not, and that asymmetry is a known
+wart rather than an oversight. **Revisit if a log timestamp is ever shown to a user as a time**:
+the moment one is rendered rather than transcribed, it needs converting, and the place to do that
+is the renderer, not the writer.
+
+---
+
+## The `images` table has no garbage collector, on purpose — and here is the field cost (2026-08-26, WP-70)
+
+The decision and its four reasons are above, under „Bilder liegen in der Datenbank, referenziert
+über ein Inhalts-Token". That entry could only estimate the cost, and it estimated the wrong
+occasion: ten hall plans in a season, ~1.2 MB per restore point, a backup folder going from ~10 MB
+to ~106 MB. On a real installation after five weeks of daily use nobody had stored ten plans. One
+image had been inserted and taken out again.
+
+**The measurement (2026-08-26, one customer installation).** The season the customer works in daily
+holds exactly one `images` row: **67,830 bytes**, 623×505, `image/jpeg`, created 2026-08-14.
+Nothing references it — not a token, not an `/api/images/` path, not any Markdown image syntax, in
+any prose column of any table, and there is no inline `data:` image anywhere in the dataset either.
+So it is an image that was added to a note and removed again twelve days before the snapshot. It is
+**24 % of that season's 278,528-byte file**, it is in all 30 restore points because `BACKUP_KEEP` is
+30, and that is **~2.0 MB — about a ninth of the entire 18.0 MB backup folder**, which sits in the
+customer's own cloud-synced Documents.
+
+**The multiplier the earlier entry predicted is exactly the one the field shows**; only the
+denominator was wrong. Ten plans were the pessimistic case and one removed picture is the ordinary
+one, and the ordinary one still costs thirty copies, because retention is what turns a deleted
+image into a permanent one.
+
+**What makes it permanent is the shape of the delete paths, not merely the absence of a sweep.**
+Every hard delete of a data row walks `DELETE_ORDER` from `server/src/lib/cascade.ts`
+(`dropUnusedSettings` deletes settings keys, which cannot reach an image):
+`purgeExpired`, the Papierkorb's „Endgültig löschen" in `routes/deleted.ts`, and `clearTables` in
+`seed.ts`. `images` is deliberately not in that list, so it is unreachable from all three — a full
+`npm run seed` empties all eight soft-deletable tables and leaves the image row standing. There is
+no list endpoint either, so nothing in the app can even enumerate what is there.
+
+**The number is the whole point of recording this.** „Acceptable" was a judgement made against an
+estimate; it is now a judgement made against a measurement, and it stands: 2 MB is nothing, and the
+alarming-looking 24 % is a ratio against a small file rather than a quantity anyone feels. The
+counterweight named in the original entry — **visibility, not collection**, a counted „Ungenutzte
+Bilder entfernen" that reports before it deletes — is unchanged, and this is the first real number
+such a card would have had to show. Re-open the question on a *quantity*, not on a ratio:
+photographic images (roughly 3× a line-art plan) or a habit of inserting and removing them. Measure
+again before revisiting.
+
+---
+
+## A season migrates only when a window pins it (2026-08-26, WP-70)
+
+`initDb` is the single initialisation path and `getDb()`/`createSeason()` are its only callers, so
+a season file is detected-and-repaired exactly when something opens it and at no other moment. That
+much has always been true and is documented function by function. What a real multi-season
+installation adds is that its two consequences are larger than they look, and that both are
+properties tooling has to respect rather than defects to design away.
+
+**(a) One installation legitimately holds several schema generations.** The audited machine has
+three seasons at two generations: two stamped `user_version = 1`, one still at `0` and missing
+`artists.task_columns`, `projects.task_columns` and `settings.rev` — all v0.10.0 additions — for no
+reason other than that no window had pinned that season since the update reached the machine.
+Nothing is wrong with it. `assertSchemaSupported` refuses only a *newer* file (`>` and nothing
+else), the chain is idempotent, and the season comes out current on its next open, stamped at the
+end. The same file is one generation behind in three columns and *ahead* in a declared default,
+because `ALTER TABLE` never rewrites one: seasons that predate a rename keep the old default text
+while the file created from a newer `SCHEMA` carries the new one. Stored values are identical
+everywhere; only the declarations differ.
+
+The rule that follows is for tools, not for the app: **any script, assertion or query that assumes
+the seasons in one data directory share a schema is wrong on real data.** The two places in the
+product that read a season they have not opened already assume the opposite, and are the pattern to
+copy. `seasonStats` and `adoptLegacyBackupConfig` both open a non-current season raw
+(`new Database(path)`, read-write — a read-only handle cannot create the WAL shared-memory file),
+wrap every read in `try/catch`, and degrade that one season to `null` or skip it instead of failing
+the whole response; both say why in a comment, the second pointing at the first. `seasonStats` goes
+a step further and writes its SQL to survive the difference — its open-task count excludes the legacy
+`'erledigt'` status alongside the current one, because a file nobody has opened never ran
+`migrateTaskStatus`. This installation is the field evidence that the precaution earns its keep.
+
+**(b) Retention is measured in opens, not in elapsed days.** `purgeExpired` runs in exactly two
+places: once at boot for the registry default season (`server/src/index.ts`), and inside `getDb()`
+on a season's first request-context pool-miss open in this process. Both were deliberate — without
+the second, a season only ever worked in from a pinned window would never purge at all (PR50-07) —
+and together they mean the Papierkorb's promise is kept only for seasons somebody uses. That
+promise is not vague prose: `routes/deleted.ts` computes `deleted_at + PURGE_AFTER_DAYS` per row and
+the Archiv page renders it as „wird in N Tagen endgültig entfernt". **So „30 Tage" is thirty days
+of *use*, per season.** The field instance is a tombstone 33 days old sitting in a season last
+opened when it was 25 days old; it will go the moment that season is pinned again.
+
+One rider belongs in the same place, because it is the same bound seen from the other side: the
+sweep is limited not only to seasons that get opened but to the *first* such open, the pool entry
+being the once-per-process guard. On that first open the customer sees nothing wrong — listing the
+Papierkorb is itself a request that opens the season, so the sweep has run by the time the page draws
+and `purgeHint`'s `Math.max(0, d)` covers whatever is left. After it, a row that crosses the cutoff
+while the process is still alive is *not* swept again, and the Archiv page will count it down to „in
+0 Tagen" and keep listing it. A desktop app restarted most days hides that; a machine left on for a
+fortnight does not. What outlives the promise in both cases is the **disk**: the row sits in the
+file, and in every restore point taken meanwhile, past the date the app named for it.
+
+**Neither consequence is to be fixed by migrating eagerly at boot.** Opening every season file at
+startup to bring it forward would pay the whole chain for seasons nobody is going to look at, and —
+the sharper reason — it would turn WP-R5's refusal of a single newer season file into a startup
+failure. `server/src/index.ts` already routes around exactly that: the default season's open is
+wrapped so the process survives it, precisely so that a user with one season from a newer build can
+still reach the others and be told which one is the problem. A boot-time mass migration would
+reintroduce the failure mode that guard exists for. Named here so it is not proposed again.
+
+---
+
+## Backups are `VACUUM INTO` snapshots, not byte copies (2026-08-26, WP-70)
+
+`snapshotDb` writes every season file through `VACUUM INTO`, because copying a live SQLite file
+with the filesystem is not safe under WAL — committed rows sit in the `-wal` until a checkpoint, and
+a plain copy of the `.db` can and in practice does yield an empty database. That is old and
+documented at the function. The consequence is what needed writing down, because it looks exactly
+like a defect: **a restore point's `.db` never hashes equal to the live file it came from, and its
+size differs too.** A snapshot is a freshly written, compacted image, so the page counts move (the
+audit measured 68 live against 63 backed up for one season, 34 against 32 for another) and the
+journal mode differs — `VACUUM INTO` output is `journal_mode = delete`, the live file is `wal`.
+
+**The rule, for verification, for support and for every future audit: compare rows, never bytes.**
+The WP-70 pass came within one step of filing „the backups are stale" off a hash comparison; what
+settled it was counting ten tables across three seasons, live against the newest restore point, and
+finding them equal table for table.
+
+**One entry in a restore point is a genuine byte copy, and that is the trap inside the trap.**
+`runBackup` copies `seasons.json` with `copyFileSync`, so the registry *is* hash-identical to the
+live one as it stood when the point was written — the audit confirmed a match by sha256, 922 B on
+both sides — while the season `.db` files beside it are not, and `MANIFEST.txt` is generated fresh
+and has no live counterpart at all. Three kinds of entry in one folder, three comparison rules. A
+method inferred from whichever file happened to be checked first is wrong about the other two.
+
+**Two further properties fall out of the same mechanism.** A snapshot is compacted, so a restore
+point can be *smaller* than its source while holding strictly the same rows — size is not evidence
+of loss in either direction. And a snapshot carries no `-wal`/`-shm`, which is why reading ninety
+restore-point databases in the audit produced no sidecar artifacts while reading the live files did
+(see „Auditing a customer's data directory" in `docs/VERIFYING.md`). It is also what
+`validateImportCandidate` leans on when it rejects a candidate whose `-wal` is non-empty: an
+app-produced backup never has one, so a file that does is a hand-copied live database with rows the
+import would silently drop.

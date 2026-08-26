@@ -2401,6 +2401,96 @@ The traps, each of which cost a wrong reading once:
 - **`BrowserWindow.getAllWindows()` came back newest-first** in that probe. Nothing documents an
   order; do not build one into an assertion.
 
+## Auditing a customer's data directory (WP-70)
+
+A copy of a real installation — the Electron `userData` directory plus the backup folder — answers
+questions no gate and no dev server can: what the schemas actually look like side by side, which
+invariants hold on five weeks of real rows, what the magnitudes are. There is no page to drive and
+no server to boot; the artifacts are SQLite files, JSONL and generated text, read with whichever
+SQLite runtime the session can actually reach (second bullet). The WP-70 pass (2026-08-26) lost time
+to each of the following.
+
+**Nothing here is a licence to write.** Read-only, on a copy, and no name, address, note or profile
+path from such a snapshot goes into a report, a commit or a doc — counts, lengths, ids and shapes
+only. See `CLAUDE.md` on what the ignored data paths protect.
+
+- **Work on a copy, and open it with `immutable=1`.** Opening a WAL-mode Auftakt database read-only
+  can still create a 32 KiB `-shm` and a 0 B `-wal` beside it whenever the directory is writable,
+  and **`?mode=ro` does not prevent that** — reproduced on a clean WAL file with python3's stdlib
+  (SQLite 3.53.4): `mode=ro` creates both, and both are still there after the connection closes.
+  (The Apple CLI's older SQLite — 3.43.2 — cannot bring up the `-shm` under `mode=ro` at all and
+  fails instead; see the next bullet.) `file:…?mode=ro&immutable=1` creates nothing,
+  because `immutable=1` promises SQLite the file cannot change and it skips the WAL machinery
+  altogether. That promise is safe on a copy nothing else has open and **only** there; against a
+  live database it is a lie whose price is stale reads. The WP-70 pass used plain `mode=ro` and
+  added 32 files / 524,288 bytes to its own working copy before noticing — reconciling a file count
+  afterwards then costs another pass. Restore-point databases are unaffected either way, being
+  `journal_mode = delete`.
+- **Exit 14 from the `sqlite3` CLI has two different causes, and only one of them is the sandbox.**
+  The WP-70 pass read „unable to open database file (14)" as the harness blocking the binary
+  outright and moved the whole audit to `python3` — a good fallback, but the diagnosis does not
+  generalise: the CLI is *not* blocked in every session, and it reads databases under
+  `/private/tmp` fine in some. The same error is also what SQLite itself reports when it cannot
+  bring up a WAL database's `-shm`, and `-readonly` makes it *more* likely rather than less. On a
+  directory the process may not write: `sqlite3 -readonly wal.db 'select …'` gives exactly
+  `Error: in prepare, unable to open database file (14)`, a plain open gives
+  `attempt to write a readonly database (8)`, and `sqlite3 'file:…?mode=ro&immutable=1'` reads the
+  row without complaint. **Try the immutable URI before concluding anything about the sandbox.**
+  And the two runtimes genuinely differ on this machine, independent of permissions: the CLI's
+  SQLite (3.43.2) fails with exit 14 under plain `mode=ro` even on a writable directory and a
+  pristine WAL file, where python3's stdlib (3.53.4) reads fine and creates the `-shm` — while on
+  an unwritable directory python3's plain `mode=ro` fails too (as error 8, not 14). So „python3
+  works and the CLI does not" can be a version difference or a permission difference; the
+  `immutable=1` probe in *whichever* runtime is what separates the causes.
+- **Never compare a backup to a live database by hash or by size.** Restore points are
+  `VACUUM INTO` snapshots: compacted, `journal_mode = delete`, a different page count from their
+  source, and never byte-equal to it. Compare **rows**, table for table. This nearly produced a
+  false „the backups are stale" finding. The one entry in a restore point that *is* a byte copy is
+  `seasons.json` (`copyFileSync`), and `MANIFEST.txt` is generated and has no live counterpart —
+  three comparison rules inside one folder. `docs/DECISIONS.md`, „Backups are `VACUUM INTO`
+  snapshots, not byte copies".
+- **A season's `user_version` says when that season was last *opened*, not what the app is.**
+  Migrations run only where `getDb()` or `createSeason()` opens a file, so a `0` means „no window
+  has pinned this season since the stamp shipped", never „a legacy installation". Expect an
+  installation to hold several schema generations at once and write every cross-season query to
+  survive it — a column another season has may be absent here, and a declared column default may be
+  older *or* newer than the current `SCHEMA` depending on whether the table was created or
+  `ALTER`ed. `seasonStats` and `adoptLegacyBackupConfig` are the in-product examples of doing this
+  right.
+- **`task_sort` names built-in columns by `key`; only `tasks.custom_values` is keyed by
+  `custom_columns.id`.** Two JSON structures in the same season, two different spellings. `colId`
+  (`client/src/lib/taskColumns.ts`) yields a built-in's `key` — `status`, `priority`, `due` — or
+  `custom:<id>` for a custom column, and that is the spelling `task_sort` and the WP-59
+  `task_columns` override map both use. `tasks.custom_values` is the odd one out: a plain object
+  keyed by bare column id (`server/src/lib/customValues.ts`). So validating `task_sort` entries
+  against `custom_columns.id` returns **zero matches on a perfectly healthy database** — it is the
+  first thing an id-shaped validation pass reports and it means nothing. The mirror mistake is
+  quieter and worse: reading a `custom_values` key as a built-in `key` also finds nothing.
+- **`sort_order = 0` on every row is a normal field state, not a corrupted one.** Two of the three
+  audited seasons had exactly one distinct ordinal across artists, projects, contacts, events,
+  links and sections — zero — and the third, which shows real dragging, still had twelve groups of
+  live tasks sharing an ordinal, the largest fourteen deep. `demo.ts` inserts every entity with
+  `sort_order: i` and so never produces this, which means a list that forgets its tiebreak looks
+  correct on the demo and random on real data. **And the tiebreak is not the same column
+  everywhere.** `sort_order ASC, id ASC`
+  for projects, contacts, links, custom sections and custom columns
+  (`server/src/routes/entities.ts`); `t.sort_order ASC, t.id ASC` for tasks (`TASK_ORDER` and
+  `TASK_ORDER_DUE`, `server/src/lib/queries.ts`), with the client's `sortTasks` falling through to
+  `a.sort_order - b.sort_order || a.id - b.id` (`TaskTable.tsx`) — but **artists order
+  `sort_order ASC, name ASC`** (`entities.ts`, `routes/dashboard.ts`), so an all-zero artists table
+  is alphabetical, not id-ordered — and **events have no `ORDER BY` at all** (their list route
+  passes no `order` to the CRUD factory), the sharpest case of the rule. Read the query before
+  predicting an order.
+- **Never read a raw filesystem mtime from a transferred snapshot.** In the WP-70 snapshot every
+  customer-written file carried an mtime exactly 9 h earlier than the instant its own contents
+  recorded — three independent confirmations (a log whose mtime preceded its last line, a README
+  one second shy of the boot-log entry that rewrote it, a season file landing between the two
+  restore points whose hashes bracket its change) — while the transfer machine's own `.DS_Store`
+  files were unshifted. Transfers can shift mtimes wholesale; the authoritative clocks are the
+  contents: boot-/app-log `at` (UTC) and `fileStamp()` folder names (naive customer-local). Cross
+  those two against each other and the timezone falls out for free; trust a bare `stat` and every
+  conclusion inherits the shift.
+
 ## What is not verified this way
 
 The Electron half — dialogs, relaunch, the packaged app against a real data directory — has its own
