@@ -719,6 +719,31 @@ verified by hand, and the gate itself is written from this list.
   scroll outside its menu, and the scroll `click()` performs for itself arrives *after* the
   popover opened — the menu blinks shut and the run reads „`PillSelect` does not open at all",
   with `aria-expanded="false"` to back it up. `await trigger.scrollIntoViewIfNeeded()` first.
+- **…and scrolling first is only half of it: `click()` scrolls *again*, after its own stability
+  check, and the event lands one frame later — inside the menu it just opened (#155).** A scroll is
+  performed synchronously; its **event** is not. Chromium queues it and dispatches it in the next
+  „update the rendering" step, which neither `scrollIntoViewIfNeeded()` nor `click()` waits for —
+  and `click()` runs `scrollRectIntoViewIfNeeded` *after* the visible/stable/enabled wait, so
+  nothing at all separates that scroll from the mouse events it then dispatches. When the layout
+  has moved since the explicit scroll — a background refetch committing, which is exactly what a
+  loaded runner produces — the click has something to scroll, opens the popover, and the queued
+  event then reaches `useAnchoredPopover`'s capture-phase listener, which closes the menu the same
+  click opened. Measured on `#/project/2` with the move injected (`window.scrollBy(0, -160)`
+  between the two scrolls): `listbox+` at 1104 ms, `scroll` (document) at 1105 ms, `listbox-` at
+  1111 ms — **4 of 12 runs**, the rate the `browser` job showed on 2026-08-26. Which wait after it
+  reports the damage is a coin toss, so one close wears three faces — „Menü false", „Menü true,
+  Eintrag sichtbar false" and „sichtbar true, geklickt false" are the same defect caught
+  milliseconds apart, never three. **The recipe is a menu that has survived a frame, not a sleep
+  and not a longer timeout**: scroll, wait one rendering opportunity, click, wait another, and only
+  then believe a listbox that is still on screen — otherwise make the gesture again, which now
+  finds the row where the last one left it and scrolls nothing. Count that retry and put the number
+  on the summary line (`reopenedPopovers`, beside `reloadedSurfaces`): a run that reached green by
+  racing is not a run that never raced, and a ⚠ six hundred lines up is not something anybody reads.
+  `scrollSettled()` in
+  `check-browser/browser.mjs` is that wait (two `requestAnimationFrame`s: a frame's scroll steps
+  run *before* its animation-frame callbacks, so one already proves delivery and the second is the
+  margin), and `ccOpenPill` in `cases/columns.mjs` is the shape. `cases/tasks.mjs`,
+  `cases/subtasks.mjs` and `cases/keyboard.mjs` open the same pill and carry the same exposure.
 - **…and never screenshot an open popover with `fullPage: true`.** Same rule, one step further:
   `shot()` in `lib/drive.mjs` stitches a full-page picture by *scrolling*, which closes the popover
   before the shutter — so the file shows the page without its menu and every locator after it times

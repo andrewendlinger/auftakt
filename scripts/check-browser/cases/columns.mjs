@@ -1,7 +1,18 @@
 /** AL–AO · the custom column types */
 
 import { sleep } from '../../lib/wait.mjs';
-import { clickIfThere, gone, open, pin, ready, shown, topDialog, until } from '../browser.mjs';
+import {
+  clickIfThere,
+  gone,
+  notePopoverReopened,
+  open,
+  pin,
+  ready,
+  scrollSettled,
+  shown,
+  topDialog,
+  until,
+} from '../browser.mjs';
 import { UI } from '../config.mjs';
 import { check } from '../report.mjs';
 import { api, scoped, send } from '../stack.mjs';
@@ -335,12 +346,41 @@ export async function runColumns(fixtures) {
    * A pill is a popover: `useAnchoredPopover` closes on any outside scroll, and the scroll a click
    * performs for itself arrives *after* the menu opened — so scroll first, then click. The menu
    * is waited for rather than assumed, so a caller that could not open it says so.
+   *
+   * **Scrolling first is only half of it, and the other half is what CI went red on** (#155).
+   * Playwright's `click()` scrolls a second time — after its visible/stable/enabled wait, with
+   * nothing between that scroll and the mouse events — so a layout that has moved since the
+   * explicit scroll gives it something to scroll, and the event it queues is delivered a frame
+   * later, into the listener the menu registered as it opened. What moves the layout on a loaded
+   * runner is the refetch each of the three writes above fans out over the run's ~30 windows.
+   * Measured with that move injected: `listbox+` 1104 ms, `scroll` 1105 ms, `listbox-` 1111 ms,
+   * 4 of 12 runs — the rate the `browser` job showed, and the reason the same failure arrived
+   * once as „Eintrag sichtbar false" and once as „sichtbar true, geklickt false".
+   *
+   * So what is waited for is a menu that has **survived a frame**, not one that has appeared:
+   * `scrollSettled` before the click delivers the scroll this helper caused, `scrollSettled` after
+   * it delivers the one the click caused, and a listbox still standing past both was not opened
+   * into a pending close. A menu that is gone by then was never open, so the gesture is simply
+   * made again — the second attempt finds the row where the first left it, scrolls nothing and
+   * queues nothing. Three attempts, so a build whose pill genuinely does not open still goes red by
+   * assertion rather than looping — and every retry is both named where it happens and counted onto
+   * the summary line, the way `surfaceSettled`'s reload is, because „this run raced and recovered"
+   * must never read as „this run was clean".
    */
   const ccPillIn = (taskId, name) => ccCell(taskId, name).locator('button[aria-haspopup="listbox"]');
   const ccOpenPill = async (taskId, name) => {
-    await ccPillIn(taskId, name).scrollIntoViewIfNeeded().catch(() => {});
-    if (!(await clickIfThere(ccPillIn(taskId, name)))) return false;
-    return shown(cc.locator('[role="listbox"]'), 4000);
+    const ccMenuEl = cc.locator('[role="listbox"]');
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await ccPillIn(taskId, name).scrollIntoViewIfNeeded().catch(() => {});
+      await scrollSettled(cc);
+      if (!(await clickIfThere(ccPillIn(taskId, name)))) return false;
+      if (await shown(ccMenuEl, 4000)) {
+        await scrollSettled(cc);
+        if ((await ccMenuEl.count()) > 0) return true;
+      }
+      notePopoverReopened(name, attempt, 3);
+    }
+    return false;
   };
 
   // One write at a time, each waited out before the next gesture. Not decoration: every commit
@@ -356,11 +396,13 @@ export async function runColumns(fixtures) {
   await until(() => ccValues(CC_TASK), (v) => v[ccKey(ccBox)] === true, 8000);
   // The pick is the one write here that is neither a keystroke nor a toggle, and it is the one
   // that has landed nowhere on a slow runner — twice in CI, both times as `select:undefined` and a
-  // grey placeholder. Two waits, because there are two things to wait for: `ccOpenPill` waits for
-  // the listbox, and the *option inside it* is waited for here — a menu that is on screen while
-  // the table under it re-renders can still be empty. Both booleans, and the click's own, travel
-  // into the check: without them „the value was not stored" and „the option was never clicked"
-  // are the same red line, and the run that needs reading is the one that cannot say which.
+  // grey placeholder. That was the popover being shut by the scroll its own click performed, and
+  // `ccOpenPill` above now waits that scroll out (#155). Two waits all the same, because there are
+  // still two things to wait for: `ccOpenPill` waits for the listbox, and the *option inside it* is
+  // waited for here — a menu that is on screen while the table under it re-renders can still be
+  // empty. Both booleans, and the click's own, travel into the check: without them „the value was
+  // not stored" and „the option was never clicked" are the same red line, and the run that needs
+  // reading is the one that cannot say which.
   const ccPillOpen = await ccOpenPill(CC_TASK, 'Phase');
   const ccOption = cc.locator(`[role="option"][data-value="${CC_PHASES[0]}"]`);
   const ccOptionShown = await shown(ccOption, 4000);
