@@ -49,10 +49,10 @@ export function PrintPage({
           Zurück
         </Link>
         <button
-          onClick={() => window.print()}
+          onClick={() => saveAsPdf(title)}
           className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white"
         >
-          Als PDF speichern / Drucken
+          Als PDF speichern
         </button>
       </div>
       {children}
@@ -61,9 +61,38 @@ export function PrintPage({
 }
 
 /**
+ * „Als PDF speichern" (WP-71) — and the reason „Drucken" is no longer part of that label.
+ *
+ * The button was `window.print()`, which on Windows opens the *printer* list: what the customer
+ * met there was a row of real printers with „Microsoft Print to PDF" somewhere among them, i.e.
+ * the one thing the label promised was not on offer. Under Electron this hands the sheet to the
+ * main process instead, which renders this window's page with `webContents.printToPDF()` and
+ * writes it where its save dialog says. Printing on paper goes with it, deliberately: the file
+ * this saves is what a printer prints, and one honest button beats two that share a dialog.
+ *
+ * The browser keeps the old call, optional-chained like every other bridge use: there is no
+ * `window.auftakt` in dev or under `check:browser`, and a page cannot write a file at all — so
+ * the print preview is what a browser has, and „Als PDF speichern" is its own default
+ * destination. The same outcome, by the user's own hand, in the one environment that also still
+ * has a back button and a preview of its own.
+ */
+function saveAsPdf(title: string): void {
+  const bridge = window.auftakt?.savePdf;
+  if (!bridge) {
+    window.print();
+    return;
+  }
+  // Fire-and-forget: every dialog on this path belongs to main — the save dialog, and a German
+  // error box when the write fails — so there is nothing here to wait for and nothing to report.
+  // The `catch` is for the channel itself: an unhandled rejection out of a click handler is
+  // picked up by `main.tsx`'s listener and written to the app log as a defect that never was.
+  void bridge(title).catch(() => {});
+}
+
+/**
  * Wrapper for a sheet that could not be built. These routes sit outside `Layout`, so unlike
  * every other page there is no header to navigate away from — an error state on its own really
- * would strand the user. The „Drucken" button is deliberately absent: there is nothing to print.
+ * would strand the user. „Als PDF speichern" is deliberately absent: there is no sheet to save.
  */
 export function PrintFallback({ children }: { children: ReactNode }) {
   return (

@@ -10,15 +10,16 @@ import {
 } from 'electron';
 import { enableCompileCache } from 'node:module';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { cpus, freemem, homedir, totalmem, release, version as osVersionName } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { fileStamp, localStamp } from '../shared/time';
+import { fileStamp, localDay, localStamp } from '../shared/time';
 import { buildDockMenu, buildMenu } from './menu';
 import { activatePlan } from './activate';
 import { backupDirProblem, runStartupBackup } from './backup';
 import { WINDOW_MINIMUM, WINDOW_PREFERRED, cascadeBounds, fittedSize } from './cascade';
-import { exportFileName } from './exportName';
+import { exportFileName, sheetFileName } from './exportName';
 import { readSeasonTerms } from './seasonTerms';
 import {
   HEALTH_TIMEOUT_MS,
@@ -49,7 +50,7 @@ import {
   uniqueBundleName,
   type SystemFacts,
 } from './diagnostics';
-import { messageBox, messageBoxSync, openDialog, saveDialog } from './dialogs';
+import { alive, messageBox, messageBoxSync, openDialog, saveDialog } from './dialogs';
 import { checkForUpdates, downloadAndInstallUpdate, startSilentStartupCheck } from './updater';
 
 // Source maps are switched on one file earlier, in the loader `scripts/build.mjs` writes as
@@ -675,6 +676,53 @@ async function exportDatabase(seasonId: number | undefined, win: BrowserWindow |
     });
   } catch (err) {
     await messageBox(win, { type: 'error', message: `Export fehlgeschlagen: ${(err as Error).message}` });
+  }
+}
+
+/**
+ * „Als PDF speichern" on a print sheet (WP-71) — the button that used to be `window.print()`.
+ *
+ * On Windows that call opens the *printer* list, so „Als PDF speichern" was a promise the button
+ * could not keep: what the customer met was a row of real printers with „Microsoft Print to PDF"
+ * somewhere among them. This renders the asking window's page instead and writes it where the
+ * save dialog says, which is the only shape in which the label is true on both platforms.
+ *
+ * `title` is untrusted like every other IPC argument, and it becomes part of a *filename* —
+ * `sheetFileName` puts it through the same `labelSlug` the database export's name goes through,
+ * and the directory is the user's to choose and never the renderer's to name (X-02).
+ *
+ * `webContents.printToPDF` renders the page in print media, so the sheet's `@media print` block
+ * applies exactly as it does in the preview: the sheet's own chrome is `.no-print` and stays off
+ * the paper. It is the same Blink path `page.pdf()` drives, which is what makes the browser
+ * gate's byte assertions about this file rather than about a preview nobody saves.
+ *
+ * Two options are decisions rather than defaults. `pageSize` is A4 because this one defaults to
+ * **Letter** while the customer prints A4 and the print block's numbers are A4's. `printBackground`
+ * is left at its default `false` on purpose: `print-color-adjust: exact` on `.print-page` is what
+ * carries the sheet's own colours (SHL-11), and turning the flag on would additionally lay the
+ * page background down as a sheet of ink. The margins are not passed at all — `@page { margin }`
+ * owns them (see index.css), and Blink's own note is that the CSS at-rule wins here.
+ */
+async function savePdf(title: unknown, win: BrowserWindow | null): Promise<void> {
+  if (!alive(win)) return;
+  const r = await saveDialog(win, {
+    title: 'Ein-Pager als PDF speichern',
+    defaultPath: sheetFileName(typeof title === 'string' ? title : '', localDay()),
+    filters: [{ name: 'PDF', extensions: ['pdf'] }],
+  });
+  // Re-checked after the await, the same rule as everywhere else in this file: a window closed
+  // while its own save dialog was open would otherwise throw out of `webContents`.
+  if (r.canceled || !r.filePath || !alive(win)) return;
+  try {
+    await writeFile(r.filePath, await win.webContents.printToPDF({ pageSize: 'A4' }));
+  } catch (err) {
+    // No confirmation on the happy path — the dialog the user just dismissed named the file and
+    // the folder — but a failure has to say so: the sheet stays on screen looking unchanged, and
+    // a handout somebody believes they saved is worse than one they know they have not.
+    await messageBox(win, {
+      type: 'error',
+      message: `Der Ein-Pager konnte nicht gespeichert werden: ${(err as Error).message}`,
+    });
   }
 }
 
@@ -1615,6 +1663,13 @@ ipcMain.handle('import-db', (e, seasonId: unknown) =>
   importDatabase(asSeasonId(seasonId), BrowserWindow.fromWebContents(e.sender)),
 );
 ipcMain.handle('choose-backup-dir', (e) => chooseBackupDir(BrowserWindow.fromWebContents(e.sender)));
+// The print sheet's „Als PDF speichern" (WP-71). The window behind the message is both the one
+// whose page is rendered and the one the dialog belongs to, so which window is meant is never
+// left to `liveWindow()`'s fallback — with two windows open on two seasons, that is the same
+// mix-up the export had (PR50-03). The title only ever picks a name; see savePdf.
+ipcMain.handle('save-pdf', (e, title: unknown) =>
+  savePdf(title, BrowserWindow.fromWebContents(e.sender)),
+);
 ipcMain.handle('get-version', () => app.getVersion());
 ipcMain.handle('check-updates', (_e, refresh: boolean) => checkForUpdates(refresh));
 // The sender window rides along so the download's progress has somewhere to go: its taskbar

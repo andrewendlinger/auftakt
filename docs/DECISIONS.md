@@ -3286,3 +3286,27 @@ that calls `dialog.*`** — the one deliberate exception being the pre-ready
 `dialog.showErrorBox`, whose first argument already is a title. macOS ignores message-box
 titles, so the default is inert there. Do not re-propose renaming the app or the data
 directory to fix casing anywhere; a wrongly-cased surface gets its own label, never a rename.
+
+## Der Ein-Pager wird gespeichert, nicht gedruckt (2026-08-26, WP-71)
+
+Decided by Andre after the 2026-08-25 customer visit: the print sheet's one button is
+**„Als PDF speichern"**, backed by `webContents.printToPDF()` plus the native save dialog
+(`savePdf` on the bridge), and **no button in Auftakt calls `window.print()` under Electron any
+more**. The customer's report was exact: the old „Als PDF speichern / Drucken" opened the
+Windows *printer* list, where the one thing the label promised — saving a PDF — was at best a
+pseudo-printer among real ones. A button that names an outcome has to deliver it on the
+platform that matters most.
+
+Printing on paper went with it deliberately, not incidentally. The saved PDF is what a printer
+prints; one honest button beats two that share a dialog, and the platform-split alternative
+(keep the system dialog on macOS, where „PDF ▾" is honest) was considered and rejected in the
+same decision — one behavior, both platforms. **Do not re-propose a „Drucken" button** or a
+print menu role; a future „customers want to print directly" wish reopens this entry, it does
+not route around it.
+
+The plain browser (dev, `check:browser`) keeps `window.print()` as the optional-chained
+fallback: a page cannot write a file, the browser has its own preview whose default destination
+is „Als PDF speichern", and — unlike the packaged app — it also has its own back button. The
+gate asserts the Electron shape through the recording bridge (`__pdfs`, area N4) and pins that
+no print dialog opens; what no headless run reaches is the real save dialog and the written
+file, which ride the packaged-build pass (`docs/VERIFYING.md`).

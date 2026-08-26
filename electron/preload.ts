@@ -9,6 +9,12 @@ contextBridge.exposeInMainWorld('auftakt', {
   exportDatabase: (seasonId?: number) => ipcRenderer.invoke('export-db', seasonId),
   importDatabase: (seasonId?: number) => ipcRenderer.invoke('import-db', seasonId),
   chooseBackupDir: () => ipcRenderer.invoke('choose-backup-dir'),
+  // The print sheets' „Als PDF speichern" (WP-71): main renders *this* window's page with
+  // printToPDF and writes it where its save dialog says. It replaces `window.print()`, which on
+  // Windows is a printer list — a dialog that cannot honestly offer what the button says. The
+  // title is untrusted like every argument here; main slugs it into a filename and picks nothing
+  // else from it.
+  savePdf: (title: string) => ipcRenderer.invoke('save-pdf', title),
   getVersion: () => ipcRenderer.invoke('get-version'),
   checkForUpdates: (refresh: boolean) => ipcRenderer.invoke('check-updates', refresh),
   installUpdate: () => ipcRenderer.invoke('install-update'),

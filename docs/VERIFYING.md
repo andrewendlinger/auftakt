@@ -44,7 +44,7 @@ here.
 | `seasons.mjs` | A–E | the season matrix in two windows, and the export that carries it |
 | `tasks.mjs` | F–H | the three core paths: a task, a column, the editor |
 | `records.mjs` | I–K | deleting a record, and reordering by the ⠿ |
-| `render.mjs` | L–N3 | the two pure render assurances: the smallest window, and paper |
+| `render.mjs` | L–N4 | the two pure render assurances: the smallest window, and paper |
 | `settings.mjs` | O–R2 | the four Einstellungen tabs and what they write |
 | `keyboard.mjs` | S–T | the keyboard contract and the search overlay |
 | `electron.mjs` | U–U2 | the two Electron surfaces, against a recording bridge stub |
@@ -1699,6 +1699,23 @@ are not — they are `labels` in the window's own season `settings`, with a gene
   **themselves**: both carry a `text-*` class, so a colour set on the row they share is inherited
   by neither. The control for that assertion is `@media print { .no-print { display: flex
   !important } }`, the same runtime override the two cases above use.
+- **„Als PDF speichern" is a bridge call now, and a real `window.print()` leaves nothing to read.**
+  Since WP-71 the button is `window.auftakt.savePdf(title)` under Electron (main renders the window
+  with `webContents.printToPDF` into a file its save dialog names) and `window.print()` only in the
+  browser, where there is no bridge. Headless Chromium's `print()` is a silent no-op, so „did it
+  open the printer dialog" cannot be observed — override it in an init script
+  (`window.print = () => { window.__printed++ }`) and assert the **pair**: the bridge recorder holds
+  the title *and* `__printed` is still 0. Either half alone passes on a build that does both, which
+  is the defect (a Windows printer list behind a button that says „Als PDF speichern").
+- **Electron's `printToPDF` and Playwright's `page.pdf()` are the same Blink path**, so everything
+  the bullets above read out of the gate's bytes is also true of the file the customer saves — with
+  three deliberate options on the app's side: `pageSize: 'A4'` (this API defaults to **Letter**),
+  `printBackground` left at `false` (`print-color-adjust: exact` on `.print-page` is what carries
+  the sheet's colours; turning it on would lay the page background down as a sheet of ink), and no
+  `margins` at all, because `@page { margin: 14mm }` owns them — Electron's own note that „the
+  `landscape` will be ignored if the `@page` CSS at-rule is used" is the same rule seen from the
+  other side. What no headless run can reach is the save dialog itself: that one is
+  `docs/BACKUP-TESTING.md`'s kind of pass, on a packaged build.
 
 ## Native modules in the packaged app
 

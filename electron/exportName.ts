@@ -1,5 +1,6 @@
 /**
- * The default filename the „Datenbank exportieren…" save dialog opens with.
+ * The default filenames the two save dialogs open with — „Datenbank exportieren…" and, since
+ * WP-71, „Als PDF speichern" on a print sheet.
  *
  * Imports nothing from `electron`, deliberately — the same rule as backup.ts and appLog.ts,
  * and for the same reason: it is what lets `client/src/lib/exportName.test.ts` exercise this
@@ -42,4 +43,26 @@ export function labelSlug(label: string): string {
 export function exportFileName(label: string, stamp: string): string {
   const slug = labelSlug(label);
   return slug ? `auftakt-${slug}-${stamp}.db` : `auftakt-${stamp}.db`;
+}
+
+/**
+ * `Ein-Pager-<Titel>-<Tag>.pdf`, the name „Als PDF speichern" proposes on a print sheet (WP-71).
+ *
+ * Same two branches and the same `labelSlug` as the export above, and for the harder version of
+ * the same reason: `title` is not a season label the user typed once, it is a *project or artist
+ * name* — free text that arrived by hand or through the CSV/Notion import, sent over IPC by the
+ * renderer, and it becomes part of a filename. „Trio 25/26" is an entirely ordinary one.
+ *
+ * The stamp is the **day**, not `fileStamp()`'s millisecond: a handout is a snapshot of a page
+ * that changes daily, and a second one taken the same afternoon is the same sheet — while
+ * `…-2026-08-26-14-30-12-345.pdf` is a name nobody can read out over the phone. The dialog is
+ * still the user's to overwrite or rename.
+ *
+ * German rather than the export's lowercase `auftakt-` prefix, because the two files are for
+ * different people: an export is a technical artifact of this app, an Ein-Pager is a page handed
+ * to a colleague who never sees Auftakt, and „Ein-Pager" is the app's own word for it.
+ */
+export function sheetFileName(title: string, day: string): string {
+  const slug = labelSlug(title);
+  return slug ? `Ein-Pager-${slug}-${day}.pdf` : `Ein-Pager-${day}.pdf`;
 }

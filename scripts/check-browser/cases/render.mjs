@@ -1,5 +1,6 @@
-/** L–N3 · the two pure render assurances: the smallest window, and paper */
+/** L–N4 · the two pure render assurances: the smallest window, and paper */
 
+import { stubElectron } from '../bridge.mjs';
 import { NARROW, PLACEHOLDER_SELECT_PX, cardWith, clickIfThere, open, pin, ready, shown, until, windowContext } from '../browser.mjs';
 import { UI } from '../config.mjs';
 import { painted, paintedAt, paintedTimes, printPdf, sheet, where, withoutPrintRule } from '../pdf.mjs';
@@ -653,4 +654,71 @@ export async function runRender(fixtures) {
     `${paintedTimes(printedChrome, MARK)}×`,
   );
   await p5.close();
+
+  // ======================================================================== N4 · saving the sheet
+  //
+  // The other half of the same report, and a decision taken over it (2026-08-26): „Als PDF
+  // speichern / Drucken" was one button doing whatever `window.print()` does, and on Windows that
+  // is the *printer* list — „Als PDF speichern" is not honestly on offer there, it is one entry
+  // among the machine's real printers. The button is a save now, and only a save: under Electron
+  // it hands the sheet's title to `savePdf`, and main renders this window with `printToPDF` into
+  // the file its save dialog names.
+  //
+  // Driven at the recording bridge and never at the real one, like U and U2 — the real member
+  // opens a dialog on the machine running this and then writes a PDF wherever it is pointed.
+  //
+  // **Two observables, and the pair is the assertion.** The recorder holds the title, and
+  // `window.print` was *not* called — overridden here, because a real call in headless Chromium
+  // leaves nothing to read. Without the second half the case also passes on a build that hands the
+  // bridge a title and opens the printer dialog beside it, which is the defect itself.
+  console.log('\nN4 · „Als PDF speichern“ am Bridge-Stub (WP-71)');
+  const watchPrint = (page) =>
+    page.addInitScript(() => {
+      const w = /** @type {any} */ (window);
+      w.__printed = 0;
+      w.print = () => {
+        w.__printed++;
+      };
+    });
+  const printCount = (page) => page.evaluate(() => /** @type {any} */ (window).__printed);
+  const p6 = await open(context, '/project/1', async (page) => {
+    await stubElectron(page);
+    await watchPrint(page);
+  });
+  await clickIfThere(p6.getByRole('link', { name: /Ein-Pager/ }));
+  await shown(p6.locator('.print-page'));
+  await clickIfThere(p6.getByRole('button', { name: 'Als PDF speichern' }));
+  const pdfs = await until(
+    () => p6.evaluate(() => /** @type {any} */ (window).__pdfs),
+    (v) => v.length > 0,
+    5000,
+  );
+  // Read back from the API rather than written down here: the title *is* the proposed file name,
+  // so it has to be this project's own, and a renamed fixture must redden this line instead of
+  // being what the expectation was copied from.
+  const printedProject = await api('/projects/1');
+  const named = [printedProject.code, printedProject.name].filter(Boolean).join(' ');
+  check(
+    '„Als PDF speichern“ reicht den Titel des Bogens an die Bridge',
+    pdfs.length === 1 && pdfs[0] === named,
+    `${pdfs.join(' | ') || 'nichts aufgezeichnet'} — erwartet „${named}“`,
+  );
+  check('…und öffnet dabei keinen Druckdialog mehr', (await printCount(p6)) === 0, `${await printCount(p6)}×`);
+  await p6.close();
+
+  // Without a bridge the same button is the browser's own print preview, whose default destination
+  // is „Als PDF speichern" — the degradation every bridge call in this app makes, and what keeps
+  // the one label honest in both environments. No stub at all here, which is the state every other
+  // case in this gate runs in.
+  const p7 = await open(context, '/print/project/1', watchPrint);
+  const controls = (await p7.locator('.print-page .no-print').innerText()).replace(/\s+/g, ' ').trim();
+  check(
+    'die Leiste des Bogens trägt genau „Zurück“ und „Als PDF speichern“ — „Drucken“ nicht mehr',
+    controls === 'Zurück Als PDF speichern',
+    controls,
+  );
+  await clickIfThere(p7.getByRole('button', { name: 'Als PDF speichern' }));
+  const printed = await until(() => printCount(p7), (n) => n > 0, 5000);
+  check('ohne Bridge bleibt der Druckdialog des Browsers die Rückfallebene', printed === 1, `${printed}×`);
+  await p7.close();
 }

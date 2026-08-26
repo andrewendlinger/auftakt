@@ -38,6 +38,18 @@ declare global {
       importDatabase?: (seasonId?: number) => void;
       chooseBackupDir?: () => void;
       /**
+       * Save the calling window's page as a PDF (WP-71) — the print sheets' one button, and the
+       * replacement for `window.print()`, which on Windows opens a *printer* list. Main renders
+       * the page with `webContents.printToPDF()` and asks where to put it.
+       *
+       * `title` is a proposed *name* and nothing else: main puts it through the same `labelSlug`
+       * the database export's filename goes through and picks the directory from the dialog, so
+       * the renderer never names a path (X-02). The promise resolves when the save is over —
+       * written, cancelled or failed alike — because every dialog on this path, the error one
+       * included, belongs to main. There is nothing here for a caller to branch on.
+       */
+      savePdf?: (title: string) => Promise<void>;
+      /**
        * Main→renderer: the registry-wide backup folder changed (any window's picker, the
        * Datei menu, or the first-launch prompt). A pure signal — refetch, it carries no
        * value. Returns its own unsubscribe. The sole listener lives in `main.tsx`, next to
