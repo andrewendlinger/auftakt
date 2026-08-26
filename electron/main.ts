@@ -339,8 +339,8 @@ async function startServer(): Promise<void> {
   process.env.AUFTAKT_DATA_DIR = dataDir();
   process.env.AUFTAKT_PORT = String(PORT);
   process.env.AUFTAKT_CLIENT_DIST = join(app.getAppPath(), 'client', 'dist');
-  // Only this process knows the app version — server/package.json carries its own, unrelated
-  // one. It reaches the MANIFEST.txt of every restore point (WP-41), which is what tells a
+  // Only this process knows the app version — server/package.json deliberately carries none.
+  // It reaches the MANIFEST.txt of every restore point (WP-41), which is what tells a
   // customer years later which version wrote the backup they are about to restore.
   process.env.AUFTAKT_APP_VERSION = app.getVersion();
   const serverEntry = join(app.getAppPath(), 'server', 'dist', 'index.mjs');

@@ -1,7 +1,6 @@
 {
   "name": "auftakt-client",
   "private": true,
-  "version": "0.5.0",
   "description": "Auftakt frontend \u2014 React + Vite, talks to auftakt-server over REST",
   "author": "Andre Wendlinger",
   "license": "SEE LICENSE IN LICENSE.md",
