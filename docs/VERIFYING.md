@@ -1952,7 +1952,19 @@ are not — they are `labels` in the window's own season `settings`, with a gene
   left it and the next arranger touch froze it; that is the state the other 6 are in, and the
   difference between the two is only visible in the database (`GET /api/projects/10` vs `/3`). A
   check that the two sections act independently (🗑 one, keep the other) belongs on a `NULL`-layout
-  project, not on either of these.
+  project, not on either of these. All three states — plus the artist-page pair, artist 1 against
+  artist 5 — are pinned since WP-78a by `check:browser`'s **AX**, which reads them and writes
+  nothing; that case is the net for the day the merge is ever taught to insert `links` beside
+  `kontakte` instead of appending it.
+- **One arranger touch writes the whole merged array down, tombstones included** — which is how a
+  page in the first state becomes a page in the second, and it takes one ▲. `move()` persists
+  `full`, not the entries the stored layout already had, so a single press on „Kontakte" turns
+  project 3's three stored entries into six: the two reordered ones, the appended `links`, and
+  `stats`/`aufmerksamkeit` as `hidden: true`. The user touched exactly one of the six. Drive it on
+  a *copy*, never on the demo's own project 3 — that row is the fixture the readings above depend
+  on. The strip's ▲ is `[aria-label="Nach oben"]` and it is disabled at index 0, so pick a section
+  that is not first; on the project page there is no toolbar anchor to work around (only the
+  Übersicht passes `toolbarAfterKey`, see AW).
 - **The demo seeds `dashboard_layout` with the season sections opted in** — `termine` full-width
   after the roll-up, `kontakte`+`links` as a half pair. On any *non-demo* database all three ship
   `defaultHidden`: not in `[data-section]`, only in the „+ Bereich" picker. To drive the
@@ -2328,6 +2340,14 @@ corrections to the ones above.
   references (SDL-01). So the demo now shows both halves of that trade-off, widget 5 inside the
   window and this one past it, and „Endgültig löschen" is the only way this one ever leaves.
   Anything that counts Papierkorb rows has to expect **two** trashed sections, not one.
+  Pinned since WP-78a by `check:browser`'s **AI2**, as an `/api/deleted` reading (`purge_at: null`,
+  one dependent link) paired with the wording the row prints — „bleibt, bis abhängige Einträge
+  entfernt sind" against a leaf row's „wird in … endgültig entfernt".
+- **It is a HOME-only reading, and that is not a preference.** `copySeasonData` copies **live**
+  rows only, so no fixture season carries section 18 at all — a case that took a copy first would
+  find nothing and pass vacuously. The same goes for the *cause*: `purgeExpired` runs at server
+  startup on the registry default, so the thing that makes „it survived the sweep" a caused outcome
+  is the gate's own cold start over a freshly rebuilt `.demo`, not anything the case does.
 
 ## Narrow windows
 

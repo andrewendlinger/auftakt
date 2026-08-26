@@ -382,6 +382,81 @@ export async function runArchive(fixtures) {
     `${JSON.stringify(liveShape)}, 24/53 gerendert=${backHome.includes('24')}/${backHome.includes('53')}`,
   );
 
+  // ======================================================================== AI2 · the row that never expires
+  //
+  // The other retention on this page, and the only fixture in the app that is *past* it. WP-78 put
+  // it there out of the WP-70 audit (F5): `custom_sections` 18 („Frühere Sammlung", on project 11)
+  // was soft-deleted three days beyond `PURGE_AFTER_DAYS` and is still here, because the live link
+  // 46 it holds still references it and `purgeExpired` skips any expired row a remaining row
+  // points at (SDL-01). Widget 5 („Alte Sammlung") is the same pairing *inside* the window; this
+  // is what it looks like once the window has passed, which is the state the customer's data is
+  // really in.
+  //
+  // The sweep runs at startup, so the cause is this run's own cold start — `stack.mjs` rebuilt
+  // `.demo` and booted the server over it before the first case opened a page. Nothing here has to
+  // arrange that, and nothing here may write: this is the demo's own season, and a fixture season
+  // could not carry the row in any case — `copySeasonData` copies **live** rows only, so no copy
+  // has a section 18 at all.
+  //
+  // What the page must then say is the pair: the parked row names the *condition*, and a row with
+  // nothing hanging off it still counts down. Both are on screen together.
+  console.log('\nAI2 · Der Eintrag, der nicht abläuft');
+  await arc.goto(`${UI}/#/archiv`);
+  await arc.reload();
+  await ready(arc);
+
+  /**
+   * The Papierkorb rows as the page prints them — the same `div.divide-y > div` the button reading
+   * above uses. `min-w-0` is the text cell and its two children are the label and the grey line
+   * under it; taken as children rather than by class, because the assertion is about the *wording*
+   * of that line and a class list is not what it is made of.
+   */
+  const trashLines = () =>
+    arc.evaluate(() =>
+      [...document.querySelectorAll('div.divide-y > div')].map((el) => {
+        const lines = [...(el.querySelector('div.min-w-0')?.children ?? [])].map((c) =>
+          (c.textContent ?? '').trim(),
+        );
+        return { label: lines[0] ?? '', meta: lines[1] ?? '' };
+      }),
+    );
+
+  const binned = await api('/deleted');
+  const parkRetention = (await api('/settings')).purge_after_days;
+  // Naive local time, the app's own convention (`docs/ARCHITECTURE.md`): the space becomes a `T`
+  // so the string parses as local rather than as UTC, which is a whole day either way at the edge.
+  const daysGone = (row) =>
+    Math.floor((Date.now() - new Date(String(row.deleted_at).replace(' ', 'T')).getTime()) / 86_400_000);
+  const overdue = binned.filter((d) => daysGone(d) > parkRetention);
+  const parked = binned.find((d) => d.type === 'section' && d.label === 'Frühere Sammlung');
+  // A leaf: `dependents.total === 0` is what „nothing references it" means here, and reading it
+  // rather than naming link 5 keeps the contrast honest if the fixtures grow another one.
+  const counting = binned.find((d) => d.dependents?.total === 0);
+  const lines = await until(() => trashLines(), (r) => r.length === binned.length, 8000);
+  const lineOf = (row) => lines.find((l) => l.label === row?.label)?.meta ?? 'keine Zeile';
+
+  check(
+    `genau ein Papierkorb-Eintrag ist älter als die ${parkRetention} Tage — und er hat den Sweep dieses Kaltstarts überlebt (SDL-01)`,
+    overdue.length === 1 && overdue[0]?.type === 'section' && overdue[0]?.label === 'Frühere Sammlung',
+    overdue.map((d) => `${d.type} „${d.label}“ seit ${daysGone(d)} Tagen`).join(' | ') ||
+      `keiner von ${binned.length} Einträgen`,
+  );
+  check(
+    '…und er verspricht kein Datum, sondern nennt die Bedingung: ein lebender Link hält ihn',
+    parked?.purge_at === null &&
+      parked?.dependents?.total === 1 &&
+      parked?.dependents?.byType?.link === 1 &&
+      lineOf(parked).endsWith('· bleibt, bis abhängige Einträge entfernt sind'),
+    `purge_at ${String(parked?.purge_at)}, abhängig ${JSON.stringify(parked?.dependents)}, „${lineOf(parked)}“`,
+  );
+  check(
+    '…während ein Eintrag, an dem nichts hängt, auf derselben Liste weiter herunterzählt',
+    !!counting &&
+      counting.purge_at !== null &&
+      /· wird in .+ endgültig entfernt$/.test(lineOf(counting)),
+    `${counting?.type ?? 'kein blattloser Eintrag'} „${counting?.label ?? ''}“: purge_at ${String(counting?.purge_at)}, „${lineOf(counting)}“`,
+  );
+
   // ======================================================================== AJ · the boundary itself
   //
   // In a season of its own, and not a copy — `agedSeason`, made with the other fixture seasons
