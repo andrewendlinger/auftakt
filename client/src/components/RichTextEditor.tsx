@@ -854,11 +854,22 @@ function Toolbar({
  *
  * The mechanism is `ColorSwatchPicker`'s (an anchored popover, a roving grid, the current value
  * holding the tab stop); the colours are not — see `lib/textColor.ts` for why those sixteen dots
- * are unreadable as text. Each swatch is an „A" painted by the very class it is about to write, so
- * the picker shows what it will do and no hex is repeated outside `index.css`. There is no „eigene
+ * are unreadable as text. Each swatch is a filled chip painted `background: currentColor` under the
+ * very class it is about to write, so no hex is repeated outside `index.css`. There is no „eigene
  * Farbe": a free colour could only be spelled as a `style` attribute, which is exactly what the
  * dialect refuses to store — which also means there is no draft to hold back here (RTE-08 is about
  * the native colour wheel firing per frame; nothing in this menu fires more than once).
+ *
+ * **A chip and not a letter, since WP-74.** WP-62 drew each swatch as an „A" in its own colour,
+ * which is what the module note and the stylesheet's comment have both described as a fill ever
+ * since — the markup was the half that drifted. A 13 px semibold „A" inks **6.3 %** of its 28 px
+ * cell, so all eight cells are ~94 % white and every one of the 28 pairs sits under ΔE00 4 when
+ * measured as the colour the eye integrates at that size: at a glance the palette is eight
+ * near-white squares, and a customer reading it as „six colours" is reading it correctly (the
+ * neighbours merge — rot/pink, grün/türkis, orange/bernstein, blau/violett). A 20 px fill takes
+ * the same cell to 51 % by geometry (55.6 % rastered, ring and rounded corners included) and
+ * pulls every pair apart. Nothing about the geometry moved: same button, same grid, same
+ * 102 px menu.
  *
  * **Positioned `fixed`, but *not* portalled**, unlike every other popover in the app. The editor
  * treats focus or a click landing outside `rootRef` as „the user left" and commits the note
@@ -969,8 +980,13 @@ function TextColorPicker({ editor, color }: { editor: Editor; color: string | nu
         {/* While the menu is open the button itself is dark, so the glyph drops the colour class
             and rides on `currentColor` — a #1d4ed8 „A" on #262626 is not a preview of anything. */}
         <span className={`flex flex-col items-center leading-none ${!open && color ? textColorClass(color) : ''}`}>
-          <span className="text-[13px] font-semibold">A</span>
-          <span aria-hidden className="mt-[2px] h-[3px] w-4 rounded-sm bg-current" />
+          {/* Only the bar carries the colour (WP-74). Painting the letter *and* a rule under it in
+              the same colour is precisely how „coloured, underlined text" is drawn, and that is
+              what the customer read it as. The letter therefore keeps `Btn`'s own ink — an
+              explicit colour on the child, so the inherited `tc-…` never reaches it — and the
+              wrapper keeps the class, which is what still makes the bar the preview. */}
+          <span className={`text-[13px] font-semibold ${open ? '' : 'text-neutral-600'}`}>A</span>
+          <span aria-hidden className="mt-[2px] h-1 w-4 rounded-sm bg-current" />
         </span>
       </Btn>
       {open && pos && (
@@ -1001,11 +1017,15 @@ function TextColorPicker({ editor, color }: { editor: Editor; color: string | nu
                 {...rovingItem(id === stop)}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => pick(id)}
-                className={`flex h-7 w-7 items-center justify-center rounded-lg text-sm font-semibold transition hover:bg-neutral-100 ${
+                className={`flex h-7 w-7 items-center justify-center rounded-lg transition hover:bg-neutral-100 ${
                   color === id ? 'ring-1 ring-neutral-400' : ''
                 } ${textColorClass(id)}`}
               >
-                A
+                {/* The fill, not a glyph — see the note above. `bg-current` under the button's own
+                    `tc-…` is what keeps the hex in the stylesheet, and the hairline is for the two
+                    lightest tones, which would otherwise float on the white card without an edge.
+                    `aria-hidden`: the button's name is the German colour, and a chip has no text. */}
+                <span aria-hidden className="h-5 w-5 rounded-md bg-current ring-1 ring-black/10" />
               </button>
             ))}
           </div>
