@@ -1703,11 +1703,13 @@ are not — they are `labels` in the window's own season `settings`, with a gene
 
 ## Fixture facts about the demo
 
-- **Only two contact lists have more than one row**, so they are the only two a reorder can be
-  tried on: project 1 („NQ1 · Eröffnungskonzert") has three contacts and artist 1 („Nordlicht
-  Quartett") has two. Their `sort_order` values are interleaved with the other parents' (0, 6, 7
-  and 1, 8), which is the case a reorder must not disturb. Artist 3 deliberately keeps its single
-  contact — the dependent-count fixture below leans on it.
+- **Only two contact lists are *interleaved*, and those two are the reorder fixtures**: project 1
+  („NQ1 · Eröffnungskonzert") has three contacts and artist 1 („Nordlicht Quartett") has two, and
+  their `sort_order` values run through each other (0, 6, 7 and 1, 8), which is the case a reorder
+  must not disturb. Artist 3 deliberately keeps its single contact — the dependent-count fixture
+  below leans on it. Since WP-78 there are two *long* lists as well (project 10 has 18 rows, project
+  11 has 8), but those are contiguous and say nothing about the interleave; drive a reorder
+  assertion on project 1 or artist 1.
 - **The record delete (WP-34) is inside „✎ Bearbeiten", not on the page header** — „Löschen" in the
   dialog footer, then a nested confirm, then „In den Papierkorb". A script looking for a 🗑 next to
   the print link finds nothing, against working code. Useful fixtures: project 2 („NQ2 ·
@@ -1789,7 +1791,8 @@ are not — they are `labels` in the window's own season `settings`, with a gene
   row it is going to be dropped on: `canDrop` tests the effective parent *first* and the rank
   second, so a child of another status is refused for the wrong reason and the case would prove
   nothing about the promotion.
-- **Every demo artist has exactly two live projects.** So a project-card reorder there can be
+- **Every demo artist has exactly two live projects, artist 5 (WP-78) included.** So a project-card
+  reorder there can be
   driven but not *asserted*: „and the other cards kept their relative order" is a statement about a
   list of one. Add a third card over the API (`POST /api/projects`) before opening the page — it
   arrives with `sort_order: 0`, i.e. tied with the first, so read the starting order off the DOM
@@ -1832,7 +1835,10 @@ are not — they are `labels` in the window's own season `settings`, with a gene
   folded-parent case. Task 12 („Verwaiste Unteraufgabe", `#/project/5`) is the orphan: its parent
   (task 11) is soft-deleted, so it renders at depth 0 with no connector while `parent_id` still
   says 11, and the pair survives every purge (SDL-01) — the Papierkorb row for the parent says so,
-  „bleibt, bis abhängige Einträge entfernt sind".
+  „bleibt, bis abhängige Einträge entfernt sind". The **widest** tree is task 100 („Bühnenaufbau
+  planen", `#/project/10`) with six live children, which is the field's maximum and the one to use
+  for anything about the counter pill's width, the connectors or a fold at real depth; its counter
+  reads „2/6".
 - **Five archived tasks, one per shape of Zuordnung.** `demo.ts` stamps them at
   `ARCHIVED = -(ARCHIVE_AFTER_DAYS + 15)` and later, so they are always comfortably past the cutoff
   and no case ever needs an absolute date. **24** („Probenraum gebucht") and **53** („Angebot
@@ -1858,17 +1864,24 @@ are not — they are `labels` in the window's own season `settings`, with a gene
   there is the regression WP-48 fixed, not a fixture quirk.
 - **The project and artist pages ship `defaultHidden={['stats', …]}`**, so the „Fortschritt" tile
   is *not on screen* until a layout that names it is written. The dashboard's is.
-- **Artist 2 and project 3 ship their own `layout`; artists 1/3/4 and every other project are
-  `NULL`** and follow the `artist_layout`/`project_layout` template (WP-25). So the two states are
-  both on the demo — and a check that arranges one artist must assert against a *different* one,
-  because asserting against artist 2 proves nothing. Artist 2 also un-hides `stats` **and
-  tombstones `aufmerksamkeit`** (`hidden: true`, WP-45) — so its „+ Bereich" picker starts with
-  „Braucht Aufmerksamkeit" on offer, and `aufmerksamkeit` is *not* in its `[data-section]` list.
-- **The project split (WP-48) is in two states on the demo, and project 3 is the appended one.**
-  Projects with `layout: NULL` render `kontakte` and `links` as separate half sections side by
-  side (spec order); project 3's stored layout predates the split, so its `links` auto-appends
-  **last** in its `[data-section]` list at `data-width="half"`. A check that the two sections act
-  independently (🗑 one, keep the other) belongs on a `NULL`-layout project, not on project 3.
+- **Artists 2 and 5 and projects 3 and 10 ship their own `layout`; artists 1/3/4 and every other
+  project are `NULL`** and follow the `artist_layout`/`project_layout` template (WP-25). So the two
+  states are both on the demo — and a check that arranges one artist must assert against a
+  *different* one, because asserting against artist 2 proves nothing. Artist 2 also un-hides
+  `stats` **and tombstones `aufmerksamkeit`** (`hidden: true`, WP-45) — so its „+ Bereich" picker
+  starts with „Braucht Aufmerksamkeit" on offer, and `aufmerksamkeit` is *not* in its
+  `[data-section]` list. Artist 5 and project 10 are WP-78's, and they are about *length* rather
+  than about a branch — see „field sizes" below.
+- **The project split (WP-48) is in three states on the demo, and both broken ones are real.**
+  Projects with `layout: NULL` render `kontakte` and `links` as separate half sections side by side
+  (spec order) — the healthy state. Project 3's stored layout predates the split and has **no
+  `links` entry at all**, so the merge appends it **last** in its `[data-section]` list at
+  `data-width="half"` on every load and nothing is written down; that is the state 2 of the
+  customer's 17 pages are in. Project 10's layout (WP-78) has `links` **stored last**, as the merge
+  left it and the next arranger touch froze it; that is the state the other 6 are in, and the
+  difference between the two is only visible in the database (`GET /api/projects/10` vs `/3`). A
+  check that the two sections act independently (🗑 one, keep the other) belongs on a `NULL`-layout
+  project, not on either of these.
 - **The demo seeds `dashboard_layout` with the season sections opted in** — `termine` full-width
   after the roll-up, `kontakte`+`links` as a half pair. On any *non-demo* database all three ship
   `defaultHidden`: not in `[data-section]`, only in the „+ Bereich" picker. To drive the
@@ -2139,10 +2152,68 @@ are not — they are `labels` in the window's own season `settings`, with a gene
 - **The link dialog's „Kategorie" is `type: 'pills'`, not a `<select>`** — `selectOption` finds
   nothing. The options are `[aria-pressed]` buttons and the current value is
   `[aria-pressed="true"]`; a second click on it clears the field.
-- **Project 1's „Technik" group is the only link group with two rows**, so it is the only place a
-  reorder is observable, and the group's `sort_order` values are *interleaved* with the other
-  groups' (0, 5, 6, 7) — which is the case a per-group reorder must not disturb. The group
-  headings are `span.rounded-full` inside the list's `div.space-y-4` and CSS-uppercased.
+- **Project 1's „Technik" group is the only *categorised* link group with two rows**, so it is the
+  only place a within-category reorder is observable, and the group's `sort_order` values are
+  *interleaved* with the other groups' (0, 5, 6, 7) — which is the case a per-group reorder must
+  not disturb. The group headings are `span.rounded-full` inside the list's `div.space-y-4` and
+  CSS-uppercased. WP-78's 29 links are all **uncategorised**, so they render as one „Ohne
+  Kategorie" list per widget and every drop inside it is legal — useful for a long drag, useless
+  for anything about `canDrop`.
+
+### Field sizes: artist 5 and its two projects (WP-78)
+
+Everything above is one row per branch. The WP-70 audit of a real installation found every branch
+covered and every **magnitude** three to eight times too small, so `demo.ts` grew one artist with
+two projects carrying the field's numbers. It is purely additive — no row, date, ordinal or layout
+that existed before it moved — which is why the six entries below are all *new* handles rather than
+corrections to the ones above.
+
+- **`#/project/10` („EW1 · Festivalzentrum") is the field-sized page.** 45 tasks (the customer's
+  busiest project has 46; the demo's had 11), 23 of them subtasks under 11 parents, ids 100–144.
+  This is where to look at anything that changes with length: the grouping rail, a header-click
+  sort, the ⠿ over a long list, the „mitverschoben" count of a move, and the **print sheet** —
+  `#/print/project/10` prints 18 contacts and 30 open tasks in two status groups, which is the
+  first demo sheet long enough to say anything about how paper handles a real list
+  (`check:browser`'s N2 builds its own tuned fixture for the page break itself and does not touch
+  this one).
+- **Three things are deliberately absent on that page, and each is a measurement.** Not one row
+  carries a **due date** (2 of the customer's 208 do, both stale by 18 months, and the built-in
+  „Fällig" is switched off in all three of his seasons), not one carries a **colour** (0 in 208),
+  and not one of its 26 links carries a **category** or a **note** (`category` is NULL on all 82 of
+  his links and `notes` is empty on every row). So „Fällig" is a column of „—" here and „Ohne
+  Kategorie" is the whole of every link list — which is what those surfaces look like in the field,
+  and the opposite of every other page on the demo. What *is* present in field proportion is the
+  **comment**: 36 of the 45 carry one, against 149 of 184 in the field.
+- **Its stored layout has 16 entries, ten of them `cs<id>`** — the customer's biggest is 18, and 17
+  of his 30 artist/project pages carry one at all, where the demo had two of 6 and 3. That is the
+  page for „alles zurücksetzen", the arranger's drag rail and the picker at real length. The ten
+  widgets are `custom_sections` 6–15; four of them are `links` widgets holding 26 documents between
+  them (the customer hangs 30 of one season's 44 links off sections, and across his installation
+  sections carry 41 % of every link he files; the demo had four).
+- **`#/project/11` („EW2 · Nachwuchsreihe") is the unsorted, statusless page.** Its `status` is
+  **NULL** — 8 of the customer's 10 projects have none, so „every project wears a status pill" was
+  a demo artefact, and this is the page to check what a missing pill does to a header or a print
+  sheet. And **every row that hangs off it sits at `sort_order = 0`** (6 tasks, 8 contacts, 2 live
+  widgets, 3 links), because two of his three seasons are exactly that: one distinct ordinal in
+  every table (bar a single task), zero — and even the season he works in daily has twelve groups
+  of live tasks sharing one, the largest fourteen deep. List order there is the id tiebreak and
+  nothing else, which is the state in
+  which a list that has forgotten the tiebreak looks random on real data and perfectly ordered
+  everywhere else on the demo. **A reorder assertion must not be driven here** — the ordinals carry
+  no information to preserve.
+- **There is an orphaned image, and it is 67 KB.** `images` holds two rows: the hall plan the notes
+  reference, and `buehnenfoto.png` (623×505), which **nothing references at all**. The customer's
+  file has exactly that — one insert-then-remove that is 24 % of the season's database and rides
+  along in all 30 restore points. It is invisible in the UI by definition, so the seeder prints its
+  size („Verwaistes Bild …"), and the only other way to see it is
+  `SELECT token, byte_size FROM images`. It is generated at seed time from a fixed seed, so the
+  bytes and the content token are the same on every rebuild.
+- **One Papierkorb row can never expire.** `custom_sections` 18 („Frühere Sammlung", on project 11)
+  is soft-deleted **33 days ago** — three days past `PURGE_AFTER_DAYS` — and survives every start
+  because the live link 46 still points at it: `purgeExpired` skips any expired row a remaining row
+  references (SDL-01). So the demo now shows both halves of that trade-off, widget 5 inside the
+  window and this one past it, and „Endgültig löschen" is the only way this one ever leaves.
+  Anything that counts Papierkorb rows has to expect **two** trashed sections, not one.
 
 ## Narrow windows
 
