@@ -43,7 +43,7 @@
  *   check-browser/probes.mjs     what a case asks the page about itself
  *   check-browser/pdf.mjs        reading a `page.pdf()` back
  *   check-browser/fixtures.mjs   the type of what crosses a scenario file's boundary
- *   check-browser/cases/*.mjs    the assertions, one file per area, A–AW
+ *   check-browser/cases/*.mjs    the assertions — fifteen files, one per surface, covering areas A–AW
  *
  * The split is a pure move (2026-08-24): no assertion was added, removed, reworded or reordered,
  * and every scenario body is byte-identical to its slice of the file this replaced.
