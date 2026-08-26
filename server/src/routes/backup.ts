@@ -171,6 +171,15 @@ export function runBackup(backupDir: string): { dir: string; files: string[] } {
       keep: BACKUP_KEEP,
       pointsDir: BACKUP_POINTS_DIR,
       preImportDir: PRE_IMPORT_DIR,
+      // Asked here rather than assumed, and after the migrate/prune above so a folder that has
+      // just been moved down from the top level counts. Nothing but an import creates it, so on
+      // an installation that has never imported the README used to name a folder that was not
+      // there (WP-70, F8). Plain existence is the same question the reader asks by looking.
+      //
+      // An import does not rewrite this file, so a folder created since the last backup run is
+      // named from the next start on; until then it explains itself with the MANIFEST.txt inside
+      // it, and the import dialog has just told the user where the copy went.
+      hasPreImportFolder: existsSync(preImportDir),
       hasLegacyFlatFiles: hasLegacyFlatBackups(backupDir),
     }),
   );

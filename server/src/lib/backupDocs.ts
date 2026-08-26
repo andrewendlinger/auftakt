@@ -190,6 +190,18 @@ export interface ReadmeOptions {
   /** PRE_IMPORT_DIR */
   preImportDir: string;
   /**
+   * Names the `pre-import/` folder — both places it comes up, the „Was hier liegt" entry and the
+   * closing sentence of the flat-files paragraph — only where that folder is actually there.
+   *
+   * It is created by the first „Datenbank importieren…", so an installation that has never
+   * imported has none, and a real one was found in exactly that state (WP-70, F8): the README
+   * described a folder the reader could not find, in the one document written for the day his
+   * data is gone. Same reasoning as `hasLegacyFlatFiles` below — a paragraph about something
+   * that is not in the folder is the noise this file exists to remove — with the sharper edge
+   * that this one sends the reader looking.
+   */
+  hasPreImportFolder: boolean;
+  /**
    * Adds the paragraph about the flat `auftakt-<stamp>.db` files older versions wrote.
    * Conditional because most folders have none, and a paragraph about files that are not there
    * is exactly the kind of noise this file exists to remove.
@@ -260,12 +272,17 @@ export function readmeText(o: ReadmeOptions): string {
     ...inside.map(([left, right]) => `        ${left.padEnd(w)}   – ${right}`),
     '',
     `    Die ${o.keep} neuesten Backups bleiben liegen. Ältere löscht Auftakt selbst.`,
-    '',
-    o.preImportDir,
-    '    Angelegt kurz vor einem „Datenbank importieren…“: der Stand von direkt',
-    '    davor. Dieselben Dateien wie oben — nur liegt hier immer genau eine',
-    '    .db-Datei, weil ein Import immer nur eine Datenbank ersetzt.',
-    `    Auch hier bleiben die ${o.keep} neuesten liegen.`,
+    // Its own blank line, so dropping the block leaves the two that separate the sections.
+    ...(o.hasPreImportFolder
+      ? [
+          '',
+          o.preImportDir,
+          '    Angelegt kurz vor einem „Datenbank importieren…“: der Stand von direkt',
+          '    davor. Dieselben Dateien wie oben — nur liegt hier immer genau eine',
+          '    .db-Datei, weil ein Import immer nur eine Datenbank ersetzt.',
+          `    Auch hier bleiben die ${o.keep} neuesten liegen.`,
+        ]
+      : []),
     '',
     '',
     ...heading('Ein Backup laden', '-'),
@@ -313,7 +330,10 @@ export function readmeText(o: ReadmeOptions): string {
       'Jede Datei ist ein Backup für sich. So lädst du eine: Auftakt öffnen,',
       `Einstellungen → „${t.singular} & Daten“ → „Datenbank importieren…“. Das`,
       'ersetzt, was gerade offen ist — Auftakt legt vorher selbst ein Backup',
-      `davon im Ordner „${o.preImportDir}“ ab.`,
+      // The reassurance stays either way; only the folder name goes. Without the block above
+      // this would be the file's single mention of a name nothing else explains — and the
+      // folder does not exist yet at the moment this is read.
+      o.hasPreImportFolder ? `davon im Ordner „${o.preImportDir}“ ab.` : 'davon an.',
       '',
     );
   }
