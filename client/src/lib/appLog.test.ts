@@ -146,6 +146,25 @@ describe('appLogLine', () => {
     expect(parsed.note).toHaveLength(20);
   });
 
+  it('shortens the stack before surrendering the line to the marker', () => {
+    // 3000 backslashes fit the raw field cap but serialize to 6000: the whole-line cap counts
+    // escaped characters, and Windows stacks are the ones that inflate. The deepest crash must
+    // survive with less stack, not vanish into an invalid-log-event marker.
+    const parsed = JSON.parse(
+      appLogLine({ event: 'crash', msg: 'm', stack: '\\'.repeat(3000) }, RUN) as string,
+    );
+    expect(parsed.event).toBe('crash');
+    expect(parsed.stack).toHaveLength(1500);
+    expect(JSON.stringify(parsed).length).toBeLessThanOrEqual(APP_LOG_EVENT_MAX_CHARS);
+    // When the bloat is not the stack, dropping the stack cannot save it — the marker stands.
+    expect(appLogLine({ event: 'x', stack: 's', pad: 'p'.repeat(5000) }, RUN)).toBeNull();
+  });
+
+  it('stamps the envelope version itself, so an entry cannot claim another one', () => {
+    const parsed = JSON.parse(appLogLine({ event: 'x', v: 99 }, RUN) as string);
+    expect(parsed.v).toBe(1);
+  });
+
   it('stays one line however many newlines a stack carries', () => {
     const line = appLogLine({ event: 'x', stack: 'a\nb\nc' }, RUN) as string;
     expect(line).not.toContain('\n');

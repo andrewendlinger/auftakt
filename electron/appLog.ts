@@ -126,7 +126,22 @@ export function appLogLine(entry: unknown, meta: AppLogMeta): string | null {
       const cap = APP_LOG_FIELD_CAPS[key];
       capped[key] = cap !== undefined && typeof value === 'string' ? value.slice(0, cap) : value;
     }
-    body = JSON.stringify({ v: 1, ...capped, at: meta.at, app: meta.app, src: meta.src });
+    // `v` after the spread, like `at`/`app`/`src`: the envelope version is the wrapper's to
+    // stamp, and an entry claiming another one must lose.
+    const line = (e: Record<string, unknown>) =>
+      JSON.stringify({ ...e, v: 1, at: meta.at, app: meta.app, src: meta.src });
+    body = line(capped);
+    if (body.length > APP_LOG_EVENT_MAX_CHARS && typeof capped.stack === 'string') {
+      // The field caps count raw characters but this cap counts serialized ones, and a Windows
+      // stack full of backslashes inflates up to 2× under JSON escaping. Losing the whole entry
+      // to the marker line on exactly the deepest crashes is the wrong trade: shorten the
+      // stack, then drop it, before giving up.
+      body = line({ ...capped, stack: capped.stack.slice(0, (APP_LOG_FIELD_CAPS.stack ?? 0) / 2) });
+      if (body.length > APP_LOG_EVENT_MAX_CHARS) {
+        const { stack: _dropped, ...rest } = capped;
+        body = line(rest);
+      }
+    }
   } catch {
     return null; // cyclic, a throwing getter or toJSON — not an event
   }
