@@ -28,6 +28,12 @@ export const stubElectron = (page, opts = {}) =>
     // is the only observable the feedback dialog produces at all.
     w.__external = [];
     w.__saved = [];
+    // The runtime log's renderer half (WP-69e). Recorded rather than dropped for the same
+    // reason as the two above — a call that no longer happens has to be observable — and
+    // because a case that ends with lines in here is a case that hit an error it never
+    // asserted on. Nothing drives it: every non-Electron case already runs without a bridge
+    // at all, which is the degradation that matters.
+    w.__logged = [];
     // Replaced by the real subscriber and the real resolver as soon as the update card mounts and
     // its button is clicked; no-ops until then, so a script may call them unconditionally.
     w.__updateProgress = () => {};
@@ -41,6 +47,9 @@ export const stubElectron = (page, opts = {}) =>
       chooseBackupDir() {},
       openExternal(url) {
         w.__external.push(url);
+      },
+      logEvent(payload) {
+        w.__logged.push(payload);
       },
       getVersion: () => Promise.resolve('0.0.0-test'),
       // `refresh` is the card's own distinction: false is the cached silent startup check it
@@ -66,7 +75,7 @@ export const stubElectron = (page, opts = {}) =>
             '2026-08-11 12:00 · v0.0.0-test · play/done · bereit 420 · Ende 2100 ms\n' +
             '2026-08-11 12:03 · v0.0.0-test · cross/abort:hitch · bereit 430 · Ende 1800 ms',
           hasLog: true,
-          file: '/tmp/Auftakt/boot-log.jsonl',
+          file: '/tmp/Auftakt/app-log.jsonl',
           system: 'macOS 15.6 · 1728×1117 @2×',
         }),
       // Two things the naive stub got wrong and the dialog depends on (WP-66). It **emulates

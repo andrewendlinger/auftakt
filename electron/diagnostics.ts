@@ -1,6 +1,6 @@
 /**
- * The diagnostics bundle — the whole boot log, in one file a customer can actually hand over
- * (WP-54).
+ * The diagnostics bundle — every boot the app logged and the failures it caught while running,
+ * in one file a customer can actually hand over (WP-54, split into two sections by WP-69f).
  *
  * A `mailto:` cannot carry an attachment. RFC 6068 limits which headers a client may honour,
  * and `attach=` — a Thunderbird extension — was disabled precisely because a URL that names a
@@ -12,15 +12,21 @@
  * So the file is made attachable instead of the mail made bigger. Everything the maintainer
  * would otherwise ask for goes into one `.txt` on the desktop, named after the mail's own
  * reference, and the mail says which file to attach. Plain text and a `.txt` extension on
- * purpose: `boot-log.jsonl` does not open on double-click on Windows, and it sits in userData
+ * purpose: `app-log.jsonl` does not open on double-click on Windows, and it sits in userData
  * among `Cache/`, `GPUCache/` and `blob_storage/`, which is not a folder to send anybody into.
  *
- * Imports nothing from `electron`, deliberately — the same rule `bootLog.ts` follows, and for
+ * Imports nothing from `electron`, deliberately — the same rule `appLog.ts` follows, and for
  * the same reason: it is what lets `client/src/lib/diagnostics.test.ts` hold this text from
  * `check:unit`. Main collects the facts and passes them in.
  */
 
-import type { BootDiagnostics } from './bootLog';
+import {
+  APP_LOG_NAME,
+  countEntries,
+  splitAppLog,
+  tailAppLog,
+  type BootDiagnostics,
+} from './appLog';
 
 /** What `get-diagnostics` returns: the boot log's digest, plus one line about the machine. */
 export interface Diagnostics extends BootDiagnostics {
@@ -135,9 +141,24 @@ export function uniqueBundleName(ref: string, taken: (name: string) => boolean):
  * escaping one into a pattern is a way to get this wrong for no gain. Best-effort by
  * construction — a path the OS spelt with different capitalisation survives it — which is why
  * the file is left on the desktop for the person to read before they attach it.
+ *
+ * **Four spellings on Windows, one everywhere else.** The log sections below are JSONL, and
+ * `JSON.stringify` doubles every backslash — a home path inside a stack trace is spelt
+ * `C:\\Users\\Marianne Fürst` in that text, which the literal split walks straight past. Since
+ * WP-69 those lines carry stacks and `err.message`s that really do name paths, so the escaped
+ * spelling is stripped too. And the server bundle is ESM, loaded via `pathToFileURL`, so on
+ * Windows its stack frames read `file:///C:/Users/Marianne%20F%C3%BCrst/…` — forward slashes
+ * and percent-encoding, which neither backslash spelling matches. The slash-normalised form
+ * and its `encodeURI` (which agrees with `pathToFileURL` on anything a home directory is
+ * called) cover those frames. Forms that collapse into one another are tried once.
  */
 export function redactHome(text: string, home: string): string {
-  return home ? text.split(home).join('~') : text;
+  if (!home) return text;
+  const slashed = home.split('\\').join('/');
+  const forms = new Set([home, home.split('\\').join('\\\\'), slashed, encodeURI(slashed)]);
+  let out = text;
+  for (const form of forms) out = out.split(form).join('~');
+  return out;
 }
 
 /** German decimal comma, fixed to one place. Not `Intl`: this has to be the same everywhere. */
@@ -259,41 +280,73 @@ export interface BundleInput {
   /** The mail body, verbatim: the file and the mail then say the same thing. */
   report: string;
   facts: SystemFacts;
-  /** `boot-log.jsonl` in full — every line, unparsed. */
+  /**
+   * `app-log.jsonl` in full — every line, unparsed. The split into the two sections happens
+   * here rather than at the call site: a count that is not derived from the lines actually
+   * printed under it is a count that goes wrong the first time either budget changes.
+   */
   log: string;
-  /** How many entries `log` holds, counted by the caller that read it. */
-  entries: number;
+}
+
+/** „1 Eintrag" / „7 Einträge" — the noun rides along, the two sections counting different things. */
+function counted(n: number, singular: string, plural: string): string {
+  return `${n} ${n === 1 ? singular : plural}`;
 }
 
 /**
- * Header, the report, the machine, then the log in full.
+ * Header, the report, the machine, then the log — as two sections, because it holds two
+ * different things (WP-69f).
  *
  * The order is for the person carrying the file, not the person reading it: they opened it to
  * check what they are about to send, so what they wrote themselves comes first and the
  * machine-generated bulk comes last. The note at the top is the same promise the dialog makes
  * — no festival data leaves in here — stated where it can still be checked against the
  * contents below it.
+ *
+ * **Boot lines are complete, runtime lines are a tail.** The boot reports are the raw material
+ * of the cross-version timing comparison and a missing one cannot be asked for again, so every
+ * single one travels; rotation already bounds how many there can be. Runtime lines have no such
+ * ceiling — one misbehaving interval can write hundreds — and the newest of them are the ones
+ * next to whatever the person is reporting, so that side is cut from the top and says so in its
+ * own heading. Last in the file for the same reason: on a crash bundle it is what the reader
+ * scrolls to the end for.
  */
 export function buildDiagnosticsBundle(input: BundleInput): string {
-  const { ref, at, report, facts, log, entries } = input;
-  const count = entries === 1 ? '1 Eintrag' : `${entries} Einträge`;
+  const { ref, at, report, facts, log } = input;
+  const { boot, runtime } = splitAppLog(log);
+  // Through `tailAppLog` rather than a slice: it is the budget in bytes as well as lines, and
+  // whole lines only, which is what keeps the section parseable for whoever reads it back.
+  const tail = tailAppLog(runtime.join('\n'));
+  const shown = countEntries(tail);
+  const bootCount = counted(boot.length, 'Starteintrag', 'Starteinträge');
+  const runtimeCount =
+    shown < runtime.length
+      ? `letzte ${shown} von ${runtime.length} Einträgen`
+      : counted(runtime.length, 'Eintrag', 'Einträge');
   const parts = [
     'Auftakt-Diagnosebericht',
     `Kennung:  ${ref}`,
     `Erstellt: ${at}`,
     '',
     'Diese Datei gehört zur E-Mail mit derselben Kennung. Sie enthält keine Termine, Künstler,',
-    'Kontakte oder Notizen — nur Angaben zum Programm und zum Rechner sowie das Protokoll der',
-    'letzten Programmstarts. Du kannst sie in Ruhe durchlesen, bevor du sie anhängst.',
+    'Kontakte oder Notizen — nur Angaben zum Programm und zum Rechner, das Protokoll der letzten',
+    'Programmstarts und die Fehler, die dem Programm zuletzt aufgefallen sind. Du kannst sie in',
+    'Ruhe durchlesen, bevor du sie anhängst.',
     section('Meldung'),
     report.trim(),
     section('Rechner'),
     formatSystemInfo(facts),
-    section(`Startprotokoll (boot-log.jsonl, ${count})`),
+    section(`Startprotokoll (${APP_LOG_NAME}, ${bootCount})`),
     // Dev writes no log at all, and neither has an install that has not settled a boot yet.
     // Saying so beats an empty section that reads like a truncated file.
-    log.trim() ||
+    boot.join('\n') ||
       '(kein Startprotokoll vorhanden — die App hat auf diesem Rechner noch keinen Start ' +
+        'protokolliert)',
+    section(`Laufzeitprotokoll (${APP_LOG_NAME}, ${runtimeCount})`),
+    // The good case, and the one an installation is in for weeks at a time: nothing went wrong.
+    // Worth a sentence, because an empty section here reads as a log that was lost.
+    tail.trim() ||
+      '(kein Laufzeitprotokoll vorhanden — die App hat auf diesem Rechner noch keinen Fehler ' +
         'protokolliert)',
     '',
   ];

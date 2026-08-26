@@ -3024,3 +3024,104 @@ again, for the new situation of a hold that can now be *watched* for ~2–3 s on
 judged shippable as designed, to be re-opened only if it feels naked on the real device. The
 boot script, the report schema and the phase-A invariant (a cross shows the flat rectangle)
 are untouched; `check:boot`'s 210 assertions pass unchanged.
+
+---
+
+## One log file, and a crash writes its own bundle (2026-08-25, WP-69a/b)
+
+Until this package the only evidence that ever left a customer machine was `boot-log.jsonl` —
+frame timings for the boot animation — plus whatever the person typed into „Fehler". Everything
+else died in a console that does not exist: the Express server runs **in-process** in Electron
+main, and a Finder- or NSIS-launched app has no stdio, so the server's 500 handler, the updater,
+`ErrorBoundary` and every unhandled rejection wrote into nothing. There were **zero** process-level
+handlers. A customer whose app vanished mid-session sent a hundred lines of frame timings and no
+trace of the crash. That is the gap; the shape of the fix is the part worth recording.
+
+**One file, not two.** `boot-log.jsonl` becomes `app-log.jsonl` and carries both kinds of line.
+The alternative — a second `error-log.jsonl` beside it — was rejected on three counts that are
+all the same count: two files mean two rotations to reason about, two readers to keep in step, and
+two artefacts a customer has to be told about. (The bundle grew two *sections* anyway in WP-69f —
+every boot line under „Startprotokoll", the runtime tail under „Laufzeitprotokoll". Printed from
+the one file at the moment it is written, which is not the same thing as two files to keep in
+step: nothing can fall between them, and the split is a `'src' in line` test rather than a second
+rotation.) And the interleaving is itself the diagnostic: „the boot reported `play`, then eleven seconds later a 500" is one story in
+one file and a correlation exercise in two.
+
+**Boot lines keep their exact shape; `src` is the discriminator.** A boot report is still
+`{v, …report, at, app}` and carries no `src`, because `scripts/check-boot.mjs` and the WP-61b/c
+cross-version comparison read those lines field by field. Runtime lines are `{v:1, …entry, at,
+app, src}` and *always* carry `src` (`main` | `renderer` — the in-process server's lines arrive
+through the tee as `main`), so every reader separates
+the two with one `'src' in line` test — `summarizeBootLog` filters before it counts, and the gate
+filters before every field-discipline assertion. Adding an `src` to boot reports would have been
+the tidier symmetry and would have silently reclassified every line ever written; the builder
+therefore does not take one.
+
+**The migration is a rename, not a merge.** `migrateBootLog` renames the legacy file onto the new
+name iff the new one does not exist, and swallows failure. The old file holds boot lines only,
+which is exactly what the new one starts as, so history survives the update — and that history is
+what a cross-version timing comparison is made of. It runs at module scope in `main.ts`, below the
+single-instance guard and above everything that reads or writes the log.
+
+**What is logged, and what never is.** Log lines carry: an event token, a message, a stack, and
+the wrapper fields. Nothing else, and specifically **no request bodies, no record titles, no
+names, no notes** — the bundle's header promises the customer „Sie enthält keine Termine,
+Künstler, Kontakte oder Notizen", that sentence stays verbatim, and it has to stay true. The
+server's error middleware logs `method + path` with numeric ids (WP-69d), never `req.body`. Field
+caps (`event ≤ 64`, `msg ≤ 500`, `stack ≤ 3000`, whole line ≤ 4096) bound the one uncontrolled
+string that remains, an `err.message`, and `redactHome` runs over the finished bundle.
+
+**No minidumps, no `crashReporter`.** Ruled out and not to be revisited without a new argument: a
+memory dump of this process contains whatever the in-process SQLite server last touched, i.e.
+artist names, e-mail addresses and notes about identifiable people. There is also nowhere to send
+one — no endpoint, no telemetry, by the standing decision above. A JSONL line the customer can
+read before they attach it is the whole delivery model, and a binary they cannot read is not it.
+
+**A console tee, not a logger module in the server.** `console.error`/`console.warn` are wrapped
+in packaged main before `startServer()`'s dynamic import. That one choke point captures all nine
+of the server's `console.*` calls, electron-updater's logger and this file's own warnings, with
+**no server-side change at all** — because the server is imported into this process. A proper
+`logger.ts` in `server/src` would have been the conventional answer and would have bought nothing
+here while costing every call site an import and the tier boundary a new shared module.
+`console.log` is deliberately not teed: the listen banner and the trace path are the bulk of it,
+and a log that fills with routine notices is a log whose rotation throws the errors away.
+**Revisit if the server ever leaves this process** — a child process or a service has its own
+stdio, and then the tee captures nothing and a real logger is the answer.
+
+**`uncaughtException` exits; it does not linger.** The handler writes its line, writes a
+diagnostics bundle to the desktop, shows a German dialog and calls `app.exit(1)` — the exit
+outside every `try`, so whatever else failed, the app still goes away. Lingering was the
+alternative and is wrong here specifically: a main process that has thrown owns the in-process
+SQLite server, so a window left standing keeps writing through a runtime whose invariants are
+already gone. WAL makes an immediate exit safe; a zombie holding the single-instance lock is not
+safe and cannot even be relaunched over. The handler is once-latched — a storm of exceptions
+gets lines and nothing else, because the first one's dialog is already on screen.
+
+Two Electron behaviours are deliberately displaced by this. Electron's own „A JavaScript error
+occurred in the main process" box is suppressed the moment a second `uncaughtException` listener
+exists (its default handler checks the listener count), which is the point: that dialog is
+English, names a stack, and offers a customer nothing. And **any** `unhandledRejection` listener
+suppresses Node's default of re-throwing, which is why rejections are log-only — a rejected
+background fetch is not a reason to close a festival's schedule. Both handlers are registered
+only in a packaged run: a developer wants the default dialog and has a terminal.
+
+**The crash bundle is the feedback bundle, written by nobody.** It reuses `buildDiagnosticsBundle`
+and `uniqueBundleName` unchanged, lands on the desktop under the same `Auftakt-Diagnose-AF-…txt`
+name, and carries an auto-generated „Meldung" saying in German that nobody wrote it. The dialog
+names the file and the address; **nothing opens** — no Finder, no mail client, no „Feedback
+senden" button — which is the WP-66 rule applied to the one path that could most plausibly have
+argued its way out of it. The facts are collected synchronously (`machineFacts`), because a
+`.then()` on a dying process is a bundle that is never written; the GPU query is the one fact
+dropped, and a crash is not read from `gpu_compositing` anyway.
+
+**The CodeQL dismissal moves with the code.** Alerts 20/21 (`js/file-system-race`, high) were
+dismissed as false positives against `electron/bootLog.ts:66`; that append → stat → rewrite is now
+`appendAndRotate` in `electron/appLog.ts` and serves two writers instead of one. The argument is
+unchanged and still holds: the only writer is the single Electron main process (the instance that
+loses `requestSingleInstanceLock` exits before it reaches any write, and the migration and the
+capture installs both sit below that guard), the three calls are synchronous with no `await`
+between them so nothing else in this program can run in the gap, and the whole block sits in a
+`catch {}` around a ring buffer that discards its oldest lines by design. If the alert re-fires
+at the new location it is to be dismissed again, with this paragraph as the reason. **Revisit if
+`appendAndRotate` ever gains a writer outside this process** — a helper process, a worker, or a
+server that has left main — which is the same condition the original entry named.

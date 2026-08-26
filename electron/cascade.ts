@@ -1,7 +1,7 @@
 /**
  * Where a new BrowserWindow goes.
  *
- * Imports nothing from `electron`, deliberately — the same rule as backup.ts, bootLog.ts and
+ * Imports nothing from `electron`, deliberately — the same rule as backup.ts, appLog.ts and
  * exportName.ts: `screen.getDisplayMatching().workArea`, the source window's bounds and the
  * bounds of the windows already open are passed in as plain rectangles, which is what lets
  * `client/src/lib/cascade.test.ts` drive the two laptop displays this got wrong from

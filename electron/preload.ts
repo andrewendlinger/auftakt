@@ -25,6 +25,16 @@ contextBridge.exposeInMainWorld('auftakt', {
   // second idiom for the sake of one unread reply on a local channel is not worth it. The
   // argument is the boot report (see client/index.html); main treats it as untrusted.
   bootSettled: (report?: unknown) => ipcRenderer.invoke('boot-settled', report),
+  // One runtime line from this window into `app-log.jsonl` (WP-69e) — a window error, an
+  // unhandled rejection, a render error. `invoke` for the reason given one member up, and the
+  // payload is untrusted exactly like every other argument here: main validates its shape,
+  // budgets how many of them a run may write and lets electron/appLog.ts cut the fields, so
+  // nothing is checked twice on this side. The reply is *caught* rather than merely dropped —
+  // an unhandled rejection out of the logger would be picked up by the very `unhandledrejection`
+  // listener that calls it, i.e. a line that could not be written would try to write itself.
+  logEvent: (payload: unknown) => {
+    ipcRenderer.invoke('log-event', payload).catch(() => {});
+  },
   /**
    * One of two main→renderer directions, hence one of two `ipcRenderer.on`s (the other is
    * `onUpdateProgress` below): the backup folder is registry-wide, so a pick in any window

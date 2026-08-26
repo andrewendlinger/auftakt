@@ -688,7 +688,7 @@ bounds know. `usableBounds()` is the pure half and the one that is
 tested: it refuses a rectangle that no longer overlaps any attached work area, because bounds
 saved on an external monitor otherwise restore a window onto coordinates that no longer exist,
 and the symptom the user reports is that the app does not start. The file sits beside
-`boot-log.jsonl` and deliberately **not** in `seasons.json` — the registry is exported, imported
+`app-log.jsonl` and deliberately **not** in `seasons.json` — the registry is exported, imported
 and backed up, and one machine's monitor layout has no business travelling inside another's data.
 
 **Main never reloads a window to refresh it.** The one thing main knows and the renderers do not
@@ -736,14 +736,16 @@ the `updateInfoAndProvider` that download reads. While one runs, a check answers
 it could not be news anyway — and a second install offers a German „wird bereits heruntergeladen"
 instead of racing.
 
-`get-diagnostics` takes **no argument**: main derives `boot-log.jsonl`'s path from
+`get-diagnostics` takes **no argument**: main derives `app-log.jsonl`'s path from
 `app.getPath('userData')` and hands the renderer finished summary text plus a path it may only
 display. A path *from* the renderer would be a filesystem call pointed anywhere on the machine —
 the same hole the scheme allowlist closes for `openExternal` (X-02).
 
 `save-diagnostics` is the exception, and it exists because a `mailto:` cannot carry an attachment
-(see `docs/DECISIONS.md`): it writes the full log plus the machine's details to the desktop so the
-customer has one named file to attach. Writing is now *all* it does — it revealed the file in the
+(see `docs/DECISIONS.md`): it writes the log plus the machine's details to the desktop so the
+customer has one named file to attach — under two headings since WP-69f, „Startprotokoll" with
+every boot line in it and „Laufzeitprotokoll" with the tail of the runtime ones, because one
+count over a file holding both kinds named neither of them. Writing is now *all* it does — it revealed the file in the
 Finder until WP-66, and nothing on the feedback path opens a window the customer did not ask for
 any more, `shell.showItemInFolder` appearing nowhere in the app. It takes two arguments and trusts
 neither. The

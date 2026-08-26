@@ -1,5 +1,21 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { signalFailed } from '../boot';
+import { errorParts, logAppEvent } from '../lib/logEvent';
+
+/**
+ * How the 3000 characters `electron/appLog.ts` keeps of a `stack` field are shared between the
+ * error's own trace and React's component stack.
+ *
+ * The two travel as one field and the cap keeps the *front* — so whichever half is first can
+ * evict the other, and the error's trace comes first. Both halves are therefore budgeted: a
+ * minified production stack of long asset URLs alone can exceed 3000 characters, and uncut it
+ * would push the entire component stack off the end. The error's first frames name the throw;
+ * the component stack's first dozen elements say where in the tree it sat — the tail of either
+ * is the part that may be lost.
+ */
+const STACK_FIELD_MAX = 3000; // mirrors APP_LOG_FIELD_CAPS.stack, grep-coupled like external.ts
+const COMPONENT_STACK_MAX = 1500;
+const ERROR_STACK_MAX = STACK_FIELD_MAX - COMPONENT_STACK_MAX;
 
 interface State {
   failed: boolean;
@@ -23,8 +39,20 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
     return { failed: true };
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo): void {
+  // `unknown`, not the declared `Error`: React hands over the raw thrown value, so a render
+  // that throws `null` reaches this with nothing to dereference — and a throw *here* runs
+  // during commit, past the boundary, tearing down the very fallback below.
+  componentDidCatch(error: unknown, info: ErrorInfo): void {
     console.error('Unbehandelter Render-Fehler', error, info.componentStack);
+    // …and into the runtime log, which is the only one of the two a packaged app keeps: the
+    // window it prints to has no console anybody can open (WP-69e).
+    const { msg, stack } = errorParts(error);
+    logAppEvent(
+      'render-error',
+      msg,
+      (stack ?? '').slice(0, ERROR_STACK_MAX) +
+        (info.componentStack ?? '').slice(0, COMPONENT_STACK_MAX),
+    );
     // The fallback below is the app now; there is nothing further to wait for. Without
     // this the boot screen would hold its still frame over a rendered error message
     // until the data budget expired. `signalFailed` rather than `signalReady` so it

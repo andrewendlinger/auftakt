@@ -214,7 +214,7 @@ if (existsSync(clientDist)) {
 }
 
 // Map SQLite constraint violations (e.g. the artist-XOR-project CHECKs) to 400s.
-app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
   // Deliberate client errors thrown by handlers (e.g. numParam validation) carry their status.
   if (err instanceof HttpError) {
     return res.status(err.status).json({ error: err.message });
@@ -224,7 +224,33 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (typeof code === 'string' && code.startsWith('SQLITE_CONSTRAINT')) {
     return res.status(400).json({ error: message, code });
   }
-  console.error(err);
+  // A body express.json() could not read never reached a handler, so it is the caller's mistake
+  // and not a defect of ours — but it used to fall through to the 500 below and be logged as one.
+  // body-parser marks every error it emits with a string `type` and an http-errors `status`
+  // (`entity.parse.failed` 400 for malformed JSON, `entity.too.large` 413 over the 4mb limit,
+  // `charset.unsupported` 415), so answering that status is enough, and nothing else in the stack
+  // sets both. Deliberately a generic message: `err.message` is the JSON parser's own text, which
+  // in current Node quotes the offending body back at the caller, and `err.body` is the raw body
+  // outright. For the same reason there is no log line here — the error object is the one kind
+  // that carries request content, and the runtime log must stay free of it.
+  const parseStatus = (err as { status?: unknown })?.status;
+  const parseType = (err as { type?: unknown })?.type;
+  if (
+    typeof parseType === 'string' &&
+    typeof parseStatus === 'number' &&
+    parseStatus >= 400 &&
+    parseStatus < 500
+  ) {
+    return res.status(parseStatus).json({ error: 'Anfrage konnte nicht gelesen werden.' });
+  }
+  // The only record a 500 leaves behind, so it has to say *which* request produced it — the
+  // stack alone points into the CRUD factory, which every entity route shares. In the packaged
+  // app the console tee (WP-69a/b) turns this into a line of the unified runtime log for free.
+  // `req.path` and nothing else: that log feeds a diagnostics bundle that promises to carry no
+  // festival data, and a path is route shapes and numeric ids only. `req.originalUrl` would
+  // append the query string, which on /api/search is the user's search term. Never the body,
+  // never the headers, never a query value.
+  console.error('API-Fehler', req.method, req.path, err);
   res.status(500).json({ error: message });
 });
 

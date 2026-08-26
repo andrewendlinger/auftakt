@@ -10,7 +10,7 @@ import {
 } from '../../../electron/cascade';
 
 /**
- * Same arrangement as backupDir.test.ts and bootLog.test.ts: the module lives in `electron/`,
+ * Same arrangement as backupDir.test.ts and appLog.test.ts: the module lives in `electron/`,
  * imports nothing from `electron`, and this suite is the only automated run that reaches it.
  *
  * Why it exists: the cascade's whole job is that two windows are not in the same place, and the

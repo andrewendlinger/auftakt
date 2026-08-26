@@ -6,6 +6,7 @@ import './index.css';
 import { ApiError } from './api/client';
 import { coalesced, onBroadcast } from './lib/broadcast';
 import { reportError } from './lib/errors';
+import { errorParts, logAppEvent } from './lib/logEvent';
 import { signalFailed } from './boot';
 import { Layout } from './components/Layout';
 import { AnnouncementOverlay } from './components/AnnouncementOverlay';
@@ -133,6 +134,32 @@ window.auftakt?.onBackupConfigChanged?.(invalidate);
  */
 window.addEventListener('error', () => signalFailed(), { once: true });
 window.addEventListener('unhandledrejection', () => signalFailed(), { once: true });
+
+/**
+ * The same two events a second time, and deliberately not the same two listeners (WP-69e).
+ *
+ * The pair above belongs to the boot screen: `{once:true}` because there is exactly one reveal
+ * to signal, and folding a log call into them would make the *second* failure of a session
+ * invisible — which is the one a customer usually reports. These are the log's, so they are
+ * permanent and they run for every failure the window sees.
+ *
+ * Both values are read defensively: `event.error` is whatever was thrown (a string, a DOM
+ * exception, `undefined` when Chromium withheld it across origins) and `event.reason` whatever
+ * a promise rejected with. `logAppEvent` no-ops without the Electron bridge, so in browser dev
+ * — and under `check:browser` — this costs two property reads and nothing else.
+ */
+window.addEventListener('error', (event) => {
+  const { msg, stack } = errorParts(event.error ?? event.message);
+  // The source location only when the value carried no stack: a string throw, or the „Script
+  // error." Chromium reduces a cross-origin failure to, is otherwise unplaceable — and against
+  // a minified bundle a file and a line are the whole of what can be looked up.
+  const where = stack || !event.filename ? '' : ` (${event.filename}:${event.lineno})`;
+  logAppEvent('window-error', msg + where, stack);
+});
+window.addEventListener('unhandledrejection', (event) => {
+  const { msg, stack } = errorParts(event.reason);
+  logAppEvent('unhandled-rejection', msg, stack);
+});
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

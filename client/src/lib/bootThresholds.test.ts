@@ -14,8 +14,8 @@ import { describe, expect, it } from 'vitest';
  * It deliberately compares numbers only. The prose around them is the part a human has to keep
  * honest; what this catches is the edit that changes a constant and leaves the sentence behind.
  *
- * Reaching out of `client/` is the arrangement `bootLog.test.ts` already uses for
- * `electron/bootLog.ts` — `check:unit` is the only automated run that gets near either.
+ * Reaching out of `client/` is the arrangement `appLog.test.ts` already uses for
+ * `electron/appLog.ts` — `check:unit` is the only automated run that gets near either.
  */
 
 const here = fileURLToPath(new URL('.', import.meta.url));

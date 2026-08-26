@@ -17,7 +17,7 @@ import { join } from 'node:path';
  * step, and this is the third copy of them.
  *
  * Imports nothing from `electron` and nothing from `server/`, the same rule backup.ts,
- * bootLog.ts, cascade.ts and windowBounds.ts follow and for the same reason: it lets
+ * appLog.ts, cascade.ts and windowBounds.ts follow and for the same reason: it lets
  * `client/src/lib/seasonTerms.test.ts` drive this from `check:unit`, the only automated run that
  * reaches main-process code at all. The data directory is passed in — main.ts owns that decision
  * (dev → repo/.data, packaged → userData) and a second copy of it here would go stale.

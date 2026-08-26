@@ -1,4 +1,5 @@
 import { ApiError } from '../api/client';
+import { logAppEvent } from './logEvent';
 
 /**
  * The app's one error sentence: the German statement of what failed leads, the server's own
@@ -50,6 +51,12 @@ const DEDUPE_MS = 5_000;
 export function reportError(err: unknown, fallback: string): void {
   const message = errorMessage(err, fallback);
   console.error(message, err);
+  // The same sentence into the runtime log (WP-69e), so what the customer was shown and what a
+  // support bundle holds cannot diverge. Above the dedupe below rather than behind it, and not
+  // gated on it: `logAppEvent` keeps a window of its own — five seconds, keyed on event+message,
+  // the same idiom as this map — so a toast suppressed because it is still on screen never
+  // decides whether a failure was worth writing down.
+  logAppEvent('reported-error', message, err instanceof Error ? err.stack : undefined);
   const now = Date.now();
   for (const [key, at] of recent) if (now - at > DEDUPE_MS) recent.delete(key);
   if (recent.has(message)) return;

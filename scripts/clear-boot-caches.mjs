@@ -6,7 +6,7 @@
  * empty HTTP cache, cold GPU/shader caches, empty main-process compile cache — and it is
  * the launch the boot gesture's field stutter happened on. Relaunching cannot reproduce
  * it: the second launch is warm by construction. This script deletes exactly those caches
- * from the packaged app's userData so a cold/warm boot-log pair can be measured at will.
+ * from the packaged app's userData so a cold/warm boot-report pair can be measured at will.
  *
  * Allowlist-only by construction, never a glob: the same directory holds the live
  * database (auftakt.db and its -wal/-shm, seasons.json) and origin storage — `Local

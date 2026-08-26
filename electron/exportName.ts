@@ -1,7 +1,7 @@
 /**
  * The default filename the „Datenbank exportieren…" save dialog opens with.
  *
- * Imports nothing from `electron`, deliberately — the same rule as backup.ts and bootLog.ts,
+ * Imports nothing from `electron`, deliberately — the same rule as backup.ts and appLog.ts,
  * and for the same reason: it is what lets `client/src/lib/exportName.test.ts` exercise this
  * from `check:unit`, the only automated run that reaches main-process code at all.
  *
