@@ -142,18 +142,23 @@ export function uniqueBundleName(ref: string, taken: (name: string) => boolean):
  * construction — a path the OS spelt with different capitalisation survives it — which is why
  * the file is left on the desktop for the person to read before they attach it.
  *
- * **Twice on Windows, once everywhere else.** The log sections below are JSONL, and
+ * **Four spellings on Windows, one everywhere else.** The log sections below are JSONL, and
  * `JSON.stringify` doubles every backslash — a home path inside a stack trace is spelt
  * `C:\\Users\\Marianne Fürst` in that text, which the literal split walks straight past. Since
  * WP-69 those lines carry stacks and `err.message`s that really do name paths, so the escaped
- * spelling is stripped too. The doubled form cannot occur in a plain path, so trying both
- * costs nothing on a text that has neither.
+ * spelling is stripped too. And the server bundle is ESM, loaded via `pathToFileURL`, so on
+ * Windows its stack frames read `file:///C:/Users/Marianne%20F%C3%BCrst/…` — forward slashes
+ * and percent-encoding, which neither backslash spelling matches. The slash-normalised form
+ * and its `encodeURI` (which agrees with `pathToFileURL` on anything a home directory is
+ * called) cover those frames. Forms that collapse into one another are tried once.
  */
 export function redactHome(text: string, home: string): string {
   if (!home) return text;
-  const out = text.split(home).join('~');
-  const escaped = home.split('\\').join('\\\\');
-  return escaped === home ? out : out.split(escaped).join('~');
+  const slashed = home.split('\\').join('/');
+  const forms = new Set([home, home.split('\\').join('\\\\'), slashed, encodeURI(slashed)]);
+  let out = text;
+  for (const form of forms) out = out.split(form).join('~');
+  return out;
 }
 
 /** German decimal comma, fixed to one place. Not `Intl`: this has to be the same everywhere. */

@@ -157,9 +157,24 @@ describe('redactHome', () => {
     expect(out).toContain('main.cjs:1:1');
   });
 
+  it('strips the ESM file-URL spelling — forward slashes and percent-encoding', () => {
+    // The server bundle is loaded via pathToFileURL, so on Windows its stack frames read
+    // file:///C:/Users/… — a spelling with no backslash for either backslash pass to find.
+    // The space and the umlaut percent-encode, so the slash-normalised form alone misses too.
+    const frame =
+      'at readSchemaVersion (file:///C:/Users/Marianne%20F%C3%BCrst/AppData/Local/Programs/Auftakt/resources/app.asar/server/src/db.ts:1529:20)';
+    const out = redactHome(frame, FACTS.home);
+    expect(out).not.toContain('Marianne');
+    expect(out).toContain('db.ts:1529:20');
+    // A plain-ASCII account name appears in the URL unencoded — the slash form catches it.
+    expect(redactHome('file:///C:/Users/andre/x.ts:1:1', 'C:\\Users\\andre')).toBe(
+      'file:///~/x.ts:1:1',
+    );
+  });
+
   it('leaves the text alone when there is no home to strip', () => {
     expect(redactHome('unverändert', '')).toBe('unverändert');
-    // A POSIX home has nothing to escape, so the second pass must not change the answer.
+    // A POSIX home has nothing to escape, so the extra passes must not change the answer.
     expect(redactHome('/Users/marianne/Desktop', '/Users/marianne')).toBe('~/Desktop');
   });
 });
