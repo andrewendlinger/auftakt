@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { exportFileName, labelSlug } from '../../../electron/exportName';
+import { exportFileName, labelSlug, sheetFileName } from '../../../electron/exportName';
 
 /**
  * Same arrangement as backupDir.test.ts and appLog.test.ts: the module lives in `electron/`,
@@ -59,5 +59,32 @@ describe('exportFileName', () => {
     // The pre-PR50-03 name. Reached when seasonLabel() could not resolve one at all.
     expect(exportFileName('', '2026-08-12-1430')).toBe('auftakt-2026-08-12-1430.db');
     expect(exportFileName('%%%', '2026-08-12-1430')).toBe('auftakt-2026-08-12-1430.db');
+  });
+});
+
+/**
+ * The sheet's name (WP-71), and the reason it is worth pinning is the argument it takes: not a
+ * season label the user typed once into „Saison umbenennen", but a *project or artist name* — the
+ * one field on this path that can also arrive through a CSV or the Notion import, sent from the
+ * renderer over IPC and turned into a filename by the main process. „Trio 25/26" is an ordinary
+ * ensemble name and carries a path separator.
+ */
+describe('sheetFileName', () => {
+  it('names the sheet between the German prefix and the day', () => {
+    expect(sheetFileName('NQ1 Eröffnungskonzert', '2026-08-26')).toBe(
+      'Ein-Pager-NQ1-Eröffnungskonzert-2026-08-26.pdf',
+    );
+  });
+
+  it('cannot be redirected by a name with a separator in it', () => {
+    expect(sheetFileName('Trio 25/26', '2026-08-26')).toBe('Ein-Pager-Trio-25-26-2026-08-26.pdf');
+    expect(sheetFileName('../../etc', '2026-08-26')).toBe('Ein-Pager-etc-2026-08-26.pdf');
+  });
+
+  it('falls back to the bare Ein-Pager when nothing usable is left', () => {
+    // An unnamed record is possible — `name` is a free-text column — and a dialog opening on
+    // „Ein-Pager--2026-08-26.pdf" would look like the defect it is not.
+    expect(sheetFileName('', '2026-08-26')).toBe('Ein-Pager-2026-08-26.pdf');
+    expect(sheetFileName('%%%', '2026-08-26')).toBe('Ein-Pager-2026-08-26.pdf');
   });
 });

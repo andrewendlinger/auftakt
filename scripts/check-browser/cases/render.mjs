@@ -1,6 +1,7 @@
-/** L–N2 · the two pure render assurances: the smallest window, and paper */
+/** L–N4 · the two pure render assurances: the smallest window, and paper */
 
-import { NARROW, PLACEHOLDER_SELECT_PX, cardWith, open, pin, ready, shown, until, windowContext } from '../browser.mjs';
+import { stubElectron } from '../bridge.mjs';
+import { NARROW, PLACEHOLDER_SELECT_PX, cardWith, clickIfThere, open, pin, ready, shown, until, windowContext } from '../browser.mjs';
 import { UI } from '../config.mjs';
 import { painted, paintedAt, paintedTimes, printPdf, sheet, where, withoutPrintRule } from '../pdf.mjs';
 import { overflowReport, sweepWithProbe } from '../probes.mjs';
@@ -566,4 +567,158 @@ export async function runRender(fixtures) {
     );
   }
   await p4.close();
+
+  // ======================================================================== N3 · off the sheet again
+  //
+  // WP-71, and a customer's own words: „einmal im Ein-Pager kann ich nur noch ‚Als PDF speichern /
+  // Drucken' drücken und komme nicht mehr raus. Ich kann nur Auftakt komplett schließen." The
+  // print routes live outside `Layout`, so the sheet has no header, no Breadcrumbs and no season
+  // switcher, and the packaged app has neither browser chrome nor a „Zurück" in its menu — the
+  // sheet really was a one-way door.
+  //
+  // **Why N and N2 could not see it.** Both `pin()` a window straight onto `#/print/…` and then
+  // read the bytes; nothing in this file had ever walked *in* through the link on the page or
+  // tried to walk out again. So this case is the walk, in both directions and on both sheets, and
+  // the assertion is the URL on the other side: the page the sheet belongs to, never the start
+  // page — `PrintFallback`'s „Zur Startseite" is the error case and stays what it is.
+  //
+  // The paper half is the other property the control has to keep: it is `no-print`, and a button
+  // printed onto a handout is exactly what that class exists to prevent. Asserted by *marking*
+  // the two controls with a colour nothing else on the sheet paints, rather than by their own
+  // Tailwind shades — `bg-neutral-900` is also the sheet's body text, so „is it in the bytes"
+  // would be answered by every line of it.
+  console.log('\nN3 · Der Weg auf den Bogen und wieder herunter (WP-71)');
+  const p5 = await open(context, '/project/1');
+  await clickIfThere(p5.getByRole('link', { name: /Ein-Pager/ }));
+  const onProjectSheet = await until(() => p5.url(), (u) => u.endsWith('#/print/project/1'), 8000);
+  const projectSheet = await shown(p5.locator('.print-page'));
+  check(
+    'die Projektseite führt über ihren eigenen Link auf den Bogen',
+    onProjectSheet.endsWith('#/print/project/1') && projectSheet,
+    onProjectSheet,
+  );
+  const backLink = p5.getByRole('link', { name: /^Zurück/ });
+  check('der Bogen trägt einen Weg zurück', await shown(backLink));
+  await clickIfThere(backLink);
+  const backOnProject = await until(() => p5.url(), (u) => u.endsWith('#/project/1'), 8000);
+  // The table, not just the URL: a hash that changed while nothing rendered is the shape a broken
+  // back link would have, and this page is one of the three that has a task table (case L).
+  const projectPage = await shown(p5.locator('div.overflow-x-auto table tbody tr'));
+  check(
+    '…und er führt auf das Projekt zurück, nicht auf die Startseite',
+    backOnProject.endsWith('#/project/1') && projectPage,
+    backOnProject,
+  );
+
+  await p5.goto(`${UI}/#/artist/1`);
+  await p5.reload();
+  await ready(p5);
+  await clickIfThere(p5.getByRole('link', { name: /Ein-Pager/ }));
+  const onArtistSheet = await until(() => p5.url(), (u) => u.endsWith('#/print/artist/1'), 8000);
+  check(
+    'der Künstlerbogen ist genauso zu erreichen',
+    onArtistSheet.endsWith('#/print/artist/1') && (await shown(p5.locator('.print-page'))),
+    onArtistSheet,
+  );
+  await clickIfThere(p5.getByRole('link', { name: /^Zurück/ }));
+  const backOnArtist = await until(() => p5.url(), (u) => u.endsWith('#/artist/1'), 8000);
+  check(
+    '…und genauso wieder zu verlassen',
+    backOnArtist.endsWith('#/artist/1') && (await shown(p5.locator('div.overflow-x-auto table tbody tr'))),
+    backOnArtist,
+  );
+
+  // Marked on the elements themselves, not on the row: both carry a `text-*` class of their own,
+  // so a colour set on the container would be inherited by neither.
+  const MARK = 'rgb(1, 254, 3)';
+  await p5.goto(`${UI}/#/print/artist/1`);
+  await p5.reload();
+  await ready(p5);
+  await p5.locator('.print-page table').first().waitFor({ timeout: 10_000 });
+  const marked = await p5.evaluate((colour) => {
+    const controls = document.querySelectorAll('.print-page .no-print a, .print-page .no-print button');
+    for (const el of controls) {
+      if (el instanceof HTMLElement) el.style.color = colour;
+    }
+    return controls.length;
+  }, MARK);
+  check('der Bogen trägt seine beiden Bedienelemente über dem Blatt', marked === 2, `${marked} Elemente`);
+  const handout = sheet(await printPdf(p5));
+  check('…und keines davon steht auf dem Papier', !painted(handout, MARK), `${paintedTimes(handout, MARK)}×`);
+  // The control, like everywhere else in this section: without `.no-print` the marked colour is in
+  // the bytes, so the assertion above is about the rule and not about Chromium's own reticence.
+  const printedChrome = await withoutPrintRule(p5, '.no-print { display: flex !important; }');
+  check(
+    '…ohne die no-print-Regel stünde es dort — die Zusicherung ist nicht vakuum',
+    painted(printedChrome, MARK),
+    `${paintedTimes(printedChrome, MARK)}×`,
+  );
+  await p5.close();
+
+  // ======================================================================== N4 · saving the sheet
+  //
+  // The other half of the same report, and a decision taken over it (2026-08-26): „Als PDF
+  // speichern / Drucken" was one button doing whatever `window.print()` does, and on Windows that
+  // is the *printer* list — „Als PDF speichern" is not honestly on offer there, it is one entry
+  // among the machine's real printers. The button is a save now, and only a save: under Electron
+  // it hands the sheet's title to `savePdf`, and main renders this window with `printToPDF` into
+  // the file its save dialog names.
+  //
+  // Driven at the recording bridge and never at the real one, like U and U2 — the real member
+  // opens a dialog on the machine running this and then writes a PDF wherever it is pointed.
+  //
+  // **Two observables, and the pair is the assertion.** The recorder holds the title, and
+  // `window.print` was *not* called — overridden here, because a real call in headless Chromium
+  // leaves nothing to read. Without the second half the case also passes on a build that hands the
+  // bridge a title and opens the printer dialog beside it, which is the defect itself.
+  console.log('\nN4 · „Als PDF speichern“ am Bridge-Stub (WP-71)');
+  const watchPrint = (page) =>
+    page.addInitScript(() => {
+      const w = /** @type {any} */ (window);
+      w.__printed = 0;
+      w.print = () => {
+        w.__printed++;
+      };
+    });
+  const printCount = (page) => page.evaluate(() => /** @type {any} */ (window).__printed);
+  const p6 = await open(context, '/project/1', async (page) => {
+    await stubElectron(page);
+    await watchPrint(page);
+  });
+  await clickIfThere(p6.getByRole('link', { name: /Ein-Pager/ }));
+  await shown(p6.locator('.print-page'));
+  await clickIfThere(p6.getByRole('button', { name: 'Als PDF speichern' }));
+  const pdfs = await until(
+    () => p6.evaluate(() => /** @type {any} */ (window).__pdfs),
+    (v) => v.length > 0,
+    5000,
+  );
+  // Read back from the API rather than written down here: the title *is* the proposed file name,
+  // so it has to be this project's own, and a renamed fixture must redden this line instead of
+  // being what the expectation was copied from.
+  const printedProject = await api('/projects/1');
+  const named = [printedProject.code, printedProject.name].filter(Boolean).join(' ');
+  check(
+    '„Als PDF speichern“ reicht den Titel des Bogens an die Bridge',
+    pdfs.length === 1 && pdfs[0] === named,
+    `${pdfs.join(' | ') || 'nichts aufgezeichnet'} — erwartet „${named}“`,
+  );
+  check('…und öffnet dabei keinen Druckdialog mehr', (await printCount(p6)) === 0, `${await printCount(p6)}×`);
+  await p6.close();
+
+  // Without a bridge the same button is the browser's own print preview, whose default destination
+  // is „Als PDF speichern" — the degradation every bridge call in this app makes, and what keeps
+  // the one label honest in both environments. No stub at all here, which is the state every other
+  // case in this gate runs in.
+  const p7 = await open(context, '/print/project/1', watchPrint);
+  const controls = (await p7.locator('.print-page .no-print').innerText()).replace(/\s+/g, ' ').trim();
+  check(
+    'die Leiste des Bogens trägt genau „Zurück“ und „Als PDF speichern“ — „Drucken“ nicht mehr',
+    controls === 'Zurück Als PDF speichern',
+    controls,
+  );
+  await clickIfThere(p7.getByRole('button', { name: 'Als PDF speichern' }));
+  const printed = await until(() => printCount(p7), (n) => n > 0, 5000);
+  check('ohne Bridge bleibt der Druckdialog des Browsers die Rückfallebene', printed === 1, `${printed}×`);
+  await p7.close();
 }

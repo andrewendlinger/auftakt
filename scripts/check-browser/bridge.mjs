@@ -1,11 +1,13 @@
 // The preload bridge, replaced by one that records instead of acting.
 //
-// Two of the app's surfaces only exist when `window.auftakt` does — the update card (WP-60) and
-// the diagnostics half of the feedback dialog (WP-54) — and neither may be driven for real: the
-// real `saveDiagnostics` writes a file to the desktop of whoever runs this, and the real
-// `installUpdate` downloads a release. So the preload bridge is replaced by one that **records**
-// instead — which is also the instrument for WP-66's promise that nothing opens by itself: a call
-// that no longer happens is a recorder that stays empty.
+// Three of the app's surfaces behave differently when `window.auftakt` exists — the update card
+// (WP-60), the diagnostics half of the feedback dialog (WP-54) and the print sheet's „Als PDF
+// speichern" (WP-71) — and none of them may be driven for real: the real `saveDiagnostics` writes
+// a file to the desktop of whoever runs this, the real `installUpdate` downloads a release, and
+// the real `savePdf` opens a save dialog and writes a PDF wherever it is pointed. So the preload
+// bridge is replaced by one that **records** instead — which is also the instrument for WP-66's
+// promise that nothing opens by itself: a call that no longer happens is a recorder that stays
+// empty.
 //
 // Ported from `~/.claude/tools/playwright/lib/drive.mjs` rather than imported: that module is the
 // ad-hoc runtime's, it imports `playwright` (this gate has only `playwright-core`) and it points at
@@ -28,6 +30,11 @@ export const stubElectron = (page, opts = {}) =>
     // is the only observable the feedback dialog produces at all.
     w.__external = [];
     w.__saved = [];
+    // The print sheet's „Als PDF speichern" (WP-71). A recorder for the same reason as the two
+    // above: the real member opens a save dialog on the machine running this and then writes a
+    // file wherever it is pointed, and what the renderer produces is exactly one value — the
+    // title it proposes as a filename.
+    w.__pdfs = [];
     // The runtime log's renderer half (WP-69e). Recorded rather than dropped for the same
     // reason as the two above — a call that no longer happens has to be observable — and
     // because a case that ends with lines in here is a case that hit an error it never
@@ -50,6 +57,13 @@ export const stubElectron = (page, opts = {}) =>
       },
       logEvent(payload) {
         w.__logged.push(payload);
+      },
+      // Answers, rather than merely recording: the sheet's click handler awaits this promise and
+      // catches it, so a member that returned `undefined` would throw inside the handler on
+      // `.catch` and take the assertion with it.
+      savePdf(title) {
+        w.__pdfs.push(title);
+        return Promise.resolve();
       },
       getVersion: () => Promise.resolve('0.0.0-test'),
       // `refresh` is the card's own distinction: false is the cached silent startup check it

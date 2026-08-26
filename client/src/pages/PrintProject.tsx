@@ -93,7 +93,10 @@ export function PrintProject() {
   );
 
   return (
-    <PrintPage>
+    // The way back is the project this sheet was built from, never the start page: the sheet is
+    // reached from there and nowhere else (WP-71). `title` names it in the tooltip; the code
+    // rides along because that is how the app addresses a project everywhere else.
+    <PrintPage back={`/project/${projectId}`} title={[project.code, project.name].filter(Boolean).join(' ')}>
       <PrintHeader
         accent={shade}
         kicker={[saison, artist?.name].filter(Boolean).join(' · ')}
