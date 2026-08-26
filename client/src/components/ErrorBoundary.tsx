@@ -1,6 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { signalFailed } from '../boot';
-import { logAppEvent } from '../lib/logEvent';
+import { errorParts, logAppEvent } from '../lib/logEvent';
 
 /**
  * How much of React's component stack rides along with the error's own.
@@ -35,14 +35,18 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
     return { failed: true };
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo): void {
+  // `unknown`, not the declared `Error`: React hands over the raw thrown value, so a render
+  // that throws `null` reaches this with nothing to dereference — and a throw *here* runs
+  // during commit, past the boundary, tearing down the very fallback below.
+  componentDidCatch(error: unknown, info: ErrorInfo): void {
     console.error('Unbehandelter Render-Fehler', error, info.componentStack);
     // …and into the runtime log, which is the only one of the two a packaged app keeps: the
     // window it prints to has no console anybody can open (WP-69e).
+    const { msg, stack } = errorParts(error);
     logAppEvent(
       'render-error',
-      error.message,
-      (error.stack ?? '') + (info.componentStack ?? '').slice(0, COMPONENT_STACK_MAX),
+      msg,
+      (stack ?? '') + (info.componentStack ?? '').slice(0, COMPONENT_STACK_MAX),
     );
     // The fallback below is the app now; there is nothing further to wait for. Without
     // this the boot screen would hold its still frame over a rendered error message
