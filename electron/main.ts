@@ -53,7 +53,7 @@ const isDev = !app.isPackaged;
 // Cache V8's compilation of the server bundle across launches. It cannot help this file
 // — main.bundle.cjs is already compiling by the time this line runs — but startServer() imports
 // server/dist/index.mjs, 3.4 MB of bundled JS that is parsed and compiled on every single
-// launch, before any window exists. Second and later launches skip that.
+// launch, behind the first window's blank hold. Second and later launches shorten it.
 //
 // Best-effort by design: it needs Node 22.1+, and a cold or unwritable cache directory
 // only means the old cost, not a failure worth surfacing.
@@ -349,11 +349,13 @@ async function startServer(): Promise<void> {
 }
 
 /**
- * Nothing is on screen while this runs — not even a window — so every millisecond here
- * is dark time. A flat 150 ms interval charged the full 150 ms whenever the server bound
- * just after a poll was refused, which is the common case: the listen call is a few ticks
- * behind the import that triggered it. Start tight and back off to the old interval, so
- * the usual launch pays ~15 ms and a genuinely slow one is polled no harder than before.
+ * The cream window is already on screen while this runs, so every millisecond here delays
+ * content rather than the window — still worth polling tightly, because the boot overlay's
+ * deadline clock starts with the page. A flat 150 ms interval charged the full 150 ms
+ * whenever the server bound just after a poll was refused, which is the common case: the
+ * listen call is a few ticks behind the import that triggered it. Start tight and back off
+ * to the old interval, so the usual launch pays ~15 ms and a genuinely slow one is polled
+ * no harder than before.
  */
 function waitForServer(timeoutMs = 10000): Promise<void> {
   const start = Date.now();
@@ -674,7 +676,7 @@ async function runImport(seasonId: number | undefined, win: BrowserWindow | null
  * `electron/tsconfig.json` is `include: ["*.ts"]` and this one imports `electron`. The test
  * carried a hand-copied twin of the minimum instead, coupled to the original by a comment. */
 
-async function createWindow(): Promise<void> {
+function openWindow(): { win: BrowserWindow; isSecondary: boolean } {
   // Sampled BEFORE construction — a moment later the count would include this window.
   // A secondary window cascades off the focused one and skips the boot gesture (its
   // ?noboot flag; see client/index.html): the gesture already played in the first window,
@@ -716,12 +718,15 @@ async function createWindow(): Promise<void> {
     minWidth: WINDOW_MINIMUM.width,
     minHeight: WINDOW_MINIMUM.height,
     title: 'Auftakt',
-    // Created hidden. A window shown at construction is on screen before loadURL has
-    // fetched anything, so the user gets an empty rectangle for the whole renderer boot
-    // — the bundle fetch, a 1.3 MB parse and React's first mount. backgroundColor keeps
-    // that rectangle from being white, but cream-coloured nothing is still nothing.
-    // ready-to-show waits until the renderer has a frame to present, which is the boot
-    // screen's first frame, so window and boot screen appear together.
+    // Created hidden — but only for the length of this tick, so bounds and maximized
+    // state land before the first presentation; shown a few lines below, before any
+    // renderer exists. backgroundColor is the boot screen's own #f6f6f4, so an empty
+    // window is pixel-identical to phase A, and showing it immediately is what makes a
+    // launch honest on slow hardware („cream is the honest first frame",
+    // docs/DECISIONS.md 2026-08-25). The old choreography — hold the window hidden until
+    // ready-to-show so „window and boot screen appear together" — showed *nothing* for
+    // seconds on a machine where the renderer's first frame is expensive, and then
+    // revealed via its own 3 s failsafe.
     show: false,
     backgroundColor: '#f6f6f4',
     webPreferences: {
@@ -731,22 +736,22 @@ async function createWindow(): Promise<void> {
     },
   });
 
-  // Maximized before the first frame, so the renderer never paints at one size and reflows to
-  // another: the reflow would land in the gesture's opening frames, re-rastering a path that
-  // cannot composite (WP-61) at exactly the moment being measured. The rectangle above is the
-  // one it will restore to, which is what getNormalBounds saved.
+  // Maximized before the first presentation, so the renderer never paints at one size and
+  // reflows to another: the reflow would land in the gesture's opening frames, re-rastering a
+  // path that cannot composite (WP-61) at exactly the moment being measured. `maximize()` on a
+  // never-shown window shows it — "this will also show (but not focus) the window if it isn't
+  // being displayed already" — already at maximized geometry, which is why show() *follows* it
+  // in the same tick rather than preceding it: show-then-maximize would present the restored
+  // rectangle first and play the restored→maximized zoom on every launch. getNormalBounds()
+  // still reports the rectangle above, so the close handler below saves what the user chose.
   //
-  // The immediate hide() is the point of this pair, not a leftover. `maximize()` *shows* a
-  // hidden window — "this will also show (but not focus) the window if it isn't being
-  // displayed already", and it does — so on its own it puts an empty #f6f6f4 rectangle on
-  // screen for the whole renderer boot, which is the failure `show: false` below exists to
-  // prevent, and it leaves the showAnyway guard's isVisible() check permanently true. Both
-  // calls run in the same synchronous tick, before the platform's display cycle, so no frame
-  // is ever presented; hide() keeps isMaximized() true and leaves getNormalBounds() untouched.
-  if (maximized) {
-    win.maximize();
-    win.hide();
-  }
+  // The previous shape was maximize() + hide(), betting that two calls in one synchronous
+  // tick present no frame. The bet lost: on a loaded Windows 11 machine DWM presented the
+  // unpainted window for ~250 ms — the customer's „irgendwas ploppt auf und verschwindet
+  // wieder" (screen recording, 2026-08-25). No window in this app is hidden again after this
+  // line, which is also what made ready-to-show and its showAnyway failsafe deletable.
+  if (maximized) win.maximize();
+  win.show();
 
   // Only the first window of a launch, matching the one rectangle that is saved: a secondary
   // window's position is a cascade offset off whichever window was focused, so letting it write
@@ -768,24 +773,6 @@ async function createWindow(): Promise<void> {
     });
   }
 
-  // ready-to-show never fires if the load fails, and a window that stays hidden is worse
-  // than one that flashes empty: app.on('activate') counts hidden windows too, so it
-  // would not create a replacement, and the app would sit with a dock icon and no way
-  // back. Show it regardless once it is clear no frame is coming.
-  const showAnyway = setTimeout(() => {
-    if (!win.isDestroyed() && !win.isVisible()) win.show();
-  }, 3000);
-  // Disarmed as soon as a frame has been presented, not only when the window closes.
-  // isVisible() is false for a window the user has since minimized, and „no frame came"
-  // and „the user put it away" are the same reading to it — so a timer left armed
-  // un-minimized the window three seconds into a perfectly normal launch, against an
-  // explicit action. Once ready-to-show has fired there is nothing left for it to fix.
-  win.once('ready-to-show', () => {
-    clearTimeout(showAnyway);
-    win.show();
-  });
-  win.on('closed', () => clearTimeout(showAnyway));
-
   // Never spawn a child BrowserWindow (a child would not inherit the preload,
   // but denying is the safe default); route allowlisted schemes out to the OS
   // through the same guard as the bridge (X-02 / Q1).
@@ -804,13 +791,13 @@ async function createWindow(): Promise<void> {
     }
   });
 
-  /* Log-only (WP-69b), and this is the only window creation path, so wiring it here covers
-     every window. A renderer that dies takes its own capture with it — WP-69e's bridge cannot
-     report the crash that killed the bridge — so main's line is the only record that separates
-     „the window went blank" from „the user closed it". `unresponsive` is the same reading for
-     the case where the renderer is alive and pinned: it fires after a few seconds of a blocked
-     main thread, and `responsive` is what says whether the customer waited it out or gave up.
-     Branch-free: `logMain` is the one place `isDev` is decided. */
+  /* Log-only (WP-69b), and this is the only path that constructs a window, so wiring it here
+     covers every window. A renderer that dies takes its own capture with it — WP-69e's bridge
+     cannot report the crash that killed the bridge — so main's line is the only record that
+     separates „the window went blank" from „the user closed it". `unresponsive` is the same
+     reading for the case where the renderer is alive and pinned: it fires after a few seconds of
+     a blocked main thread, and `responsive` is what says whether the customer waited it out or
+     gave up. Branch-free: `logMain` is the one place `isDev` is decided. */
   win.webContents.on('render-process-gone', (_e, details) => {
     logMain({
       level: 'error',
@@ -821,26 +808,42 @@ async function createWindow(): Promise<void> {
   win.on('unresponsive', () => logMain({ level: 'warn', event: 'unresponsive' }));
   win.on('responsive', () => logMain({ level: 'info', event: 'responsive' }));
 
-  // Awaited outside whenReady's try/catch until now, so a rejection here was an
-  // unhandled rejection and a permanently blank window with nothing said about it —
-  // the same silent failure ELP-06 fixed one step earlier, for the server.
+  return { win, isSecondary };
+}
+
+/** The load half: everything after the window is on screen. */
+async function loadWindow(win: BrowserWindow, isSecondary: boolean): Promise<void> {
+  // Awaited by every caller, so a rejection here is answered rather than becoming an
+  // unhandled rejection and a cream window with nothing said about it — the same silent
+  // failure ELP-06 fixed one step earlier, for the server.
   // ?noboot sits in the search component, before any hash: the boot gate's head script
-  // reads location.search, HashRouter reads only the hash, and will-navigate above
+  // reads location.search, HashRouter reads only the hash, and openWindow's will-navigate
   // compares origins — none of them collide. Appended in dev too (harmless: the gate
   // already short-circuits on %PROD%), so this line stays branch-free.
   try {
     const base = isDev ? DEV_URL : ORIGIN;
     await win.loadURL(isSecondary ? `${base}/?noboot=1` : base);
   } catch (err) {
+    // Covers the user closing the window mid-load too — loadURL then rejects against a
+    // destroyed window, and there is nobody left to tell.
     if (win.isDestroyed()) return;
-    clearTimeout(showAnyway);
-    win.show();
     await dialog.showMessageBox(win, {
       type: 'error',
       message: 'Die Oberfläche konnte nicht geladen werden.',
       detail: `${(err as Error).message}\n\nBitte die App erneut öffnen. Bleibt der Fehler bestehen, hilft eine Neuinstallation.`,
     });
   }
+}
+
+/**
+ * Construct, show and load in one call — every window but the launch's first goes through
+ * here (second instance, Cmd/Strg+N, the Dock, `activate`). The launch itself calls the two
+ * halves directly, with the server start between them, so the first window is on screen
+ * before the 3.4 MB server import instead of after it (see whenReady).
+ */
+async function createWindow(): Promise<void> {
+  const { win, isSecondary } = openWindow();
+  await loadWindow(win, isSecondary);
 }
 
 /**
@@ -911,6 +914,13 @@ async function ensureBackupDir(): Promise<string> {
 let chores: Promise<unknown> | null = null;
 
 /**
+ * Settles once the bundled server answers /api/health; the chores gate on it. Reassigned
+ * in whenReady to the actual startServer() promise — the resolved default is for dev,
+ * where the server runs outside this process (and runStartupChores no-ops anyway).
+ */
+let serverReady: Promise<void> = Promise.resolve();
+
+/**
  * The startup backup and the update check, held until the boot screen has gone.
  *
  * Still not awaited (ELP-08) — the window must not wait on disk I/O — but "not awaited"
@@ -936,6 +946,15 @@ function runStartupChores(): Promise<unknown> {
   if (chores) return chores;
   if (isDev) return (chores = Promise.resolve());
   chores = (async () => {
+    // window-all-closed can release the chores while the server is still importing — a
+    // closable window exists that early since PR #144. A backup POSTed then died on
+    // ECONNREFUSED in milliseconds and settled this memoised promise as failed for the
+    // whole launch, silently skipping the one backup the last-window path exists to
+    // save. So the chores wait for the health check first; the quit path's
+    // QUIT_CHORES_MS cap still bounds how long „close the window" can take, and every
+    // other caller arrives long after the server is up, so the await is free for them
+    // (PR144-04).
+    await serverReady;
     const backupDir = await ensureBackupDir();
     if (backupDir) await runStartupBackup(ORIGIN, backupDir);
   })().catch(reportBackupProblem);
@@ -1205,6 +1224,8 @@ let stopBootTrace: (() => Promise<void>) | null = null;
 let startupDone = false;
 /** Set once the last window has closed and the quit is only waiting on the chores. */
 let quitting = false;
+/** A window was asked for (relaunch or Dock click) while startup was still running. */
+let windowRequested = false;
 
 app.on('second-instance', () => {
   // A second launch opens a NEW window (the multi-window convention — Chrome, VS Code):
@@ -1223,8 +1244,18 @@ app.on('second-instance', () => {
   // opening a window here is the only way they get one at all. Call off the quit as well
   // as opening it, or app.quit() would tear the new window down a moment later and the
   // relaunch would read as an app that opened and died.
-  if (!startupDone) return;
+  //
+  // The quit is called off *before* the startupDone gate, and the gate queues instead of
+  // dropping: since the window shows before the server starts (PR #144), the last window
+  // can close — arming the quit — while startup is still running, and a relaunch landing
+  // in that gap used to be swallowed while the armed quit killed the instance. Clearing
+  // `quitting` alone would trade that for a headless survivor, so the request is
+  // remembered and answered right after startupDone flips (PR144-02).
   quitting = false;
+  if (!startupDone) {
+    windowRequested = true;
+    return;
+  }
   void createWindow();
 });
 
@@ -1241,8 +1272,9 @@ app.whenReady().then(async () => {
      cold start on a real panel is the one path they never covered. AUFTAKT_BOOT_TRACE=1
      records from before the window until shortly after the boot settles (capped at ~6 s,
      or the env var's value in ms) to userData/boot-trace-<stamp>.json, loadable at
-     ui.perfetto.dev. Started before startServer() so the 3.4 MB server bundle's import
-     and compile are in the picture. The categories are picked to answer "who stole the
+     ui.perfetto.dev. Started before openWindow() and startServer(), so the window's
+     first present and the 3.4 MB server bundle's import and compile are in the picture.
+     The categories are picked to answer "who stole the
      frames": disabled-by-default-v8.compile is the cold-code-cache signature, cc/gpu
      carry raster and the GPU process, and blink.user_timing carries the overlay's
      auftakt:* marks, so the gesture's phases sit on the same timeline as whatever ran
@@ -1289,14 +1321,90 @@ app.whenReady().then(async () => {
     }
   }
 
+  // The menu is installed before the server for the default-menu reason below — which
+  // arms its handlers while nothing is listening yet. Every entry needs the server (a
+  // new window loads from it; export, import and the backup folder speak to it), so
+  // each waits for startup the same way second-instance does: silently. A click during
+  // the cream hold is a no-op, not a „hilft eine Neuinstallation" dialog about a server
+  // that is two seconds from existing.
+  const whenStarted = (fn: () => void) => () => {
+    if (startupDone) fn();
+  };
+  Menu.setApplicationMenu(
+    buildMenu({
+      onNewWindow: whenStarted(() => void createWindow()),
+      // Menu clicks carry no renderer context, so the season comes from the focused window —
+      // resolved once, at the click, rather than again inside each helper.
+      onExport: whenStarted(() => {
+        const win = BrowserWindow.getFocusedWindow();
+        void windowSeason(win).then((id) => exportDatabase(id, win));
+      }),
+      onImport: whenStarted(() => {
+        const win = BrowserWindow.getFocusedWindow();
+        void windowSeason(win).then((id) => importDatabase(id, win));
+      }),
+      onChooseBackup: whenStarted(() => void chooseBackupDir(BrowserWindow.getFocusedWindow())),
+    }),
+  );
+  // Beside the application menu, and for the same reason: both are app-level state, neither
+  // belongs to a window, and set here they are in place before the first one exists — a
+  // right-click on the Dock icon during a slow launch already has its entry (a no-op until
+  // startup finishes, like everything above). Since the window below shows before the
+  // server starts, this order is load-bearing rather than tidy: on Windows a window
+  // presented before setApplicationMenu wears Electron's default English menu (File/View/…)
+  // for the whole server start, then swaps. `app.dock` is typed `Dock | undefined`
+  // (undefined off macOS), so the optional call *is* the platform branch: nothing is built
+  // on Windows, since `?.` short-circuits the argument too.
+  app.dock?.setMenu(buildDockMenu({ onNewWindow: whenStarted(() => void createWindow()) }));
+
+  // A Dock click used to be answered only when *no* window existed, and a minimized window is
+  // still a window — so with both windows minimized the handler did nothing, and the one window
+  // that did come back came back without it; the other was reachable only from the Fenster menu
+  // or Exposé (WP-67). activatePlan holds the three-way decision and says why each branch is what
+  // it is, including why it names nothing as the restorer of that one window; the loop is the
+  // same shape notifyBackupConfigChanged uses, because `getAllWindows()` is the only list of
+  // windows this app keeps (see liveWindow).
+  //
+  // **The event's second argument is not read** (WP-67b). It is macOS' `hasVisibleWindows`, and it
+  // is `true` on this platform while every window is minimized — the state the fix above exists
+  // for — so the first version of this handler passed it in and never reached its own new branch.
+  // activatePlan derives „on screen" from the windows instead; the measurement is in that file.
+  //
+  // Registered before the first window exists, because a closable window is on screen for
+  // the whole server start (PR #144): a macOS user who closes it and clicks the Dock icon
+  // must not find a dead handler. The create half needs the server, so during startup it
+  // queues like second-instance does (answered right after startupDone below); the restore
+  // half is pure window state and stays live throughout (PR144-03).
+  app.on('activate', () => {
+    const plan = activatePlan(BrowserWindow.getAllWindows());
+    if (plan.create) {
+      if (startupDone) void createWindow();
+      else windowRequested = true;
+    }
+    // All of them come back. Which one ends up frontmost is macOS's call, not this loop's.
+    for (const w of plan.restore) w.restore();
+  });
+
+  // The window first, the server second: the first thing a launch puts on screen is the
+  // cream window — ~0.4 s after the double-click — and only then does it pay for the
+  // 3.4 MB server import and the health poll, behind that window. The reverse order was
+  // the „dann passiert nichts" of the 2026-08-25 customer report: seconds of bare desktop
+  // with no window at all (docs/DECISIONS.md, „cream is the honest first frame").
+  const { win, isSecondary } = openWindow();
+
   if (!isDev) {
     try {
-      await startServer();
+      // Held in serverReady too, so the chores share the same health-check gate — a
+      // rejection lands in their .catch(reportBackupProblem) alongside the dialog below.
+      serverReady = startServer();
+      await serverReady;
     } catch (err) {
       // Nothing works without the bundled server, and every failure here is silent by
       // nature (a health-check timeout, an unresolvable ESM import). Unhandled, the
-      // whole handler rejects: no window, no message, just a dock icon (ELP-06).
-      await dialog.showMessageBox({
+      // whole handler rejects with the cream window stuck on screen (ELP-06). Parented
+      // to that window; messageBox falls back to unparented exactly when the user has
+      // already closed it during a hung start.
+      await messageBox(win, {
         type: 'error',
         message: 'Auftakt konnte nicht gestartet werden.',
         detail: `${(err as Error).message}\n\nBitte die App erneut öffnen. Bleibt der Fehler bestehen, hilft eine Neuinstallation.`,
@@ -1306,30 +1414,13 @@ app.whenReady().then(async () => {
     }
   }
 
-  Menu.setApplicationMenu(
-    buildMenu({
-      onNewWindow: () => void createWindow(),
-      // Menu clicks carry no renderer context, so the season comes from the focused window —
-      // resolved once, at the click, rather than again inside each helper.
-      onExport: () => {
-        const win = BrowserWindow.getFocusedWindow();
-        void windowSeason(win).then((id) => exportDatabase(id, win));
-      },
-      onImport: () => {
-        const win = BrowserWindow.getFocusedWindow();
-        void windowSeason(win).then((id) => importDatabase(id, win));
-      },
-      onChooseBackup: () => void chooseBackupDir(BrowserWindow.getFocusedWindow()),
-    }),
-  );
-  // Beside the application menu, and for the same reason: both are app-level state, neither
-  // belongs to a window, and set here they are in place before the first one exists — a
-  // right-click on the Dock icon during a slow launch already has its entry. `app.dock` is
-  // typed `Dock | undefined` (undefined off macOS), so the optional call *is* the platform
-  // branch: nothing is built on Windows, since `?.` short-circuits the argument too.
-  app.dock?.setMenu(buildDockMenu({ onNewWindow: () => void createWindow() }));
-  await createWindow();
+  await loadWindow(win, isSecondary);
   startupDone = true;
+  // A relaunch or Dock click that arrived during startup was queued rather than answered
+  // (second-instance / activate above). If its window still does not exist, open it now;
+  // the count guard keeps a request absorbed while the first window was alive absorbed —
+  // answering that one would open a second window nobody asked for.
+  if (windowRequested && BrowserWindow.getAllWindows().length === 0) void createWindow();
 
   // The renderer normally releases these (see runStartupChores). It might not: a crashed
   // or wedged renderer must not cost the user their backup for the launch — and that
@@ -1347,24 +1438,7 @@ app.whenReady().then(async () => {
       void runStartupChores();
     }, 8000);
 
-  // A Dock click used to be answered only when *no* window existed, and a minimized window is
-  // still a window — so with both windows minimized the handler did nothing, and the one window
-  // that did come back came back without it; the other was reachable only from the Fenster menu
-  // or Exposé (WP-67). activatePlan holds the three-way decision and says why each branch is what
-  // it is, including why it names nothing as the restorer of that one window; the loop is the
-  // same shape notifyBackupConfigChanged uses, because `getAllWindows()` is the only list of
-  // windows this app keeps (see liveWindow).
-  //
-  // **The event's second argument is not read** (WP-67b). It is macOS' `hasVisibleWindows`, and it
-  // is `true` on this platform while every window is minimized — the state the fix above exists
-  // for — so the first version of this handler passed it in and never reached its own new branch.
-  // activatePlan derives „on screen" from the windows instead; the measurement is in that file.
-  app.on('activate', () => {
-    const plan = activatePlan(BrowserWindow.getAllWindows());
-    if (plan.create) void createWindow();
-    // All of them come back. Which one ends up frontmost is macOS's call, not this loop's.
-    for (const w of plan.restore) w.restore();
-  });
+  // The 'activate' handler is registered above, before the first window — see PR144-03.
 });
 
 /** Longest a quit will wait on the startup chores it just released. */

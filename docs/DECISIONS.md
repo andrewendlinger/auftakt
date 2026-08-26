@@ -2947,6 +2947,84 @@ proof.
   checked against a declared `Fixtures` type, where a mistyped key used to be an `undefined` twenty
   assertions later.
 
+## The first window shows before the renderer exists — cream is the honest first frame (2026-08-25)
+
+**The evidence that forced this.** The first screen recording from a customer device
+(Windows 11, 7.7 GB RAM with 1.0 GB free, Intel UHD, 1536×864 @1.25×) showed what every cold
+start there looked like: at ~0.45 s the main window flashed up as an unpainted ghost for
+~250 ms and vanished; then ~2.7 s of bare desktop; at ~3.45 s a solid blank window; content
+~0.15 s later. The customer's words: „du klickst auf die App, irgendwas ploppt auf und
+verschwindet wieder. Dann passiert nichts, und dann geht die App auf." Every phase mapped to a
+line of `electron/main.ts`, and none of them was the gesture's fault:
+
+- The ghost was `win.maximize(); win.hide()` on the hidden window — a pair whose comment
+  asserted that two calls in one synchronous tick present no frame. On a loaded Windows
+  machine DWM presents it anyway. The assumption was plausible, undocumented by Electron
+  either way, and wrong; only a recording could have shown it.
+- The dark gap was the launch order: the 3.4 MB server bundle was imported and health-polled
+  *before* `createWindow()`, and the window then sat hidden waiting for `ready-to-show` —
+  which on this hardware fires only after the *whole app* has rasterized, because `onReady`
+  reveals `#root` before the overlay's cheap frame is ever presented, and a hidden renderer
+  is deprioritized on top.
+- The blank pop was the `showAnyway` failsafe (3000 ms), designed never to fire, firing on
+  every start — window created at ~0.45 s, timer at 3.45 s, first real frame just after.
+
+**The decision.** The first window is constructed, maximized if it was maximized, and shown in
+one tick at the top of `whenReady` — before the server import, before any renderer exists. The
+premise this reverses is the old `show: false` rationale, „window and boot screen appear
+together": correct on fast hardware, and on slow hardware it degraded to nothing at all,
+because „together" was implemented as „both late". What makes the reversal safe is a fact the
+2026-08-11 boot entry already recorded in the other direction: phase A of the boot overlay is
+deliberately a flat `#f6f6f4` rectangle, and the window's `backgroundColor` is the same value —
+„an empty coloured rectangle reads as a window that has not drawn yet rather than as a stall".
+A window shown before its renderer exists is therefore pixel-identical to the designed boot
+screen. Desktop → window → overlay → app is now one continuous surface, and the slow path
+finally looks like what it always was on paper: cream, then the 200 ms cross-fade.
+
+**Consequences.**
+
+- `maximize()` runs before `show()`, never after — maximize on a never-shown window shows it
+  already at maximized geometry, so the first presented frame is the final one; the reverse
+  order would present the restored rectangle and play the restored→maximized zoom on every
+  launch. `getNormalBounds()` still saves the user's chosen rectangle.
+- No window in the app is ever hidden after creation, which made `ready-to-show` gating and
+  the `showAnyway` failsafe deletable — the failure class they defended (a load failure
+  leaving a permanently hidden window that `activate` still counts) is structurally gone, for
+  secondary windows too.
+- The menu is set *before* the first show, and that order is load-bearing: on Windows a
+  window presented before `setApplicationMenu` wears Electron's default English menu for the
+  whole server start. In exchange its handlers are gated on `startupDone` — armed but
+  waiting, like `second-instance` — because every entry needs the server, and a Cmd/Strg+N
+  during the hold must be a no-op rather than a „hilft eine Neuinstallation" dialog about a
+  server that is two seconds from existing (found by review, PR144-01).
+- The server-start failure dialog is parented to the visible window (`messageBox` falls back
+  to unparented if the user closed it during a hung start).
+- `AUFTAKT_BOOT_TRACE` now also records the window's first present.
+
+**The follow-up family the reversal created.** A closable window now exists for the whole
+server start, and the second review round (Opus · medium, on the PR) found three handlers
+still assuming it cannot — all one root cause: closing the cream window during the start
+released the chores against a server that was not listening, so the launch's backup silently
+died on ECONNREFUSED (fixed by gating the chores on the shared `serverReady` promise, still
+bounded by `QUIT_CHORES_MS` — PR144-04); a relaunch landing in the armed-quit gap was
+swallowed while the quit killed the instance, and clearing `quitting` alone would only have
+traded that for a headless survivor, so window requests arriving during startup are *queued*
+and answered right after `startupDone` (PR144-02); and the `activate` handler was registered
+only at the end of whenReady, leaving a macOS user who closed the cream window with dead Dock
+clicks — it now registers before the first window, restore-branch live throughout,
+create-branch queueing like second-instance (PR144-03). The lesson generalises: showing the
+window earlier moved the start of "a user can act" back by seconds, and every startup-phase
+handler had to be re-read against that.
+
+**What deliberately did not change.** `GESTURE_DEADLINE` stays 1200 ms — the boot log from the
+same device (149 entries over twelve days: 37 cold boots, 4 completed gestures, 2 of 31 on the
+internal display) says the gesture rarely plays there, and the standing answer stands: the
+gesture is a reward for a fast start, never a tax on a slow one. Phase A stays blank — decided
+again, for the new situation of a hold that can now be *watched* for ~2–3 s on slow hardware:
+judged shippable as designed, to be re-opened only if it feels naked on the real device. The
+boot script, the report schema and the phase-A invariant (a cross shows the flat rectangle)
+are untouched; `check:boot`'s 210 assertions pass unchanged.
+
 ---
 
 ## One log file, and a crash writes its own bundle (2026-08-25, WP-69a/b)
