@@ -34,6 +34,29 @@ manager or the editor, to a delete or a reorder, to anything under `#/einstellun
 dialog's keyboard behaviour or the search overlay, and to anything that lays out narrow or
 prints; it is not a substitute for the passes below.
 
+**Where a case letter lives.** Comments across the repo cite the gate's areas as `case A` …
+`case AW`; this table is the index that resolves them. The authoritative range is each file's
+own head line in `scripts/check-browser/cases/` — a new surface adds a file there and a row
+here.
+
+| file | areas | covers |
+|---|---|---|
+| `seasons.mjs` | A–E | the season matrix in two windows, and the export that carries it |
+| `tasks.mjs` | F–H | the three core paths: a task, a column, the editor |
+| `records.mjs` | I–K | deleting a record, and reordering by the ⠿ |
+| `render.mjs` | L–N2 | the two pure render assurances: the smallest window, and paper |
+| `settings.mjs` | O–R2 | the four Einstellungen tabs and what they write |
+| `keyboard.mjs` | S–T | the keyboard contract and the search overlay |
+| `electron.mjs` | U–U2 | the two Electron surfaces, against a recording bridge stub |
+| `announcements.mjs` | V | the announcement overlay (WP-63) |
+| `subtasks.mjs` | W–Z | the task tree |
+| `toolbox.mjs` | AA–AC | the rich-text toolbar |
+| `images.mjs` | AD–AG | images in the text |
+| `archive.mjs` | AH–AK | the archive and its boundary |
+| `columns.mjs` | AL–AO | the custom column types |
+| `landing.mjs` | AP–AS | the landing page and its two conflicting blobs |
+| `reorder.mjs` | AT–AW | the reorderable surfaces |
+
 **The second committed gate is `npm run check:boot`** (WP-61c) — the boot gesture exists only in a
 built bundle, which is the one surface `check:browser` deliberately cannot reach, so this one
 builds the client itself, serves it from the real server on `:4327` against a throwaway data dir
