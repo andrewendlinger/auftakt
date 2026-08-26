@@ -3,15 +3,19 @@ import { signalFailed } from '../boot';
 import { errorParts, logAppEvent } from '../lib/logEvent';
 
 /**
- * How much of React's component stack rides along with the error's own.
+ * How the 3000 characters `electron/appLog.ts` keeps of a `stack` field are shared between the
+ * error's own trace and React's component stack.
  *
- * The two travel as one `stack` field, and `electron/appLog.ts` caps that field at 3000
- * characters *from the front* — so an uncut component stack, which is one line per element down
- * to the root, would push the trace naming the actual throw off the end. The error's stack is
- * the part a bug is found from; the component stack says where in the tree it sat, which the
- * first dozen frames already answer.
+ * The two travel as one field and the cap keeps the *front* — so whichever half is first can
+ * evict the other, and the error's trace comes first. Both halves are therefore budgeted: a
+ * minified production stack of long asset URLs alone can exceed 3000 characters, and uncut it
+ * would push the entire component stack off the end. The error's first frames name the throw;
+ * the component stack's first dozen elements say where in the tree it sat — the tail of either
+ * is the part that may be lost.
  */
+const STACK_FIELD_MAX = 3000; // mirrors APP_LOG_FIELD_CAPS.stack, grep-coupled like external.ts
 const COMPONENT_STACK_MAX = 1500;
+const ERROR_STACK_MAX = STACK_FIELD_MAX - COMPONENT_STACK_MAX;
 
 interface State {
   failed: boolean;
@@ -46,7 +50,8 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
     logAppEvent(
       'render-error',
       msg,
-      (stack ?? '') + (info.componentStack ?? '').slice(0, COMPONENT_STACK_MAX),
+      (stack ?? '').slice(0, ERROR_STACK_MAX) +
+        (info.componentStack ?? '').slice(0, COMPONENT_STACK_MAX),
     );
     // The fallback below is the app now; there is nothing further to wait for. Without
     // this the boot screen would hold its still frame over a rendered error message
