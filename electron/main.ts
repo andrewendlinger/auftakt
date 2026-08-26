@@ -217,7 +217,10 @@ function gpuFeatureStatus(): Record<string, string> {
  * block; every other fact survives, and a crash is not read from `gpu_compositing` anyway.
  */
 function machineFacts(gpu: Record<string, string>, gpuDevice: string): SystemFacts {
-  const displays = screen.getAllDisplays().map((d) => ({
+  // The `screen` module throws before `ready`, and the crash path can run that early. Losing
+  // the display list there must not cost the whole bundle — the pre-ready `showErrorBox`
+  // branch of the crash dialog exists for the same reason.
+  const displays = (app.isReady() ? screen.getAllDisplays() : []).map((d) => ({
     width: d.size.width,
     height: d.size.height,
     scale: d.scaleFactor,
