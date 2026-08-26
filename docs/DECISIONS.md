@@ -3266,3 +3266,23 @@ loading animation here. One named residual is accepted: on a machine slow enough
 status page's own first paint takes >3 s, the app's later load can surface a spurious
 „Die Oberfläche konnte nicht geladen werden" over a working app (electron#17526) — bounded,
 non-fatal, and recognisable in a report by `server-slow` lines preceding it.
+
+## The app keeps its lowercase name; the dialogs carry the capitalised one (2026-08-26, WP-73)
+
+Windows captions a native message box with `app.getName()` when the call names no title, and
+that is `package.json`'s `name` — `auftakt`. So every dialog on a customer machine wore the
+package name while the exe, installer, registry and shortcuts all said „Auftakt". The
+obvious-looking repair — `app.setName('Auftakt')`, or a top-level `productName` in
+`package.json` — is the one that must never be made: both re-derive `app.getPath('userData')`.
+On Windows that is coincidentally harmless (case-insensitive paths); on macOS it derives a
+**new, empty** `~/Library/Application Support/Auftakt/` and every existing installation loses
+sight of its database. That is a change to what customers already have, and it is off the
+table (`docs/BACKUP-TESTING.md`, „Notes").
+
+The fix is a default `title: 'Auftakt'` applied centrally in `electron/dialogs.ts`'s helpers
+(an explicit per-call title wins), with the three raw `dialog.*` call sites folded into the
+helpers so the default is enforceable by a single invariant: **`dialogs.ts` is the only file
+that calls `dialog.*`** — the one deliberate exception being the pre-ready
+`dialog.showErrorBox`, whose first argument already is a title. macOS ignores message-box
+titles, so the default is inert there. Do not re-propose renaming the app or the data
+directory to fix casing anywhere; a wrongly-cased surface gets its own label, never a rename.

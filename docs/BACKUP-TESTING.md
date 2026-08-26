@@ -259,6 +259,9 @@ focused-window season resolution. Run with at least two seasons present.
   Windows. `userData` is named after `app.getName()`, which reads `name` from the bundled
   `package.json`; `productName: Auftakt` only capitalises the *installer* side. Do not "fix" the
   case without migrating the folder — it is where every existing installation's database lives.
+  The one user-visible consequence of the lowercase name — Windows captioning native dialogs
+  `auftakt` — is handled since WP-73 by a default `title: 'Auftakt'` in `electron/dialogs.ts`,
+  so a wrongly-cased dialog title is never a reason to rename the app.
 - Windows is worth prioritising for case 4: that is where the crash was reported, though the
   cause was never platform-specific.
 - **Installer metadata (Windows, WP-27).** While a Windows machine is at hand, check the two

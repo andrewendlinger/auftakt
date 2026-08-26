@@ -49,7 +49,7 @@ import {
   uniqueBundleName,
   type SystemFacts,
 } from './diagnostics';
-import { messageBox, openDialog, saveDialog } from './dialogs';
+import { messageBox, messageBoxSync, openDialog, saveDialog } from './dialogs';
 import { checkForUpdates, downloadAndInstallUpdate, startSilentStartupCheck } from './updater';
 
 // Source maps are switched on one file earlier, in the loader `scripts/build.mjs` writes as
@@ -938,7 +938,7 @@ async function loadWindow(win: BrowserWindow, isSecondary: boolean): Promise<voi
     // Covers the user closing the window mid-load too — loadURL then rejects against a
     // destroyed window, and there is nobody left to tell.
     if (win.isDestroyed()) return;
-    await dialog.showMessageBox(win, {
+    await messageBox(win, {
       type: 'error',
       message: 'Die Oberfläche konnte nicht geladen werden.',
       detail: `${(err as Error).message}\n\nBitte die App erneut öffnen. Bleibt der Fehler bestehen, hilft eine Neuinstallation.`,
@@ -1000,7 +1000,7 @@ async function ensureBackupDir(): Promise<string> {
   // asks again until a folder is actually saved (ELP-05) while the amber hint in
   // Einstellungen keeps carrying the state.
   const terms = readSeasonTerms(dataDir());
-  const intro = await dialog.showMessageBox(win, {
+  const intro = await messageBox(win, {
     type: 'info',
     message: 'Automatische Backups einrichten?',
     detail:
@@ -1289,8 +1289,11 @@ function installProcessHandlers(): void {
           'ganz normal öffnen.';
       // Sync: the next statement ends the process, and an async dialog on a dying process is
       // one that never appears. `showErrorBox` is the one dialog Electron documents as usable
-      // before `ready`, which is precisely when a crash leaves the least behind.
-      if (app.isReady()) dialog.showMessageBoxSync({ type: 'error', message, detail });
+      // before `ready`, which is precisely when a crash leaves the least behind — and it is
+      // also the one dialog that needs nothing from `dialogs.ts` (WP-73), because its first
+      // argument already is the title: Windows captions it with `message`, macOS sets that as
+      // the bold line. Both are better than the app's name, so this call stays as it is.
+      if (app.isReady()) messageBoxSync({ type: 'error', message, detail });
       else dialog.showErrorBox(message, detail);
     } catch {
       /* no GUI left to put it on — the file on the desktop is the report either way */
