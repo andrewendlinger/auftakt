@@ -20,9 +20,9 @@
 export const tabStop = (page) =>
   page.evaluate(() => {
     // The **last** card, not the first: a Modal opened out of another one is rendered inside it
-    // (the feedback dialog's „So schickst du es ab"), so document order puts the topmost last. A
-    // `PillSelect` menu's click-away layer is a `.fixed.inset-0` with no card in it and never
-    // matches here.
+    // (`CustomColumnManager`'s „ausblenden/löschen" questions), so document order puts the
+    // topmost last. A `PillSelect` menu's click-away layer is a `.fixed.inset-0` with no card
+    // in it and never matches here.
     const card = [...document.querySelectorAll('.fixed.inset-0 > div')].pop() ?? null;
     const items = card
       ? Array.from(

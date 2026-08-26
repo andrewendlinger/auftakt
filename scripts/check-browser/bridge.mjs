@@ -83,8 +83,8 @@ export const stubElectron = (page, opts = {}) =>
       // the second save of one reference comes back `…-2.txt` — a stub that always answers
       // `…​.txt` makes the one name the handover must not predict indistinguishable from the
       // one it may. And it can be **held**, like `installUpdate`: with `__holdSave` set the
-      // promise parks until `__finishSave()`, which is the only way to observe that „Weiter"
-      // waits for the write instead of opening a handover naming a guess.
+      // promise parks until `__finishSave()`, which is the only way to observe that „Bericht
+      // speichern" waits for the write instead of opening a handover naming a guess.
       saveDiagnostics: (ref, report) => {
         w.__saved.push({ ref, report });
         const n = w.__saved.filter((s) => s.ref === ref).length;

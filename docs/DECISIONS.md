@@ -8,6 +8,65 @@ If you are about to re-raise one of these, the bar is new information, not a fre
 
 ---
 
+## Zwei Klicks bis zum Bericht — die Fragen sind gestrichen (2026-08-26, WP-75)
+
+Instigated by Andre, in his own words: „the 'send feedback' workflow is too complicated. it should
+be 2-3 mandatory clicks max. manually writing should be optional. by default only the complete log
+/ debug report should be saved to desktop and clear, short instructions + email adress (copy&paste)
+should be provided."
+
+**What it cost before.** „Feedback senden…" opened a dialog that asked which kind of thing this was
+(Fehler/Wunsch), then which of five areas it was in, then made the person write an answer that was
+required before the primary button became live — three text boxes, every keystroke measured against
+a `mailto:` budget — and only then wrote the file and stacked a second dialog offering an address, a
+subject and a body to copy. Seven to nine clicks and a paragraph of typing before anything was on
+the desktop. Every one of those steps had a reason (they are the entries below this one) and the sum
+of them was a feature the customer it exists for does not get to the end of.
+
+**What ships.** Open · „Bericht speichern" · „Fertig". The report is written on the second click
+whether or not a word was typed, and the state that follows is the file's name, the address on one
+copy button and two sentences: attach it and send it, it contains no Termine, Künstler, Kontakte or
+Notizen. The optional box above the button is the only thing left of the form.
+
+- **The kind and the area are gone.** They fed a subject line — the thing an inbox sorts on — and
+  cost two mandatory clicks to fill it in. What they answered is answerable from the report
+  itself: the bundle names the version, the machine and every boot, and the person's own sentence
+  says which of the two it is far better than a radio button does. One maintainer, no intake
+  service, and a reply is threaded on the reference, not on the filing.
+- **The text is optional, and the file is written without it.** That is the whole of Andre's
+  „by default only the complete log". A report with no words in it is still the log, the version,
+  the OS and the screen — the four things every support answer starts by asking for — and a
+  required box is what turns „I'll report this" into „not now". The bundle's „Meldung" section then
+  carries `FEEDBACK_NO_NOTE` rather than nothing, in the same voice as the crash bundle's
+  `CRASH_REPORT_TEXT`: a section where the person's words go, saying that there are none and asking
+  for one sentence in the mail.
+- **Only the address is copyable now.** The mail is the customer's to write — in webmail, in their
+  own words — and what it has to carry is one attachment. A subject and a body to copy were two
+  more decisions on a screen whose whole job is to have none, and both of them are in the file.
+- **The two steps are one dialog in two states**, not two stacked ones. The handover *replaces* the
+  form, which is what a step is; the form is one optional box, so there is nothing behind it worth
+  keeping on screen, and „Escape peels the top layer" stops being a rule anybody has to know. The
+  `Modal` places focus when it opens, so the second state places its own („Adresse kopieren").
+- **„Text ergänzen" is the way back**, and it is the only path that writes a second bundle. Named
+  rather than „Zurück" because the only reason to go back is to say something.
+
+**What stands, unchanged.** WP-66's contract below is untouched: nothing on this path opens
+anything the customer did not click, the `mailto:` survives as one optional link, and „Fertig"
+claims nothing. The file is still written to the desktop on the way *into* the handover and the
+handover still waits for main's answer, because a second save is `…-2.txt` and every line names the
+file. The dialog still remembers report text → name, so a text already on the desktop is named
+rather than written again.
+
+**What went with it in `client/src/lib/feedbackMail.ts`.** `FEEDBACK_KINDS` and its questions,
+`requiredField`, the area list, and — because the note's home is the file rather than a URL —
+`FEEDBACK_FIELD_MAX`, `feedbackHeadroom` and `fitFeedbackAnswer`, with the composer's four-rung
+ladder down to two: drop the boot digest, then clip the note and mark it. The renderer's own
+`diagnosticsFileName` went too: nothing in the app names a file before main has written it, so the
+prediction and the cross-module assertion that held it to `electron/diagnostics.ts` are gone. The
+two entries below that decided the questions and the keystroke budget are reversed by this one.
+
+---
+
 ## „Ein Weg, keine Auswahl" — REVERSED: the feedback path opens nothing by itself (decided 2026-08-14 WP-54, reversed 2026-08-17 WP-66)
 
 **What WP-54 decided.** One button and one path. „Text kopieren" was removed on 2026-08-14 as a
@@ -35,6 +94,11 @@ was explained in a dialog that was by then behind both of them.
 **The new contract.** „Weiter" writes the diagnostics file to the desktop and shows the handover;
 after that every step is the customer's own click, and the app opens nothing on its own.
 
+> **WP-75 (2026-08-26) kept that contract and cut the flow around it** — see the entry above. The
+> button is „Bericht speichern", the handover is the same dialog rather than a second one, and the
+> three copy rows are one („Adresse kopieren"). What is *not* touched is the sentence this entry
+> exists for: nothing on this path opens anything the customer did not click.
+
 - **The file is still written, and still to the desktop.** That half of WP-54 stands unchanged:
   a `mailto:` cannot attach, so the file exists to be attached by hand. Only the reveal is gone —
   `shell.showItemInFolder` now appears nowhere in the app.
@@ -50,12 +114,14 @@ after that every step is the customer's own click, and the app opens nothing on 
   replaced, so „Weiter" is disabled for the length of the write instead. The dialog remembers
   report text → name, so a text that is already on the desktop — an unchanged one, or an edit
   taken back — names *that* bundle rather than writing a third.
-- **The handover is the mail, field by field**: An, Betreff, Text — the order the compose window
+- ~~**The handover is the mail, field by field**: An, Betreff, Text — the order the compose window
   asks for them in — each with its own copy button. This is the „Text kopieren" WP-54 removed, and
   it comes back for the opposite reason to the one it left with: it is no longer a second path
   competing with a first, it *is* the path. The Betreff is shown in full because it is what the
   inbox sorts on; the Text is described rather than printed, since it is on screen in full one
-  dialog back under „Was wird mitgeschickt?".
+  dialog back under „Was wird mitgeschickt?".~~ **Cut to the address alone on 2026-08-26 (WP-75):**
+  the mail is the customer's to write and the report is the file, so a subject and a body to copy
+  were two decisions on a screen that should have none.
 - **The `mailto:` survives as one optional link**, last and small, for whoever does have a client
   set up. A link rather than a button, and never the primary: on the machines this feature is for,
   an offer that opens nothing is worse than no offer.
@@ -475,23 +541,25 @@ mail names that filename.
 
 What it costs is one manual step — the attaching — and that is the floor, not a shortfall.
 ~~„E-Mail öffnen" reveals the file first and opens the client second, so the compose window is what
-ends up in front.~~ Since WP-66 nothing is opened at all: „Weiter" writes the file, and the
-handover names it.
+ends up in front.~~ Since WP-66 nothing is opened at all: the primary button — „Weiter" then,
+„Bericht speichern" since WP-75 — writes the file, and the handover names it.
 
-Because that step is the floor, it is where the words go, and **the words are a dialog rather than
-a card (2026-08-14).** The steps were first written as a numbered card above the send button, which
-put the one thing the customer has to do at the bottom of a scrolling form under three text boxes —
-the easiest place in the feature to skip. „Weiter" now opens a second dialog carrying those steps
-and nothing else. A card is scrolled past; a dialog is answered. It also settled what the button
-may claim: „E-Mail schreiben" promised a mail that click did not write, and „verschicken" would
-have promised a send that is not this app's to make — and „E-Mail öffnen" itself went the same way
-in WP-66, having promised an opening that on the customer's machine does not happen. The second
-dialog now ends in „Fertig", which claims nothing.
+Because that step is the floor, it is where the words go, and **the words fill the dialog rather
+than sit in a card in it (2026-08-14).** The steps were first written as a numbered card above the
+send button, which put the one thing the customer has to do at the bottom of a scrolling form under
+three text boxes — the easiest place in the feature to skip. They became a second, stacked dialog
+carrying those steps and nothing else, and since WP-75 they are the dialog's own second state,
+which is the same rule one layer cheaper: what is on screen at that point is the instruction, not
+the instruction under a form. A card is scrolled past; a screen is answered. It also settled what
+the button may claim: „E-Mail schreiben" promised a mail that click did not write, and
+„verschicken" would have promised a send that is not this app's to make — and „E-Mail öffnen"
+itself went the same way in WP-66, having promised an opening that on the customer's machine does
+not happen. The step ends in „Fertig", which claims nothing.
 
 The draft then opens on the instruction to attach the file, on the first line, because a mail
 client shows the first line and not the signature. Kind, area and reference used to sit above it
-and now sit in the technical block: they are what the report is filed under, the subject carries
-all three, and nothing about them is for the reader to act on. The instruction is addressed to the
+and then sat in the technical block — kind and area are gone entirely since WP-75, and the
+reference is what is left of the filing stamp. The instruction is addressed to the
 customer rather than the maintainer, and „(bitte stehen lassen)" heads the block that is not theirs
 to tidy — every sentence asking the reader to decide something is a sentence that can be decided
 wrong. The copy written *into* the bundle drops both the instruction and the summary: a file
@@ -526,6 +594,14 @@ ladder drops entries from the top when the `mailto:` is too long, so the boot th
 report is the last thing to go. Below that, the whole block is replaced by a pointer at the reveal
 button rather than by silence, and only then does the person's own text get cut — marked.
 
+> **The ladder is two rungs since WP-75 (2026-08-26)**, and this order is what survived of it: the
+> block goes whole, then the note is clipped and marked. Dropping entries one at a time was worth
+> its code while three required fields and a digest fought over the same 1900 characters; with one
+> optional note it is a rung nothing lands on. The arithmetic in the two paragraphs below was
+> measured on those three fields and no longer describes anything shipped — what `check:unit` holds
+> now is that a report-sized note rides beside the attach instruction untouched, and that no input
+> at all can put the URL over the ceiling.
+
 Once the diagnostics file exists, that middle rung goes the other way: the block is dropped
 outright rather than replaced. The line above it already names the file the log is in, and a
 sentence under it saying so costs 140 encoded characters to repeat what the reader just read. The
@@ -541,8 +617,16 @@ feature shipped with. The restructure on 2026-08-14 paid for its headings by tak
 have spent on words. `feedbackMail.test.ts` asserts the whole shape fits with no `[…]` in it, which
 is the only reason the arithmetic is discovered before a customer's report arrives truncated.
 
-**The dialog's `maxLength` cannot be that guarantee (2026-08-14, WP-54).** It was written as one —
-300 characters per field, „sized so three full fields of ordinary German prose still fit" — and the
+**The dialog's `maxLength` cannot be that guarantee (2026-08-14, WP-54) — moot since WP-75
+(2026-08-26).** The paragraph below is right about what it measures and no longer describes
+anything shipped: the person's words travel in the *file*, which takes 4096 characters and needs no
+encoding, so the box's cap is sized against that and the mail is the derived copy. What the budget
+still decides is how much of the note the optional `mailto:` can carry, and that is settled by
+clipping the mail's copy and marking it — in front of the customer, in their own compose window —
+rather than by measuring every keystroke. `feedbackHeadroom` and `fitFeedbackAnswer` are gone with
+the required field they were written for. The original reasoning stands as follows.
+
+The cap was written as the guarantee — 300 characters per field, „sized so three full fields of ordinary German prose still fit" — and the
 1873 above is what that claim was measured on: prose carrying one umlaut per 62 characters. Real
 German carries three to six. An umlaut costs six encoded characters against one for a letter, so
 about thirteen of them across three full fields is the whole 27 of slack, and past that every
@@ -560,15 +644,24 @@ is left to what it is for: a mail that grew *after* it was typed, which is the f
 case putting the summary back. `FEEDBACK_FIELD_MAX` stays as the shape of an answer, not as the
 budget. Ten URL compositions per keystroke is the cost, against a re-render that costs more.
 
-A wish carries no summary at all. Startup timings say nothing about a feature request, and the
-budget they would spend is better spent on what was actually asked for.
+~~A wish carries no summary at all. Startup timings say nothing about a feature request, and the
+budget they would spend is better spent on what was actually asked for.~~ **Moot since WP-75:**
+nothing asks whether this is a wish, so every report carries the same bundle. What that costs a
+feature request is a text file on the desktop it did not need; what it saves is the click that
+would have decided, and the version and machine it names are worth having under a wish too.
 
 `why` is read back out under the same distrust it was written with. `bootLogLine` caps the payload
 as a whole and never inspects the fields inside it, so a literal newline in `why` would forge an
 extra report line in a support mail and a long one would eat the mailto budget. Every string
 lifted out of the log is flattened and sliced.
 
-## The kind is asked first, and it rewrites the questions (2026-08-14, WP-54)
+## The kind is asked first, and it rewrites the questions — REVERSED (2026-08-14 WP-54, reversed 2026-08-26 WP-75)
+
+**Both questions are gone.** They were two mandatory clicks in front of a feature whose value is the
+file behind them, and the reasoning below priced that at nothing. What replaced them is one optional
+box; the record of why is „Zwei Klicks bis zum Bericht" at the top of this file. The paragraphs
+below stand as what they reversed — in particular, a report *is* still filed under something, and
+what it is filed under is now the person's own sentence rather than a picked label.
 
 The first version asked „Was ist passiert?" of everyone, which is the only sentence a wish can then
 be filed under — so feature requests arrive phrased as faults, and the first reply is spent working

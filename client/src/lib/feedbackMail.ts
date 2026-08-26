@@ -1,11 +1,16 @@
 /**
- * Compose the support mail (WP-54).
+ * What leaves the app when somebody reports something (WP-54, reshaped by WP-66 and WP-75).
  *
- * The app cannot send mail itself — that would need a mail service, credentials and a
- * network, against the whole offline character of the thing — so the report is handed to
- * the customer's own mail client as a `mailto:`, which is also the moment they see and
- * approve what is being sent. Everything here is pure, so `check:unit` can hold the
- * encoding and the length budget rather than a browser.
+ * The artefact is the **file**: `save-diagnostics` writes `Auftakt-Diagnose-<ref>.txt` to the
+ * desktop and the customer attaches it to a mail they write themselves. This module composes
+ * the two texts around it — what goes into that file's „Meldung" section, and the optional
+ * `mailto:` for whoever has a mail client set up. Everything here is pure, so `check:unit` can
+ * hold the encoding and the length budget rather than a browser.
+ *
+ * WP-75 took the questions out. There is no kind, no area and no required answer any more —
+ * one optional box, and a report that is written whether or not anything was typed into it —
+ * so what a mail carries is short by construction and the ladder that used to spend a mail's
+ * budget field by field is two rungs (`mailBody`).
  */
 
 /** Where feedback goes. One address, hardcoded: there is one maintainer and no intake service. */
@@ -22,118 +27,30 @@ export const FEEDBACK_TO = 'auftakt@e-mail.de';
 export const MAILTO_MAX_CHARS = 1900;
 
 /**
- * Per free-text field, enforced by the dialog's `maxLength`.
+ * The optional note's `maxLength`, in typed characters.
  *
- * The size of an answer, not the size of the budget — those are two different measurements
- * and only one of them can be a character count. Three fields at this length are longer than
- * a `mailto:` can carry as soon as the German is ordinary German: an umlaut costs six encoded
- * characters against one for a letter, so about thirteen of them across three full fields is
- * the difference between fitting and not. No per-field character cap can express that, and
- * one sized for the true worst case — 300 umlauts encode to 1800 on their own — would be
- * around a hundred characters, which is not a report anybody could write.
+ * Sized against the **file**, not against the mail: the note's home is the bundle's „Meldung"
+ * section, main caps what it takes there at `BOOT_REPORT_MAX_CHARS` (4096), and a cap the
+ * person can feel is one they can write a report inside. The mail is the derived copy and
+ * carries as much of it as a `mailto:` can — `mailBody` clips its own copy and marks the cut,
+ * where the customer can see it in their compose window before they send.
  *
- * So the cap keeps a field to the shape of an answer, and the *encoded* length is what the
- * dialog actually stops typing on: `feedbackHeadroom` measures it and `fitFeedbackAnswer`
- * enforces it, keystroke by keystroke, where the person can still see what they wrote.
+ * That is the WP-75 reversal of the per-keystroke fit: while a *required* answer had to travel
+ * in the mail, the budget had to be enforced in the box the person was typing in, because
+ * nothing else carried their words. The file carries them now.
  */
-export const FEEDBACK_FIELD_MAX = 300;
-
-/* ---- what kind of thing is being reported ------------------------------------------
- *
- * A „Feedback" button that only ever asks „Was ist passiert?" gets feature requests phrased
- * as faults, because that is the only sentence on offer. The kind is asked first, and it
- * decides both the questions and whether startup timings travel: they say nothing at all
- * about a wish, and leaving them out gives the person's own words the budget instead.
- */
-
-export type FeedbackKind = 'bug' | 'wish';
-
-export interface FeedbackField {
-  key: string;
-  /** The dialog's question. */
-  ask: string;
-  /** The same thing as a heading in the mail — „Was ist passiert?" → „Was passiert ist". */
-  said: string;
-  placeholder: string;
-  /** Exactly one field per kind carries this; it is the one the send button waits for. */
-  required?: true;
-}
-
-export interface FeedbackKindSpec {
-  /** Goes in the subject, so it is what the maintainer sorts an inbox by. */
-  label: string;
-  /** Whether the boot summary and the desktop diagnostics file belong to this kind. */
-  diagnostics: boolean;
-  fields: readonly FeedbackField[];
-}
+export const FEEDBACK_NOTE_MAX = 2000;
 
 /**
- * The one definition of what is asked and how it is headed in the mail.
+ * The „Meldung" of a report nobody wrote a word into — the default case since WP-75.
  *
- * Both spellings used to be written out separately — questions in the dialog, statements in
- * the body — with nothing keeping them in step. The dialog renders from this table and
- * `feedbackBody` composes from it, so a re-worded question cannot leave a stale heading
- * behind in the mail.
+ * The section is where the customer's own words go, so an empty one reads as a file that lost
+ * them. It says instead that there are none, in the same voice as `CRASH_REPORT_TEXT` (the
+ * other auto-generated „Meldung"), and asks for the one sentence that cannot be collected.
  */
-export const FEEDBACK_KINDS: Record<FeedbackKind, FeedbackKindSpec> = {
-  bug: {
-    label: 'Fehler',
-    diagnostics: true,
-    fields: [
-      {
-        key: 'happened',
-        ask: 'Was ist passiert?',
-        said: 'Was passiert ist',
-        placeholder: 'z. B. „Beim Start war die Animation nur kurz zu sehen, dann kam die Übersicht.“',
-        required: true,
-      },
-      {
-        key: 'did',
-        ask: 'Was hast du davor gemacht?',
-        said: 'Was ich davor gemacht habe',
-        placeholder: 'z. B. „Auftakt neu gestartet.“',
-      },
-      {
-        key: 'expected',
-        ask: 'Was hättest du erwartet?',
-        said: 'Was ich erwartet hätte',
-        placeholder: 'Optional — hilft, wenn es nicht offensichtlich ist.',
-      },
-    ],
-  },
-  wish: {
-    label: 'Wunsch',
-    diagnostics: false,
-    fields: [
-      {
-        key: 'want',
-        ask: 'Was möchtest du tun können?',
-        said: 'Was ich tun können möchte',
-        placeholder: 'z. B. „Die Künstlerliste nach Land sortieren.“',
-        required: true,
-      },
-      {
-        key: 'today',
-        ask: 'Wie machst du es heute?',
-        said: 'Wie ich es heute mache',
-        placeholder: 'z. B. „Ich exportiere die Liste und sortiere sie in Excel.“',
-      },
-      {
-        key: 'why',
-        ask: 'Warum wäre das besser?',
-        said: 'Warum das besser wäre',
-        placeholder: 'Optional — was es dir spart.',
-      },
-    ],
-  },
-};
-
-/** The one field the dialog insists on before it will send. */
-export function requiredField(kind: FeedbackKind): FeedbackField {
-  const found = FEEDBACK_KINDS[kind].fields.find((f) => f.required);
-  // Every kind above declares one; the fallback keeps the type honest without a `!`.
-  return found ?? { key: '', ask: '', said: '', placeholder: '' };
-}
+export const FEEDBACK_NO_NOTE =
+  'Ohne eigenen Text gespeichert: Der Bericht wurde in Auftakt über „Feedback senden“ angelegt.\n' +
+  'Was unmittelbar davor getan wurde, weiß nur, wer davorsaß — ein Satz dazu in der E-Mail hilft sehr.';
 
 /* ---- the report's own name ---------------------------------------------------------- */
 
@@ -156,26 +73,18 @@ export function feedbackRef(now: Date): string {
 }
 
 /**
- * The name the diagnostics file will have, before main has written it.
+ * What `save-diagnostics` puts in the bundle's „Meldung": the note, or the stand-in above.
  *
- * The dialog needs it one step early: „Was wird mitgeschickt?" has to show the body that
- * will actually go out, and that body names the attachment. Main returns the real name once
- * it has written the file, and that is what is sent — this only has to agree with it, which
- * `diagnostics.test.ts` asserts across both modules.
+ * Nothing else — no reference, no machine line, no attach instruction. The bundle already
+ * carries all three around this text, and a file telling its reader to attach that same file
+ * is nonsense. It is also the key the dialog remembers a written bundle under, so what it
+ * returns has to depend on the note and on nothing else.
  */
-export function diagnosticsFileName(ref: string): string {
-  return `Auftakt-Diagnose-${ref}.txt`;
+export function feedbackReport(note: string): string {
+  return note.trim() || FEEDBACK_NO_NOTE;
 }
 
-/* ---- the draft and its context ------------------------------------------------------ */
-
-/** What the dialog collected. Answers are keyed by `FeedbackField.key`, any of them empty. */
-export interface FeedbackDraft {
-  kind: FeedbackKind;
-  /** „Worum geht's?" — the chosen area, already in German. */
-  area: string;
-  answers: Record<string, string>;
-}
+/* ---- the optional mail -------------------------------------------------------------- */
 
 export interface FeedbackContext {
   /** `feedbackRef` at the moment the dialog opened. */
@@ -189,9 +98,9 @@ export interface FeedbackContext {
    * replaces the bare platform label when it is there. '' without a bridge.
    */
   system: string;
-  /** `Diagnostics.summary`, or '' when there is no bridge or the kind carries none. */
+  /** `Diagnostics.summary`, or '' when there is no bridge. Only travels without a file. */
   diagnostics: string;
-  /** File name of the bundle written to the desktop; '' when none was (see the dialog). */
+  /** File name of the bundle main wrote; '' when none was (see the dialog). */
   attachment: string;
 }
 
@@ -204,55 +113,54 @@ function platformLabel(platform: string): string {
 }
 
 /**
- * Ref, kind, area, version — the four things that decide whether a mail gets opened now or
- * later, all in the line an inbox shows without opening anything.
+ * Reference and version — what an inbox shows without opening anything.
+ *
+ * Kind and area used to lead it too. They were two clicks the customer had to spend before
+ * they could say anything (WP-75), and what they filed the report under is answerable from
+ * the report itself: the attached bundle names the version, the machine and every boot, and
+ * the reference is what a reply is threaded on.
  */
-export function feedbackSubject(draft: FeedbackDraft, ctx: FeedbackContext): string {
-  const kind = FEEDBACK_KINDS[draft.kind].label;
-  return `${ctx.ref ? `[${ctx.ref}] ` : ''}Auftakt-${kind}: ${draft.area}${
-    ctx.version ? ` (v${ctx.version})` : ''
-  }`;
+export function feedbackSubject(ctx: FeedbackContext): string {
+  return `${ctx.ref ? `[${ctx.ref}] ` : ''}Auftakt-Feedback${ctx.version ? ` (v${ctx.version})` : ''}`;
 }
 
 /**
  * The body: the one thing left to do, then what the person wrote, then the machine.
  *
  * A mail client opens on the first line, so that line is the only instruction the reader
- * still has to act on — not the metadata it used to open with, which says nothing to them
- * and is in the subject anyway. Everything below is headed, because three answers and a
- * technical block separated by nothing but blank lines is one paragraph to a reader in a
- * hurry, which is what a support mail is read by.
+ * still has to act on. Everything below is headed, because a note and a technical block
+ * separated by nothing but blank lines is one paragraph to a reader in a hurry, which is what
+ * a support mail is read by. „Meldung" is the bundle's own heading for the same text, so the
+ * file and the mail say the same thing under the same word.
  *
  * The decoration is `!!` and `---` rather than `===`, `##` or box-drawing characters for a
  * reason that is not taste: `encodeURIComponent` leaves `!` and `-` alone and spends three
  * characters on `=` or `#` and nine on `─`, against the budget below. `---` is also not the
  * `-- ` several clients read as a signature delimiter and fold away.
  */
-export function feedbackBody(draft: FeedbackDraft, ctx: FeedbackContext): string {
-  const said = FEEDBACK_KINDS[draft.kind].fields
-    .map((f) => [f.said, (draft.answers[f.key] ?? '').trim()] as const)
-    .filter(([, text]) => text.length > 0)
-    .map(([label, text]) => `--- ${label}\n${text}`)
-    .join('\n\n');
+export function feedbackBody(note: string, ctx: FeedbackContext): string {
+  const parts: string[] = [];
 
   // First, in capitals, addressed to the customer rather than the maintainer: it is the one
-  // step no program can take for them, and every earlier place it was said is a place it
-  // could be scrolled past. Not phrased as something to tidy away afterwards either —
-  // every sentence asking the reader to decide something is a sentence that can be decided
-  // wrong; „(bitte stehen lassen)" below marks what is not theirs to touch.
-  const todo = ctx.attachment
-    ? `!! BITTE NOCH ANHÄNGEN: ${ctx.attachment}\n` +
-      'Die Datei liegt auf deinem Schreibtisch. Hineinziehen, dann abschicken.\n\n'
-    : '';
+  // step no program can take for them (RFC 6068 gives a `mailto:` no way to attach), and
+  // every earlier place it was said is a place it could be scrolled past.
+  if (ctx.attachment) {
+    parts.push(
+      `!! BITTE NOCH ANHÄNGEN: ${ctx.attachment}\n` +
+        'Die Datei liegt auf deinem Schreibtisch. Hineinziehen, dann abschicken.',
+    );
+  }
+
+  // The person's words ride along even though the file carries them too: this is what the
+  // compose window shows, and a customer who has just written a sentence and sees a mail
+  // without it in has every reason to think it was lost.
+  const said = note.trim();
+  if (said) parts.push(`--- Meldung\n${said}`);
 
   const technical = ['--- Technische Angaben (bitte stehen lassen)'];
-  // Kind, area and reference travel down here as one line. They read as a filing stamp, not
-  // as something to act on, and the subject carries the same three — but a subject is the
-  // first thing a forward or a reply rewrites, and the file on the desktop is named after
-  // the reference. Labelling only the reference: the other two are self-evident, and the
-  // 24 encoded characters the labels would cost are the person's to spend on words.
-  const stamp = `${FEEDBACK_KINDS[draft.kind].label}${draft.area ? ` · ${draft.area}` : ''}`;
-  technical.push(ctx.ref ? `${stamp} · Kennung: ${ctx.ref}` : stamp);
+  // „(bitte stehen lassen)" marks what is not theirs to tidy — every sentence asking the
+  // reader to decide something is a sentence that can be decided wrong.
+  if (ctx.ref) technical.push(`Kennung: ${ctx.ref}`);
   // `system` already names the OS, so it stands in for the platform label rather than
   // following it — otherwise every mail says „Windows · Windows 11".
   const machine = ctx.system || platformLabel(ctx.platform);
@@ -264,8 +172,9 @@ export function feedbackBody(draft: FeedbackDraft, ctx: FeedbackContext): string
   // Only when nothing was attached. With the file there it is the same data twice, and the
   // half in the mail is the truncated one — five folded lines against the whole log.
   if (ctx.diagnostics && !ctx.attachment) technical.push(ctx.diagnostics);
+  parts.push(technical.join('\n'));
 
-  return `${todo}${said}\n\n${technical.join('\n')}\n`;
+  return `${parts.join('\n\n')}\n`;
 }
 
 function url(subject: string, body: string): string {
@@ -280,120 +189,41 @@ function clip(text: string, max: number): string {
 }
 
 /**
- * The ladder's first two rungs: everything that can be spent before a word the person wrote.
+ * The body as the URL will really carry it: two rungs, machine before person.
  *
- * With a file attached there is nothing to spend — the body carries no diagnostics when the
- * whole log is travelling as an attachment — so the context comes back untouched and the
- * words are the only thing left, which is what `fitFeedbackAnswer` exists to make impossible.
- *
- * Without one, diagnostic entries go first (oldest first, which is why the summary is written
- * newest-last), then the whole block.
+ * The whole ladder used to be four rungs deep, because a required three-field report and a
+ * boot digest fought over 1900 encoded characters (`docs/DECISIONS.md`). Since WP-75 the file
+ * carries the report and the note is optional, so what is left is the ordering principle: the
+ * digest is spendable — it is in the attachment in full, or it is a machine's guess at what
+ * matters — and a word the person wrote is spent last and marked.
  */
-function spend(draft: FeedbackDraft, ctx: FeedbackContext): FeedbackContext {
-  const subject = feedbackSubject(draft, ctx);
-  const fits = (c: FeedbackContext) =>
-    url(subject, feedbackBody(draft, c)).length <= MAILTO_MAX_CHARS;
+function mailBody(note: string, ctx: FeedbackContext): string {
+  const subject = feedbackSubject(ctx);
+  const fits = (body: string) => url(subject, body).length <= MAILTO_MAX_CHARS;
 
-  if (fits(ctx) || ctx.attachment) return ctx;
+  const full = feedbackBody(note, ctx);
+  if (fits(full)) return full;
 
-  // 1 · drop diagnostic entries from the top, keeping the header and the newest boots.
-  // Stops one short of emptying it: a „Startdiagnose —" header with nothing under it reads
-  // as a diagnostic that was collected and says nothing, which is worse than step 2. The
-  // header survives every rung because it names no count — see `summarizeBootLog`, which
-  // stopped promising „die letzten 5" precisely so this loop cannot make it a lie.
-  const lines = ctx.diagnostics.split('\n');
-  const head = lines[0] ?? '';
-  for (let drop = 1; drop <= lines.length - 2; drop++) {
-    const trimmed = { ...ctx, diagnostics: [head, ...lines.slice(1 + drop)].join('\n') };
-    if (fits(trimmed)) return trimmed;
-  }
+  // 1 · the digest. With a file attached there is none in the body to begin with, so this
+  // rung only ever fires on the branch where no bundle was written.
+  const lean = { ...ctx, diagnostics: '' };
+  const withoutDigest = feedbackBody(note, lean);
+  if (fits(withoutDigest)) return withoutDigest;
 
-  // 2 · drop the block. There is nowhere to redirect the reader to — the file that would
-  // have carried it is the one that could not be written — so it goes, and the machine
-  // line plus the reference are what the report still arrives with.
-  return { ...ctx, diagnostics: '' };
-}
-
-/**
- * Encoded characters still free for the person's own words. Negative when the mail is over.
- *
- * Measured *after* the diagnostics have been spent, so it answers the only question the
- * dialog has: is there room for one more character of theirs. It is the real unit — a
- * character count cannot be, because the same 300 characters encode to anywhere between 300
- * and 1800 depending on how many of them are umlauts.
- */
-export function feedbackHeadroom(draft: FeedbackDraft, ctx: FeedbackContext): number {
-  const spent = spend(draft, ctx);
-  return MAILTO_MAX_CHARS - url(feedbackSubject(draft, ctx), feedbackBody(draft, spent)).length;
-}
-
-/**
- * The longest prefix of `text` that still fits in `key`, given everything else in the draft.
- *
- * This is what the dialog puts in the box on every keystroke, which is the whole point: a cap
- * enforced where the person is looking is a cap they can work with, and one enforced in
- * `feedbackMailBody` on the way out is a truncation they hear about from the maintainer. A
- * blocked keystroke leaves the box exactly as it was; a paste lands cut, in front of them,
- * where it can be edited.
- *
- * Bisected rather than stepped: the cost of a character is not a constant, so the fit has to
- * be measured, and ten measurements per keystroke is nothing next to a re-render.
- */
-export function fitFeedbackAnswer(
-  draft: FeedbackDraft,
-  ctx: FeedbackContext,
-  key: string,
-  text: string,
-): string {
-  const at = (n: number) => ({
-    ...draft,
-    answers: { ...draft.answers, [key]: text.slice(0, n) },
-  });
-  if (feedbackHeadroom(at(text.length), ctx) >= 0) return text;
-
-  // `lo` is known to fit or is the floor, `hi` is known not to — length is monotonic in the
-  // encoded size, so the boundary between them is the answer.
-  let lo = 0;
-  let hi = text.length;
-  while (hi - lo > 1) {
-    const mid = Math.floor((lo + hi) / 2);
-    if (feedbackHeadroom(at(mid), ctx) >= 0) lo = mid;
-    else hi = mid;
-  }
-  return text.slice(0, lo);
-}
-
-/**
- * The body as it will really be sent — the ladder's output, not its input.
- *
- * Exported because „Was wird mitgeschickt?" shows it: a preview of a body the composer then
- * trims is a preview of something that was never sent, which is worse than no preview at all
- * in a dialog whose promise is that the report is shown in full before it leaves.
- */
-export function feedbackMailBody(draft: FeedbackDraft, ctx: FeedbackContext): string {
-  const subject = feedbackSubject(draft, ctx);
-  const spent = spend(draft, ctx);
-  const body = feedbackBody(draft, spent);
-  if (url(subject, body).length <= MAILTO_MAX_CHARS) return body;
-
-  // 3 · backstop, so the function is total. The dialog's own fit keeps ordinary typing off
-  // this rung entirely; what still reaches it is a mail that grew *after* it was typed — a
-  // bundle that failed to write, putting the summary back into a body sized without it — and
-  // any draft that did not come through the dialog at all. It marks what it cut.
-  const longest = Math.max(FEEDBACK_FIELD_MAX, ...Object.values(draft.answers).map((t) => t.length));
-  let budget = longest;
-  let clipped = draft;
+  // 2 · the note, halved until it fits and marked `[…]`. The loop halves while the budget is
+  // still above 40, so the last cut can land between 21 and 40 characters — even all-umlaut
+  // that is at most ~240 encoded against a subject and a technical block of about 300.
+  let budget = note.length;
+  let body = withoutDigest;
   while (budget > 40) {
     budget = Math.floor(budget / 2);
-    const answers: Record<string, string> = {};
-    for (const [key, text] of Object.entries(draft.answers)) answers[key] = clip(text, budget);
-    clipped = { ...draft, answers };
-    if (url(subject, feedbackBody(clipped, spent)).length <= MAILTO_MAX_CHARS) break;
+    body = feedbackBody(clip(note, budget), lean);
+    if (fits(body)) break;
   }
-  return feedbackBody(clipped, spent);
+  return body;
 }
 
 /** The finished URL: the subject, and the body the ladder settled on. */
-export function feedbackMailto(draft: FeedbackDraft, ctx: FeedbackContext): string {
-  return url(feedbackSubject(draft, ctx), feedbackMailBody(draft, ctx));
+export function feedbackMailto(note: string, ctx: FeedbackContext): string {
+  return url(feedbackSubject(ctx), mailBody(note, ctx));
 }

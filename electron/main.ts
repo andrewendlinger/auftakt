@@ -257,7 +257,7 @@ function machineFacts(gpu: Record<string, string>, gpuDevice: string): SystemFac
   };
 }
 
-/** What `save-diagnostics` reports back. The name is what the mail body tells them to attach. */
+/** What `save-diagnostics` reports back. The name is what the dialog tells them to attach. */
 export type DiagnosticsSave = { ok: true; name: string } | { ok: false };
 
 /**
@@ -274,8 +274,9 @@ export type DiagnosticsSave = { ok: true; name: string } | { ok: false };
  *
  * `ref` is the mail's own reference and the only renderer value that becomes a filename —
  * `isBundleRef` is why that is safe, and the directory is never the renderer's to choose.
- * `report` is the mail body, capped like the boot payload is: the renderer is the untrusted
- * side here too, and an unbounded string is a way to fill somebody's disk from a web page.
+ * `report` is what the customer typed (or the stand-in for having typed nothing), capped like the
+ * boot payload is: the renderer is the untrusted side here too, and an unbounded string is a way
+ * to fill somebody's disk from a web page.
  */
 async function saveDiagnostics(ref: unknown, report: unknown): Promise<DiagnosticsSave> {
   try {
