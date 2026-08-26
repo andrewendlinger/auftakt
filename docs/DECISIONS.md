@@ -3509,3 +3509,26 @@ restore-point databases in the audit produced no sidecar artifacts while reading
 `validateImportCandidate` leans on when it rejects a candidate whose `-wal` is non-empty: an
 app-produced backup never has one, so a file that does is a hand-copied live database with rows the
 import would silently drop.
+
+## `check:boot` never causes `warm` — the field's most common outcome is an accepted gap (2026-08-26, WP-70)
+
+The customer's real `boot-log.jsonl` (149 lines over eleven days) is dominated by an outcome the
+boot gate never produces: `skip/warm` — a same-process renderer reload that finds its session
+state already stamped, reuses the memoised startup and skips the gesture — accounts for 106
+lines, 71.1 %. Season switches and in-app reloads simply outnumber cold starts in the field,
+about three warm reloads for every launch. The gate, meanwhile, causes and asserts `done`,
+`secondary`, `abort:hitch`, `abort:drops`, `click` and `deadline`; it cannot cause `warm`,
+because that requires reloading the *same* window with its `sessionStorage` intact, and the
+harness only ever cold-starts the app. That is its design, not an oversight (see „The boot gate
+asserts accounting, never a timing").
+
+Decided by Andre, 2026-08-26: **this is an accepted, named gap, not a hole to close.** The
+gate's rule is that it asserts only outcomes it caused; a `warm` line that shows up in a run's
+log is someone else's work, and counting it would assert an accident. Do not „fix" this by
+loosening the accounting to tolerate or expect uncaused `warm` lines. If `warm` coverage is
+ever genuinely wanted, it is a deliberate build — a new case that itself performs the
+same-window reload and moves the pinned 210 — and it should first answer why: `warm` is the
+cheapest path through boot (the gesture is skipped by design), and eleven days of field data
+show it doing exactly that. One practical rider from the same numbers: the renderer is reloaded
+warm about three times as often as the app starts cold, so any per-renderer-load „first frame"
+work is paid on every one of those reloads — weigh that before adding any.
