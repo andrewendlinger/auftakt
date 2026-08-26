@@ -3147,3 +3147,27 @@ Comments that named the importer as a live headerless caller (`db.ts`, `index.ts
 and `setActiveSeasonLabel`'s name is no longer frozen by an importer that cannot be refactored
 against. References to the *data shapes* a Notion export left behind stay where they are: that
 text is in customer databases and the sanitizer still has to expect it.
+
+## A slow server start is waited out and named, never abandoned at ten seconds (2026-08-26, WP-72)
+
+Decided by Andre after the 2026-08-25 update on the customer device: the app's own update
+dialog warns that virus scanners may take „eine Minute oder mehr" over the fresh binary, while
+`waitForServer` granted ten seconds and then quit through a dialog whose advice — reinstall —
+was exactly wrong for a scan. The shape that replaces it is the **honest waiting state**: after
+10 s the already-visible cream window (see „cream is the honest first frame") gains a static
+status text naming the scanner in the update dialog's own words; patience is 90 s per round;
+then a dialog offers „Weiter warten" (a full fresh round) and „Beenden". Reinstall is mentioned
+only from the third question (~4½ minutes), led by restarting the machine, and with the true
+promise „deine Daten bleiben dabei erhalten" (`deleteAppDataOnUninstall` is not set). Every
+slow start writes `server-slow*` lines into the WP-69 app log; a fast start writes and shows
+nothing — the fast path is pixel-identical to the #144 choreography.
+
+The status is a fully self-contained `data:` URL loaded into the *same* window — no script, no
+fetchable reference (the server it would fetch from is the thing being waited for), the same
+`#f6f6f4`, a proper `<title>`. Not a new window and not a spinner, deliberately: the original
+complaint was „irgendwas ploppt auf", and calm text beats theatrics on a machine that is busy.
+Do not re-propose shrinking the patience, re-adding reinstall advice to the first failure, or a
+loading animation here. One named residual is accepted: on a machine slow enough that the
+status page's own first paint takes >3 s, the app's later load can surface a spurious
+„Die Oberfläche konnte nicht geladen werden" over a working app (electron#17526) — bounded,
+non-fatal, and recognisable in a report by `server-slow` lines preceding it.
