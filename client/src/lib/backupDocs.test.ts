@@ -27,6 +27,7 @@ const OPTS: ReadmeOptions = {
   keep: 30,
   pointsDir: 'backups',
   preImportDir: 'pre-import',
+  hasPreImportFolder: true,
   hasLegacyFlatFiles: false,
 };
 
@@ -99,6 +100,26 @@ describe.each(PLATFORMS)('readmeText — %s', (platform) => {
   it('mentions the flat legacy files only when there are some', () => {
     expect(text).not.toContain('auftakt-<Zeitstempel>.db');
     expect(readmeText({ ...opts, hasLegacyFlatFiles: true })).toContain('auftakt-<Zeitstempel>.db');
+  });
+
+  /**
+   * The same rule one folder over (WP-70, F8), and the audited installation was in the state the
+   * second half asserts: no import had ever run, so there was no `pre-import/` — and the README
+   * named one twice anyway, on the day the reader has nothing else left. Both mentions are
+   * covered by one `not.toContain`, since the name appears nowhere else in the file; the flat
+   * files are switched ON for it, because that paragraph is where the second mention lives.
+   */
+  it('names the pre-import folder only when there is one', () => {
+    expect(text).toContain(opts.preImportDir);
+    const none = readmeText({ ...opts, hasPreImportFolder: false, hasLegacyFlatFiles: true });
+    expect(none).not.toContain(opts.preImportDir);
+    // What must survive the deletion: the promise that an import backs the old state up first.
+    expect(none).toContain('legt vorher selbst ein Backup');
+    // …and the flat-files paragraph's ON branch must really render, not just the folder list:
+    // a ternary broken to always-off would stay green in every other assertion here and in
+    // check:backup, whose includes('pre-import') the folder-list entry already satisfies.
+    const both = readmeText({ ...opts, hasPreImportFolder: true, hasLegacyFlatFiles: true });
+    expect(both).toContain(`im Ordner „${opts.preImportDir}“ ab.`);
   });
 });
 

@@ -204,6 +204,14 @@ function windowsDoc(name, path) {
 const readme = windowsDoc('README.txt', join(backupDir, 'README.txt'));
 check('README explains the restore (data dir + the -wal trap)', /%APPDATA%/.test(readme) && /-wal/.test(readme));
 check('README does not mention flat backups it has none of', !readme.includes('auftakt-<Zeitstempel>.db'));
+// The same rule one folder over (WP-70, F8), and the state a real installation was audited in:
+// nothing has imported yet, so there is no pre-import/ — and a README that names one sends the
+// reader looking for a folder that is not there, on the day his data is gone. The premise is
+// asserted alongside the text, so this can never pass because the fixture stopped producing it.
+check(
+  'README does not name a pre-import folder it has none of',
+  !existsSync(join(backupDir, 'pre-import')) && !readme.includes('pre-import'),
+);
 // Since WP-68 step 5 names the data directory outright instead of describing where it usually
 // lives. It is the one line the reader has to act on with no app in front of him, and a wrong
 // path there sends him somewhere real and empty. Only *this* machine's rendering is reachable
@@ -528,11 +536,17 @@ check(
   'a migrated restore point arrives with its contents',
   existsSync(join(backupDir, 'backups', 'auftakt-2020-01-33-00-00-00', 'seasons.json')),
 );
-// The README is regenerated on every run, and now there IS a flat backup to explain.
-check(
-  'the README explains the flat backups once they exist',
-  readFileSync(join(backupDir, 'README.txt'), 'utf8').includes('auftakt-<Zeitstempel>.db'),
-);
+// The README is regenerated on every run, and by now there IS a flat backup to explain — and,
+// since the import far above, a pre-import/ folder to name. The other half of the F8 pair: the
+// two conditionals have to switch on, not merely stay off.
+{
+  const rewritten = readFileSync(join(backupDir, 'README.txt'), 'utf8');
+  check('the README explains the flat backups once they exist', rewritten.includes('auftakt-<Zeitstempel>.db'));
+  check(
+    'the README names the pre-import folder once it exists',
+    existsSync(join(backupDir, 'pre-import')) && rewritten.includes('pre-import'),
+  );
+}
 
 /* ---------- the WP-39 adoption migration, without a server ---------- */
 
