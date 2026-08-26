@@ -61,7 +61,7 @@ const HEX_COLOR = /^#?(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
  * invalid CSS declaration: no fallback, nothing painted. Guarding the render path row by row
  * chases the symptom; the value should never reach storage.
  *
- * Server-side, so it holds for the Notion importer and any future API caller too — neither goes
+ * Server-side, so it holds for any programmatic or future API caller too — none of those go
  * through the client's colour picker. Empty and null stay legal: that is how a colour is cleared.
  *
  * Deliberately not retroactive. Existing rows may already hold a bad value (a CSV cell reading

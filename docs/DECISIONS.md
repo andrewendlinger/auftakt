@@ -3125,3 +3125,25 @@ between them so nothing else in this program can run in the gap, and the whole b
 at the new location it is to be dismissed again, with this paragraph as the reason. **Revisit if
 `appendAndRotate` ever gains a writer outside this process** — a helper process, a worker, or a
 server that has left main — which is the same condition the original entry named.
+
+## The Notion importer is retired (2026-08-26)
+
+The importer under `server/src/notion/` — gitignored from the start because it documented a third
+party's internal template — was a one-off onboarding tool: it built the season databases for the
+one migration that needed it, and that migration is done. It is retired outright rather than kept
+"just in case", for a reason a repo-wide convention audit put its finger on: it was the only code
+allowed to bypass the API transforms (raw SQL — `migrateFlattenDeepSubtasks` exists to repair its
+output), and it coupled silently to three `db.ts` exports (`getDb`, `setSetting`,
+`setActiveSeasonLabel`) via a dynamic `await import('../db')` with nothing but one machine's
+local typecheck guarding the seam — a dependency no fresh clone and no CI could even see, since
+the file sits inside `server/tsconfig.json`'s `include` but not in the repository. Untracked code
+with a hard dependency on tracked internals either becomes tracked or goes; it goes.
+
+The code and its skill move to the `auftakt-private` archive before local deletion — the same
+mirror-first rule that repo's own near-deletion taught (2026-08-09). The ignore rules stay, in
+past tense, so a copy restored from a backup can never be committed: the `/review/` reasoning.
+Comments that named the importer as a live headerless caller (`db.ts`, `index.ts`,
+`seasonContext.ts`, `crud.ts`, ARCHITECTURE.md) now list only seed/demo and the check scripts —
+and `setActiveSeasonLabel`'s name is no longer frozen by an importer that cannot be refactored
+against. References to the *data shapes* a Notion export left behind stay where they are: that
+text is in customer databases and the sanitizer still has to expect it.

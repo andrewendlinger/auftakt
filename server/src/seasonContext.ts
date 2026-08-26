@@ -6,7 +6,7 @@ import type { Season } from './db';
  * them) stay season-blind. better-sqlite3 is synchronous, so a request's DB work happens
  * inside its own continuation and cannot interleave with another request's; the store also
  * survives `await`s in async handlers. Anything running OUTSIDE a request — the boot warm,
- * seed/demo, the check scripts' in-process calls, the Notion importer — has no store and
+ * seed/demo, the check scripts' in-process calls — has no store and
  * deliberately resolves the registry default.
  *
  * The store holds the resolved registry row, not just the id: the /api middleware already

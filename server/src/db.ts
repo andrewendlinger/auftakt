@@ -242,7 +242,7 @@ function activeSeason(reg: Registry = readRegistry()): Season {
 
 /**
  * The registry row the request's season context resolves to; headerless callers (Electron
- * main, check scripts, seed/demo, the Notion importer) get the default. Throws for a context
+ * main, check scripts, seed/demo) get the default. Throws for a context
  * id whose season vanished mid-request: failing beats silently routing the caller's write
  * into the default season's file.
  */
@@ -743,9 +743,8 @@ export function deleteSeason(id: number): void {
 /**
  * Keep the current season's registry label in sync with the in-DB `saison` setting.
  * Context-aware like getDb(): a settings PATCH from a pinned window relabels that window's
- * season, not the default's. Headerless callers (demo, the Notion importer) keep the
- * default-season semantics the name was coined for — the export name stays because
- * gitignored local code imports it.
+ * season, not the default's. Headerless callers (demo) keep the
+ * default-season semantics the name was coined for.
  */
 export function setActiveSeasonLabel(label: string): void {
   const reg = readRegistry();
@@ -1658,7 +1657,7 @@ export function getDb(): Database.Database {
   // and explicitly not for an import — see skipPurgeOnOpen; `delete` is the consume, and
   // short-circuit keeps it to the opens that would actually sweep). Gated on the
   // AsyncLocalStorage store, not on getDb() itself: in-process programmatic opens
-  // (seed/demo, check scripts, the Notion importer) must stay non-destructive —
+  // (seed/demo, check scripts) must stay non-destructive —
   // check-dates' migration harness re-opens planted expired fixtures expecting them
   // converted, not purged. After initDb, so legacy stamps are local before the cutoff
   // comparison; never fatal, same rationale as the boot call.

@@ -34,7 +34,7 @@ const PORT = Number(process.env.AUFTAKT_PORT ?? 4317);
 // getDb() sweeps every other season on its first request-context open in this process
 // (PR50-07) — before that, a season worked in from a pinned window never purged at all.
 // The line is drawn at the AsyncLocalStorage store, not the HTTP header: in-process
-// programmatic opens (seed/demo, the check scripts, the Notion importer) never sweep,
+// programmatic opens (seed/demo, the check scripts) never sweep,
 // which is what keeps check-dates' migration harness valid — it plants expired
 // soft-deleted fixtures and re-opens the file expecting them converted, not purged. The
 // open-time sweep's cost lands on the first request a window sends to a freshly pinned

@@ -23,15 +23,16 @@ client/dist/
 # just its output. Rebuild with `npm run demo:seed`.
 .demo/
 
-# the Notion importer — a one-off onboarding tool, kept locally but not published. It
-# documents a third party's internal template, which is theirs rather than ours. Run it
-# with:
-#   cd server && npx tsx src/notion/import.ts <export-dir> [ziel-verzeichnis]
+# the Notion importer — a one-off onboarding tool that was never published (it documented a
+# third party's internal template, which is theirs rather than ours) and was retired on
+# 2026-08-26 after the one migration it existed for (docs/DECISIONS.md). The rule stays so a
+# copy restored from a backup can never be committed — the same reasoning as /review/ below.
 /server/src/notion/
 
-# output of the Notion importer — season databases built from a user's Notion export,
+# output of the retired Notion importer — season databases built from a user's Notion export,
 # so they hold the same real names, addresses and notes that `files/` does. Globbed: one
-# output directory per season (.notion-import, .notion-import-2027, …).
+# output directory per season (.notion-import, .notion-import-2027, …). Kept defensively,
+# like the rule above.
 .notion-import*/
 
 # real import data: the CSVs hold real names, e-mail addresses and internal
