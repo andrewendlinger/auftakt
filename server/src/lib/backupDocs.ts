@@ -83,7 +83,7 @@ export function germanStamp(d: Date): string {
 /**
  * The app version for the manifest. Electron pins it into the environment before importing the
  * bundled server (electron/main.ts), which is the only place that knows it: server/package.json
- * carries its own version and the root one is not readable from the packed bundle.
+ * deliberately carries no version and the root one is not readable from the packed bundle.
  */
 export function appVersion(): string {
   return process.env.AUFTAKT_APP_VERSION?.trim() || 'unbekannt';

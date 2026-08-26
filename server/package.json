@@ -1,7 +1,6 @@
 {
   "name": "auftakt-server",
   "private": true,
-  "version": "0.5.0",
   "description": "Auftakt backend — Express + better-sqlite3, one SQLite file per season",
   "author": "Andre Wendlinger",
   "license": "SEE LICENSE IN LICENSE.md",
