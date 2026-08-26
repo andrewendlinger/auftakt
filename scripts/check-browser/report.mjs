@@ -3,8 +3,8 @@
  * same totals.
  *
  * ES modules are singletons, so `check` imported from fifteen scenario files is one closure over
- * one counter — which is the whole reason the split below could keep „✓ alles ok (627 Prüfungen)"
- * meaning what it meant when all 627 sat in one file.
+ * one counter — which is the whole reason the split below could keep „✓ alles ok (… Prüfungen)"
+ * meaning what it meant when every assertion — 627 on the day of the split — sat in one file.
  */
 import { createCheck } from '../lib/check.mjs';
 
