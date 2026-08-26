@@ -160,6 +160,30 @@ export const gone = (locator, timeout = 10_000) =>
     .catch(() => false);
 
 /**
+ * Wait until the `scroll` events the page has queued have actually been **delivered**.
+ *
+ * A scroll is performed synchronously; its event is not. Chromium dispatches it in the next
+ * „update the rendering" step, and nothing on the driving side waits for that: neither
+ * `scrollIntoViewIfNeeded()` nor `click()`, which runs its own `scrollRectIntoViewIfNeeded`
+ * *after* the visible/stable/enabled wait and dispatches the mouse events with no frame in
+ * between. `useAnchoredPopover` closes on any scroll outside its menu, so a popover opened in that
+ * window is shut one frame later by the scroll that opened it — the run then reads „the menu does
+ * not open", or „the entry is not there", or „the entry would not be clicked", depending only on
+ * which wait was in flight (docs/VERIFYING.md, #155).
+ *
+ * Two `requestAnimationFrame`s: a frame's scroll steps run *before* its animation-frame callbacks,
+ * so one already proves delivery and the second is the margin. Bounded and swallowed like
+ * everything else here — a page whose frames have stopped must redden a line, never hang the run.
+ */
+export const scrollSettled = (page, timeout = 2000) =>
+  Promise.race([
+    page
+      .evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))))
+      .catch(() => false),
+    sleep(timeout).then(() => false),
+  ]);
+
+/**
  * Click something a broken build may simply not have.
  *
  * Every button a case addresses is one a reverted fix can delete, and an unguarded `click()` on a
@@ -321,6 +345,24 @@ export function moveTo(ids, from, to) {
  * fallback is the one path here that cannot fail: see there.
  */
 export let reloadedSurfaces = 0;
+
+/**
+ * How often a popover had to be opened a second time, because the scroll its own click performed
+ * shut it again (#155, `scrollSettled` above).
+ *
+ * Counted and printed with the summary for the reason `reloadedSurfaces` is: the retry is *right* —
+ * the menu really was closed by a scroll the driver caused, and the second gesture finds the row
+ * where the first left it — but a green run that reached green by racing is not the same run as one
+ * that never raced, and a ⚠ six hundred lines up is not something anybody reads. The number belongs
+ * on the last line, beside the total.
+ */
+export let reopenedPopovers = 0;
+
+/** Count one such retry and say so where it happens. The case owning the gesture calls it. */
+export const notePopoverReopened = (what, attempt, of) => {
+  reopenedPopovers++;
+  console.log(`  ⚠     das Menü der Pille „${what}“ ging beim Öffnen wieder zu (Versuch ${attempt}/${of}, #155)`);
+};
 
 /**
  * Wait for an editing surface to leave the screen, and if it will not, reload the page.

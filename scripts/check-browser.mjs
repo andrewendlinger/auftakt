@@ -52,7 +52,7 @@ import { requireFreePorts } from './lib/ports.mjs';
 import { FIXTURE, PORT, RUN } from './check-browser/config.mjs';
 import { check, count, pin } from './check-browser/report.mjs';
 import { api, assertDemo, scoped, send, shutdown, stackLog, startStack, waitForStack } from './check-browser/stack.mjs';
-import { launch, reloadedSurfaces } from './check-browser/browser.mjs';
+import { launch, reloadedSurfaces, reopenedPopovers } from './check-browser/browser.mjs';
 import { runSeasons } from './check-browser/cases/seasons.mjs';
 import { runTasks } from './check-browser/cases/tasks.mjs';
 import { runRecords } from './check-browser/cases/records.mjs';
@@ -327,6 +327,9 @@ try {
     `\n${count.failures ? `✗ ${count.failures} Fehler` : '✓ alles ok'} (${count.checks} Prüfungen)` +
       (reloadedSurfaces
         ? ` — ${reloadedSurfaces}× neu geladen, weil ein Editor nicht zuging (siehe ⚠ oben)`
+        : '') +
+      (reopenedPopovers
+        ? ` — ${reopenedPopovers}× ein Pillenmenü erneut geöffnet, weil ein Scroll es zuschlug (siehe ⚠ oben)`
         : ''),
   );
 } catch (err) {
