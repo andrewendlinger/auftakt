@@ -79,7 +79,7 @@ against a per-season connection pool.
 
 The rule that keeps this invisible: **handlers never pass season ids around.** `getDb()` is
 season-aware through the request context; anything running outside a request — the boot warm,
-seed/demo, the check scripts' in-process calls, the Notion importer — deliberately gets the
+seed/demo, the check scripts' in-process calls — deliberately gets the
 default. Never capture `getDb()`'s return across requests (the boot warm in `index.ts` is the
 sole deliberate exception). The check scripts' `activateSeason(id)` → `getDb()` pattern is a
 compatibility constraint: headerless resolution re-reads the registry per call, so do not cache
@@ -286,7 +286,7 @@ Every table has `deleted_at`; deletes are soft, lists filter `deleted_at IS NULL
 `purgeExpired()` hard-deletes after `PURGE_AFTER_DAYS` (30) — at server startup for the default
 season, and when a request opens any season whose handle is not yet pooled (`getDb()`'s pool-miss
 path, so the default sweeps again too whenever its handle was evicted). Two opens are exempt:
-in-process programmatic ones (seed/demo, check scripts, the Notion importer), and the first one
+in-process programmatic ones (seed/demo, check scripts), and the first one
 after an import — a restored backup's trash is usually what the import was *for*. On the client,
 deletes go through `useUndoableDelete()` so every deletion surfaces an undo toast backed by the
 `/restore` endpoint — keep new delete affordances on that path.
@@ -345,8 +345,9 @@ client mirror, used for the counts the dialogs promise. **Keep the two in step.*
 into a general batch API.
 
 The subtask tree is at most two levels. The tasks transform enforces it on the API and
-`migrateFlattenDeepSubtasks` repairs anything that arrived another way (a local one-off Notion
-importer, not part of this repo, writes rows with raw SQL and bypasses the transform).
+`migrateFlattenDeepSubtasks` repairs anything that arrived another way (the retired local Notion
+importer, never part of this repo, wrote rows with raw SQL and bypassed the transform — its
+output is still out there in customer databases).
 
 **The tree becomes rows in `client/src/lib/taskRows.ts`.** `buildTaskRows` flattens the sorted
 top-level list plus the per-parent child lists depth-first into `TaskRow`s carrying `depth`,
