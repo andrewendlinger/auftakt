@@ -1,44 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import {
-  FEEDBACK_FIELD_MAX,
-  FEEDBACK_KINDS,
+  FEEDBACK_NOTE_MAX,
+  FEEDBACK_NO_NOTE,
   FEEDBACK_TO,
   MAILTO_MAX_CHARS,
   feedbackBody,
-  feedbackHeadroom,
-  feedbackMailBody,
   feedbackMailto,
   feedbackRef,
+  feedbackReport,
   feedbackSubject,
-  fitFeedbackAnswer,
-  requiredField,
   type FeedbackContext,
-  type FeedbackDraft,
 } from './feedbackMail';
 
 /**
- * This composes the one artefact that leaves the app carrying diagnostics, into a URL
- * scheme with a hard length limit and an encoding that is easy to get subtly wrong. Both
- * failures are silent in exactly the situation the feature exists for: a mail client
- * truncates an over-long `mailto:` without saying so, and a mis-encoded `+` or umlaut
- * reaches the maintainer as a mangled report from someone who cannot try again.
+ * Two texts leave the app when somebody reports something: the „Meldung" of the file on the
+ * desktop, and the optional `mailto:`. The second one is a URL scheme with a hard length limit
+ * and an encoding that is easy to get subtly wrong, and both failures are silent in exactly the
+ * situation the feature exists for — a client truncates an over-long `mailto:` without saying
+ * so, and a mis-encoded `+` or umlaut reaches the maintainer as a mangled report from someone
+ * who cannot try again.
  */
 
-const DRAFT: FeedbackDraft = {
-  kind: 'bug',
-  area: 'Künstler',
-  answers: {
-    happened: 'Nichts — die Seite blieb leer.',
-    did: 'Auf „Künstler & Projekte" geklickt.',
-    expected: 'Die Liste hätte erscheinen sollen.',
-  },
-};
-
-const WISH: FeedbackDraft = {
-  kind: 'wish',
-  area: 'Termine',
-  answers: { want: 'Die Liste nach Land sortieren.', today: 'Ich sortiere in Excel.' },
-};
+const NOTE = 'Nichts — die Seite blieb leer.';
 
 const CTX: FeedbackContext = {
   ref: 'AF-2608141542',
@@ -52,10 +35,19 @@ const CTX: FeedbackContext = {
   attachment: '',
 };
 
+const FILE = 'Auftakt-Diagnose-AF-2608141542.txt';
+const ATTACHED: FeedbackContext = { ...CTX, attachment: FILE };
+
 const summaryOf = (n: number) =>
   ['Startdiagnose — Einträge:', ...Array.from({ length: n }, (_, i) => `Zeile ${i} `.repeat(8))].join(
     '\n',
   );
+
+/** Six umlauts per 71 characters — a sentence out of a real report, not a stress fixture. */
+const german = 'Die Übersicht für Künstler öffnete sich nicht, obwohl Termine da wären. '.repeat(40);
+
+const bodyOf = (note: string, ctx: FeedbackContext) =>
+  new URL(feedbackMailto(note, ctx)).searchParams.get('body') ?? '';
 
 describe('feedbackRef', () => {
   it('stamps minute resolution in local time', () => {
@@ -76,94 +68,84 @@ describe('feedbackRef', () => {
   });
 });
 
-describe('FEEDBACK_KINDS', () => {
-  it('gives every kind exactly one required field', () => {
-    for (const kind of ['bug', 'wish'] as const) {
-      const required = FEEDBACK_KINDS[kind].fields.filter((f) => f.required);
-      expect(required).toHaveLength(1);
-      expect(requiredField(kind).key).toBe(required[0]?.key);
-    }
+describe('feedbackReport', () => {
+  it('is the note and nothing else — the bundle writes everything around it', () => {
+    // No reference, no machine line, no attach instruction: `buildDiagnosticsBundle` already
+    // heads the file with all three, and a file telling its reader to attach that same file is
+    // nonsense. Trimmed, so a stray newline does not decide whether a report counts as empty.
+    expect(feedbackReport(`  ${NOTE}\n`)).toBe(NOTE);
   });
 
-  it('carries a wish without startup timings', () => {
-    // Not cosmetic: it is what frees the budget the three fields then get to use.
-    expect(FEEDBACK_KINDS.bug.diagnostics).toBe(true);
-    expect(FEEDBACK_KINDS.wish.diagnostics).toBe(false);
+  it('says so when nobody wrote anything, rather than leaving „Meldung" empty', () => {
+    // The default case since WP-75: one click, no typing. An empty section where the person's
+    // own words go reads as a file that lost them.
+    expect(feedbackReport('')).toBe(FEEDBACK_NO_NOTE);
+    expect(feedbackReport('   \n  ')).toBe(FEEDBACK_NO_NOTE);
+    expect(FEEDBACK_NO_NOTE).toContain('Ohne eigenen Text gespeichert');
+  });
+
+  it('depends on the note alone, because the dialog remembers bundles under it', () => {
+    // The map from report text → the name main wrote is what stops „Text ergänzen" and an
+    // unchanged text from writing a second file. A stamp or a clock in here would make every
+    // lookup a miss.
+    expect(feedbackReport(NOTE)).toBe(feedbackReport(NOTE));
+    expect(feedbackReport('')).toBe(feedbackReport(' '));
   });
 });
 
 describe('feedbackSubject', () => {
-  it('carries the reference, the kind, the area and the version', () => {
-    expect(feedbackSubject(DRAFT, CTX)).toBe(
-      '[AF-2608141542] Auftakt-Fehler: Künstler (v0.9.0)',
-    );
-    expect(feedbackSubject(WISH, CTX)).toBe('[AF-2608141542] Auftakt-Wunsch: Termine (v0.9.0)');
+  it('carries the reference and the version', () => {
+    expect(feedbackSubject(CTX)).toBe('[AF-2608141542] Auftakt-Feedback (v0.9.0)');
   });
 
   it('drops what it has no value for rather than printing an empty bracket', () => {
-    expect(feedbackSubject(DRAFT, { ...CTX, version: '', ref: '' })).toBe(
-      'Auftakt-Fehler: Künstler',
-    );
+    expect(feedbackSubject({ ...CTX, version: '', ref: '' })).toBe('Auftakt-Feedback');
   });
 });
 
 describe('feedbackBody', () => {
   it('puts the person first and the machine under its own heading', () => {
-    const body = feedbackBody(DRAFT, CTX);
-    expect(body.indexOf('Nichts — die Seite blieb leer.')).toBeLessThan(
-      body.indexOf('--- Technische Angaben'),
-    );
-    // Kind, area and reference read as a filing stamp, so they sit with the machine rather
-    // than above what the person wrote — the subject carries the same three.
-    expect(body).toContain('Fehler · Künstler · Kennung: AF-2608141542');
-    expect(body.indexOf('Fehler · Künstler')).toBeGreaterThan(body.indexOf('--- Was passiert ist'));
+    const body = feedbackBody(NOTE, CTX);
+    expect(body.indexOf(NOTE)).toBeLessThan(body.indexOf('--- Technische Angaben'));
+    expect(body).toContain('--- Meldung');
+    expect(body).toContain('Kennung: AF-2608141542');
     expect(body).toContain('Startdiagnose — 2 Einträge');
   });
 
-  it('heads each answer with the kind it was asked under', () => {
-    expect(feedbackBody(DRAFT, CTX)).toContain('--- Was passiert ist');
-    // The same three text boxes, a different report — the wish must not inherit bug wording.
-    const wish = feedbackBody(WISH, CTX);
-    expect(wish).toContain('--- Was ich tun können möchte');
-    expect(wish).not.toContain('Was passiert ist');
+  it('omits the heading rather than mailing an empty one', () => {
+    // The one-click case: nothing typed, so the mail is the attach line and the machine. The
+    // file's own „Meldung" says why it is empty; the mail has no room to say it twice.
+    const body = feedbackBody('   ', ATTACHED);
+    expect(body).not.toContain('--- Meldung');
+    expect(body.startsWith('!! BITTE NOCH ANHÄNGEN')).toBe(true);
   });
 
   it('lets the machine line stand in for the platform rather than repeat it', () => {
     // „Auftakt 0.9.0 · Windows · Windows 11" is what naming both would produce.
-    expect(feedbackBody(DRAFT, CTX)).toContain('Auftakt 0.9.0 · macOS 15.6 · 1728×1117 @2×');
-    expect(feedbackBody(DRAFT, { ...CTX, system: '' })).toContain('Auftakt 0.9.0 · macOS');
-  });
-
-  it('omits a heading whose field is empty rather than mailing a blank one', () => {
-    const body = feedbackBody({ ...DRAFT, answers: { happened: 'Leer.', did: '', expected: '  ' } }, CTX);
-    expect(body).not.toContain('Was ich davor gemacht habe');
-    expect(body).not.toContain('Was ich erwartet hätte');
-    expect(body).toContain('Was passiert ist');
+    expect(feedbackBody(NOTE, CTX)).toContain('Auftakt 0.9.0 · macOS 15.6 · 1728×1117 @2×');
+    expect(feedbackBody(NOTE, { ...CTX, system: '' })).toContain('Auftakt 0.9.0 · macOS');
   });
 
   it('tells the reader to attach the file, above what they wrote', () => {
     // The instruction is for the customer, not the maintainer, so it has to be where a mail
     // client opens — the top — not under a „Technische Angaben" rule they will never scroll to.
-    const withFile = feedbackBody(DRAFT, { ...CTX, attachment: 'Auftakt-Diagnose-AF-2608141542.txt' });
-    expect(withFile).toContain('!! BITTE NOCH ANHÄNGEN: Auftakt-Diagnose-AF-2608141542.txt');
+    const withFile = feedbackBody(NOTE, ATTACHED);
+    expect(withFile.startsWith(`!! BITTE NOCH ANHÄNGEN: ${FILE}`)).toBe(true);
     expect(withFile).toContain('liegt auf deinem Schreibtisch');
-    // The very first line, not merely an early one: a mail client opens on line 1.
-    expect(withFile.startsWith('!! BITTE NOCH ANHÄNGEN')).toBe(true);
     // Promising an attachment the browser build never wrote is worse than offering none.
-    expect(feedbackBody(DRAFT, CTX)).not.toMatch(/anhängen/i);
+    expect(feedbackBody(NOTE, CTX)).not.toMatch(/anhängen/i);
   });
 
   it('sends the summary or the file, never both', () => {
     // The file holds the whole log; the summary is five folded lines of the same thing, and
     // the budget it costs is the person's to spend on words.
-    const withFile = feedbackBody(DRAFT, { ...CTX, attachment: 'Auftakt-Diagnose-AF-2608141542.txt' });
-    expect(withFile).not.toContain('Startdiagnose');
-    expect(feedbackBody(DRAFT, CTX)).toContain('Startdiagnose — 2 Einträge');
+    expect(feedbackBody(NOTE, ATTACHED)).not.toContain('Startdiagnose');
+    expect(feedbackBody(NOTE, CTX)).toContain('Startdiagnose — 2 Einträge');
   });
 
   it('drops the technical lines it has no values for', () => {
     // The browser-dev shape: no bridge, so no version, no platform, no diagnostics.
-    const bare = feedbackBody(DRAFT, {
+    const bare = feedbackBody(NOTE, {
       ref: '',
       version: '',
       platform: '',
@@ -183,217 +165,69 @@ describe('feedbackMailto', () => {
     // `+` is in the fixture on purpose: searchParams decodes `+` as a space, so this passes
     // only because encodeURIComponent writes it as %2B. `&`, `#` and the newlines are the
     // other three ways a hand-rolled query string quietly loses half the report.
-    const tricky = {
-      ...DRAFT,
-      answers: { ...DRAFT.answers, happened: 'a & b\nc # d\n1 + 1\n"Zitat" mit Ümläuten' },
-    };
+    const tricky = 'a & b\nc # d\n1 + 1\n"Zitat" mit Ümläuten';
     const u = new URL(feedbackMailto(tricky, CTX));
     expect(u.protocol).toBe('mailto:');
     expect(u.pathname).toBe(FEEDBACK_TO);
-    expect(u.searchParams.get('subject')).toBe(feedbackSubject(tricky, CTX));
+    expect(u.searchParams.get('subject')).toBe(feedbackSubject(CTX));
     expect(u.searchParams.get('body')).toBe(feedbackBody(tricky, CTX));
   });
 
   it('leaves a mail that already fits completely alone', () => {
-    expect(feedbackMailto(DRAFT, CTX)).toBe(
-      `mailto:${FEEDBACK_TO}?subject=${encodeURIComponent(feedbackSubject(DRAFT, CTX))}` +
-        `&body=${encodeURIComponent(feedbackBody(DRAFT, CTX))}`,
+    expect(feedbackMailto(NOTE, CTX)).toBe(
+      `mailto:${FEEDBACK_TO}?subject=${encodeURIComponent(feedbackSubject(CTX))}` +
+        `&body=${encodeURIComponent(feedbackBody(NOTE, CTX))}`,
     );
   });
 
-  it('drops diagnostic entries oldest first, keeping the newest boot', () => {
-    const ctx = { ...CTX, diagnostics: summaryOf(20) };
-    const body = new URL(feedbackMailto(DRAFT, ctx)).searchParams.get('body') ?? '';
-    expect(body).toContain('Startdiagnose — Einträge:');
-    // The last boot is the one that prompted the report, so it must outlive the rest.
-    expect(body).toContain('Zeile 19');
-    expect(body).not.toContain('Zeile 0 ');
-  });
-
-  it('spends the whole block rather than the words, when nothing was attached', () => {
-    // There is nowhere to redirect the reader to — the file that would have carried it is the
-    // one that could not be written — so it goes, and what they typed stays.
-    const ctx = { ...CTX, diagnostics: 'Startdiagnose:\n' + 'ü'.repeat(4000) };
-    const body = new URL(feedbackMailto(DRAFT, ctx)).searchParams.get('body') ?? '';
+  it('spends the machine before a word the person wrote', () => {
+    // There is nowhere to redirect the reader to — the file that would have carried the log is
+    // the one that could not be written — so the digest goes, and what they typed stays.
+    const body = bodyOf(NOTE, { ...CTX, diagnostics: summaryOf(100) });
     expect(body).not.toContain('Startdiagnose');
     expect(body).toContain('Kennung: AF-2608141542');
-    expect(body).toContain('Nichts — die Seite blieb leer.');
+    expect(body).toContain(NOTE);
   });
 
   it('never spends the attachment line, which is the one that matters', () => {
     // The line naming the file survives every rung: without it the person is holding a file
     // nothing asked them for, and no other line in the mail can replace it.
-    const ctx = {
-      ...CTX,
-      diagnostics: summaryOf(100),
-      attachment: 'Auftakt-Diagnose-AF-2608141542.txt',
-    };
-    const fat = { ...DRAFT, answers: { happened: 'ö'.repeat(5000), did: 'ä'.repeat(5000) } };
-    const body = new URL(feedbackMailto(fat, ctx)).searchParams.get('body') ?? '';
-    expect(body).toContain('!! BITTE NOCH ANHÄNGEN: Auftakt-Diagnose-AF-2608141542.txt');
+    const body = bodyOf(german, { ...ATTACHED, diagnostics: summaryOf(100) });
+    expect(body.startsWith(`!! BITTE NOCH ANHÄNGEN: ${FILE}`)).toBe(true);
   });
 
-  it('marks the cut when even the text has to go', () => {
-    const fat = { ...DRAFT, answers: { ...DRAFT.answers, happened: 'ä'.repeat(FEEDBACK_FIELD_MAX * 4) } };
-    const body = new URL(feedbackMailto(fat, CTX)).searchParams.get('body') ?? '';
+  it('marks the cut when even the note has to go', () => {
+    // A note the size of the box is longer than a `mailto:` can carry, deliberately: the cap
+    // is sized against the file. What the customer then sees in their compose window is a
+    // marked cut, not a sentence that stops — and the file has the whole of it.
+    const body = bodyOf(german.slice(0, FEEDBACK_NOTE_MAX), ATTACHED);
     expect(body).toContain('[…]');
+    expect(body).toContain('--- Meldung');
+  });
+
+  it('lets a report-sized note through beside the attachment instructions', () => {
+    // The shape the feature is actually used in: a couple of sentences, a file, and the two
+    // lines telling the reader to attach it. Nothing here may be cut.
+    const said = german.slice(0, 300);
+    const body = bodyOf(said, ATTACHED);
+    expect(body).not.toContain('[…]');
+    expect(body).toContain(said.trimEnd());
   });
 
   it('never exceeds the budget, whatever it is handed', () => {
-    const attached = 'Auftakt-Diagnose-AF-2608141542.txt';
-    const cases: [FeedbackDraft, FeedbackContext][] = [
-      [DRAFT, CTX],
-      [WISH, CTX],
-      [DRAFT, { ...CTX, diagnostics: summaryOf(100) }],
-      [DRAFT, { ...CTX, diagnostics: summaryOf(100), attachment: attached }],
-      [
-        { ...DRAFT, answers: { happened: 'ö'.repeat(5000) } },
-        { ...CTX, diagnostics: summaryOf(100), attachment: attached },
-      ],
-      [{ kind: 'bug', area: 'Allgemein', answers: {} }, CTX],
+    const cases: [string, FeedbackContext][] = [
+      ['', CTX],
+      [NOTE, CTX],
+      [NOTE, ATTACHED],
+      [german, CTX],
+      [german, ATTACHED],
+      [german, { ...ATTACHED, diagnostics: summaryOf(100) }],
+      [german.repeat(10), { ...CTX, diagnostics: summaryOf(100) }],
+      ['ö'.repeat(5000), CTX],
+      ['', { ref: '', version: '', platform: '', system: '', diagnostics: '', attachment: '' }],
     ];
-    for (const [draft, ctx] of cases) {
-      expect(feedbackMailto(draft, ctx).length).toBeLessThanOrEqual(MAILTO_MAX_CHARS);
+    for (const [note, ctx] of cases) {
+      expect(feedbackMailto(note, ctx).length).toBeLessThanOrEqual(MAILTO_MAX_CHARS);
     }
-  });
-
-  // Prose, not 'ä'.repeat(): the cap is sized for what people write, and an all-umlaut field
-  // encodes to six times its length — that case is the ladder's job, asserted above.
-  const prose = 'Die Übersicht zeigte nichts an, obwohl Termine angelegt waren. '.repeat(20);
-  const one = prose.slice(0, FEEDBACK_FIELD_MAX);
-  const maxed: FeedbackDraft = {
-    kind: 'bug',
-    area: 'Allgemein',
-    answers: { happened: one, did: one, expected: one },
-  };
-
-  it('lets three full fields of ordinary German through beside a full summary', () => {
-    // The layout's own claim, in the shape where the mail is the only thing carrying
-    // diagnostics: no file was written, so the newest boot has to survive.
-    const body = new URL(feedbackMailto(maxed, { ...CTX, diagnostics: summaryOf(5) })).searchParams.get(
-      'body',
-    );
-    expect(body).not.toContain('[…]');
-    expect(body).toContain(one.trimEnd());
-    expect(body).toContain('Zeile 4');
-  });
-
-  it('fits three full fields beside the attachment instructions', () => {
-    // The tightest shape the feature can produce: a stamp line, a machine clause and the
-    // two-line attach instruction, with no diagnostic block left to spend — the file has it,
-    // so the person's own text is the only thing the ladder could still take. It must not.
-    //
-    // This case is the ceiling the whole layout is written against: 1873 encoded characters
-    // of 1900. It was 1897 before the head moved into the technical stamp, i.e. three to
-    // spare — so a copy edit up here is not free, and this is the assertion that says so.
-    const full = {
-      ...CTX,
-      diagnostics: summaryOf(5),
-      attachment: 'Auftakt-Diagnose-AF-2608141542.txt',
-    };
-    const body = new URL(feedbackMailto(maxed, full)).searchParams.get('body') ?? '';
-    expect(body).not.toContain('[…]');
-    expect(body).toContain(one.trimEnd());
-    expect(body).toContain('!! BITTE NOCH ANHÄNGEN: Auftakt-Diagnose-AF-2608141542.txt');
-  });
-});
-
-/**
- * The budget is in *encoded* characters and the dialog's `maxLength` is in typed ones, which
- * is why the cap alone was never the guarantee it was documented as: the prose above carries
- * one umlaut per 62 characters and lands at 1873 of 1900, so ordinary German — three to six
- * per line — walks straight through the cap and into the composer's last rung, where every
- * answer is halved. That is a customer's report arriving cut, discovered by the maintainer.
- * These three functions are what moved the enforcement into the box the person is typing in.
- */
-describe('the encoded budget, as the dialog spends it', () => {
-  const attached = { ...CTX, diagnostics: summaryOf(5), attachment: 'Auftakt-Diagnose-AF-2608141542.txt' };
-  // Six umlauts per 71 characters — a sentence out of a real report, not a stress fixture.
-  const german = 'Die Übersicht für Künstler öffnete sich nicht, obwohl Termine da wären. '.repeat(10);
-  const one = german.slice(0, FEEDBACK_FIELD_MAX);
-  const empty: FeedbackDraft = { kind: 'bug', area: 'Allgemein', answers: {} };
-
-  /** What the dialog does to a keystroke or a paste: put through the fit, then stored. */
-  const type = (d: FeedbackDraft, ctx: FeedbackContext, key: string, text: string) => ({
-    ...d,
-    answers: { ...d.answers, [key]: fitFeedbackAnswer(d, ctx, key, text) },
-  });
-
-  const typedOut = (ctx: FeedbackContext) =>
-    ['happened', 'did', 'expected'].reduce((d, key) => type(d, ctx, key, one), empty);
-
-  it('keeps ordinary German off the rung that cuts what the person wrote', () => {
-    const typed = typedOut(attached);
-    const body = feedbackMailBody(typed, attached);
-    expect(body).not.toContain('[…]');
-    expect(feedbackMailto(typed, attached).length).toBeLessThanOrEqual(MAILTO_MAX_CHARS);
-    // The cap on its own does not: the same three fields at `maxLength`, which is exactly what
-    // the dialog used to hand over, reach the rung and lose half of every answer.
-    const capped = { ...empty, answers: { happened: one, did: one, expected: one } };
-    expect(feedbackMailBody(capped, attached)).toContain('[…]');
-  });
-
-  it('spends the last field rather than the first, and only the overflow', () => {
-    const typed = typedOut(attached);
-    // First come, first served — the answer being typed is the one that runs out of room.
-    expect(typed.answers.happened).toBe(one);
-    expect(typed.answers.expected?.length).toBeGreaterThan(0);
-    expect(one.startsWith(typed.answers.expected ?? '')).toBe(true);
-  });
-
-  it('cuts an over-long paste rather than refusing it', () => {
-    // A refused paste leaves an empty box and no explanation; a cut one is in front of the
-    // person, where it can be edited. Nothing is ever appended to what they pasted, either.
-    const pasted = german.repeat(2);
-    const fitted = fitFeedbackAnswer(empty, attached, 'happened', pasted);
-    expect(fitted.length).toBeGreaterThan(100);
-    expect(fitted.length).toBeLessThan(pasted.length);
-    expect(pasted.startsWith(fitted)).toBe(true);
-    expect(fitted).not.toContain('[…]');
-  });
-
-  it('measures the headroom after the diagnostics, not before them', () => {
-    // 100 folded boot entries are far past the budget on their own, and they are spendable —
-    // so they must not read as "no room for a word", which is what a naive measurement says.
-    const fat = { ...CTX, diagnostics: summaryOf(100) };
-    expect(feedbackHeadroom(empty, fat)).toBeGreaterThan(0);
-    const typed = typedOut(fat);
-    expect(typed.answers.happened).toBe(one);
-    expect(feedbackMailBody(typed, fat)).not.toContain('[…]');
-  });
-
-  it('reports a headroom that runs out, so a full box can say so', () => {
-    const typed = typedOut(attached);
-    expect(feedbackHeadroom(typed, attached)).toBeGreaterThanOrEqual(0);
-    const over = { ...typed, answers: { ...typed.answers, expected: one } };
-    expect(feedbackHeadroom(over, attached)).toBeLessThan(0);
-  });
-});
-
-describe('feedbackMailBody', () => {
-  it('is what the URL carries, which is what „Was wird mitgeschickt?" shows', () => {
-    // The dialog previews this function and hands `feedbackMailto` to the mail client. If the
-    // two could differ, the preview would be of a mail nobody received — and they differ
-    // exactly where it matters, on the reports long enough for the ladder to bite.
-    const cases: [FeedbackDraft, FeedbackContext][] = [
-      [DRAFT, CTX],
-      [DRAFT, { ...CTX, diagnostics: summaryOf(100) }],
-      [{ ...DRAFT, answers: { happened: 'ö'.repeat(5000) } }, CTX],
-    ];
-    for (const [draft, ctx] of cases) {
-      expect(new URL(feedbackMailto(draft, ctx)).searchParams.get('body')).toBe(
-        feedbackMailBody(draft, ctx),
-      );
-    }
-  });
-
-  it('shows the trimmed diagnostic block rather than the one that was collected', () => {
-    const ctx = { ...CTX, diagnostics: summaryOf(20) };
-    const shown = feedbackMailBody(DRAFT, ctx);
-    expect(shown).toContain('Zeile 19');
-    expect(shown).not.toContain('Zeile 0 ');
-    // The untrimmed composition is what the preview used to show — 20 entries of a block the
-    // mail carries two of.
-    expect(feedbackBody(DRAFT, ctx)).toContain('Zeile 0 ');
   });
 });

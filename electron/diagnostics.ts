@@ -277,7 +277,12 @@ export interface BundleInput {
   ref: string;
   /** `localStamp()` — passed in, so this module stays pure and the tests can pin it. */
   at: string;
-  /** The mail body, verbatim: the file and the mail then say the same thing. */
+  /**
+   * What the person wrote, verbatim — or, when they wrote nothing, the renderer's stand-in
+   * saying so (`FEEDBACK_NO_NOTE`; the crash path passes `CRASH_REPORT_TEXT` for the same
+   * reason). Never the mail's own scaffolding: this file is what the mail attaches, so an
+   * attach instruction inside it would be telling its reader to attach itself.
+   */
   report: string;
   facts: SystemFacts;
   /**
@@ -328,8 +333,8 @@ export function buildDiagnosticsBundle(input: BundleInput): string {
     `Kennung:  ${ref}`,
     `Erstellt: ${at}`,
     '',
-    'Diese Datei gehört zur E-Mail mit derselben Kennung. Sie enthält keine Termine, Künstler,',
-    'Kontakte oder Notizen — nur Angaben zum Programm und zum Rechner, das Protokoll der letzten',
+    'Diese Datei gehört zur E-Mail mit derselben Kennung. Sie enthält keine privaten oder',
+    'vertraulichen Daten — nur Angaben zum Programm und zum Rechner, das Protokoll der letzten',
     'Programmstarts und die Fehler, die dem Programm zuletzt aufgefallen sind. Du kannst sie in',
     'Ruhe durchlesen, bevor du sie anhängst.',
     section('Meldung'),

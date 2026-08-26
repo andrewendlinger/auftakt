@@ -500,10 +500,10 @@ export function SettingsHelpTab() {
 }
 
 /**
- * „Feedback & Diagnose" — the entry point to the guided support mail (WP-54).
+ * „Feedback & Diagnose" — the entry point to the report on the desktop (WP-54, WP-75).
  *
- * Renders in the browser too, unlike its neighbour: `mailto:` works without a bridge, and
- * the dialog itself greys out only the parts that need one. A card that vanished in browser
+ * Renders in the browser too, unlike its neighbour: the address needs no bridge, and the
+ * dialog itself says which half it cannot do without one. A card that vanished in browser
  * mode would also be a card no driving script could ever see.
  */
 function FeedbackCard() {
@@ -519,12 +519,13 @@ function FeedbackCard() {
       >
         Feedback & Diagnose
       </SectionTitle>
-      {/* One sentence. The paragraph this replaces explained the diagnostics file, the review
-          step and whose mail client sends it — all true, all four lines long, and all said
-          again inside the dialog at the moment each one applies. Nobody reads the second
-          telling of something under a button they have not pressed yet. */}
+      {/* One sentence, and it has to be the one the dialog then keeps: this said „Auftakt
+          schreibt die E-Mail vor" while the dialog handed over a subject and a body to copy,
+          and since WP-75 it hands over a file and an address. A subtitle promising a different
+          flow from the one behind the button is how a customer decides not to press it. */}
       <p className="mt-1 text-xs text-neutral-400">
-        Etwas geht nicht oder fehlt? Auftakt schreibt die E-Mail vor.
+        Etwas geht nicht oder fehlt? Auftakt legt einen Bericht auf deinen Schreibtisch — den
+        schickst du uns per E-Mail.
       </p>
       {open && <FeedbackDialog onClose={() => setOpen(false)} />}
     </Card>

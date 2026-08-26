@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 // Reaches up into electron/, like appLog.test.ts: `check:unit` is the only automated run
 // that touches main-process code at all, and this module is written to be reachable from it.
-import { BUNDLE_TAIL_LINES } from '../../../electron/appLog';
+import { BOOT_REPORT_MAX_CHARS, BUNDLE_TAIL_LINES } from '../../../electron/appLog';
+import { FEEDBACK_NOTE_MAX } from './feedbackMail';
 import {
   buildDiagnosticsBundle,
   diagnosticsFileName,
@@ -13,7 +14,6 @@ import {
   uniqueBundleName,
   type SystemFacts,
 } from '../../../electron/diagnostics';
-import { diagnosticsFileName as predictedFileName } from './feedbackMail';
 
 /**
  * The bundle is what a `mailto:` cannot carry: the whole boot log and the machine's details,
@@ -64,6 +64,15 @@ const MAC: SystemFacts = {
   home: '/Users/marianne',
 };
 
+describe('the note cap and main\'s report cap', () => {
+  it('keeps the dialog\'s maxLength under what main will actually store', () => {
+    // `feedbackMail.ts` promises that a note the dialog accepts reaches the file untruncated;
+    // main slices the report at BOOT_REPORT_MAX_CHARS. The seam between the two constants used
+    // to be covered by the renderer-side filename test that WP-75 removed — this pins it.
+    expect(FEEDBACK_NOTE_MAX).toBeLessThanOrEqual(BOOT_REPORT_MAX_CHARS);
+  });
+});
+
 describe('isBundleRef', () => {
   it('accepts what the dialog produces', () => {
     expect(isBundleRef('AF-2608141542')).toBe(true);
@@ -93,18 +102,17 @@ describe('isBundleRef', () => {
   });
 });
 
+/**
+ * Naming the file is main's alone, and it did not use to be: the renderer carried a second
+ * definition of this name (`diagnosticsFileName` in `client/src/lib/feedbackMail.ts`) because
+ * the old dialog previewed the mail one step before the file existed, and an assertion here
+ * held the two spellings together. WP-75 took the preview out — nothing in the renderer names
+ * a file it has not been told about — so the guess is gone, and with it the pairing. What main
+ * really writes is the `…-2.txt` below, which no prediction could have got right anyway.
+ */
 describe('diagnosticsFileName', () => {
   it('is a .txt, because .jsonl does not open on double-click on Windows', () => {
     expect(diagnosticsFileName('AF-2608141542')).toBe('Auftakt-Diagnose-AF-2608141542.txt');
-  });
-
-  it('agrees with the name the dialog predicts before the file exists', () => {
-    // Two definitions, because the client cannot import this module (it reaches node:fs) and
-    // „Was wird mitgeschickt?" has to name the file one step before main writes it. This is
-    // the assertion that keeps them from drifting into naming two different files.
-    for (const ref of ['AF-2608141542', 'AF-0101010000']) {
-      expect(predictedFileName(ref)).toBe(diagnosticsFileName(ref));
-    }
   });
 });
 
@@ -389,7 +397,7 @@ describe('buildDiagnosticsBundle', () => {
     // keep. Pinned so that editing it is a deliberate act rather than a tidy-up — and pinned
     // over normalised whitespace, so re-flowing the paragraph around it stays free.
     const flat = bundle().replace(/\s+/g, ' ');
-    expect(flat).toContain('Sie enthält keine Termine, Künstler, Kontakte oder Notizen');
+    expect(flat).toContain('Sie enthält keine privaten oder vertraulichen Daten');
   });
 
   it('names both kinds of log where it says what is in it', () => {
