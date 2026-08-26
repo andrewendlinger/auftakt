@@ -237,8 +237,8 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
                   holding a festival's contact data. */}
               <p className="mt-2">
                 Auftakt-Version, Betriebssystem, Bildschirm, die Protokolle der letzten
-                Programmstarts — und was du oben schreibst. Keine Termine, Künstler, Kontakte oder
-                Notizen; du kannst die Datei vor dem Anhängen in Ruhe durchlesen.
+                Programmstarts — und was du oben schreibst. Keine privaten oder vertraulichen
+                Daten; du kannst die Datei vor dem Anhängen in Ruhe durchlesen.
               </p>
               {diag?.summary && (
                 <pre className="mt-2 overflow-x-auto rounded-lg bg-neutral-50 p-3 text-xs text-neutral-600">
@@ -284,8 +284,8 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
 
           {sent.attachment ? (
             <p className="font-medium text-neutral-800">
-              Häng die Datei an eine E-Mail an diese Adresse und schick sie ab. Sie enthält keine
-              Termine, Künstler, Kontakte oder Notizen.
+              Häng die Datei an eine E-Mail an diese Adresse und schick sie ab. Sie enthält
+              keine privaten oder vertraulichen Daten.
             </p>
           ) : (
             <p className="font-medium text-neutral-800">
@@ -298,11 +298,9 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
               there is often no mail client at all, and an offer that opens nothing is worse
               than no offer. For whoever does have one it saves the copying. */}
           <p className="text-xs text-neutral-500">
-            Mit einem eingerichteten E-Mail-Programm geht es schneller:{' '}
-            <ExternalLink href={feedbackMailto(note, ctx)}>E-Mail-Programm öffnen</ExternalLink>.
-            {sent.attachment
-              ? ' Adresse und Betreff stehen dann schon drin — anhängen musst du die Datei trotzdem selbst.'
-              : ' Adresse und Betreff stehen dann schon drin.'}
+            Oder einfach <ExternalLink href={feedbackMailto(note, ctx)}>hier klicken</ExternalLink>,
+            um einen E-Mail-Entwurf zu öffnen
+            {sent.attachment ? ' — die Datei anhängen musst du aber noch selbst.' : '.'}
           </p>
         </div>
       )}

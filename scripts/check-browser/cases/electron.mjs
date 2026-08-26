@@ -170,10 +170,10 @@ export async function runElectron(fixtures) {
   // The promise the file itself opens with, made before it is written. Clicked open rather than
   // read out of the collapsed `<details>`: `innerText` skips what is not rendered.
   await topDialog(u).getByText('Was steht im Bericht?').click();
-  const opened = await until(() => topDialog(u).innerText(), (t) => t.includes('Keine Termine'), 5000);
+  const opened = await until(() => topDialog(u).innerText(), (t) => t.includes('Keine privaten'), 5000);
   check(
-    '„Was steht im Bericht?“ nennt, was nicht mitgeht',
-    /Keine Termine, Künstler, Kontakte oder Notizen/.test(opened),
+    '„Was steht im Bericht?“ gibt das Versprechen in Andres Worten',
+    /Keine privaten oder vertraulichen\s+Daten/.test(opened),
   );
   check('…und zeigt die Startdiagnose, die die Bridge liefert', /Startdiagnose — 2 Einträge/.test(opened));
 
@@ -200,7 +200,7 @@ export async function runElectron(fixtures) {
   const handover = await until(() => topDialog(u).innerText(), (t) => t.includes(file), 8000);
   check('die Übergabe nennt die Datei, die main wirklich geschrieben hat', handover.includes(file), file);
   check('…und sagt in einem Satz, was zu tun ist', /Häng die Datei an eine E-Mail an diese Adresse/.test(handover));
-  check('…mit der Zusicherung aus dem Absturzdialog', /keine Termine, Künstler, Kontakte oder Notizen/i.test(handover));
+  check('…mit dem schlichten Datenschutz-Versprechen', /keine privaten oder vertraulichen\s+Daten/i.test(handover));
   // One dialog in two states, not two stacked ones (WP-75): the handover *replaces* the form,
   // because a step that covers the previous one is a step nobody can tell they have finished.
   check('…und bleibt dabei ein einziger Dialog', (await u.locator('.fixed.inset-0').count()) === 1);
@@ -241,7 +241,7 @@ export async function runElectron(fixtures) {
 
   // The `mailto:` is the one optional shortcut, a link and not a button, and the *only* thing on
   // this path that ever reaches `openExternal`.
-  await topDialog(u).getByRole('link', { name: 'E-Mail-Programm öffnen' }).click();
+  await topDialog(u).getByRole('link', { name: 'hier klicken' }).click();
   const mails = await until(() => u.evaluate(() => /** @type {any} */ (window).__external), (v) => v.length > 0, 8000);
   const mail = new URL(mails[0] ?? 'mailto:');
   const params = new URLSearchParams(mail.search);
@@ -295,7 +295,7 @@ export async function runElectron(fixtures) {
   // `file` is not a substring of `file2` — `…AF-….txt` against `…AF-…-2.txt` — so „the first one
   // is not mentioned" is a real assertion rather than one the second name satisfies anyway.
   check('dann nennt sie die zweite Datei, nicht die erste', renamed.includes(file2) && !renamed.includes(file), file2);
-  await topDialog(u).getByRole('link', { name: 'E-Mail-Programm öffnen' }).click();
+  await topDialog(u).getByRole('link', { name: 'hier klicken' }).click();
   const mails2 = await until(() => u.evaluate(() => /** @type {any} */ (window).__external), (v) => v.length > 1, 8000);
   const body2 = new URLSearchParams(new URL(mails2[mails2.length - 1]).search).get('body') ?? '';
   check(

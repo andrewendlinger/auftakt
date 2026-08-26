@@ -1172,7 +1172,7 @@ function installProcessHandlers(): void {
         ? 'Es ist ein interner Fehler aufgetreten; das Programm kann nicht weiterlaufen.\n\n' +
           `Ein Fehlerbericht liegt jetzt auf deinem Schreibtisch:\n${bundle}\n\n` +
           'Du kannst diese Datei per E-Mail an auftakt@e-mail.de schicken — sie enthält keine ' +
-          'Termine, Künstler, Kontakte oder Notizen. Auftakt lässt sich danach wieder ganz ' +
+          'privaten oder vertraulichen Daten. Auftakt lässt sich danach wieder ganz ' +
           'normal öffnen.'
         : 'Es ist ein interner Fehler aufgetreten; das Programm kann nicht weiterlaufen.\n\n' +
           'Ein Fehlerbericht konnte diesmal nicht gespeichert werden. Auftakt lässt sich wieder ' +

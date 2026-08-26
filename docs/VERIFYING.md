@@ -337,8 +337,9 @@ verified by hand, and the gate itself is written from this list.
   its own timeout.
 - **Nothing on this path opens anything by itself (WP-66).** „E-Mail öffnen" is gone: a script
   that waits for it, or that expects `window.__external` to fill after „Bericht speichern", hangs.
-  The `mailto:` now sits at the bottom of the handover as the link „E-Mail-Programm öffnen"
-  (`getByRole('link', …)`, not `button`), and it is the *only* thing that ever reaches
+  The `mailto:` now sits at the bottom of the handover as the link „hier klicken" (in „Oder
+  einfach hier klicken, um einen E-Mail-Entwurf zu öffnen…"; `getByRole('link', …)`, not
+  `button`), and it is the *only* thing that ever reaches
   `openExternal` from this dialog — which makes the recording stub the instrument for the
   promise as well: after „Bericht speichern", `window.__external` must still be empty.
 - **The handover's one copy button needs clipboard permission, and it really uses it.** „Adresse
@@ -826,7 +827,7 @@ verified by hand, and the gate itself is written from this list.
   on the machine running the script. Stub the bridge with an `openExternal` that *records* —
   `window.__external.push(url)` — then read it back with `new URL(...)` and `searchParams`, which
   is also the only honest check of the encoding. Since WP-66 only the optional
-  „E-Mail-Programm öffnen" link produces one, and the dialog stays open behind it, so the recorder
+  „hier klicken"-Mailto link produces one, and the dialog stays open behind it, so the recorder
   answers two questions rather than one: what the link handed over, and that nothing else did.
   **`check:browser` carries its own copy of that stub** (WP-64c) rather than importing
   `lib/drive.mjs`, which belongs to the ad-hoc runtime, imports `playwright` and points at :4317.

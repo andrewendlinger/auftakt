@@ -25,8 +25,10 @@ of them was a feature the customer it exists for does not get to the end of.
 
 **What ships.** Open · „Bericht speichern" · „Fertig". The report is written on the second click
 whether or not a word was typed, and the state that follows is the file's name, the address on one
-copy button and two sentences: attach it and send it, it contains no Termine, Künstler, Kontakte or
-Notizen. The optional box above the button is the only thing left of the form.
+copy button and two sentences: attach it and send it, it contains no private or confidential
+data (Andre, 2026-08-26: the plain promise, never the enumeration — the same phrasing in the
+crash dialog and the bundle header). The optional box above the button is the only thing left
+of the form.
 
 - **The kind and the area are gone.** They fed a subject line — the thing an inbox sorts on — and
   cost two mandatory clicks to fill it in. What they answered is answerable from the report

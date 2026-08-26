@@ -397,7 +397,7 @@ describe('buildDiagnosticsBundle', () => {
     // keep. Pinned so that editing it is a deliberate act rather than a tidy-up — and pinned
     // over normalised whitespace, so re-flowing the paragraph around it stays free.
     const flat = bundle().replace(/\s+/g, ' ');
-    expect(flat).toContain('Sie enthält keine Termine, Künstler, Kontakte oder Notizen');
+    expect(flat).toContain('Sie enthält keine privaten oder vertraulichen Daten');
   });
 
   it('names both kinds of log where it says what is in it', () => {
