@@ -6,6 +6,11 @@
  * fixture set cannot exercise the features that most need eyeballing. This writes rows
  * directly instead, and covers every edge the UI has a branch for — see the sections below.
  *
+ * Since WP-78 it also covers the *sizes* those edges appear at. Everything up to then was one row
+ * per branch, which turned out to be three to eight times smaller than a real installation on
+ * every axis the WP-70 audit measured; the block marked „WP-78 · field sizes" adds one artist with
+ * two projects carrying those magnitudes, and touches nothing above it.
+ *
  * Dates are relative to today, so due dates stay meaningful and the archive cutoff keeps
  * working however long from now this runs.
  */
@@ -13,6 +18,7 @@ import { createHash } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { crc32, deflateSync } from 'node:zlib';
 // Safe as a static import despite the deferred ./db import below: shared/time has no
 // side effects and reads no environment.
 import { localDay, localStamp } from '../../shared/time';
@@ -61,6 +67,7 @@ const {
   updateSeason,
   patchLanding,
   ARCHIVE_AFTER_DAYS,
+  PURGE_AFTER_DAYS,
 } = await import('./db');
 
 /** Distinct from the real data's default so the season chip never reads "Festival 2026". */
@@ -99,6 +106,12 @@ function stamp(n: number): string {
 
 /** Comfortably past the archive cutoff, so `#/archiv` is never empty. */
 const ARCHIVED = -(ARCHIVE_AFTER_DAYS + 15);
+
+/**
+ * Past the purge cutoff, for the one row that has to sit there and stay (WP-78, audit F5).
+ * Three days over, the way the field instance was 33 days over a 30-day window.
+ */
+const PARKED = -(PURGE_AFTER_DAYS + 3);
 
 /* ---------- the dataset ---------- */
 
@@ -348,11 +361,189 @@ const PROJECT_3_LAYOUT = JSON.stringify([
 const PROJECT_4_COLUMNS = JSON.stringify({ due: false });
 const ARTIST_4_COLUMNS = JSON.stringify({ priority: true });
 
+/* ---------- WP-78 · field sizes, from the WP-70 audit ---------- */
+
+/**
+ * What a real installation looks like, measured — and mirrored here.
+ *
+ * Every fixture above is one *branch*: the smallest dataset in which a UI state can be eyeballed
+ * at all. The WP-70 audit (2026-08-26) read a customer's five weeks of daily use and found the
+ * branches all covered and every **magnitude** three to eight times too small — 46 tasks on one
+ * project against 11 here, stored layouts of 15–18 entries against 6, 36 contacts against 10, 30
+ * links hanging off sections against 4. So nothing in this file had ever been looked at at the
+ * size the customer works at: not the task table, not its grouping rail, not the sort, not the
+ * print sheet, not the arranger's drag rail.
+ *
+ * Everything below is that size, and **nothing above it was touched**: the block is purely
+ * additive, because `npm run check:browser` reads the rows above by id, by name and by count, and
+ * a fixture that moves one of those numbers breaks the gate rather than the product. It hangs off
+ * one new artist with two projects, so every page the gate drives stays exactly as it was.
+ *
+ *   „Festivalzentrum" (project 10) — the field-sized page. 45 tasks (field: 46 on one project),
+ *     23 of them subtasks under 11 parents, one parent with **six** children (field: 6, the demo's
+ *     maximum was 4); not one due date and not one colour on any of them (field: 2 due dates in
+ *     208 tasks, both 18 months stale, and 0 colours); a comment on 36 of the 45 (field: 149 of
+ *     184 — breadth, not length: the field's longest comment is *shorter* than the ones above);
+ *     18 contacts, every one of them hanging off the project (field: all 36 of the season's are,
+ *     and WP-47's parentless row has no instance anywhere in his data); ten widget sections
+ *     carrying 26 links between
+ *     them, none categorised and none with a note (field: 30 section-parented links, and
+ *     `category`/`notes` empty on all 82); and a stored layout of **16 entries**.
+ *   „Nachwuchsreihe" (project 11) — the lean, unsorted page. `status = NULL` (field: 8 of 10
+ *     projects, and the 2 that carry one carry the untouched English default), and **every row at
+ *     `sort_order = 0`** (field: two of three seasons, every table), so its lists fall back to the
+ *     id tiebreak alone. That is the state in which a list that forgets the tiebreak looks random
+ *     on real data and perfectly ordered on the demo.
+ *
+ * Plus two rows that belong to no page at all: the orphaned image and the parked tombstone below.
+ *
+ * Four of the audit's fourteen proposals are deliberately **not** here, and all four for one
+ * reason — they need a *fourth season*, and the landing-page gate pins the demo at three: a
+ * season with every ordinal at 0 beside one that is really sorted, a season one schema generation
+ * behind (which this seeder could not honestly build in any case — it writes the current schema),
+ * a season with no events at all beside its 44 links, and a season with the built-in „Fällig"
+ * switched off. What each of them can say at *page* level is said above.
+ */
+
+/**
+ * A field-sized arrangement (field: 17 of 30 artist/project pages carry one, the biggest of 18
+ * entries; the demo had two, of 6 and 3 — see ARTIST_2_LAYOUT). Sixteen entries, ten of them
+ * `cs<id>` widgets: long enough that the merge, the drag rail and „alles zurücksetzen" behave
+ * differently than they do on three.
+ *
+ * `links` sits **last**, and that is the second of the two WP-48 shapes the audit found still
+ * unrepaired in the field. Six of the customer's pages have „Dokumente und Links" *persisted* at
+ * the bottom — where the section split's append-at-the-end merge put it, and where the next touch
+ * of the arranger froze it. Project 3 above is the *first* shape: a stored layout that predates
+ * the split and has no `links` entry at all, so the merge appends it on every load and it is not
+ * written down anywhere. Both states now sit on the demo, side by side.
+ */
+const PROJECT_10_LAYOUT = JSON.stringify([
+  { key: 'aufgaben', width: 'full' },
+  { key: 'termine', width: 'half' },
+  { key: 'kontakte', width: 'half' },
+  { key: 'cs6', width: 'full' },
+  { key: 'cs7', width: 'half' },
+  { key: 'cs8', width: 'half' },
+  { key: 'cs9', width: 'full' },
+  { key: 'cs10', width: 'full' },
+  { key: 'cs11', width: 'half' },
+  { key: 'cs12', width: 'half' },
+  { key: 'cs13', width: 'full' },
+  { key: 'cs14', width: 'full' },
+  { key: 'cs15', width: 'full' },
+  { key: 'stats', width: 'full' },
+  { key: 'aufmerksamkeit', width: 'full' },
+  { key: 'links', width: 'full' },
+]);
+
+/**
+ * The same residue on an artist page, which is where five of the customer's six unrepaired ones
+ * are. No widgets — the only thing this fixture is about is the position of `links`.
+ */
+const ARTIST_5_LAYOUT = JSON.stringify([
+  { key: 'kontakte', width: 'half' },
+  { key: 'projekte', width: 'half' },
+  { key: 'termine', width: 'full' },
+  { key: 'aufgaben', width: 'full' },
+  { key: 'stats', width: 'full' },
+  { key: 'aufmerksamkeit', width: 'full' },
+  { key: 'links', width: 'full' },
+]);
+
+/**
+ * „This row keeps the ordinal the field would have given it: none."
+ *
+ * Every insert below stamps `sort_order` with the row's index in its array, which is why the demo
+ * has always looked deliberately arranged. Two of the customer's three seasons have exactly *one*
+ * distinct value across `artists`, `projects`, `contacts`, `events`, `links`, `custom_sections`
+ * and (bar a single task) `tasks`: zero. Even the season he really works in has twelve groups of
+ * live tasks sharing an ordinal, the largest fourteen deep. In the field, list order is very often
+ * decided entirely by the id tiebreak — so project 11 keeps it that way, and a list that forgets
+ * the tiebreak looks wrong there instead of looking right everywhere.
+ */
+const FIELD_FLAT = 0;
+
+/**
+ * An image nothing references, at field weight (audit F4).
+ *
+ * The real one is 67,830 bytes at 623×505, inserted on a Tuesday and taken back out of the note
+ * the same day. It is **24 % of that season's database file** and rides along in all 30 restore
+ * points — roughly 2 MB of the customer's backup folder is one picture he removed twelve days
+ * before the audit. `routes/images.ts` states why: `images` is deliberately outside `DELETE_ORDER`
+ * and has no list endpoint, so no code path anywhere deletes an image row. This fixture is what
+ * that decision costs, in the database the demo actually builds, rather than in a paragraph.
+ *
+ * Generated rather than pasted in as base64, unlike the hall plan above: a 67 KB literal would be
+ * a third of this file, and an orphan is by definition never drawn, so the only thing that matters
+ * about it is its weight. It is a valid PNG all the same — a flat gradient plus one band of
+ * deterministic noise, noise being what a photograph's byte count is made of — so the bytes hold
+ * up if anyone ever fetches the token by hand. Same seed, same bytes, same content token on every
+ * rebuild.
+ */
+const ORPHAN_WIDTH = 623;
+const ORPHAN_HEIGHT = 505;
+
+function orphanPng(): Buffer {
+  const stride = ORPHAN_WIDTH * 3 + 1;
+  const raw = Buffer.alloc(stride * ORPHAN_HEIGHT);
+  // A plain LCG rather than crypto: the fixture has to be byte-identical on every rebuild, or the
+  // content token moves and `ON CONFLICT(token) DO NOTHING` stops being idempotent.
+  let seed = 0x51ed270b;
+  const noise = (): number => ((seed = (seed * 1664525 + 1013904223) >>> 0) >>> 16) & 0xff;
+  // Thirty rows of noise put the deflated file within a percent of the field's 67,830 bytes; the
+  // rest is a gradient, which costs almost nothing. Tuned, not derived — see the log line in main().
+  const bandTop = 210;
+  const bandHeight = 30;
+  for (let y = 0; y < ORPHAN_HEIGHT; y++) {
+    let p = y * stride;
+    raw[p++] = 0; // PNG filter type „None" for the whole row
+    const noisy = y >= bandTop && y < bandTop + bandHeight;
+    for (let x = 0; x < ORPHAN_WIDTH; x++) {
+      if (noisy) {
+        raw[p++] = noise();
+        raw[p++] = noise();
+        raw[p++] = noise();
+      } else {
+        raw[p++] = 240 - (((y * 60) / ORPHAN_HEIGHT) | 0);
+        raw[p++] = 235 - (((x * 40) / ORPHAN_WIDTH) | 0);
+        raw[p++] = 220;
+      }
+    }
+  }
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([length, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(ORPHAN_WIDTH, 0);
+  ihdr.writeUInt32BE(ORPHAN_HEIGHT, 4);
+  ihdr[8] = 8; // 8 bits per channel
+  ihdr[9] = 2; // truecolour, no alpha
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(raw, { level: 9 })),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+const ORPHAN_BYTES = orphanPng();
+const ORPHAN_TOKEN = createHash('sha256').update(ORPHAN_BYTES).digest('hex').slice(0, 32);
+
 const ARTISTS = [
   { id: 1, name: 'Nordlicht Quartett', color: '#3b82f6', notes: RICH_ARTIST_NOTES },
   { id: 2, name: 'Ana Belém Trio', color: '#ec4899', notes: 'Anreise aus Lissabon — Visa früh klären.', layout: ARTIST_2_LAYOUT },
   { id: 3, name: 'Kollektiv Halbton', color: '#10b981', notes: null },
   { id: 4, name: 'Jonas Wehrmann', color: '#f59e0b', notes: 'Solopianist, spielt auch den Meisterkurs.', task_columns: ARTIST_4_COLUMNS },
+  // WP-78 · the field-sized artist. Two projects like everybody else here, so „jeder Künstler hat
+  // genau zwei lebende Projekte" (docs/VERIFYING.md) still holds — the size is in what hangs off
+  // them, not in how many there are.
+  { id: 5, name: 'Ensemble Weitwinkel', color: '#0ea5e9', notes: 'Sechs Musikerinnen, Residenz über das ganze Festival.', layout: ARTIST_5_LAYOUT },
 ];
 
 const PROJECTS = [
@@ -368,6 +559,12 @@ const PROJECTS = [
   { id: 8, artist_id: 4, code: 'JW2', name: 'Meisterkurs', status: 'In Progress', description: 'Drei Tage, zwölf Teilnehmende.' },
   // Soft-deleted (in the trash) — its live child task 52 makes the cascade count demonstrable.
   { id: 9, artist_id: 4, code: 'JW3', name: 'Gestrichenes Nebenkonzert', status: 'Not Started', description: null, deleted_at: stamp(-4) },
+  // WP-78 · the field-sized page — 45 tasks, 18 contacts, ten widgets, a 16-entry layout.
+  { id: 10, artist_id: 5, code: 'EW1', name: 'Festivalzentrum', status: 'In Progress', description: 'Zentrale Spielstätte: Saal, Werkstatt und Büro in einem Haus.', layout: PROJECT_10_LAYOUT },
+  // WP-78 · the lean one, and the only project without a status — 8 of the customer's 10 have
+  // none, so „jedes Projekt trägt eine Statuspille" was a demo artefact. Everything that hangs off
+  // it sits at `sort_order: 0` (see FIELD_FLAT).
+  { id: 11, artist_id: 5, code: 'EW2', name: 'Nachwuchsreihe', status: null, description: null },
 ];
 
 const CONTACTS = [
@@ -395,6 +592,42 @@ const CONTACTS = [
   // Season-level contact (no parent at all, WP-47) — fills the Übersicht's „Saison-Kontakte"
   // section, and its GlobalSearch hit must land on /dashboard, not an artist or project page.
   { id: 10, artist_id: null, project_id: null, role: 'Festivalbüro', name: 'Greta Simoneit', email: 'buero@example.org', phone: '+49 151 0000005' },
+
+  // WP-78 · a contact list at field size, and in the field's *shape*. The customer has 36 contacts
+  // in one season against the ten above, and every single one of them hangs off a **project** —
+  // never off the season (WP-47's parentless row has no instance in his data at all) and, in the
+  // season he works in, never off an artist either. These 26 take the demo to 36 and sit on the
+  // two new projects; the ten above keep every shape they were seeded for.
+  //
+  // Deliberately plain: no notes and no colour on any of them, so the „+ hinzufügen"-placeholder
+  // branch is what an eighteen-row list is mostly made of, the way it is on his pages.
+  { id: 11, artist_id: null, project_id: 10, role: 'Produktionsleitung', name: 'Nele Ostrowski', email: 'nele@example.org', phone: '+49 151 0000010' },
+  { id: 12, artist_id: null, project_id: 10, role: 'Technische Leitung', name: 'Falk Brenneke', email: 'falk@example.org', phone: '+49 151 0000011' },
+  { id: 13, artist_id: null, project_id: 10, role: 'Bühnenmeisterei', name: 'Ilka Sandmann', email: 'ilka@example.org', phone: null },
+  { id: 14, artist_id: null, project_id: 10, role: 'Beleuchtung', name: 'Timo Kerschbaum', email: 'timo@example.org', phone: null },
+  { id: 15, artist_id: null, project_id: 10, role: 'Tontechnik', name: 'Yasmin Öztürk', email: 'yasmin@example.org', phone: '+49 151 0000012' },
+  { id: 16, artist_id: null, project_id: 10, role: 'Haustechnik', name: 'Roland Pietsch', email: null, phone: '+49 151 0000013' },
+  { id: 17, artist_id: null, project_id: 10, role: 'Catering', name: 'Marlene Fuhrmann', email: 'marlene@example.org', phone: null },
+  { id: 18, artist_id: null, project_id: 10, role: 'Ausschank', name: 'Bendix Kohlmann', email: 'bendix@example.org', phone: null },
+  { id: 19, artist_id: null, project_id: 10, role: 'Unterkunft', name: 'Silke Anhalt', email: 'silke@example.org', phone: '+49 151 0000014' },
+  { id: 20, artist_id: null, project_id: 10, role: 'Fahrdienst', name: 'Nurhan Aslan', email: null, phone: '+49 151 0000015' },
+  { id: 21, artist_id: null, project_id: 10, role: 'Ticketing', name: 'Corinna Lembke', email: 'corinna@example.org', phone: null },
+  { id: 22, artist_id: null, project_id: 10, role: 'Abendkasse', name: 'Hauke Reiners', email: 'hauke@example.org', phone: null },
+  { id: 23, artist_id: null, project_id: 10, role: 'Öffentlichkeitsarbeit', name: 'Amelie Storbeck', email: 'amelie@example.org', phone: '+49 151 0000016' },
+  { id: 24, artist_id: null, project_id: 10, role: 'Grafik', name: 'Jost Winnemuth', email: 'jost@example.org', phone: null },
+  { id: 25, artist_id: null, project_id: 10, role: 'Fotografie', name: 'Runa Deitmer', email: 'runa@example.org', phone: null },
+  { id: 26, artist_id: null, project_id: 10, role: 'Ordnungsdienst', name: 'Kai-Uwe Brelow', email: null, phone: '+49 151 0000017' },
+  { id: 27, artist_id: null, project_id: 10, role: 'Sanitätsdienst', name: 'Theresa Gollnow', email: 'theresa@example.org', phone: '+49 151 0000018' },
+  { id: 28, artist_id: null, project_id: 10, role: 'Reinigung', name: 'Miroslav Hajek', email: null, phone: '+49 151 0000019' },
+  // …and the eight on the unsorted page, every one of them at ordinal zero.
+  { id: 29, artist_id: null, project_id: 11, role: 'Projektleitung', name: 'Britta Sanwald', email: 'britta@example.org', phone: '+49 151 0000020', sort_order: FIELD_FLAT },
+  { id: 30, artist_id: null, project_id: 11, role: 'Jury', name: 'Dorit Halbach', email: 'dorit@example.org', phone: null, sort_order: FIELD_FLAT },
+  { id: 31, artist_id: null, project_id: 11, role: 'Mentoring', name: 'Vince Kaltenbach', email: 'vince@example.org', phone: null, sort_order: FIELD_FLAT },
+  { id: 32, artist_id: null, project_id: 11, role: 'Anmeldung', name: 'Femke Roosen', email: 'femke@example.org', phone: null, sort_order: FIELD_FLAT },
+  { id: 33, artist_id: null, project_id: 11, role: 'Werkstattleitung', name: 'Arno Pilzweger', email: null, phone: '+49 151 0000021', sort_order: FIELD_FLAT },
+  { id: 34, artist_id: null, project_id: 11, role: 'Förderstelle', name: 'Katrin Uhlemann', email: 'katrin@example.org', phone: null, sort_order: FIELD_FLAT },
+  { id: 35, artist_id: null, project_id: 11, role: 'Dokumentation', name: 'Sara Lindqvist', email: 'sara@example.org', phone: null, sort_order: FIELD_FLAT },
+  { id: 36, artist_id: null, project_id: 11, role: 'Räume', name: 'Bernd Ottweiler', email: null, phone: '+49 151 0000022', sort_order: FIELD_FLAT },
 ];
 
 /** Mix of all-day (date-only start) and timed rows — the UI renders them differently. */
@@ -433,6 +666,8 @@ interface DemoTask {
   color?: string | null;
   erledigt_am?: string | null;
   deleted_at?: string | null;
+  /** Only the WP-78 rows set this; everything else keeps its index in the array (see `ordinal`). */
+  sort_order?: number;
 }
 
 /**
@@ -548,12 +783,113 @@ const TASKS: DemoTask[] = [
   // Archived child under a live parent (task 1): absent from the live table, but the move
   // dialog collects the tree via scope 'all' — its „mitverschoben" count must include it.
   { id: 53, project_id: 1, parent_id: 1, title: 'Angebot Backline eingeholt', status: 'done', erledigt_am: stamp(ARCHIVED) },
+
+  // ---------- WP-78 · the field-sized project (ids 100–144) ----------
+  //
+  // 45 tasks on one page, because the customer has 46 on his busiest project and the demo's
+  // busiest had 11. Everything the table does — the grouping rail, a header-click sort, the ⠿, the
+  // print sheet, the „mitverschoben" count of a move — behaves differently at four times the
+  // length, and none of it had ever been seen that way.
+  //
+  // Three things are *absent* on purpose, and each is a measurement rather than an omission:
+  //
+  //  * **no due date on a single row.** 2 of the customer's 208 tasks carry one, both stale by
+  //    eighteen months and both done, and the built-in „Fällig" column is switched off in all
+  //    three of his seasons. The rows above are the opposite extreme; this page is his.
+  //  * **no colour on a single row.** 0 in 208. The coloured child and coloured parent above stay
+  //    where they are — they are what the group rail is eyeballed on — but they are the exception
+  //    in the field, not the rule.
+  //  * **no archived row.** All fifteen done rows here finished inside the last three weeks, so
+  //    the five archived fixtures above stay the whole of `#/archiv`.
+  //
+  // What is *present* in field proportion is the comment: 36 of the 45 carry one, against 149 of
+  // 184 in the field. Short ones — the customer's longest is 477 characters, which is below the
+  // demo's rich-text fixtures already, so what was missing was never the length but the breadth.
+  { id: 100, project_id: 10, title: 'Bühnenaufbau planen', status: 'active', comment: 'Aufbau ab Mittwoch früh, Haustechnik ist eingeplant.' },
+  // Six children — the field's widest parent, where the demo's widest had four. The counter pill,
+  // the connectors and the fold are all worth a second look at this width.
+  { id: 101, project_id: 10, parent_id: 100, title: 'Traversen und Rigging bestellen', status: 'done', erledigt_am: stamp(-16), comment: 'Bestätigung liegt im Ordner Technik.' },
+  { id: 102, project_id: 10, parent_id: 100, title: 'Bodenplatten anliefern lassen', status: 'done', erledigt_am: stamp(-12), comment: 'Anlieferung Dienstag, Ladezone ist reserviert.' },
+  { id: 103, project_id: 10, parent_id: 100, title: 'Stromverteilung mit dem Haus klären', status: 'active', comment: 'Zweiter Kreis für die Werkstatt fehlt noch.' },
+  { id: 104, project_id: 10, parent_id: 100, title: 'Abnahme des Bühnenbilds terminieren', status: 'new', comment: 'Frühestens Donnerstagnachmittag.' },
+  { id: 105, project_id: 10, parent_id: 100, title: 'Abbau-Team einteilen', status: 'new' },
+  { id: 106, project_id: 10, parent_id: 100, title: 'Lagerfläche für die Cases reservieren', status: 'new' },
+
+  { id: 107, project_id: 10, title: 'Technikbestellung abschließen', status: 'active', comment: 'Sammelbestellung geht Freitag raus.' },
+  { id: 108, project_id: 10, parent_id: 107, title: 'Lichtpult festlegen', status: 'active', comment: 'Zwei Angebote, das zweite ohne Techniker.' },
+  { id: 109, project_id: 10, parent_id: 107, title: 'Mikrofonliste durchgehen', status: 'done', erledigt_am: stamp(-9), comment: 'Mit der Tontechnik abgeglichen.' },
+  { id: 110, project_id: 10, parent_id: 107, title: 'Ersatzgerät für den Sonntag', status: 'new' },
+
+  { id: 111, project_id: 10, title: 'Catering ausschreiben', status: 'active', comment: 'Drei Häuser angefragt, eins hat abgesagt.' },
+  { id: 112, project_id: 10, parent_id: 111, title: 'Vegetarische Variante anfragen', status: 'done', erledigt_am: stamp(-7), comment: 'Ist im Angebot enthalten.' },
+  { id: 113, project_id: 10, parent_id: 111, title: 'Getränkemenge hochrechnen', status: 'new', comment: 'Vorjahreszahlen liegen im Büro.' },
+
+  { id: 114, project_id: 10, title: 'Unterkünfte buchen', status: 'active', comment: 'Zwölf Zimmer, Anreise gestaffelt.' },
+  { id: 115, project_id: 10, parent_id: 114, title: 'Doppelzimmer für das Ensemble', status: 'done', erledigt_am: stamp(-14), comment: 'Reservierung bestätigt.' },
+  { id: 116, project_id: 10, parent_id: 114, title: 'Späte Anreise am Freitag melden', status: 'new', comment: 'Rezeption ist ab 22:00 nicht besetzt.' },
+
+  { id: 117, project_id: 10, title: 'Shuttle-Plan erstellen', status: 'new', comment: 'Zwei Fahrzeuge, drei Zeitfenster.' },
+  { id: 118, project_id: 10, parent_id: 117, title: 'Fahrzeiten mit dem Bahnhof abgleichen', status: 'new', comment: 'Umsteigezeit am Nachmittag ist knapp.' },
+  { id: 119, project_id: 10, parent_id: 117, title: 'Fahrerinnen anfragen', status: 'new' },
+
+  { id: 120, project_id: 10, title: 'Programmheft vorbereiten', status: 'active', comment: 'Umfang steht, Druckerei ist vorgemerkt.' },
+  { id: 121, project_id: 10, parent_id: 120, title: 'Texte redigieren', status: 'done', erledigt_am: stamp(-5), comment: 'Zweite Korrekturrunde ist eingearbeitet.' },
+  { id: 122, project_id: 10, parent_id: 120, title: 'Anzeigenspiegel schließen', status: 'active', comment: 'Eine halbe Seite ist noch frei.' },
+
+  // -18 d is the oldest completion in the new block ON PURPOSE, and also a boundary: the archive
+  // cutoff is 30 d, and the browser gate pins exactly 5 archived rows (case AH). A freshly built
+  // .demo keeps these out of the Archiv with 12 days of margin — a stale .demo left sitting for
+  // ~12+ days grows a sixth archived row and reds that pin. The gate rebuilds .demo every run,
+  // so this only bites hand-kept demo directories.
+  { id: 123, project_id: 10, title: 'Ticketvorverkauf starten', status: 'done', erledigt_am: stamp(-18), comment: 'Läuft seit drei Wochen über das Haus.' },
+  { id: 124, project_id: 10, parent_id: 123, title: 'Preisstufen im System anlegen', status: 'done', erledigt_am: stamp(-18), comment: 'Ermäßigung ist hinterlegt.' },
+  { id: 125, project_id: 10, parent_id: 123, title: 'Kontingent für die Abendkasse zurücklegen', status: 'done', erledigt_am: stamp(-17), comment: 'Zwanzig Plätze je Abend.' },
+
+  { id: 126, project_id: 10, title: 'Sicherheitskonzept einreichen', status: 'active', comment: 'Ordnungsamt will es vier Wochen vorher.' },
+  { id: 127, project_id: 10, parent_id: 126, title: 'Fluchtwegplan aktualisieren', status: 'active', comment: 'Der zweite Ausgang ist neu.' },
+
+  { id: 128, project_id: 10, title: 'Helferschichten planen', status: 'new', comment: 'Etwa dreißig Schichten über vier Tage.' },
+  { id: 129, project_id: 10, parent_id: 128, title: 'Schichtplan im Büro aushängen', status: 'new' },
+
+  { id: 130, project_id: 10, title: 'Abrechnung vorbereiten', status: 'new', comment: 'Verwendungsnachweis ist bis Jahresende fällig.' },
+  { id: 131, project_id: 10, parent_id: 130, title: 'Belegordner anlegen', status: 'new' },
+
+  { id: 132, project_id: 10, title: 'Nachbereitung terminieren', status: 'new', comment: 'Am besten in der Woche danach.' },
+  { id: 133, project_id: 10, parent_id: 132, title: 'Feedbackrunde ansetzen', status: 'new' },
+
+  // Eleven rows without children, so the table is not only trees.
+  { id: 134, project_id: 10, title: 'Schlüsselübergabe organisieren', status: 'done', erledigt_am: stamp(-15), comment: 'Vier Sätze, Liste liegt im Büro.' },
+  { id: 135, project_id: 10, title: 'Reinigungsfirma beauftragen', status: 'done', erledigt_am: stamp(-11), comment: 'Täglich nach Vorstellungsende.' },
+  { id: 136, project_id: 10, title: 'Garderoben ausstatten', status: 'active', comment: 'Spiegel und Kleiderstangen fehlen noch.' },
+  { id: 137, project_id: 10, title: 'Instrumententransport versichern', status: 'active', comment: 'Deckungssumme ist angefragt.' },
+  { id: 138, project_id: 10, title: 'Beschilderung im Haus erneuern', status: 'new' },
+  { id: 139, project_id: 10, title: 'WLAN für die Technik freischalten', status: 'done', erledigt_am: stamp(-8), comment: 'Zugangsdaten hängen im Technikraum.' },
+  { id: 140, project_id: 10, title: 'Fotogenehmigung einholen', status: 'done', erledigt_am: stamp(-6), comment: 'Gilt für Proben und Vorstellungen.' },
+  { id: 141, project_id: 10, title: 'Barrierefreiheit prüfen', status: 'active', comment: 'Rampe am Nebeneingang ist zu steil.' },
+  { id: 142, project_id: 10, title: 'Lärmschutzauflagen bestätigen', status: 'done', erledigt_am: stamp(-4), comment: 'Ab 22:00 gilt der Innenraum.' },
+  { id: 143, project_id: 10, title: 'Nachbarschaft informieren', status: 'done', erledigt_am: stamp(-2), comment: 'Handzettel sind verteilt.' },
+  { id: 144, project_id: 10, title: 'Inventarliste aktualisieren', status: 'new' },
+
+  // ---------- WP-78 · the unsorted page (ids 150–155) ----------
+  //
+  // Six rows, every one of them at ordinal zero, so the table's order is the id tiebreak and
+  // nothing else — see FIELD_FLAT. No due dates and no comments either: this is the shape of the
+  // customer's second season, which carries eleven tasks and forty-four links.
+  { id: 150, project_id: 11, title: 'Bewerbungsfrist festlegen', status: 'active', sort_order: FIELD_FLAT },
+  { id: 151, project_id: 11, title: 'Jury zusammenstellen', status: 'new', sort_order: FIELD_FLAT },
+  { id: 152, project_id: 11, title: 'Übungsräume verteilen', status: 'new', sort_order: FIELD_FLAT },
+  { id: 153, project_id: 11, title: 'Auftrittsformat beschreiben', status: 'new', sort_order: FIELD_FLAT },
+  { id: 154, project_id: 11, title: 'Förderzusage abwarten', status: 'active', sort_order: FIELD_FLAT },
+  { id: 155, project_id: 11, title: 'Mentoring-Paare bilden', status: 'new', sort_order: FIELD_FLAT },
 ];
 
 /**
  * Custom widget sections (WP-S): one text and one links widget per surface — dashboard
  * (both parents NULL), artist 1 and project 1 — plus a soft-deleted one whose live link
  * exercises the trash cascade count and the purge guard that skips it.
+ *
+ * Ids 6–18 are WP-78's, and they are about *quantity* rather than about a branch: ten widgets on
+ * one project page, which is what the customer's pages look like. See the block below.
  */
 const CUSTOM_SECTIONS = [
   { id: 1, artist_id: null, project_id: null, name: 'Saison-Motto', type: 'text', value: 'Diese Saison steht unter dem Motto **„Klang & Raum“** 🎶.' },
@@ -562,6 +898,33 @@ const CUSTOM_SECTIONS = [
   { id: 4, artist_id: null, project_id: 1, name: 'Werbematerial', type: 'links', value: null },
   // Soft-deleted widget — its live link 11 makes the "Bereich" trash row's cascade count visible.
   { id: 5, artist_id: null, project_id: 1, name: 'Alte Sammlung', type: 'links', value: null, deleted_at: stamp(-6) },
+
+  // WP-78 · the ten widgets of the field-sized page (audit: 18 custom sections in one season
+  // against five here, and stored layouts of 15–16 entries „most of them cs<id>"). Four of them
+  // are `links` widgets and carry 26 documents between them — one of the customer's seasons hangs
+  // 30 of its 44 links off sections, and across the installation 41 % of everything he files goes
+  // into a widget he made himself, where the demo had four. Order and widths: PROJECT_10_LAYOUT.
+  { id: 6, artist_id: null, project_id: 10, name: 'Technik', type: 'links', value: null },
+  { id: 7, artist_id: null, project_id: 10, name: 'Catering', type: 'text', value: 'Mittagsverpflegung für 40 Personen, warm ab 12:00. Allergien liegen im Büro.' },
+  { id: 8, artist_id: null, project_id: 10, name: 'Unterkunft', type: 'text', value: 'Zwölf Zimmer im Haus am Wall, Anreise gestaffelt ab Donnerstag.' },
+  { id: 9, artist_id: null, project_id: 10, name: 'Anreise & Transport', type: 'links', value: null },
+  { id: 10, artist_id: null, project_id: 10, name: 'Presse & Werbung', type: 'links', value: null },
+  { id: 11, artist_id: null, project_id: 10, name: 'Ticketing', type: 'text', value: 'Vorverkauf über das Haus, Abendkasse ab 19:00 mit eigenem Kontingent.' },
+  { id: 12, artist_id: null, project_id: 10, name: 'Aufbau & Abbau', type: 'text', value: 'Aufbau Mittwoch ab 08:00, Abbau direkt nach der letzten Vorstellung.' },
+  { id: 13, artist_id: null, project_id: 10, name: 'Sicherheit', type: 'text', value: 'Fluchtwege freihalten, Ordnungsdienst ab 18:00 im Haus.' },
+  { id: 14, artist_id: null, project_id: 10, name: 'Abrechnung', type: 'links', value: null },
+  { id: 15, artist_id: null, project_id: 10, name: 'Nachbereitung', type: 'text', value: 'Feedbackrunde zwei Wochen nach Schluss, Bericht bis Monatsende.' },
+  // …and the two on the unsorted page, both at ordinal zero.
+  { id: 16, artist_id: null, project_id: 11, name: 'Ideensammlung', type: 'text', value: 'Werkstattformat, offene Bühne, Patenschaften mit dem Ensemble.', sort_order: FIELD_FLAT },
+  { id: 17, artist_id: null, project_id: 11, name: 'Material', type: 'links', value: null, sort_order: FIELD_FLAT },
+  // WP-78 · the Papierkorb entry that can never expire (audit F5, the first field instance of the
+  // SDL-01 guarded purge). Soft-deleted three days *past* PURGE_AFTER_DAYS, and still here on every
+  // start, because the live link 46 below still points at it: `purgeExpired` skips any expired row
+  // a remaining row references, so „alles wiederherstellbar im Archiv" holds indefinitely for this
+  // one rather than for 30 days, and „Endgültig löschen" is the only way it ever leaves. Widget 5
+  // above is the same pairing inside the window — this is what it looks like once the window has
+  // passed, which is the state the customer's data is actually in.
+  { id: 18, artist_id: null, project_id: 11, name: 'Frühere Sammlung', type: 'links', value: null, deleted_at: stamp(PARKED), sort_order: FIELD_FLAT },
 ];
 
 /** Colored link categories (WP-P) — the "Dokumente & Links" lists group by these. */
@@ -609,6 +972,44 @@ const LINKS = [
   // Season-level link (all five parent FKs NULL, WP-47) — fills the Übersicht's
   // „Dokumente & Links" section; as a parentless link it rides the `settings` copy group.
   { id: 17, label: 'Förderantrag 2026 (bewilligt)', url: 'https://example.org/foerderantrag.pdf', category: 'vertrag' },
+
+  // WP-78 · 26 documents inside the field-sized page's four `links` widgets, plus two on the
+  // unsorted page and one under the parked widget. Every one of them **uncategorised and without a
+  // note**, which is not laziness: `links.category` is NULL on all 82 of the customer's links and
+  // `links.notes` is empty on every single row, in all three seasons. Two whole features unused —
+  // so the demo now shows both states, the curated one on project 1 and artist 1 above and the
+  // field's plain one here, where „Ohne Kategorie" is the whole list and the drag never leaves it.
+  { id: 18, section_id: 6, label: 'Lichtplan Halle', url: 'https://example.org/lichtplan.pdf' },
+  { id: 19, section_id: 6, label: 'Tonanlage Datenblatt', url: 'https://example.org/tonanlage.pdf' },
+  { id: 20, section_id: 6, label: 'Rigging-Statik', url: 'https://example.org/statik.pdf' },
+  { id: 21, section_id: 6, label: 'Stromlaufplan', url: 'https://example.org/strom.pdf' },
+  { id: 22, section_id: 6, label: 'Geräteliste Verleih', url: 'https://example.org/geraeteliste' },
+  { id: 23, section_id: 6, label: 'Funkfrequenzen (Anmeldung)', url: 'https://example.org/frequenzen' },
+  { id: 24, section_id: 6, label: 'Prüfprotokoll Traversen', url: 'https://example.org/pruefprotokoll.pdf' },
+  { id: 25, section_id: 9, label: 'Anfahrtsskizze', url: 'https://example.org/anfahrt.pdf' },
+  { id: 26, section_id: 9, label: 'Parkkarten (Bestellung)', url: 'https://example.org/parkkarten' },
+  { id: 27, section_id: 9, label: 'Shuttle-Fahrplan', url: 'https://example.org/shuttle' },
+  { id: 28, section_id: 9, label: 'Bahnverbindungen', url: 'https://example.org/bahn' },
+  { id: 29, section_id: 9, label: 'Transportversicherung', url: 'https://example.org/versicherung.pdf' },
+  { id: 30, section_id: 9, label: 'Ladezonen-Genehmigung', url: 'https://example.org/ladezone.pdf' },
+  { id: 31, section_id: 10, label: 'Pressemappe', url: 'https://example.org/pressemappe.pdf' },
+  { id: 32, section_id: 10, label: 'Bildmaterial (Download)', url: 'https://example.org/bildmaterial' },
+  { id: 33, section_id: 10, label: 'Plakatentwurf', url: 'https://example.org/plakatentwurf.pdf' },
+  { id: 34, section_id: 10, label: 'Anzeigenpreise', url: 'https://example.org/anzeigenpreise' },
+  { id: 35, section_id: 10, label: 'Verteilerliste', url: 'https://example.org/verteiler' },
+  { id: 36, section_id: 10, label: 'Social-Media-Plan', url: 'https://example.org/socialmedia' },
+  { id: 37, section_id: 10, label: 'Radiospot (Rohschnitt)', url: 'https://example.org/radiospot' },
+  { id: 38, section_id: 14, label: 'Kostenaufstellung', url: 'https://example.org/kosten.xlsx' },
+  { id: 39, section_id: 14, label: 'Honorarübersicht', url: 'https://example.org/honorare.xlsx' },
+  { id: 40, section_id: 14, label: 'Reisekostenformular (Vorlage)', url: 'https://example.org/reisekosten.pdf' },
+  { id: 41, section_id: 14, label: 'GEMA-Meldung', url: 'https://example.org/gema' },
+  { id: 42, section_id: 14, label: 'Zuwendungsbescheid', url: 'https://example.org/bescheid.pdf' },
+  { id: 43, section_id: 14, label: 'Verwendungsnachweis', url: 'https://example.org/nachweis.pdf' },
+  { id: 44, section_id: 17, label: 'Ausschreibungstext', url: 'https://example.org/ausschreibung', sort_order: FIELD_FLAT },
+  { id: 45, section_id: 17, label: 'Bewerbungsbogen', url: 'https://example.org/bewerbung.pdf', sort_order: FIELD_FLAT },
+  // The live row that pins widget 18 past the purge cutoff — invisible in the app, and the reason
+  // that Papierkorb entry is permanent.
+  { id: 46, section_id: 18, label: 'Ältere Ausschreibung', url: 'https://example.org/ausschreibung-alt', sort_order: FIELD_FLAT },
 ];
 
 /**
@@ -679,9 +1080,55 @@ const CUSTOM_VALUES: Record<
   // Artist 1's own tasks, the only rows where the artist-scoped „Freigabe" column is visible.
   16: { Freigabe: 'ausstehend' },
   51: { Bereich: 'kommunikation', Freigabe: 'erteilt' },
+
+  // WP-78 · the field-sized page, and the field's *pattern* of use: **one** column filled on
+  // roughly two rows in three, the other three empty everywhere. The customer has two custom
+  // columns across three whole seasons — against four in one demo season — but the one that exists
+  // is used hard: 114 of his 184 tasks carry a value for it. So this is 27 of 45 on a single
+  // column, which is what a select column looks like when it is really in use: dense enough to
+  // group and sort by, patchy enough that „—" is still a common cell.
+  100: { Bereich: 'technik' },
+  101: { Bereich: 'technik' },
+  102: { Bereich: 'technik' },
+  103: { Bereich: 'technik' },
+  107: { Bereich: 'technik' },
+  108: { Bereich: 'technik' },
+  109: { Bereich: 'technik' },
+  111: { Bereich: 'logistik' },
+  112: { Bereich: 'logistik' },
+  114: { Bereich: 'logistik' },
+  115: { Bereich: 'logistik' },
+  117: { Bereich: 'logistik' },
+  118: { Bereich: 'logistik' },
+  120: { Bereich: 'kommunikation' },
+  121: { Bereich: 'kommunikation' },
+  122: { Bereich: 'kommunikation' },
+  123: { Bereich: 'kommunikation' },
+  127: { Bereich: 'technik' },
+  128: { Bereich: 'kommunikation' },
+  132: { Bereich: 'kommunikation' },
+  134: { Bereich: 'logistik' },
+  136: { Bereich: 'technik' },
+  137: { Bereich: 'logistik' },
+  139: { Bereich: 'technik' },
+  140: { Bereich: 'kommunikation' },
+  143: { Bereich: 'kommunikation' },
+  144: { Bereich: 'logistik' },
 };
 
 /* ---------- insert ---------- */
+
+/**
+ * The ordinal a row goes in with: its own, where a fixture states one, otherwise its position in
+ * the array.
+ *
+ * Position is the right default — it is what makes „the demo looks arranged" true, and every list
+ * fixture above depends on the interleaving it produces (docs/VERIFYING.md pins four of those
+ * values). The override exists for WP-78's `FIELD_FLAT` rows and for nothing else: a page on which
+ * the ordinals really are all zero is the field's normal state and cannot be expressed by an
+ * index. Rows that state nothing are untouched by this.
+ */
+const ordinal = (row: { sort_order?: number }, i: number): number => row.sort_order ?? i;
 
 function main(): void {
   // Clean slate. Dropping the directory is simpler than replicating seed.ts's clearTables(),
@@ -700,6 +1147,13 @@ function main(): void {
      VALUES (?, 'image/jpeg', ?, ?, 260, 173, 'saalplan.jpg')
      ON CONFLICT(token) DO NOTHING`,
   ).run(SAALPLAN_TOKEN, SAALPLAN_BYTES, SAALPLAN_BYTES.length);
+  // …and the orphan beside it (WP-78): the same statement, no reference anywhere in the dataset,
+  // and nothing in the program that will ever remove it. See `orphanPng` for why it is generated.
+  db.prepare(
+    `INSERT INTO images (token, mime, bytes, byte_size, width, height, name)
+     VALUES (?, 'image/png', ?, ?, ?, ?, 'buehnenfoto.png')
+     ON CONFLICT(token) DO NOTHING`,
+  ).run(ORPHAN_TOKEN, ORPHAN_BYTES, ORPHAN_BYTES.length, ORPHAN_WIDTH, ORPHAN_HEIGHT);
 
   const insProject = db.prepare(
     `INSERT INTO projects (id, artist_id, code, name, status, description, color, layout, task_columns, deleted_at, sort_order)
@@ -737,7 +1191,9 @@ function main(): void {
     PROJECTS.forEach((p, i) =>
       insProject.run({ color: null, layout: null, task_columns: null, deleted_at: null, ...p, sort_order: i }),
     );
-    CONTACTS.forEach((c, i) => insContact.run({ notes: null, color: null, deleted_at: null, ...c, sort_order: i }));
+    CONTACTS.forEach((c, i) =>
+      insContact.run({ notes: null, color: null, deleted_at: null, ...c, sort_order: ordinal(c, i) }),
+    );
     EVENTS.forEach((e, i) => insEvent.run({ notes: null, deleted_at: null, ...e, sort_order: i }));
 
     // Custom columns first: their generated ids are the keys inside tasks.custom_values.
@@ -772,7 +1228,7 @@ function main(): void {
         deleted_at: null,
         ...t,
         custom_values: JSON.stringify(cv),
-        sort_order: i,
+        sort_order: ordinal(t, i),
       });
     });
 
@@ -781,7 +1237,9 @@ function main(): void {
     // stored `task_sort` is `[status]`, so waking the column up orders nothing differently.
     db.prepare(`UPDATE custom_columns SET enabled = 1 WHERE kind = 'builtin' AND key = 'due'`).run();
 
-    CUSTOM_SECTIONS.forEach((s, i) => insSection.run({ deleted_at: null, ...s, sort_order: i }));
+    CUSTOM_SECTIONS.forEach((s, i) =>
+      insSection.run({ deleted_at: null, ...s, sort_order: ordinal(s, i) }),
+    );
     // Sections first: widget links reference custom_sections(id).
     LINKS.forEach((l, i) =>
       insLink.run({
@@ -794,7 +1252,7 @@ function main(): void {
         notes: null,
         deleted_at: null,
         ...l,
-        sort_order: i,
+        sort_order: ordinal(l, i),
       }),
     );
   });
@@ -897,11 +1355,16 @@ function main(): void {
 
   console.log(`Demo-Datenbank neu gebaut in ${DEMO_DIR}`);
   console.log('\nRow counts:');
-  for (const t of ['artists', 'projects', 'contacts', 'events', 'tasks', 'links', 'custom_columns', 'custom_sections']) {
+  for (const t of ['artists', 'projects', 'contacts', 'events', 'tasks', 'links', 'custom_columns', 'custom_sections', 'images']) {
     const n = (db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n;
     console.log(`  ${t.padEnd(15)} ${n}`);
   }
   console.log(`\n  Saison          ${getSetting(db, 'saison')}`);
+  // The one fixture whose *weight* is the fixture (WP-78), so it is worth seeing without a query:
+  // an orphaned image is invisible everywhere else, on purpose.
+  console.log(
+    `  Verwaistes Bild ${ORPHAN_BYTES.length.toLocaleString('de-DE')} Bytes, von nichts referenziert`,
+  );
   // Which of the two datasets this was is otherwise invisible until someone opens the Übersicht
   // and wonders where the season sections went.
   if (FRESH) {
