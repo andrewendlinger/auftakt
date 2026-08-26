@@ -1589,6 +1589,44 @@ are not — they are `labels` in the window's own season `settings`, with a gene
   („what really says the commit landed is the editor going away"); what is new is that the wait
   has to be generous, because its length is a property of how many windows are open, not of the
   page under test.
+- **…and there is a third shape, in the log rather than on the screen: „the server has it" is not
+  „this window's log has heard about it" (#166).** The two entries above are about a *surface* that
+  has not caught up; this one is about the driver's own record. Every conflict case here reads a log
+  fed by Playwright `request`/`response` **page events**, which reach the node process over the
+  browser's CDP connection — and AQ and AR then proceed on `until(lpBlob, …)`, a **node-side
+  `fetch`** (AS proceeds on `surfaceSettled`, which is page-observed and only *usually* enough; see
+  the end of this entry). Two clocks, and the second one is not behind the first by any guaranteed
+  amount: the write is stored the moment the server handles it, the
+  driver hears about the answer one hop later. So a round in which both PATCHes went out with the
+  right revs and the retry really was answered 200 is read as `beantwortet mit 409` — one status
+  short, which reads like a *refused retry* and is really an unread one. Measured with 24 windows
+  on `#/` under 8× CPU throttling: the answer arrives a median of 18 ms *before* the poll lets the
+  case proceed, against 147 ms on an idle machine — the margin is one `until` sleep plus one
+  `unroute` round trip, and it is nearly gone. At 30 windows and 20× it goes the other way (+179,
+  +293, +480 ms) and **one round in six fails exactly as the `browser` job did** on 2026-08-26
+  (#162), with no injection at all. Injected at the boundary — the response handler's push deferred
+  150 ms, which is where the event reaches this process — 10 of 12 rounds are red, and 0 of 12 with
+  the wait below, up to a 5 s deferral. **The recipe is to wait for the log you are about to read**,
+  not only for the state that implies it: `lpAnswered(log, n)` in `cases/landing.mjs` is that wait
+  (`until` over the log's own answer count, `SETTLED_MS`, so a round that really is answered once
+  fails the assertion it was going to fail with the same detail, later). It is a plain
+  synchronisation and not a recovery — nothing is retried and no gesture is repeated — so unlike
+  `reloadedSurfaces` and `reopenedPopovers` it announces nothing. Two sibling logs elsewhere are sound, and
+  for reasons that do not generalise: `images.mjs`'s `uploads` is read after polling
+  `insertedImage`, which needs a whole further round trip after the POST it counts; and
+  `reorder.mjs`'s `ldWrites` carries this exact anatomy — a count read straight after
+  `until(ldBlob, …)` — but watches **`request`** events, emitted before the server even handles the
+  write, and a lost one reads as `0 !== 1`, a false *red* rather than a false green. Neither is a
+  rule. Wait on the log, and if you are counting `request` events instead, know that the failure
+  direction is the only thing protecting you.
+- **…and „let the answer land" is not a duration.** AR held a bare `await sleep(400)` at that
+  site from the day it was written, which is the one thing `scripts/lib/wait.mjs`'s own header
+  forbids. It looked unavoidable because the assertion around it is „three attempts and no fourth",
+  and a negative cannot be waited for — but the two halves come apart: the fourth attempt is
+  already ruled out by the *toast*, which `guard`'s catch raises after `retryOnConflict` has spent
+  `MAX_CONFLICT_ATTEMPTS` and after `landingUpdate`'s `finally { await invalidate() }`, so once it
+  is up no fourth PATCH can still be issued — and a request is logged when it goes out, not when it
+  is answered. Only the third **answer** was ever in question, and that is a condition.
 - **`check:browser`'s landing cases reload rather than fail when a surface will not settle — and
   „neu geladen" is a *passing* verdict.** `surfaceSettled` waits `EDITOR_GONE_MS` (20 s) for the
   dialog or the inline input to leave; past that it reloads the page and the assertion reads the
