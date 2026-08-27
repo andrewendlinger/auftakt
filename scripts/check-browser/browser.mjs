@@ -183,6 +183,47 @@ export const scrollSettled = (page, timeout = 2000) =>
     sleep(timeout).then(() => false),
   ]);
 
+/** Why the last `clickIfThere` gave up. Read it through `clickFailure()` below. */
+let lastClickFailure = '';
+
+/**
+ * Playwright's own reason for the click that just failed — its first line plus the last line of
+ * its call log, which is the one that says *why*: „element was detached from the DOM, retrying",
+ * „… intercepts pointer events", „element is not stable".
+ *
+ * Those three are different defects that a bare `false` renders identical, and the difference is
+ * the whole diagnosis: WP-83 took four CI reds to place because „geklickt false" was all the run
+ * ever said, while Playwright had known since the first one that the node had gone. A case that
+ * folds a click's boolean into an assertion should fold this into the detail beside it.
+ *
+ * Cleared by the next successful click, so read it while the `false` is still in hand.
+ */
+export const clickFailure = () => lastClickFailure;
+
+/** The first line and the last call-log line, ANSI stripped and bounded. */
+const clickReason = (err) => {
+  const lines = String(err?.message ?? err)
+    // Playwright colours its call log, and the codes would land in the failure detail.
+    .replace(/\u001b\[[0-9;]*m/g, '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (!lines.length) return 'unbekannt';
+  // The *last* call-log line is usually „- waiting 500ms" — Playwright's retry, not its reason. So
+  // scan back for the line that names a failed actionability step, and only fall back to the last
+  // one when none of them says anything.
+  const why =
+    [...lines]
+      .reverse()
+      .find((l) =>
+        /detached|intercepts pointer events|not stable|not visible|not enabled|is disabled|not editable|outside of the viewport|hit target/i.test(
+          l,
+        ),
+      ) ?? lines[lines.length - 1];
+  const head = lines[0];
+  return (why === head ? head : `${head} ${why}`).slice(0, 160);
+};
+
 /**
  * Click something a broken build may simply not have.
  *
@@ -202,8 +243,14 @@ export const clickIfThere = (locator, timeout = 5000) =>
   locator
     .first()
     .click({ timeout })
-    .then(() => true)
-    .catch(() => false);
+    .then(() => {
+      lastClickFailure = '';
+      return true;
+    })
+    .catch((e) => {
+      lastClickFailure = clickReason(e);
+      return false;
+    });
 
 /**
  * Poll `read()` until `ok` accepts the answer, then hand the last value back — the *caller* still

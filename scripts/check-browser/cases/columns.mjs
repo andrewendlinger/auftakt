@@ -2,6 +2,7 @@
 
 import { sleep } from '../../lib/wait.mjs';
 import {
+  clickFailure,
   clickIfThere,
   gone,
   notePopoverReopened,
@@ -410,6 +411,9 @@ export async function runColumns(fixtures) {
   const ccOption = cc.locator(`[role="option"][data-value="${CC_PHASES[0]}"]`);
   const ccOptionShown = await shown(ccOption, 4000);
   const ccPicked = await clickIfThere(ccOption);
+  // Read while the `false` is still in hand: without it „geklickt false" is three different
+  // defects wearing one word, and this line is the one that placed WP-83 (browser.mjs).
+  const ccWhy = ccPicked ? '' : ` — ${clickFailure()}`;
 
   const ccStored = await until(() => ccValues(CC_TASK), (v) => Object.keys(v).length === 4, 8000);
   check(
@@ -421,7 +425,7 @@ export async function runColumns(fixtures) {
       ccStored[ccKey(ccDate)] === ccIso &&
       ccStored[ccKey(ccBox)] === true &&
       ccStored[ccKey(ccSel)] === CC_PHASES[0],
-    `Menü ${ccPillOpen}, Eintrag sichtbar ${ccOptionShown}, geklickt ${ccPicked}, ${JSON.stringify(ccStored)}`,
+    `Menü ${ccPillOpen}, Eintrag sichtbar ${ccOptionShown}, geklickt ${ccPicked}${ccWhy}, ${JSON.stringify(ccStored)}`,
   );
   check(
     '…die Checkbox als echter Boolean, die drei anderen als Zeichenkette',
