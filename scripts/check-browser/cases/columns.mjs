@@ -997,7 +997,16 @@ export async function runColumns(fixtures) {
   );
   // Polled, not read once. The map above is the *server's* state; the badge is the row's own,
   // rendered from the entity cache — and canary 9a caught the two disagreeing for a moment, with
-  // three keys stored and one badge on screen. The predicate is what the assertion reads.
+  // three keys stored and one badge on screen.
+  //
+  // The predicate carries both halves of what the assertion reads — three flagged rows *and* those
+  // three being these three — because a count on its own is satisfied by the wrong three: „Phase"
+  // was re-shown fifty lines up and gives its own badge back a render later, so „three flagged" is
+  // briefly true of a set holding „Phase" and not „Abgabe". And the budget is `SETTLED_MS`, like
+  // everything else in this file that reads a screen: WP-82 put `invalidate()` inside the queued
+  // write, so the burst is published a rung at a time — 3 → 1 → 2 → 3 — and the client is one
+  // write behind the server for the whole of it. Eight seconds is under that on a loaded machine,
+  // which is what two of this file's CI reds were.
   const ccBadges = await until(
     () =>
       ccMgr3
@@ -1008,8 +1017,10 @@ export async function runColumns(fixtures) {
             (el.textContent ?? '').includes('abweichend'),
           ]),
         ),
-    (rows) => rows.filter(([, flagged]) => flagged).length === 3,
-    8000,
+    (rows) =>
+      rows.filter(([, flagged]) => flagged).length === 3 &&
+      CC_GLOBALS.every((n) => rows.some(([text, flagged]) => flagged && text.includes(n))),
+    SETTLED_MS,
   );
   check(
     '…und genau diese drei Zeilen tragen „abweichend“',
@@ -1023,13 +1034,18 @@ export async function runColumns(fixtures) {
   );
   await cc.keyboard.press('Escape');
   await gone(cc.getByRole('heading', { name: 'Spalten verwalten' }), 5000);
-  // The predicate carries everything the assertion below reads, all three names and not just the
-  // first: a canary that hid only one of them satisfied a poll keyed on „Bereich" while the other
-  // two were still on screen, which is the assertion passing or failing on a coin toss.
+  // The predicate carries everything the assertion below reads — the three globals gone *and* the
+  // four own columns still standing — and not just the first half of either. A canary that hid one
+  // of the three satisfied a poll keyed on „Bereich" while the other two were still on screen; and
+  // a head that has not yet brought „Phase" back satisfies „the three are gone" while the check
+  // still fails on `CC_NAMES`. Both are the assertion passing or failing on a coin toss. Budgeted
+  // at `SETTLED_MS` for the reason given at `ccBadges` above.
   ccHeadRow = await until(
     ccHeads,
-    (h) => CC_GLOBALS.every((n) => !h.some((x) => x.includes(n))),
-    8000,
+    (h) =>
+      CC_GLOBALS.every((n) => !h.some((x) => x.includes(n))) &&
+      CC_NAMES.every((n) => h.some((x) => x.includes(n))),
+    SETTLED_MS,
   );
   check(
     'die drei Köpfe sind von dieser Seite weg, die vier eigenen stehen weiter da',
