@@ -3535,3 +3535,51 @@ cheapest path through boot (the gesture is skipped by design), and eleven days o
 show it doing exactly that. One practical rider from the same numbers: the renderer is reloaded
 warm about three times as often as the app starts cold, so any per-renderer-load „first frame"
 work is paid on every one of those reloads — weigh that before adding any.
+
+## „Künstler" is one id, renamed on the Übersicht (2026-08-27, WP-84)
+
+`dash.artists` (the Übersicht's section box) and `artist.kicker` (the line above an artist's H1)
+both shipped with the default „Künstler" and were stored as independent rows in the per-season
+`labels` array. Two pencils, one word, no link: renaming the kicker changed every artist page but
+never the Übersicht, and renaming the Übersicht never reached the artist pages. From the outside
+this reads as a sync bug rather than as two settings, which is how it was reported — the customer's
+description was that the rename „does not get mirrored".
+
+`artist.kicker` is retired into `dash.artists`. The kicker renders it as **plain text with no ✎**,
+and the two other artist-page consumers — the „Layout · Künstler" menu heading and
+`EditArtistButton`'s modal/undo/delete wording — follow the same id. One heading, one place to
+rename it, on the section it names.
+
+**Not two ids with an inherit-and-pin fallback.** That was the alternative: keep `artist.kicker`,
+resolve it to `dash.artists` when it has no override of its own, and let a festival pin a separate
+singular („Act" over one, „Acts" over the grid). Rejected by user decision — the pin is silent, so
+a user who once edited the kicker would find the Übersicht rename mysteriously not working again,
+which is the reported bug wearing a hat. The cost is real and accepted: **one word serves singular
+and plural everywhere**, so a rename to „Act" reads „3 Act" in the cascade sentence. German's
+„Künstler" is the same word either way, so the default never showed this.
+
+**A read-side alias, not a migration.** `LEGACY_LABEL_KEYS` in `lib/labels.ts` maps the retired id
+onto the surviving one, and `resolveLabels` applies aliases *before* own overrides so the survivor
+wins regardless of row order. A stored `artist.kicker` therefore still renders — a customer's rename
+is not silently reverted — while `labels` is a per-season array in a per-season database, so a write
+migration would mean rewriting every season's settings to save one map lookup on read.
+`parseLabelOverrides` already keeps rows whose key this build does not know (it was written to let a
+newer version's rename survive an older build's write), so the legacy row is preserved for free.
+Nothing writes a legacy key: `useRenameLabel` always writes the target.
+
+**Where the rename now reaches, and where it deliberately does not.** The sweep took the in-app
+strings that had hardcoded „Künstler": the global search group and placeholder, the archive's type
+pill and its filter, the delete cascade sentence (`typeLabels()` injects the noun, keeping
+`lib/deletedTypes.ts` React-free for `check:unit`), the move-task dialog, the season-copy checkbox,
+„Künstler-Spalten", and the not-found/failed states on the artist page and its one-pager. Three
+strings were *reworded* rather than substituted, because German case and gender cannot be derived
+from a noun the app has never seen: the copy dialog's hints became „gehören zu: X & Projekte"
+(„hängen an Musiker" is wrong where „hängen an Künstlern" was right), and the artist page's „Keine
+Termine für diesen Künstler." dropped to `EventList`'s own „Keine Termine." default rather than
+guess an article. Still hardcoded, on purpose: the Excel export header (the server has no label
+resolver) and the landing page's season-card stat (cross-season, while `labels` is per season).
+`artist.kontakte` („Künstler-Kontakte") keeps its own ✎ and does not follow — it is a section
+heading with its own edit surface, not a stray literal.
+
+`project.kicker` („Projekt") and `artist.projekte` („Projekte") are the same structural split and
+were **left alone**: the two German words genuinely differ, so there is no shared word to join.

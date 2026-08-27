@@ -2075,9 +2075,13 @@ are not — they are `labels` in the window's own season `settings`, with a gene
 - **The layout menu is a portal at `[role="menu"]`, not a child of the toolbar.** Its rows are
   `[role="menuitem"]`; the heading and status line are its first two `div`s. It closes on Escape
   (capture-phase, from `useAnchoredPopover`) and on a click on the `.fixed.inset-0` backdrop.
-- **`Layout · Künstler` is composed from a renameable label** (`artist.kicker`). A check that the
+- **`Layout · Künstler` is composed from a renameable label** (`dash.artists`, the Übersicht's
+  section title — it was `artist.kicker` until the two ids were joined). A check that the
   heading is right should rename it via `PATCH /api/settings {"labels":[…]}` and reload — that is
   the case the non-fused wording exists for, and a hardcoded assertion passes against both.
+- **The artist page's kicker has no `[data-label]` and no ✎.** It renders `dash.artists` as plain
+  text, so `[data-label="dash.artists"]` matches on the Übersicht only, and a script that hovers the
+  kicker waiting for a pencil waits for ever. Rename it on the Übersicht, or by `PATCH`.
 - **An *empty* custom widget's 🗑 deletes straight away** — `nonEmptyKeys` is what routes it to the
   „Bereich löschen" dialog, so a script that waits for „In den Papierkorb" after binning a fresh
   widget times out against working code.

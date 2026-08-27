@@ -35,6 +35,7 @@ import { ProjectStatusPill } from '../components/ProjectStatusPill';
 import { ExcelButton } from '../components/ExcelButton';
 import {
   useAllTasks,
+  useArtistNoun,
   useEventTypeOptions,
   useEntityColumns,
   useScopedColumns,
@@ -47,6 +48,7 @@ export function ArtistPage() {
   // `#/artist/abc` parses to NaN. Answer it here rather than asking the server for /artists/NaN.
   const validId = isValidId(artistId);
   const eventTypes = useEventTypeOptions();
+  const artistNoun = useArtistNoun();
   const undoablePatch = useUndoablePatch();
   const [managingColumns, setManagingColumns] = useState(false);
 
@@ -117,15 +119,20 @@ export function ArtistPage() {
   // undefined, so that guard rendered the spinner for ever — a stale bookmark to a deleted
   // artist spun with no message and no way to retry (PGS-05).
   if (!validId) {
-    return <ErrorState title="Künstler nicht gefunden" hint="Diese Adresse enthält keine gültige Künstler-Nummer." />;
+    return (
+      <ErrorState
+        title={`${artistNoun} nicht gefunden`}
+        hint={`Diese Adresse enthält keine gültige ${artistNoun}-Nummer.`}
+      />
+    );
   }
   if (isLoading) return <Spinner />;
   if (isError || !artist) {
     return (
       <LoadError
         error={error}
-        notFound="Künstler nicht gefunden"
-        failed="Künstler konnte nicht geladen werden."
+        notFound={`${artistNoun} nicht gefunden`}
+        failed={`${artistNoun} konnte nicht geladen werden.`}
         onRetry={() => void refetch()}
       />
     );
@@ -182,7 +189,6 @@ export function ArtistPage() {
           parent={{ artist_id: artistId }}
           eventTypes={eventTypes}
           showProject
-          emptyLabel="Keine Termine für diesen Künstler."
         />
       ),
     },
@@ -272,8 +278,12 @@ export function ArtistPage() {
                 </span>
               )}
               <div>
+                {/* Plain text, not an `EditableLabel`: this names the same thing as the
+                    Übersicht's „Künstler" box, and the two used to be separate ids that drifted
+                    apart the moment either was renamed. Renamed there, on the section it heads —
+                    do not give it a ✎ back (docs/DECISIONS.md). */}
                 <div className="text-xs font-semibold uppercase tracking-wider text-neutral-500">
-                  <EditableLabel k="artist.kicker" />
+                  {artistNoun}
                 </div>
                 <h1 className="text-2xl font-bold text-neutral-800">{artist.name}</h1>
               </div>
@@ -320,9 +330,9 @@ export function ArtistPage() {
         onRemoveCustom={removeCustomSection}
         addAction={builtinPicker(specs, { artist_id: artistId })}
         layoutAction={({ full }) => (
-          // `artist.kicker`, not `dash.artists`: this menu sits on the artist page, under that
-          // heading, so it follows that rename — the same rule EditArtistButton states.
-          <LayoutMenu store={layout} full={full} labelKey="artist.kicker" />
+          // `Layout · Künstler` — the one id the artist noun has left, so this menu heading and the
+          // kicker above it can no longer disagree.
+          <LayoutMenu store={layout} full={full} labelKey="dash.artists" />
         )}
       />
 

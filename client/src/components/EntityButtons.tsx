@@ -18,9 +18,11 @@ import { pickArtistColor, projectShade } from '../lib/colors';
 import { cascadeText } from '../lib/deletedTypes';
 import {
   resourceUndo,
+  useArtistNoun,
   useInvalidateAll,
   useLabel,
   useProjectStatusOptions,
+  useTypeLabels,
   useUndoableDelete,
   useUndoablePatch,
 } from '../hooks';
@@ -110,6 +112,7 @@ function DeleteRecordAction({
 }) {
   const del = useUndoableDelete();
   const navigate = useNavigate();
+  const nouns = useTypeLabels();
   const [confirming, setConfirming] = useState(false);
   const res = kind === 'artist' ? api.artists : api.projects;
   // Fetched when the *confirm* opens, not when the edit dialog does: renaming someone is the
@@ -187,7 +190,7 @@ function DeleteRecordAction({
           ) : (
             dependents != null &&
             dependents.total > 0 && (
-              <p className="mt-2 text-sm text-neutral-600">Mit dabei: {cascadeText(dependents)}.</p>
+              <p className="mt-2 text-sm text-neutral-600">Mit dabei: {cascadeText(dependents, nouns)}.</p>
             )
           )}
           <p className="mt-2 text-sm text-neutral-500">
@@ -203,8 +206,8 @@ export function NewArtistButton() {
   const invalidate = useInvalidateAll();
   const [open, setOpen] = useState(false);
   // Follow the „Künstler" heading rename (WP-F) — this button sits under the dashboard's
-  // `dash.artists` section, so it tracks that key, not the artist page's kicker.
-  const artistLabel = useLabel()('dash.artists');
+  // `dash.artists` section, and that is now the app's one artist noun.
+  const artistLabel = useArtistNoun();
   const { data: artists = [] } = useQuery({
     queryKey: ['artists'],
     queryFn: () => api.artists.list(),
@@ -233,9 +236,7 @@ export function NewArtistButton() {
 export function EditArtistButton({ artist }: { artist: Artist }) {
   const undoablePatch = useUndoablePatch();
   const [open, setOpen] = useState(false);
-  // The edit button lives on the artist page, under the `artist.kicker` heading — follow that
-  // rename rather than the dashboard's `dash.artists`.
-  const artistLabel = useLabel()('artist.kicker');
+  const artistLabel = useArtistNoun();
   return (
     <>
       <Btn variant="subtle" onClick={() => setOpen(true)}>

@@ -5,7 +5,7 @@ import { api } from '../api/client';
 import type { SearchResults } from '../api/types';
 import { formatDate } from '../lib/dates';
 import { findOption } from '../lib/selectOptions';
-import { useEventTypeOptions } from '../hooks';
+import { useArtistNoun, useEventTypeOptions } from '../hooks';
 import { anyModalOpen } from './fields';
 
 interface Hit {
@@ -16,7 +16,7 @@ interface Hit {
   to: string;
 }
 
-function buildHits(r: SearchResults, typeLabel: (value: string) => string): Hit[] {
+function buildHits(r: SearchResults, typeLabel: (value: string) => string, artistNoun: string): Hit[] {
   const hits: Hit[] = [];
   // A season-wide row has neither parent — the tasks CHECK allows it (migrateTasksAllowGeneral),
   // and the dashboard's „Festival" table is where it lives. Interpolating the null instead produced
@@ -26,7 +26,7 @@ function buildHits(r: SearchResults, typeLabel: (value: string) => string): Hit[
     return artistId ? `/artist/${artistId}` : '/dashboard';
   };
 
-  for (const a of r.artists) hits.push({ key: `a${a.id}`, group: 'Künstler', label: a.name, to: `/artist/${a.id}` });
+  for (const a of r.artists) hits.push({ key: `a${a.id}`, group: artistNoun, label: a.name, to: `/artist/${a.id}` });
   for (const p of r.projects)
     hits.push({
       key: `p${p.id}`,
@@ -62,6 +62,7 @@ function buildHits(r: SearchResults, typeLabel: (value: string) => string): Hit[
 }
 
 export function GlobalSearch() {
+  const artistNoun = useArtistNoun();
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
   const [debounced, setDebounced] = useState('');
@@ -139,7 +140,7 @@ export function GlobalSearch() {
   });
 
   const eventTypes = useEventTypeOptions();
-  const hits = data ? buildHits(data, (v) => findOption(eventTypes, v)?.label ?? v) : [];
+  const hits = data ? buildHits(data, (v) => findOption(eventTypes, v)?.label ?? v, artistNoun) : [];
   const groups = [...new Set(hits.map((h) => h.group))];
   const flatIndex = new Map(hits.map((h, i) => [h.key, i]));
   const shown = open && debounced.trim().length >= 2 && (hits.length > 0 || !isFetching);
@@ -214,7 +215,7 @@ export function GlobalSearch() {
         }}
         onFocus={() => setOpen(true)}
         onKeyDown={onKeyDown}
-        placeholder="Suchen … (Künstler, Projekte, Aufgaben, Termine, Kontakte)"
+        placeholder={`Suchen … (${artistNoun}, Projekte, Aufgaben, Termine, Kontakte)`}
         className="w-full rounded-xl border border-white/20 bg-white/15 px-4 py-2 text-sm text-white placeholder:text-white/60 outline-none focus:bg-white/25"
       />
       {shown && (

@@ -6,7 +6,7 @@ import { descendantsOf } from '../lib/taskTree';
 import { Label, Modal, Select } from './fields';
 import { Btn } from './ui';
 import { useUndo } from './UndoProvider';
-import { useAllTasks, useGuardedAction, useInvalidateAll, useSaison } from '../hooks';
+import { useAllTasks, useArtistNoun, useGuardedAction, useInvalidateAll, useSaison } from '../hooks';
 
 /** Select value encoding a move target: the overview, an artist's „Allgemein", or a project. */
 function parseTarget(value: string): { artist_id: number | null; project_id: number | null } {
@@ -31,6 +31,7 @@ function projectLabel(p: Project): string {
  */
 export function MoveTaskDialog({ task, onClose }: { task: Task; onClose: () => void }) {
   const saison = useSaison();
+  const artistNoun = useArtistNoun();
   const invalidate = useInvalidateAll();
   const guard = useGuardedAction();
   const { pushWithToast } = useUndo();
@@ -84,7 +85,7 @@ export function MoveTaskDialog({ task, onClose }: { task: Task; onClose: () => v
     task.project_id != null
       ? `Projekt „${currentLabel}“`
       : task.artist_id != null
-        ? `Künstler „${task.artist_name ?? artistName.get(task.artist_id) ?? ''}“`
+        ? `${artistNoun} „${task.artist_name ?? artistName.get(task.artist_id) ?? ''}“`
         : null;
   const targetLabel = (value: string): string => {
     if (value.startsWith('a')) return `${artistName.get(Number(value.slice(1))) ?? ''} · Allgemein`;
@@ -187,7 +188,7 @@ export function MoveTaskDialog({ task, onClose }: { task: Task; onClose: () => v
             <option value="">Ziel wählen …</option>
             {current !== 'overview' && <option value="overview">{overviewLabel}</option>}
             {artistOptions.length > 0 && (
-              <optgroup label="Künstler (Allgemein)">
+              <optgroup label={`${artistNoun} (Allgemein)`}>
                 {artistOptions.map((a) => (
                   <option key={a.id} value={`a${a.id}`}>
                     {a.name}

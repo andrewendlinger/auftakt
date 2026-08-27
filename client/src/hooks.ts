@@ -27,7 +27,8 @@ import { retryOnConflict } from './lib/conflict';
 import { errorMessage } from './lib/errors';
 import { pendingKey, queueWrite, settlePending, trackPending } from './lib/pending';
 import { DEFAULT_EVENT_WINDOW_DAYS } from './lib/eventGroups';
-import { LABEL_DEFAULTS, isLabelKey, type LabelKey } from './lib/labels';
+import { LABEL_DEFAULTS, labelText, resolveLabels, type LabelKey } from './lib/labels';
+import { typeLabels, type TypeLabels } from './lib/deletedTypes';
 import { getWindowSeason } from './lib/season';
 import { normalizeEventTypeOptions, normalizeSelectOptions } from './lib/selectOptions';
 import { parseColumnOverrides, withColumnVisible } from './lib/taskColumns';
@@ -852,15 +853,14 @@ export function useTaskSortRules(): TaskSortRule[] {
 
 /**
  * Resolves a heading id to its text: the user's override if there is one, else the default
- * from `LABEL_DEFAULTS`. A key this build does not know is ignored rather than rendered.
+ * from `LABEL_DEFAULTS`. A key this build does not know is ignored rather than rendered, and a
+ * *retired* one resolves onto whatever it was folded into — both rules live in `resolveLabels`,
+ * where `check:unit` can reach them.
  */
 export function useLabel(): (key: LabelKey) => string {
   const { value } = useSettingsArray('labels', parseLabelOverrides);
-  const overrides = useMemo(
-    () => new Map(value.filter((r) => isLabelKey(r.key)).map((r) => [r.key, r.label])),
-    [value],
-  );
-  return useCallback((key: LabelKey) => overrides.get(key) ?? LABEL_DEFAULTS[key], [overrides]);
+  const overrides = useMemo(() => resolveLabels(value), [value]);
+  return useCallback((key: LabelKey) => labelText(overrides, key), [overrides]);
 }
 
 /**
@@ -884,6 +884,21 @@ export function useRenameLabel(): (key: LabelKey, label: string) => Promise<void
     },
     [update],
   );
+}
+
+/**
+ * The one renameable heading that is also a *noun* the app puts in sentences — „+ Künstler",
+ * „Künstler bearbeiten", „3 Künstler". One place resolves it, so a caller never has to remember
+ * which of the two artist ids was the surviving one.
+ */
+export function useArtistNoun(): string {
+  return useLabel()('dash.artists');
+}
+
+/** `TYPE_LABELS` with the artist rename applied — for the archive pill and the cascade sentence. */
+export function useTypeLabels(): TypeLabels {
+  const artist = useArtistNoun();
+  return useMemo(() => typeLabels(artist), [artist]);
 }
 
 /**
