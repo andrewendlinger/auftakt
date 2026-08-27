@@ -3583,3 +3583,93 @@ heading with its own edit surface, not a stray literal.
 
 `project.kicker` („Projekt") and `artist.projekte` („Projekte") are the same structural split and
 were **left alone**: the two German words genuinely differ, so there is no shared word to join.
+
+---
+
+## Ein Zeilenanfang ist kein Befehl (2026-08-27, WP-85)
+
+Reported by Andre: „when you type a `+` at the beginning of a list it gets turned into a list item
+and doesn't stay a plus … when being rendered, drops the plus and turns it into a box of some kind."
+The box is a second-level bullet — the plus had made a *nested* list inside the item above it.
+
+**Two independent mechanisms, and the reported one is the smaller.** `bulletListInputRegex` in
+`@tiptap/extension-list` is `/^\s*([-+*])\s$/`: three characters start a list, so `+` and a space
+converted the block on the spot. Underneath it sat the quieter fault — `escapeMarkdownSyntax`
+escapes a backslash, a backtick, `*`, `_`, `[`, `]` and `~`, which is a statement about *inline*
+syntax and knows nothing about where a character sits. Every CommonMark **block** construct is
+decided by what stands at the start of a line, so a paragraph whose text merely *began* `+ Punkt A`
+was stored verbatim and read back as a list — by the editor and by `Markdown.tsx` alike. `-`, `#`,
+`2026.`, `1)` and `---` had the identical fault; `*` and `>` were safe only by luck, one through the
+inline escape and one through the entity encoding. This is the WP-49 and WP-57 shape: the user's
+structure was gone from storage, not merely drawn wrong.
+
+Fixing only the input rule would have left every other way in — paste, CSV import, restored backup,
+a legacy WP-49 fence, and `Cmd-Z` on an input rule, which hands back exactly the literal text the
+serializer then destroyed. **`1)` was reachable by typing alone**: no input rule claims a closing
+parenthesis, so it went to the database raw and came back a list on the next open.
+
+**The escape is a rule about lines, not about characters, and it runs on the serialized paragraph.**
+`escapeBlockStarts` (`lib/blockEscape.ts`) is called from one place, `MdParagraph.renderMarkdown` —
+the only point where a paragraph's finished text still starts at column 0. The list renderer
+prefixes `- ` and the indent *afterwards* and the blockquote its `> `, so one paragraph override
+covers list items and quotes too. Pushing it down to the text nodes was the obvious alternative and
+is wrong twice: a text node does not know it is at a line start, and a whole-paragraph colour
+serializes to `<span class="tc-rot">+ Punkt</span>`, where the plus is at column 21 and harmless —
+escaping it there would put a backslash inside the span, in every backup and every `.xlsx` export,
+for nothing. Both are pinned as corpus guards that pass before *and* after the fix.
+
+**At most one backslash per line, and never on a line that already has one.** Every rule tests the
+same position — the first non-space character, or for the ordered list the punctuation right after
+the digits — and after a rule fires that position holds a backslash, which is in no rule's character
+class. That is the whole idempotence argument, and it is the argument WP-62 did not have: an escape
+that can fire on its own output grows one backslash per save without limit, and the *first* save is
+always right, so only idempotence catches it.
+
+**Constructs deliberately given no rule**, each because it cannot reach a line start: `>` and `<`
+are entity-encoded before the escape runs (that is semantics the whole dialect rests on — the reader
+whitelists `<u>` and the colour span precisely because everything else is encoded), and a backtick,
+`~` and `_` are already dead through the serializer's inline escape. The second group is an
+implementation detail rather than semantics, so it is held by four serialize cases instead of a
+rule: an upgrade of `@tiptap/markdown` that narrows `escapeMarkdownSyntax` fails loudly rather than
+silently. A bare leading pipe gets no rule either — a header row alone is not a table, only the
+delimiter row under it makes one, and escaping both would be churn in every hand-drawn ASCII table.
+
+**The indent is unbounded, not CommonMark's three spaces.** WP-49 disabled `codeIndented` on both
+halves, which took the four-space ceiling with it: `    - vier` is a list to the reader now. A
+`{0,3}` bound would have left exactly the paragraphs WP-49 exists for unprotected.
+
+**Only `-` still starts a list when typed** (user decision). Nothing in the app ever *writes* `+` or
+`*` — the serializer spells every bullet `- ` and the toolbar has a button — so those two characters
+had no effect but to surprise someone who meant „+ 2 Helfer" or „*siehe unten". Keeping them would
+also have made the two halves disagree about one keystroke, because an input rule fires only at the
+start of a text block: `+ Punkt` after Shift+Enter would have stayed a plus while the same two keys
+at the start of the paragraph made a list. **The ordered rule was left alone.** `2026. ` still
+becomes `<ol start="2026">`, which is the same class of surprise, but narrowing it is a judgement
+about how you start a list at 3 rather than a bug fix, and it has a mitigation the plus did not:
+Backspace runs `undoInputRule()` first, so one keystroke gives the text back — and the serializer
+half now protects that shape everywhere it is *not* typed.
+
+**Neither reader was touched.** `+` and `*` are still accepted as list markers on the way in, which
+legacy notes and every import depend on, and `\+` is an ordinary CommonMark character escape that
+marked and micromark both consume. So nothing already stored moves: a note that holds `+ x` today
+already *is* a list and stays one, and the escape never sees a node.
+
+**Two consequences, stated so they are not reported as bugs later.** The `.xlsx` export writes
+stored Markdown verbatim into the `comment` column, by the decision recorded under WP-62 above, so
+`\+ Punkt A` now lands in a cell beside the `**fett**` and `<span class="tc-…">` that have always
+been there. That is the strongest argument for keeping the rule table minimal and is why `>` and the
+table header row have no rule. And **one existing note shape changes what it draws**: a paragraph
+line with leading spaces and a marker (`    - vier`) is prose to the editor and a bullet to the
+card *today* — the two halves already disagree — and after the first save of such a note both show
+prose. It needs an import or a pre-WP-49 note to exist at all, and the direction is the honest one,
+since the editor is what the author was looking at while typing.
+
+**Why 110 corpus cases never found it.** Render-equality is structurally blind here: stored
+`+ Punkt A` renders as a list, the round-trip writes `- Punkt A`, which renders identically, and
+idempotence holds too. Only a case written in the *escaped* spelling bites — `render('\- x')` is a
+paragraph, and the unfixed round-trip drew a list — or one seeded from ProseMirror JSON, which is
+the only way to say „the text of this paragraph *is* `+ Punkt A`". Fourteen of the seventeen new
+corpus entries fail on the unfixed code; the three that pass are the two deliberate guards and the
+`*` case that was safe by luck. `check-markdown.ts` also gained its first coverage of **typing**:
+`handleTextInput` is reachable in jsdom, so the input rule is asserted there rather than in
+`check:browser`, whose pinned total does not move.
