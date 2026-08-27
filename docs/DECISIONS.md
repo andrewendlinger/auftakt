@@ -2964,7 +2964,7 @@ the shape of half the gates' output is not what an extraction is for.
 **The browser gate is now a runner and fifteen scenario files**, split along the section markers it
 already had. `scripts/check-browser.mjs` keeps the port refusal, the stack, the fixture seasons and
 the ordered list; `scripts/check-browser/` holds `config`, `report`, `stack`, `browser`, `bridge`,
-`probes`, `pdf` and `cases/*.mjs`, one file per area, A–AW. The npm script, the ports, the `.demo`
+`probes`, `pdf` and `cases/*.mjs`, one file per area, A–AX. The npm script, the ports, the `.demo`
 rebuild, the refusal to start beside `npm run demo` and the order of the run are all unchanged.
 
 Two things made the split safe rather than hopeful.

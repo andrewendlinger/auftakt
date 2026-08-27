@@ -1,4 +1,4 @@
-/** AT–AW · the reorderable surfaces */
+/** AT–AX · the reorderable surfaces */
 
 import { sleep } from '../../lib/wait.mjs';
 import { stubElectron } from '../bridge.mjs';
@@ -10,7 +10,7 @@ import { api, send } from '../stack.mjs';
 
 /** @param {import('../fixtures.mjs').Fixtures} fixtures */
 export async function runReorder(fixtures) {
-  const { context, sorted } = fixtures;
+  const { HOME, context, sorted } = fixtures;
   /** `S` — the sorted season's query scope — comes from `records`, twelve files earlier. */
   const { S } = handedOver(fixtures, ['S']);
   // ======================================================================== AT · the task table
@@ -830,4 +830,148 @@ export async function runReorder(fixtures) {
     `geklickt ${arLeft}, ziehbar ${arOff.filter((s) => s.drag).length}, Leisten ${arOff.filter((s) => s.strip).length}`,
   );
   await ar.close().catch(() => {});
+
+  // ======================================================================== AX · the appended section
+  //
+  // The arranger's other half, and the only one that runs on *every* load: the merge that gives a
+  // stored layout the keys it has never seen (`SectionArranger.tsx:705-713`). It appends them at
+  // the **end**, which is right for a genuinely new section and wrong for one split out of an
+  // existing one — WP-48 split the welded `kontakte` into `kontakte` and `links`, and "Dokumente
+  // und Links" has been sitting at the bottom of the customer's pages ever since (the WP-70
+  // audit's F1; `docs/DECISIONS.md`, "The project page's Kontakte and Links are two sections").
+  //
+  // WP-78 put both damaged states on the demo and until now they were prose. Three shapes, and the
+  // pair in the middle is the point:
+  //
+  //   * **project 1 / artist 1** carry no layout at all and follow the spec order — the healthy
+  //     state, in which „Dokumente“ sits next to „Kontakte“.
+  //   * **project 3** — a stored layout that predates the split and has no `links` entry at all,
+  //     so the merge appends it on every load and nothing is ever written down.
+  //   * **project 10 / artist 5** have `links` *in* the layout, at the end, where an earlier merge
+  //     put it and the next touch of the arranger froze it.
+  //
+  // The last two are nearly indistinguishable on the page, which is exactly why the complaint could
+  // not be diagnosed from a screenshot: only the width and the database tell them apart. That is
+  // what makes this the net for the day F1 gets a product-side answer — a merge taught to insert
+  // `links` beside `kontakte` moves the first shape and leaves the second, and these four readings
+  // are what says which pages the customer would see move on the next start.
+  //
+  // Read-only against the demo's own season: those four rows *are* the fixtures, and a case that
+  // arranged them would be rewriting what it is here to read. The one write is the last check, and
+  // it happens in the `sorted` copy.
+  console.log('\nAX · Was ein gespeichertes Layout nicht kennt');
+
+  /** Every `[data-section]` cell with the width the arranger gave it — case AP's reading. */
+  const axShape = (page) =>
+    page
+      .locator('[data-section]')
+      .evaluateAll((els) =>
+        els.map((el) => `${el.getAttribute('data-section')}:${el.getAttribute('data-width')}`),
+      );
+  /**
+   * The same list as the *database* holds it. `layout` is JSON text and NULL is the sentinel for
+   * "never arranged, follow the template" — so a page with no layout of its own answers `null`
+   * here and the reading stays a reading rather than becoming an empty array that looks like one.
+   * Tombstones are spelled out, because the last check below is about entries a write puts down
+   * that nobody touched.
+   */
+  const axStored = async (path) => {
+    const row = await api(path);
+    if (typeof row?.layout !== 'string') return null;
+    return JSON.parse(row.layout).map(
+      (e) => `${e.key}:${e.width}${e.hidden ? '·versteckt' : ''}`,
+    );
+  };
+  /**
+   * One page of the demo's own season, read once it is laid out and closed again.
+   *
+   * `n` is what the fixture's layout comes to, and waiting for it is not decoration: the arranger
+   * renders its whole grid in one pass, so the list is 0 and then complete — a one-shot read on a
+   * loaded runner is an empty array, which would satisfy "`links` is not in the middle" perfectly.
+   */
+  const axRead = async (path, n) => {
+    const page = await open(context, path);
+    await pin(page, HOME, path);
+    const shape = await until(() => axShape(page), (s) => s.length >= n, 8000);
+    await page.close().catch(() => {});
+    return shape;
+  };
+
+  const axP1 = await axRead('/project/1', 5);
+  const axP3 = await axRead('/project/3', 4);
+  const axP10 = await axRead('/project/10', 16);
+  const axP3Db = await axStored('/projects/3');
+  const axP10Db = await axStored('/projects/10');
+
+  check(
+    'ohne eigenes Layout stehen „Kontakte“ und „Dokumente“ nebeneinander, beide halbbreit — die Form, die WP-48 gemeint hat',
+    axP1.join(' ').includes('kontakte:half links:half'),
+    axP1.join(' ') || 'keine Bereiche',
+  );
+  check(
+    'ein gespeichertes Layout ohne „Dokumente“ bekommt den Bereich bei jedem Laden hinten angehängt — und nichts davon wird geschrieben',
+    axP3.join(' ') === 'aufgaben:full termine:half kontakte:half links:half' &&
+      axP3Db !== null &&
+      axP3Db.join(' ') === 'aufgaben:full termine:half kontakte:half',
+    `Seite ${axP3.join(' ')} | Datenbank ${axP3Db === null ? 'kein eigenes Layout' : axP3Db.join(' ')}`,
+  );
+  check(
+    '…steht „Dokumente“ dagegen im Layout, sieht die Seite fast genauso aus: derselbe letzte Platz, und nur die Breite und die Datenbank unterscheiden die beiden Zustände',
+    axP3.at(-1) === 'links:half' &&
+      axP10.at(-1) === 'links:full' &&
+      axP10Db !== null &&
+      axP10Db.length === 16 &&
+      axP10Db.at(-1) === 'links:full',
+    `Projekt 3 …${axP3.slice(-2).join(' ')} | Projekt 10 …${axP10.slice(-2).join(' ')} | Datenbank ${axP10Db?.length ?? 0} Einträge, zuletzt ${axP10Db?.at(-1) ?? '—'}`,
+  );
+
+  // The artist page is where five of the customer's six unrepaired pages are, and the contrast is
+  // sharper there: nothing on it defaults to half width, so the healthy state is not "side by
+  // side" but "directly after Kontakte" — and the damaged one puts „Dokumente“ behind the task
+  // table, which is the bottom of a long page.
+  const axA1 = await axRead('/artist/1', 7);
+  const axA5 = await axRead('/artist/5', 7);
+  check(
+    'auf der Künstlerseite dasselbe Paar: ohne Layout folgt „Dokumente“ den Kontakten, mit gespeichertem Layout steht es hinter allem, der Aufgabentabelle eingeschlossen',
+    axA1.join(' ').includes('kontakte:full links:full') &&
+      axA1.indexOf('links:full') < axA1.indexOf('aufgaben:full') &&
+      axA5.at(-1) === 'links:full' &&
+      // `includes` first: `indexOf` answers -1 for a section that is not on the page at all, and
+      // -1 is below every index — so „behind the task table" would stay true of a build that had
+      // stopped rendering the task table. The `axA1` arm above needs no such guard: it compares
+      // two indices, and a missing one takes that comparison red on its own.
+      axA5.includes('aufgaben:full') &&
+      axA5.indexOf('aufgaben:full') < axA5.length - 1,
+    `Künstler 1: ${axA1.join(' ')} | Künstler 5: ${axA5.join(' ')}`,
+  );
+
+  // And the gesture that turns the first shape into the second, which is the whole mechanism in one
+  // click. `move()` persists `full` — the *merged* array — so one ▲ on „Kontakte“ writes down
+  // „Dokumente“ at the end and the two hidden Einblicke with it, although the user touched
+  // none of the three. In the `sorted` copy, because it writes; `copySeasonData` carries `layout`
+  // and preserves ids, so project 3 is the same shape there as it is on the demo.
+  const axF = await open(context, '/project/3');
+  await pin(axF, sorted.id, '/project/3');
+  const axFBefore = await axStored(S('/projects/3'));
+  const axFOn = await clickIfThere(axF.getByRole('button', { name: '✎ Bereiche bearbeiten' }));
+  const axFUp = await clickIfThere(
+    axF.locator('[data-section="kontakte"] [aria-label="Nach oben"]').first(),
+  );
+  const axFAfter = await until(
+    () => axStored(S('/projects/3')),
+    (v) => (v?.length ?? 0) > 3,
+    8000,
+  );
+  check(
+    'eine einzige Bewegung schreibt die ganze zusammengeführte Liste fest — „Dokumente“ hinten und die zwei ausgeblendeten Einblicke dazu, obwohl keiner der drei angefasst wurde',
+    axFOn &&
+      axFUp &&
+      axFBefore !== null &&
+      axFBefore.join(' ') === 'aufgaben:full termine:half kontakte:half' &&
+      axFAfter !== null &&
+      axFAfter.join(' ') ===
+        'aufgaben:full kontakte:half termine:half links:half stats:full·versteckt aufmerksamkeit:full·versteckt',
+    `Modus ${axFOn}, ▲ ${axFUp} | vorher ${axFBefore?.join(' ') ?? 'kein eigenes Layout'} | nachher ${axFAfter?.join(' ') ?? 'kein eigenes Layout'}`,
+  );
+  await axF.close().catch(() => {});
 }

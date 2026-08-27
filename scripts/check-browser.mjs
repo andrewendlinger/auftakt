@@ -43,7 +43,7 @@
  *   check-browser/probes.mjs     what a case asks the page about itself
  *   check-browser/pdf.mjs        reading a `page.pdf()` back
  *   check-browser/fixtures.mjs   the type of what crosses a scenario file's boundary
- *   check-browser/cases/*.mjs    the assertions — fifteen files, one per surface, covering areas A–AW
+ *   check-browser/cases/*.mjs    the assertions — fifteen files, one per surface, covering areas A–AX
  *
  * The split is a pure move (2026-08-24): no assertion was added, removed, reworded or reordered,
  * and every scenario body is byte-identical to its slice of the file this replaced.
@@ -74,7 +74,7 @@ import { runReorder } from './check-browser/cases/reorder.mjs';
  * header, CLAUDE.md, decision records), and prose cannot be typechecked — so the run pins it.
  * Adding or removing a case moves this number too, deliberately.
  */
-const EXPECTED_CHECKS = 638;
+const EXPECTED_CHECKS = 646;
 
 // ---------------------------------------------------------------------------- the run
 
