@@ -74,7 +74,7 @@ import { runReorder } from './check-browser/cases/reorder.mjs';
  * header, CLAUDE.md, decision records), and prose cannot be typechecked — so the run pins it.
  * Adding or removing a case moves this number too, deliberately.
  */
-const EXPECTED_CHECKS = 646;
+const EXPECTED_CHECKS = 648;
 
 // ---------------------------------------------------------------------------- the run
 

@@ -755,6 +755,32 @@ verified by hand, and the gate itself is written from this list.
   run *before* its animation-frame callbacks, so one already proves delivery and the second is the
   margin), and `ccOpenPill` in `cases/columns.mjs` is the shape. `cases/tasks.mjs`,
   `cases/subtasks.mjs` and `cases/keyboard.mjs` open the same pill and carry the same exposure.
+- **…and the scroll that shut it was not always one anybody performed (WP-83).** The entry above
+  blames the driver's own `click()` scroll, and that was only half of it: the second half needs no
+  driver at all, which is why `scrollSettled` could not cover it and why the same case went red
+  again after #156. The task table's wrapper is `overflow-x-auto` (`TaskTable.tsx:614`), and an
+  open `InlineInput` is **wider than the value it commits** — `min-w-48` for a text cell, `w-40`
+  for the date one. So the moment an editor closes, the table gets 70–150 px narrower; and because
+  `InlineInput` only closes when its write's blanket `invalidate()` resolves
+  (`InlineInput.tsx:112` → `hooks.ts:946`), on a run with this gate's ~25 open windows that
+  arrives *seconds* after the server already has the value. A case that waits on the API — as AM's
+  `until(() => ccValues(…))` does — therefore starts its next gesture with the editors still open
+  behind it. Reach a late column with `scrollIntoViewIfNeeded` and the wrapper is at its right-hand
+  end; the narrowing then forces the browser to pull `scrollLeft` back into range, and **that
+  clamp is dispatched as a `scroll` event**, which `useAnchoredPopover` used to read as „the user
+  scrolled". Measured on `#/project/2` with nothing injected: `editor-` at 217 ms, `scroll`
+  (wrapper, left 269 → 200, scrollWidth 1501 → 1432) at 229 ms, `listbox-` at 238 ms. Where that
+  lands decides which face it wears — before `shown()` the retry above eats it (**6 of 30** runs at
+  24 windows and 6× CPU throttling), after it the click detaches and the run reads „sichtbar true,
+  geklickt false" with no ⚠ at all, which is CI run `33073114558`. Forced into the click's own
+  window it is **12 of 12**, and Playwright names it exactly — `element was detached from the DOM,
+  retrying`, then the timeout. **The tell is that the anchor does not move**: the table loses
+  exactly what the clamp takes back, so a pill to the right of the shrink is stationary — measured
+  at 0 px in both axes — and the menu is still perfectly aligned with its trigger at the moment it
+  is taken away. Hence the rule the hook now applies: re-measure the anchor and close only when it
+  has really gone somewhere (`popover.ts`), which leaves a genuine page scroll closing the menu as
+  before. Withholding that one event from the hook took the forced repro from 12/12 to 0/8, and the
+  fix takes it to 0/12 with the unforced reopen rate going from 6/30 to 0/20.
 - **…and never screenshot an open popover with `fullPage: true`.** Same rule, one step further:
   `shot()` in `lib/drive.mjs` stitches a full-page picture by *scrolling*, which closes the popover
   before the shutter — so the file shows the page without its menu and every locator after it times
