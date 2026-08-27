@@ -2,6 +2,7 @@
 
 import { sleep } from '../../lib/wait.mjs';
 import {
+  clickFailure,
   clickIfThere,
   gone,
   notePopoverReopened,
@@ -13,14 +14,14 @@ import {
   topDialog,
   until,
 } from '../browser.mjs';
-import { UI } from '../config.mjs';
+import { SETTLED_MS, UI } from '../config.mjs';
 import { handedOver } from '../fixtures.mjs';
 import { check } from '../report.mjs';
 import { api, scoped, send } from '../stack.mjs';
 
 /** @param {import('../fixtures.mjs').Fixtures} fixtures */
 export async function runColumns(fixtures) {
-  const { columnsSeason, context } = fixtures;
+  const { columnsSeason, context, heldRoutes } = fixtures;
   /** Both come from `archive`, which runs immediately before this file. */
   const { pad2, rowIds } = handedOver(fixtures, ['pad2', 'rowIds']);
   // ======================================================================== AL–AO · the column types
@@ -410,6 +411,9 @@ export async function runColumns(fixtures) {
   const ccOption = cc.locator(`[role="option"][data-value="${CC_PHASES[0]}"]`);
   const ccOptionShown = await shown(ccOption, 4000);
   const ccPicked = await clickIfThere(ccOption);
+  // Read while the `false` is still in hand: without it „geklickt false" is three different
+  // defects wearing one word, and this line is the one that placed WP-83 (browser.mjs).
+  const ccWhy = ccPicked ? '' : ` — ${clickFailure()}`;
 
   const ccStored = await until(() => ccValues(CC_TASK), (v) => Object.keys(v).length === 4, 8000);
   check(
@@ -421,7 +425,7 @@ export async function runColumns(fixtures) {
       ccStored[ccKey(ccDate)] === ccIso &&
       ccStored[ccKey(ccBox)] === true &&
       ccStored[ccKey(ccSel)] === CC_PHASES[0],
-    `Menü ${ccPillOpen}, Eintrag sichtbar ${ccOptionShown}, geklickt ${ccPicked}, ${JSON.stringify(ccStored)}`,
+    `Menü ${ccPillOpen}, Eintrag sichtbar ${ccOptionShown}, geklickt ${ccPicked}${ccWhy}, ${JSON.stringify(ccStored)}`,
   );
   check(
     '…die Checkbox als echter Boolean, die drei anderen als Zeichenkette',
@@ -697,6 +701,109 @@ export async function runColumns(fixtures) {
     ccBoth[ccKey(ccBox)] === true && ccBoth[ccKey(ccSel)] === CC_PHASES[1],
     JSON.stringify(ccBoth),
   );
+
+  // 7 · the open menu survives the table re-laying out under it (WP-83). Not a scroll anybody
+  // performs: an open `InlineInput` is wider than the value it commits — `min-w-48` here, `w-40`
+  // on the date cell — and it closes only once its write's blanket `invalidate()` resolves, which
+  // on a run with this gate's windows open arrives long after the server already has the value.
+  // So the column narrows *while the pill's menu stands*, and with the wrapper at its right-hand
+  // end the browser has to pull `scrollLeft` back into range — a `scroll` event with nobody
+  // behind it, which used to shut the menu 9 ms later (docs/VERIFYING.md).
+  //
+  // Held rather than raced: parking the PATCH's *answer* puts the editor's close exactly where a
+  // loaded runner puts it by accident, so this is one measurement and not a coin toss. Unforced,
+  // the same clamp landed inside the *opening* gesture in 6 of 30 runs — where `ccOpenPill`'s
+  // retry hides it — and inside the click far more rarely, which is why it took four CI reds.
+  /** The `overflow-x-auto` the task table sits in, and nothing else on the page. */
+  const ccWrap = (mode) =>
+    cc.evaluate((how) => {
+      const table = [...document.querySelectorAll('table')].find((t) =>
+        [...t.querySelectorAll('thead th')].some((th) => (th.textContent ?? '').trim() === 'Aufgabe'),
+      );
+      const w = table?.closest('div.overflow-x-auto');
+      if (!w) return null;
+      if (how === 'end') {
+        w.scrollLeft = w.scrollWidth;
+        return null;
+      }
+      return { left: Math.round(w.scrollLeft), sw: Math.round(w.scrollWidth) };
+    }, mode);
+  /** Where the pill sits on screen — the reference the hook's own guard decides against. */
+  const ccPillBox = () =>
+    ccPillIn(CC_TASK, 'Phase')
+      .first()
+      .evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return { x: Math.round(r.left), y: Math.round(r.top) };
+      })
+      .catch(() => null);
+  /** Park the next task PATCH's answer until `release()`. Same shape as the landing case's. */
+  const ccHoldPatch = () => {
+    /** @type {{ held: boolean, release: (v?: unknown) => void }} */
+    const state = { held: false, release: () => {} };
+    const gate = new Promise((r) => {
+      state.release = r;
+    });
+    heldRoutes.push(state);
+    return cc
+      .route('**/api/tasks/*', async (route) => {
+        if (route.request().method() === 'PATCH' && !state.held) {
+          state.held = true;
+          await gate;
+        }
+        await route.continue().catch(() => {}); // see the guard above
+      })
+      .then(() => state);
+  };
+
+  const ccHold = await ccHoldPatch();
+  await clickIfThere(ccCell(CC_TASK, 'Zuständig').locator('button'));
+  const ccWideInput = ccCell(CC_TASK, 'Zuständig').locator('input');
+  const ccEditorUp = await shown(ccWideInput, 4000);
+  await ccFill(ccWideInput, 'Merle Dahlke-Wittenbrink (Vertretung)');
+  await ccWrap('end');
+  await scrollSettled(cc);
+  // Opening the pill is also what blurs the editor, so the commit — and the answer now parked —
+  // is the same gesture that puts the menu on screen, exactly as in AM.
+  const ccMenuUp = await ccOpenPill(CC_TASK, 'Phase');
+  await until(async () => ccHold.held, (v) => v === true, SETTLED_MS);
+  const ccWrapBefore = await ccWrap();
+  const ccPillBefore = await ccPillBox();
+  ccHold.release();
+  const ccWrapAfter = await until(
+    ccWrap,
+    (w) => !!w && !!ccWrapBefore && w.sw < ccWrapBefore.sw && w.left < ccWrapBefore.left,
+    SETTLED_MS,
+  );
+  const ccPillAfter = await ccPillBox();
+  const ccMenuSurvived = (await cc.locator('[role="listbox"]').count()) > 0;
+  await cc.unroute('**/api/tasks/*');
+
+  // The precondition, and it carries every part of the cause: the editor was open, the menu was
+  // open, the table really did get narrower and the browser really did pull the wrapper back. A
+  // check for „the menu is still there" without this passes on a run where nothing ever happened.
+  check(
+    'der schließende Editor macht die Tabelle schmaler, und der Browser setzt den Wrapper zurück — ohne dass jemand scrollt (WP-83)',
+    ccEditorUp &&
+      ccMenuUp &&
+      !!ccWrapBefore &&
+      !!ccWrapAfter &&
+      ccWrapAfter.sw < ccWrapBefore.sw &&
+      ccWrapAfter.left < ccWrapBefore.left,
+    `Editor ${ccEditorUp}, Menü ${ccMenuUp}, ${ccWrapBefore?.sw}→${ccWrapAfter?.sw} breit, links ${ccWrapBefore?.left}→${ccWrapAfter?.left}`,
+  );
+  // And the finding. The pill's own position is in the detail because it is the reason: the table
+  // loses exactly what the clamp takes back, so the trigger never moves and the menu was never
+  // out of place — a scroll that moves nothing may not take a menu away mid-Auswahl.
+  check(
+    '…und das offene Menü bleibt trotzdem stehen, weil die Pille sich dabei nicht bewegt hat',
+    ccMenuSurvived && !!ccPillBefore && !!ccPillAfter && ccPillBefore.x === ccPillAfter.x && ccPillBefore.y === ccPillAfter.y,
+    `${ccMenuSurvived ? 'Menü steht' : 'Menü zu'}, Pille ${JSON.stringify(ccPillBefore)} → ${JSON.stringify(ccPillAfter)}`,
+  );
+  await cc.keyboard.press('Escape');
+  await gone(cc.locator('[role="listbox"]'), 4000);
+  // Put the text cell back the way AN·3 left it, so AO reads the state this file documented.
+  await send('PATCH', CC(`/tasks/${CC_TASK}`), { custom_values: { [ccKey(ccText)]: '' } });
 
   // ======================================================================== AO · hiding across the types
   //

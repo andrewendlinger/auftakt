@@ -49,6 +49,12 @@ export function useAnchoredPopover<A extends HTMLElement, M extends HTMLElement>
   const [pos, setPos] = useState<PopoverPos | null>(null);
   const anchorRef = useRef<A>(null);
   const menuRef = useRef<M>(null);
+  /**
+   * Where the anchor sat when the menu was last positioned against it — the reference `onScroll`
+   * below decides against. Kept in a ref rather than in state: nothing renders from it, and it is
+   * written from a layout effect that must not schedule a second pass.
+   */
+  const anchorAtRef = useRef<{ left: number; top: number } | null>(null);
   // Read from listeners registered once per open, so a changing callback never re-binds them.
   const onCloseRef = useRef(onClose);
   const openRef = useRef(open);
@@ -57,7 +63,10 @@ export function useAnchoredPopover<A extends HTMLElement, M extends HTMLElement>
 
   const openPopover = useCallback(() => {
     const r = anchorRef.current?.getBoundingClientRect();
-    if (r) setPos({ left: r.left, top: r.bottom + 4, minWidth: r.width });
+    if (r) {
+      anchorAtRef.current = { left: r.left, top: r.top };
+      setPos({ left: r.left, top: r.bottom + 4, minWidth: r.width });
+    }
     openRef.current = true;
     setOpen(true);
   }, []);
@@ -76,6 +85,7 @@ export function useAnchoredPopover<A extends HTMLElement, M extends HTMLElement>
     const menu = menuRef.current;
     if (anchor && menu) {
       const r = anchor.getBoundingClientRect();
+      anchorAtRef.current = { left: r.left, top: r.top };
       const spaceBelow = window.innerHeight - r.bottom - MARGIN;
       const spaceAbove = r.top - MARGIN;
       const flipUp = menu.scrollHeight > spaceBelow && spaceAbove > spaceBelow;
@@ -86,10 +96,35 @@ export function useAnchoredPopover<A extends HTMLElement, M extends HTMLElement>
         : r.bottom + 4;
       setPos({ left, top, minWidth: r.width, maxHeight });
     }
-    // A page scroll invalidates the anchor rect — but a scroll *inside* the menu is its own
-    // `overflow-y-auto` doing its job and must not close it.
+    /**
+     * A page scroll invalidates the anchor rect — but a scroll *inside* the menu is its own
+     * `overflow-y-auto` doing its job and must not close it.
+     *
+     * **And neither must a scroll nobody performed (WP-83).** The task table's wrapper is
+     * `overflow-x-auto`, and an inline editor is wider than the value it commits
+     * (`InlineInput` is `min-w-48`, the date cell `w-40`), so the moment an editor closes the
+     * table gets ~70–150 px narrower. When the wrapper is scrolled to its right-hand end — which
+     * it is whenever the user has reached one of the last columns — the browser has to pull
+     * `scrollLeft` back into range, and *that* is dispatched as a `scroll` event with no user
+     * behind it. `InlineInput` only closes once its write's blanket `invalidate()` resolves, so
+     * with several windows open that arrives seconds later, landing on whatever popover happens
+     * to be open. Measured on `#/project/2`: `editor-` at 217 ms, `scroll` (wrapper, left
+     * 269 → 200, scrollWidth 1501 → 1432) at 229 ms, the menu gone at 238 ms.
+     *
+     * The tell is that the anchor does **not** move: the table shrinks by exactly what the clamp
+     * takes back, so a pill to the right of the shrink stays where it was — measured at 0 px in
+     * both axes. So the rule is not „did something scroll" but „did the menu come loose from its
+     * anchor": re-measure, and only close when the pill has actually gone somewhere. A real page
+     * scroll still moves it, and still closes the menu.
+     */
     const onScroll = (e: Event) => {
       if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) return;
+      const now = anchorRef.current?.getBoundingClientRect();
+      const was = anchorAtRef.current;
+      // Half a pixel: below that nothing has visibly moved, and sub-pixel layout noise is not a
+      // reason to take a menu away from someone mid-choice. No anchor at all means the trigger has
+      // gone — close, the way this always did.
+      if (now && was && Math.abs(now.left - was.left) < 0.5 && Math.abs(now.top - was.top) < 0.5) return;
       closePopover();
     };
     /**
