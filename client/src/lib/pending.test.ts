@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { clearPending, pendingKey, settlePending, trackPending } from './pending';
+import { clearPending, pendingKey, queueWrite, settlePending, trackPending } from './pending';
 
 /**
  * The assertion that matters is the ordering one: a refresh issued while a write is in flight
@@ -125,5 +125,143 @@ describe('trackPending', () => {
     const run = Promise.resolve('ok');
     expect(trackPending(pendingKey(['settings']), run)).toBe(run);
     await expect(run).resolves.toBe('ok');
+  });
+});
+
+/**
+ * The assertion that matters here is the mirror of `settlePending`'s: a write must not be *sent*
+ * while an earlier write on the same value is still out. Every store that uses this persists its
+ * whole value on each change, so two in flight at once are decided by whichever the server applies
+ * last — and nothing orders concurrent requests (WP-82: the browser gate's three-column burst
+ * ended with the server holding write 2's map in 2 of 10 runs).
+ */
+describe('queueWrite', () => {
+  it('does not start the second write until the first has answered', async () => {
+    const key = pendingKey(['project', 2, 'task_columns']);
+    const first = deferred<string>();
+    const order: string[] = [];
+
+    const a = queueWrite(key, () => {
+      order.push('a sent');
+      return first.promise;
+    });
+    const b = queueWrite(key, () => {
+      order.push('b sent');
+      return Promise.resolve('b');
+    });
+
+    // Two microtask drains: enough for `b` to have been started had nothing held it back.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(order).toEqual(['a sent']);
+
+    first.resolve('a');
+    await expect(a).resolves.toBe('a');
+    await expect(b).resolves.toBe('b');
+    expect(order).toEqual(['a sent', 'b sent']);
+  });
+
+  it('keeps a whole burst in the order it was made, whatever order the answers come in', async () => {
+    const key = pendingKey(['project', 2, 'task_columns']);
+    const answers = { one: deferred<void>(), two: deferred<void>(), three: deferred<void>() };
+    const sent: string[] = [];
+    const answered: string[] = [];
+    const write = (name: keyof typeof answers) =>
+      queueWrite(key, async () => {
+        sent.push(name);
+        await answers[name].promise;
+        return name;
+      }).then((n) => {
+        answered.push(n);
+        return n;
+      });
+
+    const all = Promise.all([write('one'), write('two'), write('three')]);
+    await Promise.resolve();
+    // Answered back to front — the ordering that leaves the server holding an older map when the
+    // three go out together. Nothing but the queue makes the run order survive it.
+    answers.three.resolve();
+    answers.two.resolve();
+    answers.one.resolve();
+
+    expect(await all).toEqual(['one', 'two', 'three']);
+    expect(sent).toEqual(['one', 'two', 'three']);
+    expect(answered).toEqual(['one', 'two', 'three']);
+  });
+
+  it('lets the queue carry on after a write that failed', async () => {
+    const key = pendingKey(['project', 2, 'task_columns']);
+    const failed = queueWrite(key, () => Promise.reject(new Error('offline')));
+    const after = queueWrite(key, () => Promise.resolve('stored'));
+    await expect(failed).rejects.toThrow('offline');
+    await expect(after).resolves.toBe('stored');
+  });
+
+  it('does not make one page wait for another', async () => {
+    const two = pendingKey(['project', 2, 'task_columns']);
+    const three = pendingKey(['project', 3, 'task_columns']);
+    const held = deferred<void>();
+    const started: string[] = [];
+
+    queueWrite(two, () => {
+      started.push('two');
+      return held.promise;
+    });
+    await queueWrite(three, () => {
+      started.push('three');
+      return Promise.resolve();
+    });
+
+    expect(started).toEqual(['two', 'three']);
+    held.resolve();
+  });
+
+  it('starts a write made after the queue drained without waiting for anything', async () => {
+    const key = pendingKey(['project', 2, 'task_columns']);
+    await queueWrite(key, () => Promise.resolve('first'));
+    const order: string[] = [];
+    const second = queueWrite(key, () => {
+      order.push('second sent');
+      return Promise.resolve('second');
+    });
+    // One drain, not two: nothing is in flight, so the queue is one microtask deep — a settled
+    // tail left in the map would still resolve, but it would cost a hop per write ever made here.
+    await Promise.resolve();
+    expect(order).toEqual(['second sent']);
+    await expect(second).resolves.toBe('second');
+  });
+
+  it('still queues behind a write in flight, even after an earlier one has drained', async () => {
+    const key = pendingKey(['project', 2, 'task_columns']);
+    const held = deferred<void>();
+    const started: string[] = [];
+    const send = (name: string, answer: Promise<unknown>) =>
+      queueWrite(key, () => {
+        started.push(name);
+        return answer;
+      });
+
+    // The case the identity test in the cleanup exists for, and the only one that reaches it: a
+    // burst registered in one tick never runs a cleanup mid-flight. `a` answers at once while `b`
+    // is still out, so `a`'s cleanup fires against a map whose tail is already `b`'s — an
+    // unconditional `tails.delete(key)` there empties it, and `c` then chains on nothing.
+    const a = send('a', Promise.resolve('a'));
+    send('b', held.promise);
+    await expect(a).resolves.toBe('a');
+    // Two drains: `b` starts one microtask after `a`'s tail settles, and `a`'s cleanup runs in the
+    // same turn.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(started).toEqual(['a', 'b']);
+
+    const c = send('c', Promise.resolve('c'));
+    // The same two drains again — enough for `c` to have run had it queued behind nothing.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(started).toEqual(['a', 'b']);
+
+    held.resolve();
+    await expect(c).resolves.toBe('c');
+    expect(started).toEqual(['a', 'b', 'c']);
   });
 });
