@@ -1116,6 +1116,17 @@ verified by hand, and the gate itself is written from this list.
   `announcementsSeen: { version: '0.9.0' }` in the same file and reload: anything in `CHANGELOG.md`
   above that version is what the card shows. Setting it to a version *above* the running one is how
   you keep it out of the way while looking at a dated announcement.
+- **Measuring the fold needs its own payload — the „Was ist neu" card cannot show that bug.** The
+  card the marker summons carries every entry above it, and a catch-up card is already at its
+  ceiling (`max-h`, then `overflow-y-auto`): opening „Außerdem" changes its height by **zero**, so
+  „the top edge did not move" passes against a centred card exactly as well as against an anchored
+  one. Install a *short* dated payload with a `<details>` in the body — laid out like
+  `CHANGELOG.md`'s, `<summary>` on its own line and blank lines around the list, or remark keeps
+  the block as raw HTML and the bullets never become a list — and assert the growth **before** the
+  anchoring. Measured at 357 → 415 px with the top edge sliding 197 → 168 while the overlay was
+  still `items-center` (2026-08-27, viewport 1428×752). Locate the card by what it contains
+  (`div:has(> #announcement-title)`), never by `nth()`: the fireworks canvas sits between the
+  scrim and the card and moves the index under you.
 - **„Nothing is shown" has to be a wait, never a `count()`.** `html[data-app-ready]` is also set
   from `BootReady`'s unconditional budget, so the feed request can still be in flight when the page
   is „ready" — a zero counted there passes against an overlay that is one round trip from

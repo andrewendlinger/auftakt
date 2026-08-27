@@ -162,6 +162,53 @@ export async function runAnnouncements(fixtures) {
   await w1.close();
   await w2.close();
 
+  // --- the fold grows the card downwards, it does not move it ---
+  //
+  // „Außerdem" is a `<details>`, so opening it makes the card taller while the reader is in the
+  // middle of it. Centred — `items-center`, which this overlay used until 2026-08-27 — a box
+  // splits every height change evenly between its two edges: the 0.12.0 notes grew the card by
+  // 58px and slid its top edge up by 29, carrying the line under the reader's eye with it.
+  // Anchored at `20vh` the fold can only extend downwards.
+  //
+  // **Both halves, or this asserts nothing.** The „Was ist neu" card summoned below carries
+  // every entry in CHANGELOG.md; it is already at the ceiling and scrolling, so its fold changes
+  // the height by zero and „the top did not move" would pass there against a centred card too.
+  // Hence a payload short enough to have room to grow — and the growth is asserted *first*, so a
+  // future card that stops growing turns this into a red rather than into a silent pass.
+  writeReg((reg) => {
+    reg.announcements = [
+      {
+        id: 'faltung',
+        title: 'Faltung',
+        // Laid out the way CHANGELOG.md lays a fold out — `<summary>` on its own line and blank
+        // lines around the list, or remark keeps the whole block as raw HTML and the bullets
+        // never become a list.
+        body: 'Eine Zeile.\n\n<details>\n<summary>Außerdem</summary>\n\n- Noch eine Zeile.\n- Und noch eine.\n\n</details>\n\nGrüße',
+        date: TODAY.slice(5),
+      },
+    ];
+  });
+  const v3 = await open(context);
+  // The card by what it contains, not by its position among its siblings: the fireworks canvas
+  // comes and goes between the scrim and the card, and an `nth()` would follow it.
+  const foldCard = overlay(v3).locator('div:has(> #announcement-title)');
+  await foldCard.waitFor({ state: 'visible', timeout: 15000 });
+  const shut = await foldCard.boundingBox();
+  await overlay(v3).locator('summary').click();
+  await sleep(300);
+  const opened = await foldCard.boundingBox();
+  check(
+    'die Falte macht die Karte höher — sonst prüft das Folgende nichts',
+    opened.height > shut.height + 8,
+    `${Math.round(shut.height)} → ${Math.round(opened.height)}`,
+  );
+  check(
+    '…und die Oberkante bleibt, wo sie war — sie wächst nach unten',
+    Math.abs(opened.y - shut.y) < 1,
+    `${Math.round(shut.y)} → ${Math.round(opened.y)}`,
+  );
+  await v3.close();
+
   // --- the card can arrive after a dialog is already open ---
   //
   // The feed is a round trip, so this is a real ordering and not a contrived one: the user opens

@@ -202,7 +202,14 @@ export function AnnouncementOverlay() {
     <div
       // `no-print`, or it prints on page 1 of the Cmd-P sheets. `z-[60]`: the toast layer is at
       // z-50 and was the ceiling until this.
-      className="no-print fixed inset-0 z-[60] flex items-center justify-center p-6"
+      //
+      // **Anchored, not centred.** The card has a fold („Außerdem"), and a centred box splits
+      // every height change evenly between its two edges: opening it grew the card by 58px and
+      // slid its top edge up by 29, so the text the reader was already looking at moved while
+      // they were reading it. Anchoring the top means the fold only ever extends downwards.
+      // `pt-[20vh]` rather than the top of the screen — it keeps the resting position within
+      // ~50px of where centring used to put it, so nothing else about the card looks different.
+      className="no-print fixed inset-0 z-[60] flex items-start justify-center px-6 pb-16 pt-[20vh]"
       role="dialog"
       aria-modal="true"
       aria-labelledby="announcement-title"
@@ -235,7 +242,15 @@ export function AnnouncementOverlay() {
         // Keyed, so a second queued card remounts: the confirm button's `autoFocus` fires again
         // and a long set of release notes does not open scrolled to where the last one was.
         key={current.id}
-        className={`relative flex max-h-[calc(100vh-6rem)] w-[min(38rem,100%)] flex-col overflow-y-auto rounded-2xl bg-white px-8 pb-6 pt-8 shadow-[0_24px_70px_rgba(0,0,0,0.28)] ${
+        // The ceiling follows the anchor above: the card starts at 20vh, so 80vh less what the
+        // bottom has to keep free is everything it can have before it has to scroll. Left at
+        // `100vh-6rem` it would run off the screen instead — which a centred card could never
+        // do, and a long catch-up (several releases in one card) does.
+        //
+        // The 4rem is the dismiss hint below, not a margin: it is `bottom-8` and a line tall,
+        // and it is painted *after* this card, so a ceiling that merely fits on screen puts it
+        // on top of the last line of the notes. Centring used to keep them apart by accident.
+        className={`relative flex max-h-[calc(80vh-4rem)] w-[min(38rem,100%)] flex-col overflow-y-auto rounded-2xl bg-white px-8 pb-6 pt-8 shadow-[0_24px_70px_rgba(0,0,0,0.28)] ${
           tone.centered ? 'text-center' : ''
         }`}
       >
