@@ -164,6 +164,98 @@ body {
   color: #8a7a52;
 }
 
+/* „Was ist neu“ — the entry lists (2026-08-27). The emoji *is* the marker: a disc beside it
+   said the same thing twice. `text-indent`, not padding, so only the first line is pulled out —
+   the description after the `<br>` then lands at `padding-left`, under the bold lead-in rather
+   than under the emoji. The entry writes an en space after the emoji (U+2002, which HTML does
+   not collapse the way it collapses a second " "), and this padding is tuned to it: change one
+   and the two lines stop lining up. Scoped to `> ul` so the „Außerdem“ fold keeps its dashes. */
+.announcement-body > ul {
+  list-style: none;
+  padding-left: 1.69em;
+}
+.announcement-body > ul > li {
+  text-indent: -1.69em;
+  font-size: 0.86rem;
+}
+/* The lead-in keeps the body size; only the line under it steps down. Both are set in `rem`, not
+   `em`, so the two do not compound. `text-indent`/`padding-left` stay in `em` on purpose: they
+   track the emoji and the en space, which scale with the li, so the alignment holds at any size. */
+.announcement-body > ul > li > strong {
+  font-size: 0.95rem;
+}
+
+/* A version heading, when the card carries more than one entry — someone who skipped a release
+   gets both at once. Centred between two rules rather than merely small and grey: the fold below
+   is *also* small, grey and left-aligned, and two quiet grey lines meaning different things
+   ("a version starts here" vs "open this") read as the same thing. A divider is the one shape
+   nothing else in the card uses. */
+.announcement-body h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.8em;
+  margin: 1.75rem 0 0.75rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #9a9a9a;
+}
+.announcement-body h3::before,
+.announcement-body h3::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #e5e5e5;
+}
+
+/* „Außerdem" — the fold at the end of a changelog card (2026-08-27). Everything the reader does
+   not have to act on sits behind one disclosure and recedes, so the bullets above it are what the
+   eye lands on. #6e6e6e is 5.10:1 on white: quieter than the body, still legible rather than
+   decorative — the same bar the sign-off's gold is held to.
+
+   `details`/`summary` need no schema change. Both are already in rehype-sanitize's GitHub default
+   `tagNames`, which `lib/markdownPipeline.ts` extends rather than replaces, and `rehypeRaw` parses
+   the raw HTML ahead of it — so the entry writes the fold in Markdown and nothing in the pipeline
+   moves. */
+.announcement-body details {
+  color: #6e6e6e;
+  font-size: 0.9rem;
+}
+/* „Außerdem“ sits hard against the left edge — it is the card's own aside, not a fourth entry,
+   so it does not take the entries' emoji gutter. Its arrow follows the word instead of leading
+   it: the gutter to the left belongs to the emoji column above, and a marker sitting in it read
+   as a fourth, unlabelled entry. The native `summary` triangle is a marker whose width and side
+   the page cannot set, hence `::after`. */
+.announcement-body details > summary {
+  cursor: pointer;
+  list-style: none;
+}
+.announcement-body details > summary::-webkit-details-marker {
+  display: none;
+}
+.announcement-body details > summary::after {
+  content: '▶';
+  display: inline-block;
+  margin-left: 0.5em;
+  font-size: 0.82em;
+  vertical-align: 0.04em;
+}
+.announcement-body details[open] > summary::after {
+  content: '▼';
+}
+/* …and its items hang under the label rather than beside it — one ordinary step, measured from
+   the card's edge now that the label starts there. */
+.announcement-body details ul {
+  padding-left: 1.25rem;
+}
+
+/* A dash, not a disc: inside the fold the marker should sit back too. `::marker` rather than a
+   string `list-style-type`, so the dash inherits the fold's colour instead of needing it twice. */
+.announcement-body details li::marker {
+  content: '– ';
+}
+
 /* Schriftfarbe im Text (WP-62). Eight tones, all ≥ 4.5:1 against white — the palette a user picks
    from, and the *only* place the colours are written down. `lib/textColor.ts` carries the ids and
    the labels, the mark stores `<span class="tc-rot">`, the sanitize schema admits exactly that

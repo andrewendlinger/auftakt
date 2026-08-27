@@ -235,7 +235,7 @@ export function AnnouncementOverlay() {
         // Keyed, so a second queued card remounts: the confirm button's `autoFocus` fires again
         // and a long set of release notes does not open scrolled to where the last one was.
         key={current.id}
-        className={`relative flex max-h-[calc(100vh-6rem)] w-[min(32.5rem,100%)] flex-col overflow-y-auto rounded-2xl bg-white px-8 pb-6 pt-8 shadow-[0_24px_70px_rgba(0,0,0,0.28)] ${
+        className={`relative flex max-h-[calc(100vh-6rem)] w-[min(38rem,100%)] flex-col overflow-y-auto rounded-2xl bg-white px-8 pb-6 pt-8 shadow-[0_24px_70px_rgba(0,0,0,0.28)] ${
           tone.centered ? 'text-center' : ''
         }`}
       >

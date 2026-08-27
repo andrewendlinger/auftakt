@@ -9,14 +9,20 @@ Versionen und die technische Historie stehen auf der
 
 ## 0.12.0 — 27. August 2026
 
-Diese Version räumt die Stellen weg, an denen Auftakt dich stehen ließ: ein Start, der zu früh aufgab, ein Ein-Pager ohne Rückweg und eine Rückmeldung, die erst durch fünf Bereiche führte.
+- 🖨️ **Druckansicht verbessert**
+  Man kam nicht mehr aus der Ansicht heraus — das ist behoben.
+- 🎨 **Farbiger Text**
+  Textfarben sind im Menü nun besser zu erkennen.
+- 💬 **Feedback senden**
+  Zum Feedback senden braucht es jetzt nur noch zwei Klicks in den Einstellungen.
 
-- **Zurück aus dem Ein-Pager** — die Druckansicht führt jetzt auf die Seite zurück, von der du gekommen bist, und „Als PDF speichern“ legt die Datei wirklich ab.
-- **Ein Start, der wartet** — prüft ein Virenscanner nach einem Update erst die neue Programmdatei, sagt Auftakt das und fragt, ob es weiter warten soll, statt nach zehn Sekunden aufzugeben.
-- **Rückmeldung in zwei Klicks** — „Feedback & Diagnose“ fragt nur noch, was passiert ist, und legt den Bericht auf deinen Schreibtisch.
-- **Farben, die du unterscheidest** — die Schriftfarbe zeigt acht gefüllte Farbflächen statt eines kleinen „A“ in acht kaum verschiedenen Tönen.
+<details>
+<summary>Außerdem</summary>
 
-_Außerdem:_ das Fenster steht vom ersten Augenblick an auf dem Schirm, Windows-Dialoge tragen „Auftakt“ im Titel, schnell nacheinander ausgeblendete Aufgaben-Spalten kommen in der Reihenfolge an, in der du sie geklickt hast, und Auftakt führt ein Protokoll mit, das einem Fehlerbericht beiliegt.
+- Der App-Start ist insgesamt flüssiger.
+- Weitere kleine Verbesserungen.
+
+</details>
 
 ## 0.11.0 — 25. August 2026
 
