@@ -7,9 +7,19 @@ import { Table, renderTableToMarkdown } from '@tiptap/extension-table';
 import { TableRow } from '@tiptap/extension-table-row';
 import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
-import { Extension, Mark, Node, mergeAttributes, type AnyExtension, type JSONContent } from '@tiptap/core';
+import { BulletList } from '@tiptap/extension-list';
+import {
+  Extension,
+  Mark,
+  Node,
+  mergeAttributes,
+  wrappingInputRule,
+  type AnyExtension,
+  type JSONContent,
+} from '@tiptap/core';
 import { NodeSelection, Plugin } from '@tiptap/pm/state';
 import { Lexer, Marked, type TokensList } from 'marked';
+import { escapeBlockStarts } from './blockEscape';
 import { fenceParagraphs } from './legacyCode';
 import {
   canonicalImageSrc,
@@ -660,6 +670,13 @@ const isEmptyParagraph = (node: JSONContent) =>
  * `parseMarkdown` reads back as an empty paragraph, so this only makes the write side spell what
  * both halves already understood. `MarkdownManager.serialize` strips a document that is *nothing
  * but* markers back to `""`, so an empty note still stores an empty string.
+ *
+ * ---
+ *
+ * **Und jede Zeile eines Absatzes wird entschärft (WP-85).** The serializer escapes *inline* syntax
+ * only, so a paragraph whose text merely *began* `+ Punkt A` was stored verbatim and read back as a
+ * bullet list — the note re-shaped itself on the next open. Why that is a rule about lines rather
+ * than about characters, and which constructs deliberately have no rule, is on `lib/blockEscape.ts`.
  */
 const MdParagraph = Paragraph.extend({
   parseMarkdown: (token, helpers) => {
@@ -682,7 +699,18 @@ const MdParagraph = Paragraph.extend({
     if (node && ctx.parentType === 'doc' && isEmptyParagraph(node)) return EMPTY_PARAGRAPH_MARKDOWN;
     // A paragraph with content is the extension's own `renderChildren`, reached the same way as
     // the parser above — `ctx` carries the neighbouring nodes the indentation logic reads.
-    return Paragraph.config.renderMarkdown!(node, helpers, ctx);
+    const md = Paragraph.config.renderMarkdown!(node, helpers, ctx);
+    // …and then every line of it is defused (WP-85). This is the only place that sees a paragraph's
+    // finished text while it still starts at column 0: the list renderer prefixes `- ` and the
+    // indent *afterwards*, the blockquote its `> `, so this one override covers list items and
+    // quotes too — `- \- Unterpunkt` is the difference between one list and a nested one.
+    //
+    // The test is `'table'`, **not** `'tableCell'`: `renderTableToMarkdown` hands a cell's
+    // *paragraphs* straight to the table's own `renderChildren`, so neither the row nor the cell is
+    // ever a parent node. A cell needs nothing anyway — GFM splits the row and parses what is left
+    // as inline text, so no block can begin there, and a backslash would only widen the padded
+    // column and show up in the .xlsx export.
+    return ctx.parentType === 'table' ? md : escapeBlockStarts(md);
   },
 });
 
@@ -712,6 +740,37 @@ const MdDocument = Document.extend({
     let end = content.length;
     while (end > 0 && isEmptyParagraph(content[end - 1]!)) end--;
     return helpers.renderChildren(content.slice(0, end), '\n\n');
+  },
+});
+
+/**
+ * `+ ` am Zeilenanfang ist ein Pluszeichen (WP-85) — the typing half of it.
+ *
+ * The vendor's rule is `bulletListInputRegex`, `/^\s*([-+*])\s$/` in `@tiptap/extension-list`
+ * 3.30.1: three characters start a bullet list, and typing any of them followed by a space converts
+ * the block on the spot. Inside a list item that makes a *nested* item — „turns it into a box of
+ * some kind", as the report put it, that box being the second-level bullet. Only `-` survives here.
+ * Two reasons, and the second is the one that decides it:
+ *
+ * - Nothing in the app ever *writes* `+` or `*`. The serializer spells every bullet `- `, the
+ *   toolbar has a button, and both readers accept all three on the way in — so those two characters
+ *   have no effect but to surprise someone who meant „+ 2 Helfer" or „*siehe unten".
+ * - Without it the two halves of the dialect would disagree about one keystroke. `escapeBlockStarts`
+ *   now stores a typed `+ ` as `\+ `, and an input rule fires only at the start of a *text block* —
+ *   `getTextContentFromNodes` renders a hard break as a leaf placeholder, so `^\s*` cannot reach
+ *   past one. So `+ Punkt` after Shift+Enter would have stayed a plus while the same two keys at
+ *   the start of the paragraph made a list.
+ *
+ * The replacement lives here rather than in `RichTextEditor.tsx` because `bulletList: false` is a
+ * *schema* change: the headless round-trip check builds its editor from this list too, and without
+ * the replacement it would run with no `bulletList` node at all.
+ *
+ * `keepMarks`/`keepAttributes` are not restated — the app sets neither, both default to `false`,
+ * and that is the branch the vendor's own `addInputRules` takes.
+ */
+const MdBulletList = BulletList.extend({
+  addInputRules() {
+    return [wrappingInputRule({ find: /^\s*(-)\s$/, type: this.type })];
   },
 });
 
@@ -823,6 +882,7 @@ export function markdownExtensions(
       underline: false, // replaced by MdUnderline so it serializes to <u>
       document: false, // replaced by MdDocument so the trailing empty paragraph isn't stored
       paragraph: false, // replaced by MdParagraph so a lone image keeps its paragraph
+      bulletList: false, // replaced by MdBulletList so a typed `+ ` stays a plus (WP-85)
       code: false, // WP-49 — see markdownParser; the tokenizers go with them
       codeBlock: false,
       link: {
@@ -847,6 +907,7 @@ export function markdownExtensions(
     LegacyFence,
     MdDocument,
     MdParagraph,
+    MdBulletList,
     MdLinkedImage,
     MdImage.configure({ resolveSrc: opts.resolveSrc ?? ((src: string) => src) }),
     MdTable.configure({ resizable: false }),

@@ -278,6 +278,50 @@ const corpus: Record<string, string> = {
   rawPreTag: 'davor\n\n<pre>Soundcheck\nEinlass</pre>',
   inlineBackticksLegacy: 'ein `code` wort',
   inlineBackticksEscaped: 'ein \\`code\\` wort',
+  // WP-85 — ein Zeilenanfang ist kein Befehl. Der Serialisierer escaped nur *inline*-Syntax, also
+  // wurde ein Absatz, dessen Text mit `+ Punkt A` bloß *begann*, wörtlich gespeichert und beim
+  // nächsten Öffnen als Liste gelesen: die Notiz formte sich um, und das Pluszeichen war weg.
+  //
+  // Die Fälle stehen in der **escapten** Schreibweise, weil genau die vorher verloren ging:
+  // `render('\- x')` ist ein Absatz, der Round-Trip schrieb `- x` und damit eine Liste. Auf der
+  // rohen Schreibweise sieht die Render-Gleichheit nichts — `+ x` und `- x` zeichnen dieselbe
+  // Liste, beide Zusicherungen halten, und der Fehler bleibt unsichtbar. Das ist der Grund, warum
+  // dieser Korpus ihn ein Jahr lang nicht gefunden hat.
+  escapedBullet: '\\- Punkt A',
+  escapedPlus: '\\+ Punkt A',
+  escapedStar: '\\* Punkt A',
+  escapedHeading: '\\# Kein Titel',
+  escapedOrderedYear: '2026\\. Jubiläum',
+  escapedOrderedParen: '1\\) eins',
+  escapedRule: '\\---',
+  // Ein harter Umbruch legt mehrere Zeilen in *einen* Absatz, und eine Liste darf einen Absatz
+  // unterbrechen — die Regel gilt also je Zeile, nicht nur für die erste. Dieselben zwei Zeilen
+  // sind der einzige Weg zu den beiden folgenden Konstrukten: `===` unter einer Textzeile ist eine
+  // Setext-Überschrift, und eine Strich-Zeile unter einer Pipe-Zeile ist eine GFM-Tabelle. Nur die
+  // Trennzeile bekommt den Backslash — eine Kopfzeile allein ist keine Tabelle.
+  escapedBulletAfterBreak: 'eins  \n\\+ zwei',
+  escapedHeadingAfterBreak: 'eins  \n\\## zwei',
+  escapedSetext: 'Titel  \n\\===',
+  escapedTableRows: '| a | b |  \n\\| --- | --- |',
+  // Im Listenpunkt und im Zitat steht der Absatz ebenso in Spalte 0, bevor `- ` bzw. `> ` davor
+  // kommt: ohne Escape wird aus dem einen Punkt eine *verschachtelte* Liste und aus dem Zitat ein
+  // Zitat mit Liste darin. Ein Absatz-Override deckt beide mit ab, weil beide Absätze enthalten.
+  escapedInList: '- \\- Unterpunkt',
+  escapedInQuote: '> \\- Punkt',
+  // Die einzigen neuen Fälle in *roher* Speicherung — und die stärksten, weil die Datenbank solche
+  // Zäune wirklich hält: WP-49 hat sie selbst hineingeschrieben. Der Reader zeichnet sie als Prosa
+  // (`remarkFenceToParagraph`, der Text wird bewusst nicht neu als Markdown gelesen), der Editor
+  // schrieb daraus eine Liste zurück. Das ist ein echter Render-Gleichheits-Bruch im
+  // ausgelieferten Stand, nicht bloß ein latenter.
+  legacyFenceList: '```\n- Punkt\n1. eins\n```',
+  legacyFencePlus: '```\n+ Punkt\n```',
+  // Zwei Wächter: sie halten vorher wie nachher. Der erste bricht, sobald der Escape jemals auf
+  // seine *eigene* Ausgabe feuert — WP-62s Fehlerbild, ein Backslash pro Speicherung ohne Grenze.
+  // Der zweite bricht, sobald er auf die Textknoten heruntergezogen wird: dort stünde er innerhalb
+  // des Farb-Spans, wo kein Block beginnen kann, und wäre in jeder Sicherung und im .xlsx-Export
+  // zu sehen.
+  typedBackslashPlus: '\\\\+ Punkt',
+  markerInColour: '<span class="tc-rot">+ Punkt A</span>',
   // WP-37. Before the image node existed, every one of these came back out of the editor as its
   // alt text with the URL dropped — a picture silently becoming a word, which is why the plain
   // `image` case alone fails the gate on the unfixed code. `imageInline` is the one that pins
@@ -395,6 +439,30 @@ const corpus: Record<string, string> = {
 // ProseMirror JSON is the only way to reach that branch of the table serializer.
 const para = (text: string) => ({ type: 'paragraph', content: [{ type: 'text', text }] });
 const jsonCorpus: Record<string, JSONContent> = {
+  // WP-85 — der eine Absatz, den der Editor ständig baut und den Markdown nicht buchstabieren
+  // kann: mehrere Zeilen in *einem* Absatz, jede mit einem Blockzeichen davor, erreichbar nur über
+  // Shift+Enter. Dieser Fall beißt ausnahmsweise auch durch die Primär-Zusicherungen, obwohl er
+  // aus JSON kommt: die zwei Aufzählungszeichen ergeben in der Eingabe zwei getrennte Listen, nach
+  // dem Round-Trip aber *eine* — die Struktur, die der Nutzer getippt hat, ist weg.
+  markerLines: {
+    type: 'doc',
+    content: [
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: '+ Punkt A' },
+          { type: 'hardBreak' },
+          { type: 'text', text: '- Punkt B' },
+          { type: 'hardBreak' },
+          { type: 'text', text: '# Titel' },
+          { type: 'hardBreak' },
+          { type: 'text', text: '2026. Jubiläum' },
+          { type: 'hardBreak' },
+          { type: 'text', text: '---' },
+        ],
+      },
+    ],
+  },
   tableTwoBlocksInCell: {
     type: 'doc',
     content: [
@@ -645,6 +713,55 @@ if (
 }
 
 /**
+ * What happens while you *type* — the other half of WP-85.
+ *
+ * Everything else in this file starts from a document that already exists. An input rule runs one
+ * keystroke earlier, and that is the half the bug was reported from: `+ ` at the start of a block
+ * became a bullet before anything was stored, so the plus never reached the serializer to be
+ * escaped. `handleTextInput` is the prop `inputRulesPlugin` registers, so feeding it character by
+ * character is exactly what a keyboard does — and unlike a real key event it is reachable in jsdom,
+ * which is what keeps this out of `check:browser` and off that gate's pinned total.
+ *
+ * The `- ` row is the one that must keep passing: narrowing the rule is only correct if the bullet
+ * shortcut anyone actually uses still works.
+ */
+const typed = (text: string): string => {
+  editor.commands.setContent('', { contentType: 'markdown' });
+  for (const ch of text) {
+    const { from, to } = editor.state.selection;
+    // The fifth argument is ProseMirror's own „what would have happened" — a thunk returning the
+    // plain insert transaction. A handler may call it; none of ours does, and nothing dispatches it
+    // unless the handler says it handled the input, so the fallback below is still what types.
+    const handled = editor.view.someProp('handleTextInput', (f) =>
+      f(editor.view, from, to, ch, () => editor.state.tr.insertText(ch, from, to)),
+    );
+    if (!handled) editor.view.dispatch(editor.state.tr.insertText(ch, from, to));
+  }
+  return editor.getMarkdown();
+};
+
+const inputRules: Array<[string, string, string]> = [
+  ['ein getipptes Pluszeichen bleibt eines', '+ Punkt A', '\\+ Punkt A'],
+  ['ein getippter Stern bleibt einer', '* Punkt A', '\\* Punkt A'],
+  ['ein Gedankenstrich macht weiterhin eine Liste', '- Punkt A', '- Punkt A'],
+  ['eine Nummerierung bleibt unangetastet', '1. eins', '1. eins'],
+  ['eine Überschrift bleibt unangetastet', '# Titel', '# Titel'],
+];
+
+for (const [name, keys, expected] of inputRules) {
+  const out = typed(keys);
+  if (out === expected) {
+    console.log(`  ok   tippen: ${name}`);
+  } else {
+    failures++;
+    console.log(`  FAIL tippen: ${name}`);
+    console.log(`       getippt: ${JSON.stringify(keys)}`);
+    console.log(`       out md : ${JSON.stringify(out)}`);
+    console.log(`       soll   : ${JSON.stringify(expected)}`);
+  }
+}
+
+/**
  * What the editor *writes* for a document it built itself (WP-57).
  *
  * The corpus can only ever say „this stored string survives a round-trip". It cannot say how a
@@ -657,6 +774,14 @@ if (
 const bullet = (text: string) => ({ type: 'listItem', content: [para(text)] });
 const bulletList = (...texts: string[]) => ({ type: 'bulletList', content: texts.map(bullet) });
 const emptyPara = { type: 'paragraph' };
+/** WP-85's two shapes: a paragraph inside a quote, and several lines inside one paragraph. */
+const quote = (...blocks: JSONContent[]) => ({ type: 'blockquote', content: blocks });
+const breakLines = (...texts: string[]) => ({
+  type: 'paragraph',
+  content: texts.flatMap((t, i) =>
+    i ? [{ type: 'hardBreak' }, { type: 'text', text: t }] : [{ type: 'text', text: t }],
+  ),
+});
 const serialized: Array<[string, JSONContent, string]> = [
   [
     'eine Leerzeile zwischen zwei Listen',
@@ -679,6 +804,67 @@ const serialized: Array<[string, JSONContent, string]> = [
     '- eins\n- zwei',
   ],
   ['eine leere Notiz bleibt leer', { type: 'doc', content: [emptyPara] }, ''],
+  // WP-85. Der Korpus oben startet immer von einer Zeichenkette, die es schon gibt; hier steht das
+  // Dokument am Anfang. Nur so lässt sich „der Text dieses Absatzes *ist* `+ Punkt A`" überhaupt
+  // aussprechen — genau die Lücke, die WP-57 für den `&nbsp;`-Marker schon einmal aufgemacht hat.
+  ['ein Pluszeichen am Zeilenanfang bleibt ein Pluszeichen',
+    { type: 'doc', content: [para('+ Punkt A')] }, '\\+ Punkt A'],
+  ['ein Gedankenstrich am Zeilenanfang wird keine Liste',
+    { type: 'doc', content: [para('- Punkt A')] }, '\\- Punkt A'],
+  ['ein Stern am Zeilenanfang wird keine Liste',
+    { type: 'doc', content: [para('* Punkt A')] }, '\\* Punkt A'],
+  ['eine Raute am Zeilenanfang wird keine Überschrift',
+    { type: 'doc', content: [para('# Titel')] }, '\\# Titel'],
+  // Der Backslash steht vor der Interpunktion, nicht vor der Ziffer: `\2026.` ist in CommonMark
+  // kein Escape und bliebe sichtbar im Text stehen.
+  ['eine Jahreszahl wird keine Nummerierung',
+    { type: 'doc', content: [para('2026. Jubiläum')] }, '2026\\. Jubiläum'],
+  ['eine Klammer-Nummerierung ebenso — die kein Eingabe-Muster je abfängt',
+    { type: 'doc', content: [para('1) eins')] }, '1\\) eins'],
+  ['zehn Ziffern sind keine Nummerierung und bleiben unangetastet',
+    { type: 'doc', content: [para('1234567890. zu lang')] }, '1234567890. zu lang'],
+  ['eine Zeile aus Strichen wird keine Trennlinie',
+    { type: 'doc', content: [para('---')] }, '\\---'],
+  ['die zweite Zeile eines Absatzes wird keine Setext-Überschrift',
+    { type: 'doc', content: [breakLines('Titel', '===')] }, 'Titel  \n\\==='],
+  ['eine Tabellen-Trennzeile im Absatz bleibt Text, die Kopfzeile braucht nichts',
+    { type: 'doc', content: [breakLines('| a | b |', '| --- | --- |')] },
+    '| a | b |  \n\\| --- | --- |'],
+  ['ein Marker im Listenpunkt verschachtelt die Liste nicht',
+    { type: 'doc', content: [{ type: 'bulletList', content: [bullet('- Unterpunkt')] }] },
+    '- \\- Unterpunkt'],
+  ['ein Marker im Zitat bleibt Text',
+    { type: 'doc', content: [quote(para('- Punkt'))] }, '> \\- Punkt'],
+  // Die vier Konstrukte, für die *bewusst* keine Regel geschrieben wurde, plus das Größerzeichen:
+  // alle fünf sind schon tot, vier durch den Inline-Escape des Serialisierers und eines durch die
+  // Entitäten-Kodierung. Sie stehen hier, damit ein Upgrade von `@tiptap/markdown`, das eine der
+  // beiden verengt, laut scheitert statt still.
+  ['ein Größerzeichen braucht keinen Backslash — es wird ohnehin kodiert',
+    { type: 'doc', content: [para('> Zitat')] }, '&gt; Zitat'],
+  ['drei Sterne bleiben drei Sterne', { type: 'doc', content: [para('***')] }, '\\*\\*\\*'],
+  ['drei Unterstriche bleiben drei Unterstriche',
+    { type: 'doc', content: [para('___')] }, '\\_\\_\\_'],
+  ['drei Tilden bleiben drei Tilden', { type: 'doc', content: [para('~~~')] }, '\\~\\~\\~'],
+  ['drei Backticks bleiben drei Backticks',
+    { type: 'doc', content: [para('```')] }, '\\`\\`\\`'],
+  // Und die zwei Stellen, an denen der Escape *nicht* feuern darf.
+  ['ein getippter Backslash wächst nicht',
+    { type: 'doc', content: [para('\\+ Punkt')] }, '\\\\+ Punkt'],
+  ['ein gefärbter Absatz wird nicht am Zeilenanfang escaped',
+    { type: 'doc', content: [{ type: 'paragraph', content: [
+      { type: 'text', text: '+ Punkt', marks: [{ type: 'textColor', attrs: { color: 'rot' } }] }] }] },
+    '<span class="tc-rot">+ Punkt</span>'],
+  ['eine Tabellenzelle bleibt roh — dort kann kein Block beginnen',
+    { type: 'doc', content: [{ type: 'table', content: [
+      { type: 'tableRow', content: [
+        { type: 'tableHeader', content: [para('Rolle')] },
+        { type: 'tableHeader', content: [para('Notiz')] }] },
+      { type: 'tableRow', content: [
+        { type: 'tableCell', content: [para('- Licht')] },
+        { type: 'tableCell', content: [para('# Ton')] }] }] }] },
+    // Der Tabellen-Serialisierer klammert seine Ausgabe selbst in Zeilenumbrüche; was dieser Fall
+    // festhält, sind die beiden Zellen — `- Licht` und `# Ton`, ohne Backslash.
+    '\n| Rolle   | Notiz |\n| ------- | ----- |\n| - Licht | # Ton |\n'],
 ];
 
 for (const [name, doc, expected] of serialized) {
@@ -702,6 +888,7 @@ if (failures) {
 }
 console.log(
   `\nmarkdown round-trip: all ${total} cases render-equal, idempotent, control-char free, code free` +
-    ` and style free, and all ${clipboard.length + imported.length + 6 + serialized.length}` +
-    ` clipboard, import, node and serialize assertions hold`,
+    ` and style free, and all ${
+      clipboard.length + imported.length + 6 + inputRules.length + serialized.length
+    } clipboard, import, node, typing and serialize assertions hold`,
 );
