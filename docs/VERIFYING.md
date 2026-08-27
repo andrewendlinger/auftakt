@@ -981,6 +981,22 @@ verified by hand, and the gate itself is written from this list.
   the `PATCH` and sleep before `route.continue()`, then fire the other window's write inside that
   window. Release the hold before the retry (`hold = 0` inside the handler) or the run measures
   the sleep twice.
+- **A `sleep` before `route.continue()` delays the *request*, not the answer — so it hands the page
+  data that is *newer*, never older.** The distinction is invisible until a repro needs a stale
+  answer to land late, and then it silently inverts the experiment: the held request reaches the
+  server *after* everything else has, and comes back current. To hold an *answer* back, read the
+  server at the right moment and deliver it afterwards — `const res = await route.fetch(); await
+  sleep(ms); await route.fulfill({ response: res, body: await res.body() })`.
+- **…and a refetch held that way still does not win, because react-query cancels it.**
+  `invalidateQueries` goes through `refetchQueries`, whose `cancelRefetch` defaults to **true**, so
+  the next invalidate aborts the fetch still in flight and its late answer is dropped rather than
+  published (`@tanstack/query-core` 5.101.4, `build/modern/queryClient.js:168` — the same line is
+  `build/legacy/queryClient.js:179` and `src/queryClient.ts:319`). Measured in WP-82 on
+  `#/project/2`: refetch 1 read a one-key `task_columns`, its answer was held 2.5 s and settled
+  1.4 s after refetch 3 had published all three — and the page still showed three. So „an earlier
+  invalidate republished the older value over the newer one" is **not** a mechanism here, for any
+  store that invalidates on write; it is the same first line of defence the two-window landing
+  entry above describes. Look at what the *server* ended up holding instead.
 - **Assert the 409 actually arrived.** Every one of these cases passes for the wrong reason if the
   timing slips and no conflict happens — the outcome is correct either way, which is the whole
   point of the fix. Count them off `page.on('response')` and fail on zero.
@@ -1478,6 +1494,18 @@ to real `tasks` fields through `key`, and two of them take no input at all.
   (`page.route('**/api/projects/*', …)`) or the writes settle between the clicks and the burst is
   never exercised. The stored map is keyed by `colId` — `custom:8`, `custom:9`, `custom:10` for the
   demo's three global custom columns.
+- **…and holding all three by the *same* amount does not make them arrive in that order.** Each
+  `sleep(400)` runs in its own route callback; one stall of ≥400 ms leaves all three timers expired
+  at once, so the three `route.continue()`s go out together on three sockets and nothing decides
+  which the server applies last — and since each carries the whole map, the last one applied is the
+  whole answer. Measured in WP-82 on demo project 2, releasing all three at one instant: **2 of 10
+  runs ended with the server holding write 2's map** (`{custom:8,custom:9}` — one column visibly
+  back on the page), and the response order was PATCH 1 → PATCH 3 → PATCH 2. That, not a stale
+  client, is what made `main` red on 2026-08-27 with 2 of 646 (run `33049630974`): the page was
+  rendering the server's real map, and the map was wrong. The client now sends the burst's writes
+  one at a time (`lib/pending.ts`, `queueWrite`), so **only one `task_columns` `PATCH` is ever parked in a
+  route handler** — `**/api/projects/*` still carries `useEntityLayout`'s layout writes, which are not
+  queued — a repro that waits for a second one before releasing anything will hang.
 
 ### Die Startseite und ihr Konflikt (#111)
 

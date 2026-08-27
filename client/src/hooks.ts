@@ -25,7 +25,7 @@ import { doneValueOf } from './api/types';
 import { postBroadcast } from './lib/broadcast';
 import { retryOnConflict } from './lib/conflict';
 import { errorMessage } from './lib/errors';
-import { pendingKey, settlePending, trackPending } from './lib/pending';
+import { pendingKey, queueWrite, settlePending, trackPending } from './lib/pending';
 import { DEFAULT_EVENT_WINDOW_DAYS } from './lib/eventGroups';
 import { LABEL_DEFAULTS, isLabelKey, type LabelKey } from './lib/labels';
 import { getWindowSeason } from './lib/season';
@@ -336,6 +336,12 @@ export interface EntityColumnsStore {
  * toggle would then be computed from it. Holding the last intent in a ref until the write it
  * belongs to has settled makes the composition true for the whole burst, not just within one
  * round trip.
+ *
+ * Both of those are about what this window *computes*. `queueWrite` closes the third one, which is
+ * about what the **server** ends up with: composed or not, three toggles inside one round trip are
+ * three PATCHes carrying a one-, a two- and a three-key map, and nothing orders them — the map
+ * that survives is whichever arrives last. Sending them one at a time is what makes the last map
+ * stored the last map asked for (WP-82; `lib/pending.ts` has the measurement).
  */
 export function useEntityColumns(
   kind: 'artist' | 'project',
@@ -360,12 +366,16 @@ export function useEntityColumns(
           : old,
       );
       const res = kind === 'artist' ? api.artists : api.projects;
-      const okay = await guard(fallback, () => res.update(id, { task_columns: next }));
-      await invalidate();
-      // Only the last write clears the latch; an earlier one settling must not hand the next
-      // toggle back to whatever the refetch above published.
-      if (pending.current === mine) pending.current = null;
-      return okay;
+      // Queued on the *field*, not just the row: what may not overtake this write is another write
+      // of the same whole map, and a layout write to the same row rewrites a different column.
+      return queueWrite(pendingKey([kind, id, 'task_columns']), async () => {
+        const okay = await guard(fallback, () => res.update(id, { task_columns: next }));
+        await invalidate();
+        // Only the last write clears the latch; an earlier one settling must not hand the next
+        // toggle back to whatever the refetch above published.
+        if (pending.current === mine) pending.current = null;
+        return okay;
+      });
     },
     [qc, kind, id, guard, invalidate],
   );
