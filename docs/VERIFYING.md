@@ -1110,6 +1110,12 @@ verified by hand, and the gate itself is written from this list.
   the `count() === 0` is the discriminator. Label both for what they are. If a release ever ships
   one paragraph, that check is what tells you, and the answer is to strengthen the assertion, not
   to delete it.
+- **A probe taken from `CHANGELOG.md` must skip the `Außerdem` fold's tags.** Since 2026-08-27 an
+  entry ends in `</details>`, not in prose. A probe built from „the last non-empty line" therefore
+  searched the card for the literal string `</details>` and went red — the card renders that line
+  as structure, so the text can never be there. Filter `<details>`/`<summary>` lines out before
+  taking first- or last-line probes. The fold's *content* is safe to probe even while it is shut:
+  `textContent` reports it whether or not `<details>` is open.
 - **The fireworks need `reducedMotion: 'no-preference'`.** Every other driving context here uses
   `reduce` — the boot gesture's documented escape hatch — and that is *also* the branch the overlay
   renders without a canvas, so the standard context gets the reduced-motion variant for free and can

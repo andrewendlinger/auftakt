@@ -213,14 +213,23 @@ export async function runAnnouncements(fixtures) {
       .replace(/^\s*[-–—]\s*/, '')
       .trim()
       .slice(0, 24);
-  const entryLines = newest.split('\n').slice(1).filter((l) => l.trim());
+  // The `Außerdem` fold is raw HTML, and `<details>`/`<summary>` lines carry structure rather
+  // than text — a probe taken from one would hunt for a string the card can never contain, which
+  // is exactly how this case went red on 2026-08-27 when the entry shape changed under it.
+  // `<summary>Außerdem</summary>` is dropped with them: its text does reach the card, but it is
+  // the fold's label rather than a line of the entry.
+  const entryLines = newest
+    .split('\n')
+    .slice(1)
+    .filter((l) => l.trim() && !/^<\/?(?:details|summary)/i.test(l.trim()));
   const notesProbe = strip(entryLines[0] ?? '');
-  // The newest entry's closing line — and deliberately labelled as the *weaker* half of the pair
-  // below. It is the card's last block only while the card carries a single entry; the marker is
-  // set to `0.0.1`, so the card carries every entry above that, and the block `splitSignoff`
-  // would set apart then belongs to the **oldest** one. The discriminator is therefore the count,
-  // and this says the newest entry's closing line arrived as flowing text rather than going
-  // missing.
+  // The newest entry's closing *content* line — and deliberately labelled as the *weaker* half of
+  // the pair below. It is the card's last block only while the card carries a single entry; the
+  // marker is set to `0.0.1`, so the card carries every entry above that, and the block
+  // `splitSignoff` would set apart then belongs to the **oldest** one. The discriminator is
+  // therefore the count, and this says the newest entry's closing line arrived as flowing text
+  // rather than going missing. It reaches the card even while the fold is shut: `textContent`
+  // does not care that `<details>` is closed.
   const lastProbe = strip(entryLines[entryLines.length - 1] ?? '');
   writeReg((reg) => {
     delete reg.announcements;
@@ -238,8 +247,11 @@ export async function runAnnouncements(fixtures) {
   // ever sets a paragraph apart when there are two or more, so „no signature" on a single-block
   // card is true whatever the code does. Counted on the **card**, not on one entry — the marker
   // sends every entry above `0.0.1` into it, which today is one and tomorrow may be three. A
-  // changelog entry has always been an intro, a list and an „Außerdem" line, so this holds either
-  // way; if that ever stops being so, this must say so out loud rather than let the next check
+  // changelog entry used to be an intro, a list and an „Außerdem" line; since 2026-08-27 the new
+  // shape is a list and a `<details>` fold — no intro, and the fold is not counted here, so one
+  // new-style entry contributes exactly one block. The count survives only because the marker
+  // pulls **every** entry into the card. If the file is ever trimmed to a single new-style entry
+  // this goes red, which is the point: it must say so out loud rather than let the next check
   // pass for the wrong reason. A fixture fact, like the print case's row count, and it lives in
   // docs/VERIFYING.md as one.
   const blocks = await v2.locator('.announcement-body > p, .announcement-body > ul, .announcement-body > ol').count();
