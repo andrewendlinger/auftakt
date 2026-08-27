@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import type { Season, SeasonCopyOptions } from '../api/types';
 import { Modal, Label, TextInput, Select, onEnterKey } from './fields';
 import { Btn } from './ui';
-import { useSeasonTerm } from '../hooks';
+import { useArtistNoun, useSeasonTerm } from '../hooks';
 
 /** Configuration is carried by default — losing it is the thing this dialog fixes. */
 const DEFAULT_COPY: SeasonCopyOptions = {
@@ -40,13 +40,28 @@ interface CopyGroup {
   hint?: string;
 }
 
-const DATA_GROUPS: CopyGroup[] = [
-  { key: 'artists', label: 'Künstler' },
-  { key: 'contacts', label: 'Kontakte', hint: 'hängen an Künstlern & Projekten' },
-  { key: 'events', label: 'Termine', hint: 'hängen an Künstlern & Projekten' },
-  { key: 'projects', label: 'Projekte', hint: 'gehören zu einem Künstler' },
-  { key: 'tasks', label: 'Aufgaben', hint: 'hängen an Künstlern & Projekten' },
-];
+/**
+ * Built from the artist noun rather than spelled out, so a festival that renamed „Künstler" reads
+ * its own word here too.
+ *
+ * The hints say „gehören zu: X" and not „hängen an X" because the dative would have to inflect the
+ * user's noun — „hängen an Musiker" is wrong where „hängen an Künstlern" was right, and German case
+ * endings cannot be derived from a word the app has never seen. A colon followed by the plain
+ * nominative is grammatical whatever they typed.
+ *
+ * A function, not a constant: this renders on the landing page, where `useLabel` resolves the
+ * *active* season's labels while the copy may be from another one — the same asymmetry
+ * `lib/labels.ts` already records for the landing sections, and still better than a fixed word.
+ */
+function dataGroups(artistNoun: string): CopyGroup[] {
+  return [
+    { key: 'artists', label: artistNoun },
+    { key: 'contacts', label: 'Kontakte', hint: `gehören zu: ${artistNoun} & Projekte` },
+    { key: 'events', label: 'Termine', hint: `gehören zu: ${artistNoun} & Projekte` },
+    { key: 'projects', label: 'Projekte', hint: `gehören zu: ${artistNoun}` },
+    { key: 'tasks', label: 'Aufgaben', hint: `gehören zu: ${artistNoun} & Projekte` },
+  ];
+}
 
 const CONFIG_GROUPS: CopyGroup[] = [
   { key: 'columns', label: 'Spalten & Ansicht der Aufgabentabelle' },
@@ -94,6 +109,7 @@ export function NewSeasonModal({
   onClose: () => void;
 }) {
   const term = useSeasonTerm();
+  const artistNoun = useArtistNoun();
   const [label, setLabel] = useState('');
   const [copyFrom, setCopyFrom] = useState('');
   const [copy, setCopy] = useState<SeasonCopyOptions>(DEFAULT_COPY);
@@ -179,7 +195,7 @@ export function NewSeasonModal({
         {copyFrom && (
           <div className="space-y-4 rounded-lg bg-neutral-50 p-3">
             {[
-              { title: 'Daten', groups: DATA_GROUPS },
+              { title: 'Daten', groups: dataGroups(artistNoun) },
               { title: 'Konfiguration', groups: CONFIG_GROUPS },
             ].map(({ title, groups }) => (
               <div key={title}>

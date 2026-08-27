@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cascadeText, TYPE_LABELS } from './deletedTypes';
+import { cascadeText, TYPE_LABELS, typeLabels } from './deletedTypes';
 
 /**
  * `cascadeText` writes the only sentence standing between a click and a delete — in the archive
@@ -39,5 +39,24 @@ describe('cascadeText', () => {
   it('leaves an unchanging plural alone', () => {
     expect(TYPE_LABELS.artist.one).toBe(TYPE_LABELS.artist.many);
     expect(cascadeText({ total: 2, byType: { artist: 2 } })).toBe('2 Künstler');
+  });
+
+  // The sentence has to follow a renamed „Künstler" too, or the delete confirmation names a thing
+  // the customer's app does not call by that word any more.
+  it('counts the renamed noun when one is passed', () => {
+    const text = cascadeText({ total: 3, byType: { artist: 2, event: 1 } }, typeLabels('Musiker'));
+    expect(text).toBe('2 Musiker und 1 Termin');
+  });
+});
+
+describe('typeLabels', () => {
+  it('hands back the shipped table untouched when nothing was renamed', () => {
+    expect(typeLabels('Künstler')).toBe(TYPE_LABELS);
+  });
+
+  it('applies the rename to both forms, and leaves every other type alone', () => {
+    const t = typeLabels('Act');
+    expect(t.artist).toEqual({ one: 'Act', many: 'Act' });
+    expect(t.project).toEqual(TYPE_LABELS.project);
   });
 });

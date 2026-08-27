@@ -15,7 +15,7 @@ import {
   Section,
 } from '../components/PrintSheet';
 import { formatDate } from '../lib/dates';
-import { useDoneValue, useLabel, useSaison } from '../hooks';
+import { useArtistNoun, useDoneValue, useLabel, useSaison } from '../hooks';
 
 export function PrintArtist() {
   const { id } = useParams<{ id: string }>();
@@ -26,6 +26,7 @@ export function PrintArtist() {
   // headings are the same sections, so a PDF that disagreed with the screen would be the
   // drift this registry exists to prevent.
   const label = useLabel();
+  const artistNoun = useArtistNoun();
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['print-artist', artistId],
@@ -62,7 +63,10 @@ export function PrintArtist() {
   if (!validId) {
     return (
       <PrintFallback>
-        <ErrorState title="Künstler nicht gefunden" hint="Diese Adresse enthält keine gültige Künstler-Nummer." />
+        <ErrorState
+          title={`${artistNoun} nicht gefunden`}
+          hint={`Diese Adresse enthält keine gültige ${artistNoun}-Nummer.`}
+        />
       </PrintFallback>
     );
   }
@@ -73,7 +77,7 @@ export function PrintArtist() {
       <PrintFallback>
         <LoadError
           error={error}
-          notFound="Künstler nicht gefunden"
+          notFound={`${artistNoun} nicht gefunden`}
           failed="Der Ein-Pager konnte nicht geladen werden."
           onRetry={() => void refetch()}
         />

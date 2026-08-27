@@ -1,11 +1,11 @@
-/** O–R2 · the four Einstellungen tabs and what they write */
+/** O–R3 · the four Einstellungen tabs, what they write, and the two words the user owns */
 
-import { cardWith, gone, open, pin, ready, shown, toast, topDialog, until } from '../browser.mjs';
+import { cardWith, clickIfThere, gone, open, pin, ready, shown, toast, topDialog, until } from '../browser.mjs';
 import { sleep } from '../../lib/wait.mjs';
 import { RUN, UI } from '../config.mjs';
 import { tabStop } from '../probes.mjs';
 import { check } from '../report.mjs';
-import { api, scoped } from '../stack.mjs';
+import { api, scoped, send } from '../stack.mjs';
 
 /** @param {import('../fixtures.mjs').Fixtures} fixtures */
 export async function runSettings(fixtures) {
@@ -493,4 +493,79 @@ export async function runSettings(fixtures) {
   const plainTab = await until(() => tabLink(s, 'daten').innerText(), (t) => t.includes('Saison'), 5000);
   check('…und der Reiter heißt wieder wie ab Werk', plainTab.trim() === 'Saison & Daten', plainTab.trim());
   await s.close();
+
+  // ======================================================================== R3 · the artist noun
+  //
+  // R2's twin, one level down: „Künstler" is a word the user owns too, but per season, in the
+  // `labels` array. It used to be *two* words — `dash.artists` over the Übersicht's grid and
+  // `artist.kicker` over an artist's H1 — sharing a default and stored apart, so renaming either
+  // left the other saying „Künstler" and the rename looked broken (docs/DECISIONS.md, WP-84).
+  //
+  // The gesture under test is therefore the one the user has: the ✎ on the Übersicht. What is
+  // asserted is every *other* place the word has to arrive, none of which has a pencil of its own —
+  // if a later change re-points one of them at an id nobody renames, this goes red where a
+  // typecheck cannot.
+  console.log('\nR3 · Ein umbenanntes „Künstler“ trägt über die Seiten');
+  const an = await open(context, '/dashboard');
+  await pin(an, config.id, '/dashboard');
+  const anWord = `Musiker ${RUN}`;
+  const anBox = an.locator('[data-label="dash.artists"]');
+  await anBox.hover().catch(() => {});
+  const anOpened = await clickIfThere(anBox.getByRole('button', { name: '„Künstler“ umbenennen' }));
+  await anBox.locator('input').first().fill(anWord);
+  await anBox.locator('input').first().press('Enter');
+  const anStored = await until(
+    () => api(C('/settings')),
+    (v) => (v.labels ?? []).some((r) => r.key === 'dash.artists' && r.label === anWord),
+    8000,
+  );
+  check(
+    'die ✎ auf der Übersicht schreibt genau eine Zeile, unter `dash.artists`',
+    anOpened && (anStored.labels ?? []).length === 1,
+    JSON.stringify(anStored.labels ?? null),
+  );
+  // The search sits in the header, so it is on this page already — and it is the one surface that
+  // renames without being a heading at all.
+  const anPlaceholder = await until(
+    () => an.locator('input[role="combobox"]').getAttribute('placeholder'),
+    (v) => (v ?? '').startsWith(`Suchen … (${anWord},`),
+    5000,
+  );
+  check('…die Kopfzeilensuche nennt das neue Wort zuerst', (anPlaceholder ?? '').startsWith(`Suchen … (${anWord},`), anPlaceholder ?? 'kein Platzhalter');
+
+  // The artist page is the half that was broken. The kicker has no ✎ of its own any more, so this
+  // reads its text, not a pencil (docs/VERIFYING.md).
+  const anArtist = (await api(C('/artists')))[0];
+  if (check('Vorbedingung: die Saison hat einen Künstler zum Aufschlagen', anArtist != null, JSON.stringify(anArtist?.id ?? null))) {
+    await an.goto(`${UI}/#/artist/${anArtist.id}`);
+    await ready(an);
+    // `textContent`, not `innerText`: the kicker is CSS-uppercased, so `innerText` reads
+    // „MUSIKER …" and never matches the stored label (docs/VERIFYING.md).
+    const anKicker = await until(
+      () => an.locator('h1').locator('xpath=preceding-sibling::div[1]').first().textContent(),
+      (t) => (t ?? '').trim() === anWord,
+      8000,
+    );
+    check('…der Zeile über dem Künstlernamen folgt die Umbenennung', (anKicker ?? '').trim() === anWord, anKicker ?? 'keine Zeile');
+    check('…und sie trägt kein eigenes ✎ mehr', (await an.locator('[data-label="dash.artists"]').count()) === 0);
+    // The layout menu composes its heading from the same id — the one artist-page surface that
+    // used to read `artist.kicker` and would silently keep doing so. „⌂ Layout" is gated on edit
+    // mode (`{arranging && layoutAction?.(…)}`), so the ✎ comes first.
+    await an.getByRole('button', { name: '✎ Bereiche bearbeiten' }).click();
+    await an.getByRole('button', { name: 'Layout' }).first().click();
+    // The menu's first div is its heading, and it is CSS-uppercased like the kicker — so this
+    // reads `textContent` too rather than the `LAYOUT · MUSIKER …` that `innerText` returns.
+    const anMenu = an.locator('[role="menu"]').first();
+    const anHeading = (await shown(anMenu)) ? ((await anMenu.locator('div').first().textContent()) ?? '') : '';
+    check('…und „Layout · …“ nennt es auch', anHeading.trim() === `Layout · ${anWord}`, anHeading.trim() || 'kein Menü');
+    await an.keyboard.press('Escape');
+    await an.getByRole('button', { name: '✓ Fertig' }).click();
+  }
+
+  // Leaving the override in place would hand every later case a season whose „Künstler" is not
+  // „Künstler"; the empty write is also the reset path, so clearing it is a second assertion.
+  await send('PATCH', C('/settings'), { labels: [] });
+  const anCleared = await api(C('/settings'));
+  check('eine leere Liste setzt die Umbenennung zurück', (anCleared.labels ?? []).length === 0, JSON.stringify(anCleared.labels ?? null));
+  await an.close();
 }

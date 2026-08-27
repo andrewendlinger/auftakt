@@ -8,9 +8,9 @@ import { ProjectBadge } from '../components/ProjectBadge';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { TextInput, Modal } from '../components/fields';
 import { formatDate, daysUntil, dayCount, dayCountDative } from '../lib/dates';
-import { cascadeText, TYPE_LABELS } from '../lib/deletedTypes';
+import { cascadeText } from '../lib/deletedTypes';
 import { Markdown } from '../components/Markdown';
-import { useGuardedAction, useInvalidateAll, useRetention } from '../hooks';
+import { useGuardedAction, useInvalidateAll, useRetention, useTypeLabels } from '../hooks';
 import { useToast } from '../components/Toast';
 
 function purgeHint(purgeAt: string | null): string {
@@ -23,6 +23,8 @@ function purgeHint(purgeAt: string | null): string {
 }
 
 export function ArchivePage() {
+  // The type words the rows are labelled with, artist rename applied.
+  const nouns = useTypeLabels();
   const {
     data: tasks = [],
     isLoading,
@@ -73,9 +75,9 @@ export function ArchivePage() {
       (item) =>
         item.label.toLowerCase().includes(needle) ||
         (item.sublabel ?? '').toLowerCase().includes(needle) ||
-        TYPE_LABELS[item.type].one.toLowerCase().includes(needle),
+        nouns[item.type].one.toLowerCase().includes(needle),
     );
-  }, [deleted, needle]);
+  }, [deleted, needle, nouns]);
 
   // Guarded like `purge()` below: POST /restore 404s when the row is no longer there, which
   // happens whenever the cached list is stale — purgeExpired() hard-deletes 30-day-old rows on
@@ -210,7 +212,7 @@ export function ArchivePage() {
           <div className="divide-y divide-neutral-50 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-black/5">
             {filteredDeleted.map((item) => (
               <div key={`${item.type}-${item.id}`} className="flex items-center gap-3 px-4 py-3">
-                <Pill bg="#f5f5f5" color="#525252">{TYPE_LABELS[item.type].one}</Pill>
+                <Pill bg="#f5f5f5" color="#525252">{nouns[item.type].one}</Pill>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium text-neutral-700">{item.label}</div>
                   <div className="truncate text-xs text-neutral-400">
@@ -245,7 +247,7 @@ export function ArchivePage() {
           </p>
           {confirmPurge.dependents.total > 0 && (
             <p className="mt-2 text-sm text-neutral-600">
-              Löscht auch {cascadeText(confirmPurge.dependents)} unwiderruflich mit.
+              Löscht auch {cascadeText(confirmPurge.dependents, nouns)} unwiderruflich mit.
             </p>
           )}
         </Modal>

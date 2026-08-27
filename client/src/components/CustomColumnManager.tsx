@@ -27,6 +27,7 @@ import {
 } from './OptionsEditor';
 import { OptionRemovalDialog, type OptionRemoval } from './OptionRemovalDialog';
 import {
+  useArtistNoun,
   useInvalidateAll,
   useOptionUsage,
   useRetention,
@@ -132,10 +133,9 @@ interface ColumnConfirm {
  * page, which manages the global set; an artist or project page manages its own and shows the
  * globals read-only (WP-51).
  */
-const OWNER_LABEL: Record<ColumnOwner['scope'], string> = {
-  artist: 'Künstler-Spalten',
-  project: 'Projekt-Spalten',
-};
+function ownerLabel(scope: ColumnOwner['scope'], artistNoun: string): string {
+  return scope === 'artist' ? `${artistNoun}-Spalten` : 'Projekt-Spalten';
+}
 
 export function CustomColumnManager({
   columns,
@@ -154,6 +154,7 @@ export function CustomColumnManager({
 }) {
   const invalidate = useInvalidateAll();
   const del = useUndoableDelete();
+  const artistNoun = useArtistNoun();
   const { usage } = useOptionUsage();
   const { purgeAfterDays } = useRetention();
   const [editing, setEditing] = useState<CustomColumn | null>(null);
@@ -323,7 +324,7 @@ export function CustomColumnManager({
 
         <div>
           <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
-            {owner ? OWNER_LABEL[owner.scope] : 'Spalten'}
+            {owner ? ownerLabel(owner.scope, artistNoun) : 'Spalten'}
           </div>
           <p className="mb-3 text-xs text-neutral-400">
             {owner
