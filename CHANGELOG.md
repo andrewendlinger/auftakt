@@ -7,6 +7,17 @@ Diese Datei beginnt mit der ersten Version, die nach dem 16. August 2026 erschie
 Versionen und die technische Historie stehen auf der
 [Releases-Seite](https://github.com/andrewendlinger/auftakt/releases).
 
+## 0.12.0 — 27. August 2026
+
+Diese Version räumt die Stellen weg, an denen Auftakt dich stehen ließ: ein Start, der zu früh aufgab, ein Ein-Pager ohne Rückweg und eine Rückmeldung, die erst durch fünf Bereiche führte.
+
+- **Zurück aus dem Ein-Pager** — die Druckansicht führt jetzt auf die Seite zurück, von der du gekommen bist, und „Als PDF speichern“ legt die Datei wirklich ab.
+- **Ein Start, der wartet** — prüft ein Virenscanner nach einem Update erst die neue Programmdatei, sagt Auftakt das und fragt, ob es weiter warten soll, statt nach zehn Sekunden aufzugeben.
+- **Rückmeldung in zwei Klicks** — „Feedback & Diagnose“ fragt nur noch, was passiert ist, und legt den Bericht auf deinen Schreibtisch.
+- **Farben, die du unterscheidest** — die Schriftfarbe zeigt acht gefüllte Farbflächen statt eines kleinen „A“ in acht kaum verschiedenen Tönen.
+
+_Außerdem:_ das Fenster steht vom ersten Augenblick an auf dem Schirm, Windows-Dialoge tragen „Auftakt“ im Titel, schnell nacheinander ausgeblendete Aufgaben-Spalten kommen in der Reihenfolge an, in der du sie geklickt hast, und Auftakt führt ein Protokoll mit, das einem Fehlerbericht beiliegt.
+
 ## 0.11.0 — 25. August 2026
 
 Diese Version macht Auftakt gesprächiger: was sich geändert hat, was mit den Sicherungen los ist, und wie eine Rückmeldung bei mir ankommt.

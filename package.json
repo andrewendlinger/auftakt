@@ -1,7 +1,7 @@
 {
   "name": "auftakt",
   "private": true,
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Auftakt — Künstler- und Projektverwaltung für ein klassisches Musikfestival",
   "author": "Andre Wendlinger",
   "license": "SEE LICENSE IN LICENSE.md",
