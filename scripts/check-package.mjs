@@ -17,7 +17,7 @@
  */
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createCheck, MARKERS } from './lib/check.mjs';
 
@@ -113,9 +113,21 @@ for (const path of [
   check(`app.asar contains ${path}`, entries.includes(path));
 }
 
-/** One packed file's text, by the same leading-slash path the entry list uses. */
+/**
+ * One packed file's text, by the same leading-slash path the entry list uses.
+ *
+ * **The separator swap is the whole point, and it is Windows-only.** `@electron/asar` walks its
+ * archive with `p.split(path.sep)` (`filesystem.js:60`), so a POSIX path resolves on macOS —
+ * where `sep` *is* `/` — and finds nothing on Windows, where the whole string is read as one
+ * node name. The entry list this takes its argument from is POSIX-shaped, because that is how
+ * asar stores it, so this is the one place the two conventions meet.
+ *
+ * It cost the v0.12.0 tag build: `check:package` runs only on a tag or a dispatch, so the
+ * assertion above it („app.asar contains …", a string match on the entry list) went green on
+ * every PR while the extraction beneath it had never once run on Windows.
+ */
 function packed(/** @type {string} */ path) {
-  return extractFile(asar, path.replace(/^\//, '')).toString('utf8');
+  return extractFile(asar, path.replace(/^\//, '').split('/').join(sep)).toString('utf8');
 }
 
 // The loader is the mechanism, not a wrapper worth tidying away. Node caches a file's source
