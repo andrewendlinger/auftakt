@@ -70,9 +70,9 @@ import { runLanding } from './check-browser/cases/landing.mjs';
 import { runReorder } from './check-browser/cases/reorder.mjs';
 
 /**
- * Every assertion a green run makes, exactly. The total is quoted in prose (`check-boot.mjs`'s
- * header, CLAUDE.md, decision records), and prose cannot be typechecked — so the run pins it.
- * Adding or removing a case moves this number too, deliberately.
+ * Every assertion a green run makes, exactly — the single source of truth for this count. Prose
+ * that needs to name it points here rather than repeating the number, which cannot be typechecked
+ * and drifts; only this run pins it. Adding or removing a case moves this constant, deliberately.
  */
 const EXPECTED_CHECKS = 659;
 

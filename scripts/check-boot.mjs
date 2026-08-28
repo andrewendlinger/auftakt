@@ -14,7 +14,7 @@
  *    gesture survives, so an outcome is not a property of the build. What this gate does about
  *    that is the whole design, below.
  * 3. **`reducedMotion: 'reduce'` removes it outright**, and that escape hatch is what every other
- *    driving script in `docs/VERIFYING.md` — all 646 assertions of `check:browser` among them —
+ *    driving script in `docs/VERIFYING.md` — `check:browser`'s whole suite among them —
  *    relies on to get past the overlay. A gate for the gesture cannot use it, and case L is here
  *    to make sure nobody breaks it for the others.
  *
