@@ -15,7 +15,9 @@ Versionen und die technische Historie stehen auf der
   Textfarben sind im Menü nun besser zu erkennen.
 - 💬 **Feedback senden**
   Zum Feedback senden braucht es jetzt nur noch zwei Klicks in den Einstellungen.
-
+- ➕ **Listen Bug** 
+  Ein '+' wird nicht mehr zu einem Listen item (nur '-' funktionert noch).
+  
 <details>
 <summary>Außerdem</summary>
 
