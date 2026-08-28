@@ -600,6 +600,13 @@ export function useSettingsArray<K extends SettingsArrayKey>(
   // other's `dashboard_layout`; that stays the deliberate stop it was, because an array
   // assembled in an editor is not an intent a retry could re-apply, and a lost configuration
   // edit is on screen and one gesture from being redone.
+  //
+  // The **within-tab** `write`-vs-`write` order is unguarded on purpose too. `useEntityLayout` took
+  // the `queueWrite` + `pending.current` latch pair in WP-87, and `write` has the identical shape —
+  // but no burst caller (one write per gesture from `TaskSortEditor` and the arrangers), and
+  // `queueWrite` here *alone*, without also latching this broadly-read `value`, would trade the
+  // server-ordering race for a composition one. Deferred, not half-done; see DECISIONS.md, „Only the
+  // entity-layout store gets the serialized write".
   const refresh = useCallback(async () => {
     await refetchNow(qc, ['settings'], api.getSettings);
   }, [qc]);

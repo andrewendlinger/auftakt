@@ -3774,3 +3774,29 @@ same `parseMarkdown`, paste handler and shortcuts, so nothing is lost. Unlike th
 gesture *is* reachable by `check:markdown` — an input rule runs through `handleTextInput`, which jsdom
 can feed character by character — so the `inputRules` block pins it directly: `2026. ` and `5. ` stay
 text (red before, green after), while `1. ` still makes a list.
+
+## Only the entity-layout store gets the serialized write; `useSettingsArray.write` stays last-writer-wins (2026-08-29, WP-87)
+
+WP-87 gave `useEntityLayout` the treatment WP-82 gave `useEntityColumns`: the layout writes go through
+`queueWrite` one at a time (nested inside the `trackPending` the removal-undo reads back), plus the
+`pending.current` latch so the reads prefer the last layout this window wrote until that write settles.
+Both guards are needed together — the queue fixes what the *server* ends on, and the latch fixes what
+the *window composes from*, because serialising defeats the `cancelRefetch` collapse that used to keep a
+mid-burst `invalidate()` refetch from republishing the older array under a later write. A fast
+⠿-reorder was the one place in the app a whole-value write actually bursts.
+
+**`useSettingsArray.write` has the identical shape and was deliberately left untouched.** It persists a
+whole array optimistically and PATCHes it with no generation and no queue — the same race on paper. But
+it has *no burst caller*: `TaskSortEditor` and the two arrangers each emit one write per gesture, and
+nothing fires `write` faster than a round trip. Adopting `queueWrite` there **alone** would be a net
+loss, not a fix: it would remove the same `cancelRefetch` shield and, without also porting the latch,
+hand the composing caller a mid-burst republished array — trading the server-ordering race for a
+client-composition one (the review of WP-87's first cut found exactly this). And porting the latch to
+`useSettingsArray` is not a small change: its `value`/`current()` are read by every screen and by every
+layout store built on it, and it interacts with `update`'s WP-R5 generation.
+
+So the settings store keeps the deliberate stop already recorded at its `write` comment (WP-53 → WP-R5):
+`update` carries the generation guard for the cross-window case, `write` posts a caller-assembled array a
+retry cannot re-derive, and the within-tab `write`-vs-`write` order stays unguarded because nothing
+bursts it. **If a burst caller for `write` ever appears, the fix is the full three-guard port —
+`queueWrite` *and* the latch — not `queueWrite` on its own.**

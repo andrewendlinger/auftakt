@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
@@ -14,7 +14,7 @@ import { useToast } from './Toast';
 import { useUndo, type UndoEntry } from './UndoProvider';
 import type { LabelKey } from '../lib/labels';
 import { refetchNow, useGuardedAction, useInvalidateAll, useLabel, useSettingsArray } from '../hooks';
-import { pendingKey, trackPending } from '../lib/pending';
+import { pendingKey, queueWrite, trackPending } from '../lib/pending';
 
 export type LayoutKey = 'artist_layout' | 'project_layout' | 'dashboard_layout';
 
@@ -156,9 +156,20 @@ export function useEntityLayout(
   const raw = row?.layout;
 
   const own = useMemo(() => parseEntityLayout(raw), [raw]);
+
+  // The latest layout this window wrote, held until that write settles — the shield
+  // `useEntityColumns`' `pending` gives (WP-82; `hooks.ts`). The arrange mutations serialise
+  // through `queueWrite` in `patch`, and each write's `invalidate()` refetches this entity; a
+  // refetch that lands while a later write is still queued republishes the *older* layout, and the
+  // next reorder — most fire as `void persist`, so a burst is easy — would compose from it and drop
+  // the move. Preferring the latch on every read below keeps the composition true across the burst.
+  // `[]` marks a reset (own layout cleared) still in flight, distinct from `null` = nothing in
+  // flight; empty then falls back to the standard exactly as a stored-empty layout does.
+  const pending = useRef<LayoutEntry[] | null>(null);
+  const effectiveOwn = pending.current ?? own;
   // Emptiness, not `!= null`: a corrupt or empty stored value then falls back to the standard
   // rather than presenting a layout with no entries in it.
-  const hasOwn = own.length > 0;
+  const hasOwn = effectiveOwn.length > 0;
 
   const standardCurrent = standard.current;
   const standardWrite = standard.write;
@@ -167,6 +178,7 @@ export function useEntityLayout(
 
   const ownRows = useCallback(
     () =>
+      pending.current ??
       parseEntityLayout((qc.getQueryData([kind, id]) as { layout?: unknown } | undefined)?.layout),
     [qc, kind, id],
   );
@@ -188,22 +200,34 @@ export function useEntityLayout(
   const patch = useCallback(
     async (next: LayoutEntry[] | null, fallback: string) => {
       if (id == null) return false;
+      pending.current = next ?? [];
+      const mine = pending.current;
       qc.setQueryData([kind, id], (old: unknown) =>
         old && typeof old === 'object'
           ? { ...(old as object), layout: next && JSON.stringify(next) }
           : old,
       );
       const res = kind === 'artist' ? api.artists : api.projects;
-      // Registered for the length of the round trip, so this page's own `refresh()` waits for it
-      // instead of GETting the pre-write entity over the value published above — the removal undo
-      // reads `current()`/`owned()` straight after refreshing (lib/pending.ts).
+      // Three guards, mirroring `useEntityColumns` (WP-82). The latch above is what the reads
+      // prefer, so a mid-burst refetch cannot roll the composition back. `trackPending` is on the
+      // **row** key for the length of the round trip, so this page's own `refresh()` waits for the
+      // write instead of GETting the pre-write entity — the removal undo reads `current()`/`owned()`
+      // straight after refreshing (lib/pending.ts); it is handed the *outer* `queueWrite` promise so
+      // that read still waits across the queue wait. `queueWrite` is on the **field** key so the
+      // whole-`layout` PATCHes go one at a time and the last map stored is the last asked for, yet a
+      // layout reorder does not serialise against a `task_columns` toggle to the same row.
       return trackPending(
         pendingKey([kind, id]),
-        (async () => {
+        queueWrite(pendingKey([kind, id, 'layout']), async () => {
           const ok = await guard(fallback, () => res.update(id, { layout: next }));
           await invalidate();
+          // Only the last write clears the latch; an earlier one settling must not hand the next
+          // reorder back to whatever its `invalidate()` refetch just republished. The test is
+          // reference identity — safe because every caller builds a fresh `next` (a reordered
+          // array, or `[]` for a reset), so no two writes in a burst share a `mine`.
+          if (pending.current === mine) pending.current = null;
           return ok;
-        })(),
+        }),
       );
     },
     [qc, kind, id, guard, invalidate],
@@ -234,7 +258,7 @@ export function useEntityLayout(
   const applySaved = useCallback(() => write(savedCurrent()), [write, savedCurrent]);
 
   return {
-    value: hasOwn ? own : standard.value,
+    value: hasOwn ? effectiveOwn : standard.value,
     current,
     write,
     refresh,
