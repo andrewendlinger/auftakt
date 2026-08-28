@@ -3740,3 +3740,37 @@ identically, so the round-trip stays render-equal and idempotent even unfixed. O
 case that pins the exact string `# eins zwei` bites — red before, green after. The keystroke half is
 not reachable by `check:markdown` at all — it is a key event, not an input rule — so it is verified by
 firing the keymap through `someProp('handleKeyDown', …)`, the deterministic sibling of `check:browser`.
+
+## Eine getippte Zahl startet nur bei „1." eine Liste (2026-08-28, WP-85-Nachbar)
+
+The last of the WP-85 neighbours, taken on its own. The vendor's ordered-list input rule is
+`/^(\d+)\.\s$/`: **any** number followed by `. ` at the start of a line converts the block into a
+numbered list starting at that number. So typing „2026. Ein starkes Jahr" became a list marked
+„2026." — a numbered list the customer never asked for, with a wide gap after the marker.
+`MdOrderedList` pins the digit to `1`, so only `1. ` still starts a list; every other number stays
+text.
+
+**This is only a live-typing fix, and deliberately so — the write side was already safe.**
+`escapeBlockStarts` (`lib/blockEscape.ts`) stores a typed `2026. ` as `2026\. `, so such a line never
+round-trips back into a list; the note does not re-shape itself on save. That is the difference from
+the heading sibling, which was genuine save-time loss. Here the only defect is the surprise while
+typing, and Backspace already undid it (`undoInputRule`) — so this is polish, not a correctness fix,
+and it sits behind the freeze as „eigenes, kleines Paket".
+
+**„Only 1" is a judgment, and the alternative was a digit cap.** Narrowing at all is „ein Urteil über
+‚Liste bei 3 beginnen', kein Fehler" — the rule is not wrong, only surprising. A cap (say 1–2 digits,
+so `5. ` and `12. ` still start a list but `2026. ` does not) keeps a „start at N" affordance for
+realistic N, but the cutoff is arbitrary and typing a starting offset is not something this audience
+does. „Only 1" is the same move `MdBulletList` made — keep the one shortcut that reads as „start a
+list", drop the rest — and it costs nothing real: the „Nummerierte Liste" toolbar button still makes a
+list, and Enter still auto-counts 2, 3, 4… inside one.
+
+**The narrowing is minimal because `start` never varies.** With the digit pinned to `1` the list
+always starts at its default, so the vendor's `getAttributes`/`joinPredicate` — which existed only to
+carry and continue a non-1 start — are dropped, and the rule is as small as the bullet's. Like it,
+`MdOrderedList` is a schema replacement (`orderedList: false` in `StarterKit.configure`, the standalone
+`OrderedList` re-added) so the headless gate serializes through it; the standalone extension keeps the
+same `parseMarkdown`, paste handler and shortcuts, so nothing is lost. Unlike the heading sibling this
+gesture *is* reachable by `check:markdown` — an input rule runs through `handleTextInput`, which jsdom
+can feed character by character — so the `inputRules` block pins it directly: `2026. ` and `5. ` stay
+text (red before, green after), while `1. ` still makes a list.

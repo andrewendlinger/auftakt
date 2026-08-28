@@ -744,7 +744,12 @@ const inputRules: Array<[string, string, string]> = [
   ['ein getipptes Pluszeichen bleibt eines', '+ Punkt A', '\\+ Punkt A'],
   ['ein getippter Stern bleibt einer', '* Punkt A', '\\* Punkt A'],
   ['ein Gedankenstrich macht weiterhin eine Liste', '- Punkt A', '- Punkt A'],
-  ['eine Nummerierung bleibt unangetastet', '1. eins', '1. eins'],
+  // Nur `1. ` startet noch eine Nummerierung. Jede andere Zahl bleibt Text — die Jahreszahl ist der
+  // gemeldete Fall, die Fünf die Entscheidungsgrenze. `escapeBlockStarts` setzt den Backslash vor die
+  // Interpunktion, deshalb `2026\. ` und `5\. `. Die Eins-Zeile ist die, die weiterhin greifen muss.
+  ['eine Eins macht weiterhin eine Liste', '1. eins', '1. eins'],
+  ['eine Jahreszahl wird beim Tippen keine Liste', '2026. Jubiläum', '2026\\. Jubiläum'],
+  ['eine getippte Fünf bleibt Text', '5. Punkt', '5\\. Punkt'],
   ['eine Überschrift bleibt unangetastet', '# Titel', '# Titel'],
 ];
 
