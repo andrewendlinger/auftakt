@@ -2513,10 +2513,22 @@ still by hand.
   reports it, and 7 px *inside* a 624 px one, where the sweep has nothing to say while the row
   still overhangs its card (600 px) by 17. „Does the row end inside its card" bites at both widths
   and is the honest question anyway — the card is where the content is cut off.
-- **The season switcher's menu is `div.absolute.z-40`**, and what WP-55 pinned on it is the pair
-  `overflow-y: auto` plus `max-height: min(24rem, 70vh)` — 348.6 px in a 498 px window. Assert
-  those rather than „the menu fits", which is true on a short list whatever the CSS says: the demo
-  has three seasons and a run's own fixtures only take it to eight.
+- **The season switcher's menu is `div.absolute.left-0.w-64`** — address it by its shape, not its
+  layer. It moved off `z-40` onto the shared `POPOVER_LAYER` (`z-[55]`) with #175, so a selector
+  keyed on the z-value silently matches nothing after that change; `.left-0.w-64` is the menu and
+  not its `fixed inset-0` backdrop. What WP-55 pinned on it is the pair `overflow-y: auto` plus
+  `max-height: min(24rem, 70vh)` — 348.6 px in a 498 px window. Assert those rather than „the menu
+  fits", which is true on a short list whatever the CSS says: the demo has three seasons and a run's
+  own fixtures only take it to eight.
+- **A toast can cover a menu, and only at 624×532 (#175, case L2).** The toast stack is
+  `pointer-events-none` but each card is `pointer-events-auto`, so „is the menu covered" is a
+  pointer-events question, not a paint one: read it with `elementsFromPoint` at three x-fractions of
+  every option (a menu covered only at its left edge is still broken), **not** by comparing z-index
+  numbers — the toast column and the menu portal are separate `fixed` subtrees and do not share a
+  stacking context. The bug is invisible at `WIDE`: the toast is bottom-centred and narrow there, and
+  a menu only reaches its band when `useAnchoredPopover` caps it against a low viewport bottom. The
+  undo toast lives 6 s and hovering does not pause it, so raise a fresh one (delete a task) whenever
+  a loop over pills outlives it, and delete from the *bottom* so the top pills keep their indices.
 
 ## Asking the main process a question (WP-67b)
 

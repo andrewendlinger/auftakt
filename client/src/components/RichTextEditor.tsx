@@ -19,7 +19,7 @@ import { useErrorToast } from '../hooks';
 import { withSeasonPin, type ImageAlign } from '../lib/imageRef';
 import { INDENT_UNIT, outdentWidth } from '../lib/indent';
 import { resizeTextImage } from '../lib/image';
-import { useAnchoredPopover } from '../lib/popover';
+import { POPOVER_LAYER, useAnchoredPopover } from '../lib/popover';
 import { markdownExtensions } from '../lib/richtext';
 import { rovingItem, useRovingFocus } from '../lib/rovingFocus';
 import { getWindowSeason } from '../lib/season';
@@ -820,7 +820,7 @@ function Toolbar({
         // absolutely positioned so WP-K's scrolling dialog body doesn't reflow around it.
         <div className="relative">
           <div
-            className="absolute left-0 z-50 mt-1"
+            className={`absolute left-0 ${POPOVER_LAYER} mt-1`}
             // Keeps the caret in the editor while the user clicks around the picker — except
             // on its search field, which cannot be focused at all if the default is cancelled
             // anywhere along the dispatch (RTE-15). Scoped to `input` on purpose: letting the
@@ -1002,7 +1002,7 @@ function TextColorPicker({ editor, color }: { editor: Editor; color: string | nu
             e.stopPropagation();
             dismiss();
           }}
-          className="fixed z-50 overflow-y-auto rounded-xl bg-white p-2 text-neutral-600 shadow-lg ring-1 ring-black/10"
+          className={`fixed ${POPOVER_LAYER} overflow-y-auto rounded-xl bg-white p-2 text-neutral-600 shadow-lg ring-1 ring-black/10`}
           style={{ left: pos.left, top: pos.top, maxHeight: pos.maxHeight }}
         >
           <div ref={roving.ref} onKeyDown={roving.onKeyDown} className="grid grid-cols-4 gap-0.5">

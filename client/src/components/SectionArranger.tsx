@@ -6,7 +6,7 @@ import type { Artist, LayoutEntry, Project } from '../api/types';
 import { arrayMoveTo } from '../lib/arrays';
 import { clearHidden, ensureEntry, markHidden, sameLayout } from '../lib/layoutEntries';
 import { useDragReorder } from '../lib/dragReorder';
-import { useAnchoredPopover } from '../lib/popover';
+import { POPOVER_LAYER, useAnchoredPopover } from '../lib/popover';
 import { Btn, DragHandle } from './ui';
 import { Modal } from './fields';
 import { ChevronRightIcon, HomeIcon, TrashIcon } from './icons';
@@ -423,7 +423,7 @@ export function LayoutMenu({
             <div
               ref={menuRef}
               role="menu"
-              className="fixed z-40 w-72 overflow-y-auto rounded-xl bg-white p-1 shadow-xl ring-1 ring-black/10"
+              className={`fixed ${POPOVER_LAYER} w-72 overflow-y-auto rounded-xl bg-white p-1 shadow-xl ring-1 ring-black/10`}
               style={{ left: pos.left, top: pos.top, maxHeight: pos.maxHeight }}
             >
               <div className="px-3 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">

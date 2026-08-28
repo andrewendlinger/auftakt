@@ -1,7 +1,7 @@
 import { useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { contrastText } from '../lib/colors';
-import { useAnchoredPopover } from '../lib/popover';
+import { POPOVER_LAYER, useAnchoredPopover } from '../lib/popover';
 import type { CustomColumnOption } from '../api/types';
 import { ChevronRightIcon } from './icons';
 
@@ -118,7 +118,7 @@ export function PillSelect({
             <div
               ref={menuRef}
               role="listbox"
-              className="fixed z-40 min-w-36 overflow-y-auto rounded-xl bg-white p-1 shadow-lg ring-1 ring-black/10"
+              className={`fixed ${POPOVER_LAYER} min-w-36 overflow-y-auto rounded-xl bg-white p-1 shadow-lg ring-1 ring-black/10`}
               style={{ left: pos.left, top: pos.top, minWidth: pos.minWidth, maxHeight: pos.maxHeight }}
               onKeyDown={(e) => {
                 // Escape is the popover hook's — it needs a capture-phase window listener,

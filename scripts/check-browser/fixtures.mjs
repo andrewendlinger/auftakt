@@ -29,6 +29,7 @@
  * @property {any} trash I · the copy the delete path may empty
  * @property {any} sorted J–K, AT–AX · the copy the reorder cases shuffle
  * @property {any} sheets N · the copy whose project 1 loses its status pill
+ * @property {any} menuToast L2 · the disposable copy whose project 1 loses tasks to raise the toast under test (#175)
  * @property {any} printed N2 · the one season that is not a copy — a task list of a tuned length
  * @property {any} config O–R2 · the copy the settings cases rewrite
  * @property {any} subtree X–Z · the copy the subtask tree is cut about in
