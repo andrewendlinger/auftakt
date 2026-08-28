@@ -387,17 +387,59 @@ export async function runColumns(fixtures) {
     return false;
   };
 
-  // One write at a time, each waited out before the next gesture. Not decoration: every commit
-  // ends in a blanket invalidate, and with two refetches in flight the pill's popover opened onto
-  // a table that re-rendered under it — the pick landed nowhere and the cell stayed „—" once in a
-  // full run. What „several writes inside one refetch window" does is AN's ground, with the GET
-  // held back on purpose rather than by accident.
+  /**
+   * One reading of a row's cells — text, checkbox state, pill colour and how many controls the
+   * cell offers. A single `evaluate`, because two round trips can straddle a background refetch's
+   * re-render and compare readings taken from different commits. Declared above the writes because
+   * each write is now waited out on what it reads (see the block below).
+   */
+  const ccRender = (taskId, positions) =>
+    cc.evaluate(
+      ([id, pos]) => {
+        const tds = [...document.querySelectorAll(`tr[data-task-id="${id}"] td`)];
+        /** @type {Record<string, {text: string, checked: boolean|null, pill: string|null, controls: number}>} */
+        const out = {};
+        for (const [key, i] of Object.entries(pos)) {
+          const td = tds[Number(i) - 1];
+          const box = /** @type {HTMLInputElement | null | undefined} */ (
+            td?.querySelector('input[type="checkbox"]')
+          );
+          const pill = td?.querySelector('button[aria-haspopup="listbox"]');
+          out[key] = {
+            text: (td?.textContent ?? '').trim(),
+            checked: box ? box.checked : null,
+            pill: pill ? getComputedStyle(pill).backgroundColor : null,
+            controls: td
+              ? td.querySelectorAll('button, input, select, textarea, [contenteditable], div.cursor-text').length
+              : -1,
+          };
+        }
+        return out;
+      },
+      [taskId, positions],
+    );
+  const ccFourAt = () => ({
+    text: ccAt('Zuständig'),
+    date: ccAt('Zusage bis'),
+    box: ccAt('Vertrag'),
+    sel: ccAt('Phase'),
+  });
+
+  // One write at a time, and each one waited out on the **screen** before the next gesture — not
+  // on the API. A task write publishes nothing optimistically, so `ccValues` (the GET) reports the
+  // value while the row is still mid-write: the commit's blanket invalidate has fired but its
+  // refetch has not landed, the cell has not re-rendered and `InlineInput` is still mounted. A
+  // gesture started there lands on a table that re-renders under it — the pick goes nowhere and the
+  // cell stays „—" (measured once in a full run). So each write polls `ccRender` until its value is
+  // on screen, which proves the refetch landed and the row re-rendered. That is the determinism
+  // „several writes inside one refetch window" needs; AN·6 reaches it from the other side, by
+  // holding the GET on purpose (#177).
   await ccType(CC_TASK, 'Zuständig', 'Merle Dahlke');
-  await until(() => ccValues(CC_TASK), (v) => v[ccKey(ccText)] === 'Merle Dahlke', 8000);
+  await until(() => ccRender(CC_TASK, ccFourAt()), (r) => r.text?.text === 'Merle Dahlke', 8000);
   await ccType(CC_TASK, 'Zusage bis', ccIso);
-  await until(() => ccValues(CC_TASK), (v) => v[ccKey(ccDate)] === ccIso, 8000);
+  await until(() => ccRender(CC_TASK, ccFourAt()), (r) => r.date?.text === ccGerman, 8000);
   await clickIfThere(ccCell(CC_TASK, 'Vertrag').locator('input[type="checkbox"]'));
-  await until(() => ccValues(CC_TASK), (v) => v[ccKey(ccBox)] === true, 8000);
+  await until(() => ccRender(CC_TASK, ccFourAt()), (r) => r.box?.checked === true, 8000);
   // The pick is the one write here that is neither a keystroke nor a toggle, and it is the one
   // that has landed nowhere on a slow runner — twice in CI, both times as `select:undefined` and a
   // grey placeholder. That was the popover being shut by the scroll its own click performed, and
@@ -433,43 +475,6 @@ export async function runColumns(fixtures) {
       [ccText, ccDate, ccSel].every((c) => typeof ccStored[ccKey(c)] === 'string'),
     ccFour.map((c) => `${c?.type}:${typeof ccStored[ccKey(c)]}`).join(' '),
   );
-
-  /**
-   * One reading of a row's cells — text, checkbox state, pill colour and how many controls the
-   * cell offers. A single `evaluate`, because two round trips can straddle a background refetch's
-   * re-render and compare readings taken from different commits.
-   */
-  const ccRender = (taskId, positions) =>
-    cc.evaluate(
-      ([id, pos]) => {
-        const tds = [...document.querySelectorAll(`tr[data-task-id="${id}"] td`)];
-        /** @type {Record<string, {text: string, checked: boolean|null, pill: string|null, controls: number}>} */
-        const out = {};
-        for (const [key, i] of Object.entries(pos)) {
-          const td = tds[Number(i) - 1];
-          const box = /** @type {HTMLInputElement | null | undefined} */ (
-            td?.querySelector('input[type="checkbox"]')
-          );
-          const pill = td?.querySelector('button[aria-haspopup="listbox"]');
-          out[key] = {
-            text: (td?.textContent ?? '').trim(),
-            checked: box ? box.checked : null,
-            pill: pill ? getComputedStyle(pill).backgroundColor : null,
-            controls: td
-              ? td.querySelectorAll('button, input, select, textarea, [contenteditable], div.cursor-text').length
-              : -1,
-          };
-        }
-        return out;
-      },
-      [taskId, positions],
-    );
-  const ccFourAt = () => ({
-    text: ccAt('Zuständig'),
-    date: ccAt('Zusage bis'),
-    box: ccAt('Vertrag'),
-    sel: ccAt('Phase'),
-  });
 
   // The colour comes from the column's own options rather than from a literal: it is the swatch
   // the user picked in the form above, and a hardcoded value would pass on a pill painted by
