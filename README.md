@@ -6,7 +6,7 @@
 
 <p align="center">
   Lokale Desktop-App für die Künstler- und Projektverwaltung<br>
-  eines klassischen Musikfestivals. Alle Daten bleiben auf dem eigenen Rechner.
+  Alle Daten bleiben auf dem eigenen Rechner.
 </p>
 
 <p align="center">
