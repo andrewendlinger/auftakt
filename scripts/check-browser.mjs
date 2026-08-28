@@ -303,21 +303,44 @@ try {
   // single file this replaced had, A through AW: `records` builds the scope `reorder` works in,
   // `toolbox` the note helpers `images` reuses, `archive` the row reader `columns` reuses, and
   // several areas read a page an earlier one wrote. Moving a line here is changing the gate.
-  await runSeasons(fixtures);
-  await runTasks(fixtures);
-  await runRecords(fixtures);
-  await runRender(fixtures);
-  await runSettings(fixtures);
-  await runKeyboard(fixtures);
-  await runElectron(fixtures);
-  await runAnnouncements(fixtures);
-  await runSubtasks(fixtures);
-  await runToolbox(fixtures);
-  await runImages(fixtures);
-  await runArchive(fixtures);
-  await runColumns(fixtures);
-  await runLanding(fixtures);
-  await runReorder(fixtures);
+  /**
+   * One area — and then the windows it left behind (#178).
+   *
+   * The gate used to open some thirty pages and close almost none: twelve were live in this
+   * context by the time `columns` ran. That is not idle cost. Every write's `invalidate()`
+   * refetches *and* broadcasts, so one click fans out across every open page, over the handful of
+   * sockets Chromium keeps to a single origin — and a refetch stretched that far lands inside a
+   * later case's gesture instead of before it. That is what the flake was: not a wrong answer, a
+   * late one, read by a poll that had already given up.
+   *
+   * Closing here rather than inside fifteen files is also what makes it safe to do at all, because
+   * nothing a file opens crosses its boundary. `fixtures` hands on helpers and data, never pages —
+   * every helper takes the page it works on as an argument, see its typedef — and no case ever
+   * looks a window up: `context.pages()` appears nowhere else in the gate. So the pages a file
+   * leaves behind are exactly the ones it is finished with. A file that already closes its own
+   * (`render`, `announcements`, `landing`, `reorder`, `settings`, `keyboard`, `electron`) finds
+   * nothing to close and is untouched.
+   */
+  const area = async (run) => {
+    await run(fixtures);
+    for (const page of context.pages()) await page.close().catch(() => {});
+  };
+
+  await area(runSeasons);
+  await area(runTasks);
+  await area(runRecords);
+  await area(runRender);
+  await area(runSettings);
+  await area(runKeyboard);
+  await area(runElectron);
+  await area(runAnnouncements);
+  await area(runSubtasks);
+  await area(runToolbox);
+  await area(runImages);
+  await area(runArchive);
+  await area(runColumns);
+  await area(runLanding);
+  await area(runReorder);
 
   // Only on a green run: a failed `check()` may have short-circuited a case's remaining
   // assertions, and that run is red already — the pin guards the green ones.

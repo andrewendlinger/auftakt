@@ -1711,9 +1711,26 @@ are not — they are `labels` in the window's own season `settings`, with a gene
   fallback announces itself — a `⚠` line where it happens and a count on the summary line — and a
   run that reloaded its way to green must be read as a run with something wrong in it, not as a
   green run.
-- **A window left open costs every later case.** The gate opens ~30 pages and closes almost none,
-  so a broadcast fans out to all of them. Closing a case's windows when it is done is not tidiness
-  here: it is what keeps the *next* case's writes fast enough to drive.
+- **A window left open costs every later case — so the runner now closes them (#178).**
+  `check-browser.mjs` closes every page still open on the context after each scenario file, because
+  a broadcast fans out to all of them: measured at *twelve* live windows by the time `columns` ran,
+  against the ~30 opened over a whole run. This is safe only because nothing a file opens crosses
+  its boundary — `fixtures` hands on helpers and data, never pages, and `context.pages()` appears
+  nowhere else in the gate — and it is the reason a later case's writes are fast enough to drive.
+  If you add a file that *does* need a page from an earlier one, hand the page over explicitly and
+  say so here first.
+- **„The server has the burst" is not „the screen has it", and the gap is a whole rung.** WP-82 put
+  `invalidate()` inside `queueWrite`'s closure, so a burst of writes to one key is published one at
+  a time — hiding three columns walks the screen through 3 → 1 → 2 → 3 while the server goes
+  straight to three. A poll that reads the *server* and then asserts on the *screen* is therefore
+  reading a state that is one write behind, and it must (a) carry every term its assertion reads,
+  not half of them, and (b) be budgeted at `SETTLED_MS` rather than at some smaller number that
+  looked generous locally. Both AO polls in `cases/columns.mjs` were wrong on both counts and were
+  two of this file's CI reds.
+- **An unthrottled local run cannot reproduce any of this.** A developer machine wins the race
+  every time; the lever is CDP `Emulation.setCPUThrottlingRate` at 6×, which is what turned a
+  green local gate red on the first run. Measure a flake fix with it, before and after, and quote
+  both rates — a gate that went green once has not been shown to be fixed.
 - **A season's own `period`/`subtitle` beat the automatic line even when the automatic one exists.**
   The demo's 2027 season carries both overrides *and* the same event range as 2026, which is what
   makes „the override wins" discriminate — asserted against 2028 (no events at all) alone it also
