@@ -12,8 +12,9 @@ import { useCallback, useLayoutEffect, useRef, useState } from 'react';
  *
  * What it owns: measuring the anchor, flipping above it when there is more room there,
  * clamping horizontally to stay on screen, capping the height to the space available (the
- * menu scrolls internally), and closing on Escape, page scroll or resize. What it does not
- * own: the trigger, the backdrop and the menu contents — those differ per popover.
+ * menu scrolls internally), following the anchor when a layout reflow moves it, and closing
+ * on Escape, page scroll or resize. What it does not own: the trigger, the backdrop and the
+ * menu contents — those differ per popover.
  *
  * Rendering is two-phase by design: `pos` is seeded from the anchor rect before the portal
  * mounts, then refined once the menu is in the DOM and can be measured.
@@ -90,23 +91,39 @@ export function useAnchoredPopover<A extends HTMLElement, M extends HTMLElement>
     onCloseRef.current?.();
   }, []);
 
-  useLayoutEffect(() => {
-    if (!open) return;
+  /**
+   * Measure the anchor and place the menu against it: flip above when there is more room there,
+   * clamp horizontally to stay on screen, cap the height to the space left (the menu scrolls
+   * internally). Runs once when the menu mounts and again whenever a reflow moves the anchor (the
+   * `ResizeObserver` below). A no-op when the menu is on its way out or not yet mounted, and it
+   * returns the previous `pos` unchanged when nothing moved, so a burst of observer callbacks
+   * during a reflow does not churn renders.
+   */
+  const reposition = useCallback(() => {
+    if (!openRef.current) return;
     const anchor = anchorRef.current;
     const menu = menuRef.current;
-    if (anchor && menu) {
-      const r = anchor.getBoundingClientRect();
-      anchorAtRef.current = { left: r.left, top: r.top };
-      const spaceBelow = window.innerHeight - r.bottom - MARGIN;
-      const spaceAbove = r.top - MARGIN;
-      const flipUp = menu.scrollHeight > spaceBelow && spaceAbove > spaceBelow;
-      const maxHeight = Math.max(80, Math.floor(flipUp ? spaceAbove : spaceBelow));
-      const left = Math.max(MARGIN, Math.min(r.left, window.innerWidth - menu.offsetWidth - MARGIN));
-      const top = flipUp
-        ? Math.max(MARGIN, r.top - 4 - Math.min(menu.scrollHeight, maxHeight))
-        : r.bottom + 4;
-      setPos({ left, top, minWidth: r.width, maxHeight });
-    }
+    if (!anchor || !menu) return;
+    const r = anchor.getBoundingClientRect();
+    anchorAtRef.current = { left: r.left, top: r.top };
+    const spaceBelow = window.innerHeight - r.bottom - MARGIN;
+    const spaceAbove = r.top - MARGIN;
+    const flipUp = menu.scrollHeight > spaceBelow && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(80, Math.floor(flipUp ? spaceAbove : spaceBelow));
+    const left = Math.max(MARGIN, Math.min(r.left, window.innerWidth - menu.offsetWidth - MARGIN));
+    const top = flipUp
+      ? Math.max(MARGIN, r.top - 4 - Math.min(menu.scrollHeight, maxHeight))
+      : r.bottom + 4;
+    setPos((prev) =>
+      prev && prev.left === left && prev.top === top && prev.minWidth === r.width && prev.maxHeight === maxHeight
+        ? prev
+        : { left, top, minWidth: r.width, maxHeight },
+    );
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    reposition();
     /**
      * A page scroll invalidates the anchor rect — but a scroll *inside* the menu is its own
      * `overflow-y-auto` doing its job and must not close it.
@@ -154,15 +171,37 @@ export function useAnchoredPopover<A extends HTMLElement, M extends HTMLElement>
       closePopover();
       anchorRef.current?.focus();
     };
+    /**
+     * A layout reflow can move the anchor with no scroll behind it — a column left of it in the
+     * task table's `overflow-x-auto` wrapper narrows as an inline editor closes, and when the
+     * wrapper needs no `scrollLeft` clamp nothing is dispatched at all (#176). `onScroll` never
+     * runs, so the menu would sit frozen where it opened, now detached from its button. A
+     * `ResizeObserver` fills exactly that gap: it fires on the reflow and never on a scroll, so the
+     * menu follows the anchor here while a real scroll still closes it above. The wrapper keeps its
+     * own width when an inner column shrinks — the element that resizes is the `<table>`, which is
+     * on the anchor's ancestor path — so we watch the anchor and every ancestor up to and including
+     * its nearest scrollable one.
+     */
+    const ro = new ResizeObserver(() => reposition());
+    const anchorEl = anchorRef.current;
+    if (anchorEl) {
+      ro.observe(anchorEl);
+      for (let el = anchorEl.parentElement; el; el = el.parentElement) {
+        ro.observe(el);
+        const s = getComputedStyle(el);
+        if (/auto|scroll/.test(s.overflowX + s.overflowY)) break;
+      }
+    }
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', closePopover);
     window.addEventListener('keydown', onKeyDown, true);
     return () => {
+      ro.disconnect();
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', closePopover);
       window.removeEventListener('keydown', onKeyDown, true);
     };
-  }, [open, closePopover]);
+  }, [open, closePopover, reposition]);
 
   const toggle = useCallback(() => {
     if (openRef.current) closePopover();

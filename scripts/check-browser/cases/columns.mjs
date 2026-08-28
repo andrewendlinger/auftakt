@@ -810,6 +810,106 @@ export async function runColumns(fixtures) {
   // Put the text cell back the way AN·3 left it, so AO reads the state this file documented.
   await send('PATCH', CC(`/tasks/${CC_TASK}`), { custom_values: { [ccKey(ccText)]: '' } });
 
+  // 8 · the other half of AN·7 (#176). WP-83 handles the *clamp* case — a `scroll` event fires and
+  // the pill happens to be stationary. This is the case with no clamp at all: with `scrollLeft` at 0
+  // there is room to spare, so a column collapsing to the pill's left narrows the table and slides
+  // the pill left with **nothing dispatched**. `onScroll` never runs, and before #176 the open menu
+  // simply stayed where it opened — now detached from its pill. The cause is a genuine column
+  // collapse (the table's border-box narrows, exactly as a closing editor narrows it) and the follow
+  // is asserted only here, where it was injected. A `ResizeObserver` on the pill's ancestors is the
+  // only thing that can move the menu without a scroll, so a pass is proof it fired.
+  await cc.evaluate(() => {
+    const table = [...document.querySelectorAll('table')].find((t) =>
+      [...t.querySelectorAll('thead th')].some((th) => (th.textContent ?? '').trim() === 'Aufgabe'),
+    );
+    const wrap = table?.closest('div.overflow-x-auto');
+    if (wrap) wrap.scrollLeft = 0; // room to spare ⇒ the coming shrink needs no clamp
+  });
+  await scrollSettled(cc);
+  /** The Status pill's on-screen left and the open menu's left, plus the pill's column index. */
+  const ccFollowMeasure = () =>
+    cc.evaluate((taskId) => {
+      const tr = /** @type {HTMLTableRowElement | null} */ (
+        document.querySelector(`tr[data-task-id="${taskId}"]`)
+      );
+      const table = tr?.closest('table');
+      const sTh = /** @type {HTMLTableCellElement | undefined} */ (
+        table
+          ? [...table.querySelectorAll('thead th')].find((th) => (th.textContent ?? '').trim() === 'Status')
+          : undefined
+      );
+      const sIdx = sTh ? sTh.cellIndex : -1;
+      const pill = sIdx >= 0 ? tr?.cells[sIdx]?.querySelector('button[aria-haspopup="listbox"]') : null;
+      const menu = document.querySelector('[role="listbox"]');
+      const pr = pill?.getBoundingClientRect();
+      const mr = menu?.getBoundingClientRect();
+      return {
+        menuOpen: !!menu,
+        sIdx,
+        pillLeft: pr ? Math.round(pr.left) : null,
+        menuLeft: mr ? Math.round(mr.left) : null,
+      };
+    }, CC_TASK);
+  const ccFollowOpen = await ccOpenPill(CC_TASK, 'Status');
+  const ccFollowBefore = await ccFollowMeasure();
+  const ccFollowLeftIdx = ccFollowBefore.sIdx - 1; // the column immediately left of the pill
+  const ccFollowShrink = await cc.evaluate((leftIdx) => {
+    const table = [...document.querySelectorAll('table')].find((t) =>
+      [...t.querySelectorAll('thead th')].some((th) => (th.textContent ?? '').trim() === 'Aufgabe'),
+    );
+    if (!table || leftIdx < 0) return { ok: false };
+    const w = /** @type {{ __pop176scrolled?: boolean }} */ (/** @type {unknown} */ (window));
+    w.__pop176scrolled = false;
+    document.addEventListener('scroll', () => { w.__pop176scrolled = true; }, true);
+    const w0 = Math.round(table.getBoundingClientRect().width);
+    for (const row of table.rows) {
+      const cell = row.cells[leftIdx];
+      if (cell) cell.style.display = 'none';
+    }
+    return { ok: true, widthBefore: w0, widthAfter: Math.round(table.getBoundingClientRect().width) };
+  }, ccFollowLeftIdx);
+  await cc.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await sleep(60);
+  const ccFollowAfter = await ccFollowMeasure();
+  const ccFollowScrolled = await cc.evaluate(
+    () => /** @type {{ __pop176scrolled?: boolean }} */ (/** @type {unknown} */ (window)).__pop176scrolled === true,
+  );
+  // Restore the collapsed column — AO reloads right after, but leave the DOM as found.
+  await cc.evaluate((leftIdx) => {
+    const table = [...document.querySelectorAll('table')].find((t) =>
+      [...t.querySelectorAll('thead th')].some((th) => (th.textContent ?? '').trim() === 'Aufgabe'),
+    );
+    if (table && leftIdx >= 0) for (const row of table.rows) {
+      const cell = row.cells[leftIdx];
+      if (cell) cell.style.display = '';
+    }
+  }, ccFollowLeftIdx);
+
+  // Precondition: the menu opened, a column really collapsed, the pill really slid left, and no
+  // scroll was behind it — without all of that, „the menu followed" would prove nothing.
+  check(
+    'eine Spalte links der Pille klappt zusammen, die Pille rutscht nach links — und niemand scrollt dabei (#176)',
+    ccFollowOpen &&
+      !!ccFollowShrink.ok &&
+      ccFollowShrink.widthAfter < ccFollowShrink.widthBefore &&
+      ccFollowBefore.pillLeft != null &&
+      ccFollowAfter.pillLeft != null &&
+      ccFollowBefore.pillLeft - ccFollowAfter.pillLeft >= 5 &&
+      !ccFollowScrolled,
+    `Menü ${ccFollowOpen}, ${ccFollowShrink.widthBefore}→${ccFollowShrink.widthAfter} breit, Pille ${ccFollowBefore.pillLeft}→${ccFollowAfter.pillLeft}, scroll ${ccFollowScrolled}`,
+  );
+  // The finding: the ResizeObserver kept the menu glued to the pill it moved with.
+  check(
+    '…und das offene Menü folgt der Pille, statt sich von ihr zu lösen (#176)',
+    ccFollowAfter.menuOpen &&
+      ccFollowAfter.menuLeft != null &&
+      ccFollowAfter.pillLeft != null &&
+      Math.abs(ccFollowAfter.menuLeft - ccFollowAfter.pillLeft) <= 2,
+    ccFollowAfter.menuOpen ? `Menü x ${ccFollowAfter.menuLeft} vs Pille x ${ccFollowAfter.pillLeft}` : 'Menü zu',
+  );
+  await cc.keyboard.press('Escape');
+  await gone(cc.locator('[role="listbox"]'), 4000);
+
   // ======================================================================== AO · hiding across the types
   //
   // Case G asserts the write shape for one global built-in on an artist page. Here: what the same

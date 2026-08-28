@@ -74,7 +74,7 @@ import { runReorder } from './check-browser/cases/reorder.mjs';
  * that needs to name it points here rather than repeating the number, which cannot be typechecked
  * and drifts; only this run pins it. Adding or removing a case moves this constant, deliberately.
  */
-const EXPECTED_CHECKS = 659;
+const EXPECTED_CHECKS = 661;
 
 // ---------------------------------------------------------------------------- the run
 

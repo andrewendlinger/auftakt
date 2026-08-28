@@ -781,6 +781,17 @@ verified by hand, and the gate itself is written from this list.
   has really gone somewhere (`popover.ts`), which leaves a genuine page scroll closing the menu as
   before. Withholding that one event from the hook took the forced repro from 12/12 to 0/8, and the
   fix takes it to 0/12 with the unforced reopen rate going from 6/30 to 0/20.
+- **…and a reflow that moves the pill with *no* scroll behind it now makes the menu follow, not
+  detach (#176).** WP-83's guard closes on a real scroll and holds through the clamp case, but it
+  never had a way to notice a layout change that dispatches no `scroll` at all — a column left of
+  the pill collapsing while the wrapper has `scrollLeft` to spare (no clamp needed). The pill slides
+  left, the menu used to stay frozen where it opened, now hanging off nothing. `useAnchoredPopover`
+  now carries a `ResizeObserver` on the anchor and its scroll ancestors that repositions the menu on
+  exactly that reflow, and — because a `ResizeObserver` never fires on a scroll — **a genuine page
+  scroll still closes the menu, unchanged.** Driving it: inject the reflow as a real column collapse
+  (`display:none` on the cells of a column left of the pill) with the wrapper at `scrollLeft` 0, arm
+  a capture-phase `scroll` spy first to prove none fired, then assert the menu's left tracked the
+  pill's. Both halves are the AN·8 case in `cases/columns.mjs`.
 - **…and never screenshot an open popover with `fullPage: true`.** Same rule, one step further:
   `shot()` in `lib/drive.mjs` stitches a full-page picture by *scrolling*, which closes the popover
   before the shutter — so the file shows the page without its menu and every locator after it times
