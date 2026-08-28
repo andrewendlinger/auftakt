@@ -3699,3 +3699,44 @@ corpus entries fail on the unfixed code; the three that pass are the two deliber
 `*` case that was safe by luck. `check-markdown.ts` also gained its first coverage of **typing**:
 `handleTextInput` is reachable in jsdom, so the input rule is asserted there rather than in
 `check:browser`, whose pinned total does not move.
+
+## Eine Überschrift ist immer eine Zeile (2026-08-28, WP-85-Nachbar)
+
+Found while building WP-85 and taken on its own. A heading can hold a `hardBreak` — press Shift+Enter
+in a title, or paste `<h1>eins<br>zwei</h1>`, or open a restored note — but an ATX heading (`# …`)
+has no continuation line. The vendor serializer writes `# ` and then `renderChildren` verbatim, so
+`[eins, hardBreak, zwei]` came out `# eins  \nzwei`, and both readers took `zwei` for a separate
+paragraph. The title tore into a heading plus a paragraph on the next open — the silent, save-time
+loss WP-57 warns about, the note whole until it is reopened.
+
+**The write half is the position-not-character escape of WP-85, applied to the one block Markdown
+cannot spell as multi-line.** `MdHeading.renderMarkdown` takes the vendor output and collapses every
+hard break (and the spaces around it) to a single space, then trims a break that sat at the very end:
+`# eins  \nzwei` → `# eins zwei`. A heading's children are inline-only, so the sole newline its text
+can contain is a hard break — the collapse is unambiguous, keeps every word, keeps one legal title
+line, and round-trips stably. Some loss is unavoidable — the note already accepts that ATX has no
+continuation line — so the choice is between losing the *break* (a space) and losing the *structure*
+(a second block), and a space is the smaller. It neutralises the loss from every source at once —
+typing, paste, legacy JSON — the same reason WP-85 escaped on the serialized line, not at the
+keystroke.
+
+**The typing half makes the broken title unreachable, not merely harmless.** The vendor binds
+`Shift-Enter` and `Mod-Enter` to `setHardBreak`. `MdHardBreak` keeps that everywhere except a heading,
+where the soft-break keys run the exact command chain ProseMirror runs for Enter (`newlineInCode` →
+`createParagraphNear` → `liftEmptyBlock` → `splitBlock`). Enter was already right — the heading node
+is `defining: true`, so Enter drops out of the title into a paragraph below, which is what finishing a
+title means — so the fix is to make the soft-break keys do the *same* thing in a heading and stay
+`setHardBreak` in ordinary prose. Now no keystroke makes a two-line title and no key feels dead. Only
+`addKeyboardShortcuts` is overridden, so the node, `markdownTokenName: 'br'` and the hard-break
+serializer that `LegacyFence` and every stored soft break rely on are the vendor's, untouched.
+
+**Both are schema replacements** (`heading: false`/`hardBreak: false` in `StarterKit.configure`, the
+standalone extensions re-added) for the reason `MdBulletList` is: the headless round-trip gate builds
+its editor from the same list, so the fix has to live in the dialect, not in `RichTextEditor.tsx`.
+
+**Why the gate holds this with an exact-output case, not a round-trip one.** Render-equality is blind
+here for the same reason it was blind to WP-85's `+ Punkt A`: both readers split `# eins  \nzwei`
+identically, so the round-trip stays render-equal and idempotent even unfixed. Only a `serialized`
+case that pins the exact string `# eins zwei` bites — red before, green after. The keystroke half is
+not reachable by `check:markdown` at all — it is a key event, not an input rule — so it is verified by
+firing the keymap through `someProp('handleKeyDown', …)`, the deterministic sibling of `check:browser`.

@@ -830,6 +830,12 @@ const serialized: Array<[string, JSONContent, string]> = [
   ['eine Tabellen-Trennzeile im Absatz bleibt Text, die Kopfzeile braucht nichts',
     { type: 'doc', content: [breakLines('| a | b |', '| --- | --- |')] },
     '| a | b |  \n\\| --- | --- |'],
+  // Eine Überschrift ist immer *eine* Zeile: der harte Umbruch wird ein Leerzeichen, nicht `  \n`,
+  // sonst risse der Titel beim nächsten Öffnen in Überschrift + Absatz.
+  ['ein harter Umbruch in einer Überschrift wird ein Leerzeichen',
+    { type: 'doc', content: [{ type: 'heading', attrs: { level: 1 }, content: [
+      { type: 'text', text: 'eins' }, { type: 'hardBreak' }, { type: 'text', text: 'zwei' }] }] },
+    '# eins zwei'],
   ['ein Marker im Listenpunkt verschachtelt die Liste nicht',
     { type: 'doc', content: [{ type: 'bulletList', content: [bullet('- Unterpunkt')] }] },
     '- \\- Unterpunkt'],

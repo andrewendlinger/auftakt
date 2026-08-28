@@ -8,6 +8,8 @@ import { TableRow } from '@tiptap/extension-table-row';
 import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
 import { BulletList } from '@tiptap/extension-list';
+import { Heading } from '@tiptap/extension-heading';
+import { HardBreak } from '@tiptap/extension-hard-break';
 import {
   Extension,
   Mark,
@@ -775,6 +777,70 @@ const MdBulletList = BulletList.extend({
 });
 
 /**
+ * Eine Überschrift ist immer *eine* Zeile — the write half.
+ *
+ * An ATX heading (`# …`) has no continuation line, but a heading node can hold a `hardBreak`: a
+ * Shift+Enter, or pasted HTML like `<h1>eins<br>zwei</h1>`, or a restored note. The vendor
+ * serializer writes `# ` and then `renderChildren` verbatim, so that break comes out as `  \n` and
+ * turns `[eins, hardBreak, zwei]` into `# eins  \nzwei`. Both readers then take `zwei` for a
+ * separate paragraph — the note re-shapes itself the next time it is opened, the title torn in two,
+ * exactly the quiet save-time loss WP-57 warns about.
+ *
+ * A heading's children are inline-only, so the *only* newline its rendered text can contain is a
+ * hard break. Collapsing every such newline (and the spaces around it) to a single space keeps all
+ * the words, keeps it one legal title line, and — after trimming a break that sat at the very end —
+ * round-trips stably: `# eins  \nzwei` → `# eins zwei`. This is the position-not-character escape of
+ * WP-85 applied to the one block Markdown cannot spell as multi-line. Like `MdBulletList` it is a
+ * *schema* replacement so the headless round-trip check serializes through it too; the standalone
+ * `Heading` carries the same `parseMarkdown`/input rules/`Mod-Alt-N` shortcuts the StarterKit copy
+ * did, so `heading: false` there loses nothing.
+ *
+ * The typing half — so a two-line title cannot be made in the first place — is `MdHardBreak` below.
+ */
+const MdHeading = Heading.extend({
+  renderMarkdown: (node, helpers, ctx) =>
+    Heading.config
+      .renderMarkdown!(node, helpers, ctx)
+      .replace(/[^\S\n]*\n[^\S\n]*/g, ' ')
+      .replace(/[^\S\n]+$/, ''),
+});
+
+/**
+ * Shift+Enter in einer Überschrift tut, was Enter tut (WP-85's heading sibling) — the typing half.
+ *
+ * The vendor binds both `Shift-Enter` and `Mod-Enter` to `setHardBreak`, so pressing either inside a
+ * title inserts the hard break `MdHeading` then has to collapse on save — a break the editor shows
+ * while typing and silently swallows on the next open. Enter itself is already right: the heading is
+ * `defining: true`, so Enter drops out of the title into a normal paragraph below, which is what
+ * someone finishing a title wants. So the fix is to make the soft-break keys do the *same thing*
+ * when the caret is in a heading — the exact command chain ProseMirror runs for Enter — and stay the
+ * vendor's `setHardBreak` everywhere else, so soft breaks in ordinary prose are untouched. Now no
+ * keystroke can make a two-line title, and none feels dead.
+ *
+ * (`Mod-Enter` is claimed first by `RichTextEditor.tsx`'s `handleKeyDown` submit, so this branch of
+ * it is unreachable in practice; it is overridden anyway to keep both new-line gestures identical.)
+ * Only `addKeyboardShortcuts` is touched, so the node, `markdownTokenName: 'br'` and its serializer
+ * — which `LegacyFence` and every stored soft break rely on — are the vendor's unchanged.
+ */
+const MdHardBreak = HardBreak.extend({
+  addKeyboardShortcuts() {
+    const enterInHeadings = () => {
+      const { editor } = this;
+      if (editor.state.selection.$head.parent.type.name !== 'heading') {
+        return editor.commands.setHardBreak();
+      }
+      return (
+        editor.commands.newlineInCode() ||
+        editor.commands.createParagraphNear() ||
+        editor.commands.liftEmptyBlock() ||
+        editor.commands.splitBlock()
+      );
+    };
+    return { ...this.parent?.(), 'Shift-Enter': enterInHeadings, 'Mod-Enter': enterInHeadings };
+  },
+});
+
+/**
  * The read half of „a link around an image survives": `[![Saalplan](/api/images/…)](https://…)`.
  *
  * `applyMarkToContent` in the Markdown manager sets marks on **text** nodes and otherwise recurses
@@ -883,6 +949,8 @@ export function markdownExtensions(
       document: false, // replaced by MdDocument so the trailing empty paragraph isn't stored
       paragraph: false, // replaced by MdParagraph so a lone image keeps its paragraph
       bulletList: false, // replaced by MdBulletList so a typed `+ ` stays a plus (WP-85)
+      heading: false, // replaced by MdHeading so a hard break in a title collapses, not splits
+      hardBreak: false, // replaced by MdHardBreak so Shift+Enter in a title acts like Enter
       code: false, // WP-49 — see markdownParser; the tokenizers go with them
       codeBlock: false,
       link: {
@@ -908,6 +976,8 @@ export function markdownExtensions(
     MdDocument,
     MdParagraph,
     MdBulletList,
+    MdHeading,
+    MdHardBreak,
     MdLinkedImage,
     MdImage.configure({ resolveSrc: opts.resolveSrc ?? ((src: string) => src) }),
     MdTable.configure({ resizable: false }),
