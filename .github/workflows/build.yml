@@ -150,8 +150,16 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
 
+      # No `--with-deps`. That flag runs `apt-get update` over *every* source on the runner image —
+      # including the preinstalled Google Chrome and Microsoft repos, which have nothing to do with
+      # Playwright — and one mirror mid-sync fails the whole step. It took PR #188 red on a
+      # README-only change ("File has unexpected size … Mirror sync in progress?"). ubuntu-latest
+      # already ships the shared libraries Chromium links against (it preinstalls Chrome, Chromium
+      # and Edge), so the cached browser download above is all this needs. If a future image ever
+      # drops a required lib, Chromium fails to *launch* here — loud, deterministic, on both this job
+      # and `boot` — never an intermittent flake; add the flag back then.
       - name: Install Chromium
-        run: npx playwright-core install --with-deps chromium
+        run: npx playwright-core install chromium
 
       - name: Browser gate
         run: npm run check:browser
@@ -209,8 +217,11 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
 
+      # No `--with-deps`, for the same reason as `browser` above: it makes `apt-get update` scan the
+      # runner's third-party mirrors, and one mid-sync fails the step. The runner already has the
+      # libraries; the cached browser download above is all this needs.
       - name: Install Chromium
-        run: npx playwright-core install --with-deps chromium
+        run: npx playwright-core install chromium
 
       # The gate builds the client itself — a stale `client/dist` would be a silent false green,
       # which is the one failure mode it may not have.
