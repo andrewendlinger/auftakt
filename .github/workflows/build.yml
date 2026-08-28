@@ -135,12 +135,20 @@ jobs:
           npm --prefix client ci
 
       # `playwright-core` downloads nothing on install — that is why it is the dependency and
-      # `playwright` is not (docs/DECISIONS.md). The browser is fetched here instead, and cached
-      # on the lockfile, so a run only pays for it when the pinned version moves.
+      # `playwright` is not (docs/DECISIONS.md). The browser is fetched below and cached on the
+      # pinned playwright-core version, read straight from the committed lockfile — so a run only
+      # pays for the download when that pin moves, not on every unrelated root-lockfile bump.
+      # (Keying on hashFiles('package-lock.json') evicted this on every Dependabot root bump.)
+      - name: Resolve Playwright version
+        id: pw
+        run: |
+          VERSION=$(node -p "require('./package-lock.json').packages['node_modules/playwright-core'].version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
 
       - name: Install Chromium
         run: npx playwright-core install --with-deps chromium
@@ -188,12 +196,18 @@ jobs:
           npm --prefix server ci
           npm --prefix client ci
 
-      # The same cache key as `browser`, so the two jobs share one download rather than paying for
-      # a browser each.
+      # The same cache key as `browser` (keyed on the pinned playwright-core version), so the two
+      # jobs share one download rather than paying for a browser each.
+      - name: Resolve Playwright version
+        id: pw
+        run: |
+          VERSION=$(node -p "require('./package-lock.json').packages['node_modules/playwright-core'].version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
 
       - name: Install Chromium
         run: npx playwright-core install --with-deps chromium
