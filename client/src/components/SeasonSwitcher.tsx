@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ID } from '../api/types';
+import { POPOVER_LAYER } from '../lib/popover';
 import { switchSeason } from '../lib/season';
 import { ChevronRightIcon } from './icons';
 import {
@@ -63,7 +64,9 @@ export function SeasonSwitcher() {
               either — in a 560 px window, which is now the smallest allowed, the bottom seasons
               were simply unreachable. `max-h` is expressed against the viewport for the same
               reason the anchored popovers are. */}
-          <div className="absolute left-0 z-40 mt-2 max-h-[min(24rem,70vh)] w-64 overflow-y-auto rounded-xl bg-white p-1 text-neutral-800 shadow-xl ring-1 ring-black/10">
+          <div
+            className={`absolute left-0 ${POPOVER_LAYER} mt-2 max-h-[min(24rem,70vh)] w-64 overflow-y-auto rounded-xl bg-white p-1 text-neutral-800 shadow-xl ring-1 ring-black/10`}
+          >
             <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
               {term.singular}
             </div>

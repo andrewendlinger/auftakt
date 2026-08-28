@@ -74,7 +74,7 @@ import { runReorder } from './check-browser/cases/reorder.mjs';
  * header, CLAUDE.md, decision records), and prose cannot be typechecked — so the run pins it.
  * Adding or removing a case moves this number too, deliberately.
  */
-const EXPECTED_CHECKS = 657;
+const EXPECTED_CHECKS = 659;
 
 // ---------------------------------------------------------------------------- the run
 
@@ -220,6 +220,10 @@ try {
   // Case N prints demo rows and needs one of them changed (project 1 loses its status pill, see
   // there), so it gets a copy like the cases above — taken here, before anything has written.
   const sheets = await makeSeason('Bögen', true);
+  // Case L2 (#175) deletes tasks on project 1 to raise a real undo toast and checks that an open
+  // status menu is not covered by it — so it needs a copy of its own, disposable: the deletes it
+  // makes are never undone and must land nowhere another case reads. Taken here with the rest.
+  const menuToast = await makeSeason('Menü-Toast', true);
   // Case N2's page-break fixture is the one season that is **not** a copy: its whole point is a
   // task list of a tuned length, and a copy would bring the demo's along. Built here with the
   // others all the same, so a season this run created is never a season an earlier case wrote to.
@@ -288,6 +292,7 @@ try {
     trash,
     sorted,
     sheets,
+    menuToast,
     printed,
     config,
     subtree,

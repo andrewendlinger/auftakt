@@ -40,6 +40,17 @@ export interface AnchoredPopover<A extends HTMLElement, M extends HTMLElement> {
   toggle: () => void;
 }
 
+/**
+ * The layer every popover menu renders at — its one source, so the order is decided once.
+ *
+ * Top → bottom of the app's overlays: the boot splash (`z-index:9999` in `index.html`), the
+ * announcement overlay (`z-[60]`), **the popover menus (`z-[55]`)**, the toast stack (`z-50`),
+ * the `Modal` layer (`z-40`), the menus' click-away backdrops (`z-30`, deliberately left there),
+ * the sticky header (`z-20`). A menu the user is actively choosing from outranks a transient
+ * toast — a notification must not steal the menu's clicks (#175). See docs/ARCHITECTURE.md.
+ */
+export const POPOVER_LAYER = 'z-[55]';
+
 const MARGIN = 8;
 
 export function useAnchoredPopover<A extends HTMLElement, M extends HTMLElement>(

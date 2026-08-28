@@ -1,7 +1,7 @@
-/** L–N4 · the two pure render assurances: the smallest window, and paper */
+/** L–N4 · the two pure render assurances: the smallest window (incl. the toast/menu layer, #175), and paper */
 
 import { stubElectron } from '../bridge.mjs';
-import { NARROW, PLACEHOLDER_SELECT_PX, cardWith, clickIfThere, open, pin, ready, shown, until, windowContext } from '../browser.mjs';
+import { NARROW, PLACEHOLDER_SELECT_PX, cardWith, clickIfThere, open, pin, ready, scrollSettled, shown, toast, topDialog, until, windowContext } from '../browser.mjs';
 import { UI } from '../config.mjs';
 import { painted, paintedAt, paintedTimes, printPdf, sheet, where, withoutPrintRule } from '../pdf.mjs';
 import { overflowReport, sweepWithProbe } from '../probes.mjs';
@@ -10,7 +10,7 @@ import { api, scoped, send } from '../stack.mjs';
 
 /** @param {import('../fixtures.mjs').Fixtures} fixtures */
 export async function runRender(fixtures) {
-  const { PAGE_BREAK_FIRST, PAGE_BREAK_TRIES, chrome, context, pageBreak, sheets } = fixtures;
+  const { PAGE_BREAK_FIRST, PAGE_BREAK_TRIES, chrome, context, menuToast, pageBreak, sheets } = fixtures;
   // ======================================================================== L · the smallest window
   //
   // WP-55 took the window minimum from 1024×680 to 624×560 so two of them fit side by side, and
@@ -212,7 +212,11 @@ export async function runRender(fixtures) {
   // an overlong list cannot be reached by scrolling the document either — in the smallest window
   // its last entries were simply unreachable before WP-55 capped and scrolled it.
   await g.locator('button[title$="wechseln"]').first().click();
-  const menu = g.locator('div.absolute.z-40').first();
+  // Addressed by its shape, not its layer: the menu moved off `z-40` onto the shared popover layer
+  // (#175, `POPOVER_LAYER`), and a selector that encoded the z-value would have to move with it —
+  // which is the brittleness that made this line need touching. `absolute left-0 w-64` is the
+  // switcher menu and nothing else (its backdrop is `fixed inset-0`).
+  const menu = g.locator('div.absolute.left-0.w-64').first();
   check('der Saison-Umschalter öffnet im schmalen Fenster', await shown(menu));
   const cap = await menu.evaluate((el) => {
     const cs = getComputedStyle(el);
@@ -233,6 +237,101 @@ export async function runRender(fixtures) {
   await g.keyboard.press('Escape');
   await g.close();
   await probe.close();
+
+  // ======================================================================== L2 · a toast over a menu
+  //
+  // #175, and the one interaction the whole gate could not reach: the toast stack is
+  // `fixed bottom-4 z-50` and `pointer-events-none`, but each card re-enables pointer events, so a
+  // live undo toast did not merely sit over an open popover menu — it took that menu's clicks. It is
+  // reachable *only* at the smallest window: `useAnchoredPopover` caps a downward menu at the space
+  // below its anchor, so a menu on a low row ends within a few px of the viewport bottom, inside the
+  // bottom-centred toast's band. The `WIDE` viewport every other case runs in cannot see it; case L
+  // is the only place at `NARROW`, and it never opened a pill with a toast up. The fix moved every
+  // popover menu onto `POPOVER_LAYER` (`z-[55]`, above the toast); this is the proof it bites.
+  //
+  // Asserted by real hit-testing (`elementsFromPoint`), never by comparing z-index numbers: the
+  // toast *card* that steals the click carries no z-index of its own (`z-index: auto`, computed 0) —
+  // its layer comes from the `z-50` container — so a card-vs-menu z compare reads „40 > 0" and
+  // passes on the very build that has the bug. So the case finds a pill whose open menu actually
+  // overlaps the toast, then asks the browser who is on top at three x-fractions of every option (a
+  // menu covered only at its left edge is still broken). Runs in a disposable copy: the deletes that
+  // raise the toast are never undone, so they must land nowhere another case reads.
+  console.log('\nL2 · Ein Toast verdeckt kein offenes Menü (#175)');
+  const macNarrow = NARROW.find((v) => v.width === 624) ?? NARROW[NARROW.length - 1];
+  const tctx = await windowContext(chrome, macNarrow);
+  const tp = await open(tctx, '/project/1');
+  await pin(tp, menuToast.id, '/project/1');
+  await shown(tp.locator('div.overflow-x-auto table tbody tr[data-task-id]'));
+
+  // A fresh 6 s undo toast, raised by deleting the *last* task so the top pills this loop opens keep
+  // their indices while the toast is re-raised. Tolerant of both confirm shapes: a task with
+  // subtasks offers „Nur diese Aufgabe" instead of „Löschen".
+  const raiseToast = async () => {
+    const row = tp.locator('table tbody tr[data-task-id]').last();
+    if (!(await shown(row, 3000))) return false;
+    await row.scrollIntoViewIfNeeded().catch(() => {});
+    await row.hover().catch(() => {});
+    if (!(await clickIfThere(row.locator('button[title="Löschen"]').first()))) return false;
+    await clickIfThere(topDialog(tp).getByRole('button', { name: /^(Löschen|Nur diese Aufgabe)$/ }), 3000);
+    return shown(toast(tp, /Rückgängig/), 3000);
+  };
+  const toastIsUp = () => toast(tp, /Rückgängig/).count().then((c) => c > 0);
+
+  await raiseToast();
+  const pills = tp.locator('button[aria-haspopup="listbox"]');
+  // Bounded: the overlapping pill is a lower-middle row, well inside this, and iterating every pill
+  // of a large project on every green run would delete far more than a disposable season needs.
+  const limit = Math.min(await pills.count(), 12);
+  /** @type {{ overlap: boolean, covered: number, toastPe: string } | null} */
+  let worst = null;
+  let sawOverlap = false;
+  for (let i = 0; i < limit; i++) {
+    if (!(await toastIsUp())) await raiseToast();
+    const pill = pills.nth(i);
+    await pill.scrollIntoViewIfNeeded().catch(() => {});
+    await scrollSettled(tp); // #155: don't let the pill's own scroll shut the menu we just opened
+    if (!(await clickIfThere(pill))) continue;
+    if (!(await shown(tp.locator('[role="listbox"]'), 1500))) continue;
+    await scrollSettled(tp);
+    const res = await tp.evaluate(() => {
+      // The undo toast is the last live pointer-events card; the menu is the open listbox.
+      const card = [...document.querySelectorAll('.pointer-events-auto')].pop();
+      const list = document.querySelector('[role="listbox"]');
+      if (!card || !list) return null;
+      const cr = card.getBoundingClientRect();
+      const mr = list.getBoundingClientRect();
+      const overlap = mr.left < cr.right && mr.right > cr.left && mr.top < cr.bottom && mr.bottom > cr.top;
+      let covered = 0;
+      for (const o of list.querySelectorAll('[role="option"]')) {
+        const r = o.getBoundingClientRect();
+        for (const f of [0.15, 0.5, 0.85]) {
+          const top = document.elementsFromPoint(r.left + r.width * f, r.top + r.height / 2)[0];
+          if (top && top !== o && !o.contains(top) && card.contains(top)) {
+            covered++;
+            break;
+          }
+        }
+      }
+      return { overlap, covered, toastPe: getComputedStyle(card).pointerEvents };
+    });
+    await tp.keyboard.press('Escape').catch(() => {});
+    if (res && res.overlap) {
+      sawOverlap = true;
+      if (!worst || res.covered > worst.covered) worst = res;
+    }
+  }
+  check(
+    'bei 624×532 überlappt ein Statusmenü das Band des Undo-Toasts — der Fall ist nicht vakuum (#175)',
+    sawOverlap && !!worst && worst.toastPe === 'auto',
+    worst ? `Toast pointer-events ${worst.toastPe}` : 'kein überlappendes Menü gefunden',
+  );
+  check(
+    '…und kein Menüeintrag wird vom Toast verdeckt',
+    !!worst && worst.covered === 0,
+    worst ? `${worst.covered} Einträge verdeckt` : 'nichts gemessen',
+  );
+  await tp.close();
+  await tctx.close();
 
   // ======================================================================== M · a done row
   //

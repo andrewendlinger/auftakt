@@ -8,6 +8,32 @@ If you are about to re-raise one of these, the bar is new information, not a fre
 
 ---
 
+## The popover layer sits above the toast, decided once (2026-08-28, #175)
+
+A live undo toast could take the clicks of an open popover menu. The toast stack is
+`fixed bottom-4 z-50` and `pointer-events-none`, but each card re-enables pointer events, so a
+toast overlapping a menu did not merely sit over it — it intercepted the menu's clicks. It was only
+reachable at the smallest window (macOS viewport 624×532): `useAnchoredPopover` caps a downward
+menu at the space below its anchor, so a menu on a low row ends within a few px of the viewport
+bottom, inside the bottom-centred toast's band.
+
+The order is now written down once, top → bottom: boot splash (`z-index:9999`) › announcement
+overlay (`z-[60]`) › **popover menus (`POPOVER_LAYER` = `z-[55]`)** › toast (`z-50`) › `Modal`
+(`z-40`) › a menu's click-away backdrop (`z-30`) › sticky header (`z-20`). The full table is in
+`docs/ARCHITECTURE.md` („Other client conventions"), the single source is `POPOVER_LAYER` in
+`lib/popover.ts`, and every dropdown uses it — the four `useAnchoredPopover` menus (`PillSelect`,
+`ColorSwatchPicker`, `SectionArranger`, the editor's text-colour picker), the season switcher and
+the editor's emoji dropdown.
+
+Two things decided rather than fallen into. The **menu goes up, not the toast down**: a notification
+must not outrank a menu the user is actively choosing from, but it must still outrank ordinary page
+content, so the toast keeps `z-50`. And the **backdrop stays at `z-30`, below the toast**: raising
+it above would let a click on a visible toast be swallowed as a menu-dismiss instead of firing its
+„Rückgängig", which is worse than the bug. Not in scope, and left alone: the 6 s dismissal, the
+`MAX_TOASTS` cap and the undo semantics. Guarded by `check:browser` case L2, at 624×532, by real
+hit-testing (`elementsFromPoint`) — a z-index compare is unsound across two separate `fixed`
+subtrees.
+
 ## Zwei Klicks bis zum Bericht — die Fragen sind gestrichen (2026-08-26, WP-75)
 
 Instigated by Andre, in his own words: „the 'send feedback' workflow is too complicated. it should

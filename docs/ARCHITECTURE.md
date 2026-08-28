@@ -603,7 +603,7 @@ Which module owns which invariant. Reach for these rather than rebuilding the be
 | `lib/broadcast.ts` | cross-window signalling. **One channel object per window, for posting AND listening — the singleton IS the self-suppression**: BroadcastChannel skips delivery only to the posting object, so a second `new BroadcastChannel('auftakt')` makes a window hear its own writes and loop every invalidate. Messages are versioned pure signals, never data. `useInvalidateAll` posts; the sole listener lives in `main.tsx`, where it shares one coalesced blanket invalidate with the `backup-config-changed` bridge event (see „Windows (plural)"). |
 | `lib/sectionSpecs.ts` (via `SectionCatalog.tsx`) | the section catalog: `SectionSpec[]` → `arrangerConfig` derives the arranger props, `pickerBuiltins` the „+ Bereich" rows. Spec order **is** the fresh-layout default order; a removable spec must carry its picker group (type-enforced). The derivation is pure and lives in `lib/` so `check:unit` reaches it without React; `SectionCatalog.tsx` re-exports it and holds the shared section bodies (`StatsSection`, `AttentionSection` — both computed sections say so in a hint line under the renameable heading). |
 | `SectionPickerModal` | the one „Bereich hinzufügen" presentation (type rows, restore rows, name field, Enter-to-create). Persistence stays with the wrappers — `AddSectionModal` creates `custom_sections` rows, `AddLandingSectionButton` registry sections (SHL-29's split). |
-| `useAnchoredPopover()` (`lib/popover.ts`) | any new popover: anchor rect, flip-above, clamp, height cap, close on scroll/resize, Escape. Escape is a **capture-phase window listener, not a React `onKeyDown`** — a popover opened by a click has no focus inside its menu. |
+| `useAnchoredPopover()` (`lib/popover.ts`) | any new popover: anchor rect, flip-above, clamp, height cap, close on scroll/resize, Escape. Escape is a **capture-phase window listener, not a React `onKeyDown`** — a popover opened by a click has no focus inside its menu. Its menu renders at **`POPOVER_LAYER` (`z-[55]`)**, above the toast — see „Other client conventions". |
 | `useRovingFocus()` / `rovingItem()` (`lib/rovingFocus.ts`) | any group of equivalent buttons drawn as one control — pills, emoji presets, picker rows, colour swatches. One tab stop (the *selected* item, or the first), arrows move focus, picking stays with the button. Put the container on the group and nothing else: a text field inside it would lose its ←/→. `Modal`'s `tabbables()` drops the rest by the `tabIndex >= 0` filter it already had. A ▲▼ pair is the same reading with ↑/↓ *performing* the move (`ReorderArrows`). |
 | `InlineInput` + `useCommitOnUnmount` (hooks.ts) | click-to-edit that commits on blur. React delegates focus events at the root, so a detached node never reaches `onBlur`. `useCommitOnUnmount`'s `active` argument is load-bearing: a constant `true` makes StrictMode's mount-time cleanup fire the commit while the editor is still open. Pick an `EmptyPolicy` (`ignore`/`clear`/`raw`) explicitly. **Every** inline editor in the task table goes through it, dates included (`type="date"`), which is what makes „a half-typed picker commits nothing" one rule rather than five: `validity.badInput`, not the empty string, is what says the draft is incomplete (WP-43). |
 | `normalizeUrl` (`lib/url.ts`) | URL shaping at the **storage and render** boundaries, never inside `openExternal` — `normalizeUrl('/foo')` yields `https:///foo`, which the allowlist would then accept. `openExternal`'s protocol allowlist stays the one place that decides what may open. |
@@ -624,6 +624,16 @@ Which module owns which invariant. Reach for these rather than rebuilding the be
   `visibilitychange` never fires between two visible Electron windows.
 - The error boundary is **app-wide, not per-section**: a throw in one widget takes the whole page
   to the German fallback panel.
+- **Overlay layers, top → bottom**, decided once so a transient notification never outranks a menu
+  the user is actively choosing from (#175): boot splash (`z-index:9999`, `index.html`) › the
+  announcement overlay (`z-[60]`) › **popover menus (`POPOVER_LAYER` = `z-[55]`, `lib/popover.ts`,
+  applied to every dropdown — the four `useAnchoredPopover` menus, the season switcher and the
+  editor's emoji dropdown)** › the toast stack (`z-50`, `Toast.tsx`) › `Modal` (`z-40`,
+  `fields.tsx`) › a menu's click-away backdrop (`z-30`) › the sticky header (`z-20`). The backdrop
+  stays *below* the toast on purpose: a click on a live toast must fire its „Rückgängig", never be
+  eaten as a menu-dismiss. This is the *visual* order; the keyboard/Escape order is a separate token
+  (`ANNOUNCEMENT_DEPTH`/`topModalDepth`, `fields.tsx`) that has to agree with it — toasts are not in
+  it, which is what let one overlap an open menu in the first place.
 - **UI strings are German.** Match the surrounding language in labels, toasts, dialogs and menu
   items; code identifiers and comments are English, except domain fields that are German in the
   schema (`saison`, `erledigt_am`, `priority` values `hoch`/`mittel`/`niedrig`).

@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useGuardedAction } from '../hooks';
-import { useAnchoredPopover } from '../lib/popover';
+import { POPOVER_LAYER, useAnchoredPopover } from '../lib/popover';
 import { rovingItem, useRovingFocus } from '../lib/rovingFocus';
 import { DropletIcon } from './icons';
 
@@ -129,7 +129,7 @@ export function ColorSwatchPicker({
             <div className="fixed inset-0 z-30" onClick={closePopover} />
             <div
               ref={menuRef}
-              className="fixed z-40 overflow-y-auto rounded-xl bg-white p-2 text-neutral-600 shadow-lg ring-1 ring-black/10"
+              className={`fixed ${POPOVER_LAYER} overflow-y-auto rounded-xl bg-white p-2 text-neutral-600 shadow-lg ring-1 ring-black/10`}
               style={{ left: pos.left, top: pos.top, maxHeight: pos.maxHeight }}
             >
               <div ref={roving.ref} onKeyDown={roving.onKeyDown} className="grid grid-cols-8 gap-1">
