@@ -7,7 +7,7 @@ import { Table, renderTableToMarkdown } from '@tiptap/extension-table';
 import { TableRow } from '@tiptap/extension-table-row';
 import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
-import { BulletList } from '@tiptap/extension-list';
+import { BulletList, OrderedList } from '@tiptap/extension-list';
 import { Heading } from '@tiptap/extension-heading';
 import { HardBreak } from '@tiptap/extension-hard-break';
 import {
@@ -777,6 +777,34 @@ const MdBulletList = BulletList.extend({
 });
 
 /**
+ * Eine getippte Zahl startet nur bei „1." eine Liste — the same narrowing as `MdBulletList`, for
+ * numbers.
+ *
+ * The vendor rule is `orderedListInputRegex`, `/^(\d+)\.\s$/` in `@tiptap/extension-list`: **any**
+ * number followed by `. ` turns the block into an ordered list starting at that number. So typing
+ * „2026. Ein starkes Jahr" at the start of a line becomes a list marked „2026." — a numbered list
+ * nobody asked for, with a wide gap after the marker. Pinning the digit to `1` keeps the one shortcut
+ * that reads as „start a list" and drops every number that reads as „I am typing a number".
+ *
+ * Unlike the bullet and heading siblings this is *only* a live-typing fix, because the write side is
+ * already safe: `escapeBlockStarts` (`lib/blockEscape.ts`) stores a typed `2026. ` as `2026\. `, so
+ * such a line never round-trips back into a list — the note does not re-shape itself on save. Nothing
+ * is lost by narrowing here either: the „Nummerierte Liste" toolbar button still makes a list, and
+ * Enter still auto-counts 2, 3, 4… inside one. Only the surprise is gone.
+ *
+ * With `start` pinned to its default, the vendor's `getAttributes`/`joinPredicate` (which existed only
+ * to carry a non-1 start) are unneeded — the rule is as small as `MdBulletList`'s. Like it, this is a
+ * *schema* replacement so the headless round-trip check serializes through it too; the standalone
+ * `OrderedList` carries the same `parseMarkdown`, paste handler and shortcuts the StarterKit copy did,
+ * so `orderedList: false` there loses nothing.
+ */
+const MdOrderedList = OrderedList.extend({
+  addInputRules() {
+    return [wrappingInputRule({ find: /^(1)\.\s$/, type: this.type })];
+  },
+});
+
+/**
  * Eine Überschrift ist immer *eine* Zeile — the write half.
  *
  * An ATX heading (`# …`) has no continuation line, but a heading node can hold a `hardBreak`: a
@@ -949,6 +977,7 @@ export function markdownExtensions(
       document: false, // replaced by MdDocument so the trailing empty paragraph isn't stored
       paragraph: false, // replaced by MdParagraph so a lone image keeps its paragraph
       bulletList: false, // replaced by MdBulletList so a typed `+ ` stays a plus (WP-85)
+      orderedList: false, // replaced by MdOrderedList so a typed number other than 1 stays text
       heading: false, // replaced by MdHeading so a hard break in a title collapses, not splits
       hardBreak: false, // replaced by MdHardBreak so Shift+Enter in a title acts like Enter
       code: false, // WP-49 — see markdownParser; the tokenizers go with them
@@ -976,6 +1005,7 @@ export function markdownExtensions(
     MdDocument,
     MdParagraph,
     MdBulletList,
+    MdOrderedList,
     MdHeading,
     MdHardBreak,
     MdLinkedImage,
