@@ -7,7 +7,7 @@ Diese Datei beginnt mit der ersten Version, die nach dem 16. August 2026 erschie
 Versionen und die technische Historie stehen auf der
 [Releases-Seite](https://github.com/andrewendlinger/auftakt/releases).
 
-## 0.12.0 — 27. August 2026
+## 0.12.1 — 29. August 2026
 
 - 🖨️ **Druckansicht verbessert**
   Man kam nicht mehr aus der Ansicht heraus — das ist behoben.
@@ -16,7 +16,7 @@ Versionen und die technische Historie stehen auf der
 - 💬 **Feedback senden**
   Zum Feedback senden braucht es jetzt nur noch zwei Klicks in den Einstellungen.
 - ➕ **Listen Bug** 
-  Ein '+' wird nicht mehr zu einem Listen item (nur '-' funktionert noch).
+  Ein '+' wird nicht mehr zu einem Listen item (nur '-' funktioniert noch).
   
 <details>
 <summary>Außerdem</summary>
