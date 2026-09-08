@@ -5,7 +5,7 @@
 <h1 align="center">Auftakt</h1>
 
 <p align="center">
-  Lokale Desktop-App für die Künstler- und Projektverwaltung<br>
+  Lokale Desktop-App für die Künstler- und Projektverwaltung.<br>
   Alle Daten bleiben auf dem eigenen Rechner.
 </p>
 
@@ -28,16 +28,12 @@ verteilt liegt:
 - **Termine**: Auftritte, Proben, Deadlines; ganztägig oder mit Uhrzeit
 - **Aufgaben** mit Unteraufgaben, Fälligkeiten, Farben und selbst angelegten Spalten
 - **Kontakte, Dokumente & Links** dort, wo man sie sucht — am Künstler, am Projekt, an der Saison
-- **Eine Saison = eine Datenbank.** Mehrere Saisons nebeneinander, jede in ihrem eigenen Fenster
 
 Auftakt läuft **offline**. Es gibt kein Konto, keine Cloud und keinen Server: Die Daten liegen als
 Datei auf dem Rechner und werden nirgendwohin übertragen. Die einzige Verbindung nach außen ist
-die Frage „gibt es eine neuere Version?".
+für Updates.
 
 ## Installation
-
-Die fertigen Installationsdateien liegen auf der
-**[Releases-Seite](https://github.com/andrewendlinger/auftakt/releases/latest)**:
 
 | System | Datei | Größe |
 | --- | --- | --- |
@@ -45,6 +41,21 @@ Die fertigen Installationsdateien liegen auf der
 | Windows (64-Bit) | `Auftakt-Setup-<Version>.exe` | ~100 MB |
 
 Für Linux und für Intel-Macs gibt es keine Version.
+
+
+### Windows
+
+Voraussetzung: **Windows 10 oder 11**, 64-Bit.
+
+1. `Auftakt-Setup-<Version>.exe` herunterladen und ausführen.
+2. Windows meldet **„Der Computer wurde durch Windows geschützt"** → auf **„Weitere
+   Informationen"** klicken, dann auf **„Trotzdem ausführen"**.
+3. Dem Installationsdialog folgen. Der Zielordner lässt sich ändern, und
+   **Administratorrechte sind nicht nötig** — installiert wird für den angemeldeten Benutzer.
+
+**Warum diese Warnung?** Der Installer trägt keine Windows-Code-Signatur (ein Zertifikat dafür
+kostet jährlich Geld). SmartScreen kennt den Herausgeber deshalb nicht und warnt, wie bei jedem
+unbekannten Programm.
 
 ### macOS
 
@@ -67,19 +78,6 @@ heruntergeladene, unsignierte Programme mit einem Quarantäne-Flag, und der Befe
 dieses Flag. Je nach macOS-Version funktioniert auch ein Rechtsklick auf die App → **Öffnen**;
 verlässlich ist der Terminal-Befehl.
 
-### Windows
-
-Voraussetzung: **Windows 10 oder 11**, 64-Bit.
-
-1. `Auftakt-Setup-<Version>.exe` herunterladen und ausführen.
-2. Windows meldet **„Der Computer wurde durch Windows geschützt"** → auf **„Weitere
-   Informationen"** klicken, dann auf **„Trotzdem ausführen"**.
-3. Dem Installationsdialog folgen. Der Zielordner lässt sich ändern, und
-   **Administratorrechte sind nicht nötig** — installiert wird für den angemeldeten Benutzer.
-
-**Warum diese Warnung?** Der Installer trägt keine Windows-Code-Signatur (ein Zertifikat dafür
-kostet jährlich Geld). SmartScreen kennt den Herausgeber deshalb nicht und warnt, wie bei jedem
-unbekannten Programm.
 
 ### Ist der Download echt?
 
@@ -140,11 +138,6 @@ Gut zu wissen:
   ersetzen und den `xattr`-Befehl von oben erneut ausführen.
 - **Die Daten bleiben bei einem Update erhalten.**
 
-## Was noch nicht drin ist
-
-- Kein Kalender-Sync und kein `.ics`-Export (die Termine sind dafür vorbereitet)
-- Kein Mehrbenutzerbetrieb — Auftakt ist eine Einzelplatz-App
-- Kein Linux-Build, kein Intel-Mac-Build
 
 ## Hilfe & Fehler melden
 
